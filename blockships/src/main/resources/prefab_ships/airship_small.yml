@@ -1,0 +1,125 @@
+# Initial rotation when ship spawns (yaw, pitch, roll) in degrees
+# yaw: 0=north, 90=east, 180=south, 270=west
+initial-rotation: [90.0, 0, 0.0]
+
+# Position offset relative to boat in local space (x, y, z)
+position-offset: [0.75, -0.75, -0.5]
+
+# Global collision offset for all hitboxes relative to boat in local space (x, y, z)
+# If not specified, defaults to position-offset
+# Per-block collision offsets are added to this global offset
+collision-offset: [1.25, 1.25, 0]
+
+blocks:
+- block: SPRUCE_SLAB
+  transformation: [1.0, 0, 0, -1.0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0]
+  properties:
+    type: bottom
+  collision:
+    enable: true
+    offset: [0, -0.5, 0]
+  seat:
+    is_driver: true
+
+- block: SPRUCE_SLAB
+  transformation: [1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0]
+  properties:
+    type: bottom
+  collision:
+    enable: true
+    offset: [0, -0.5, 0]
+  seat:
+    is_driver: false
+
+- block: SPRUCE_SLAB
+  transformation: [1.0, 0, 0, 1.0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0]
+  properties:
+    type: bottom
+  collision:
+    enable: true
+    offset: [0, -0.5, 0]
+
+# front and rear
+- block: SPRUCE_STAIRS
+  transformation: [1.0, 0, 0, -2.0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0]
+  properties:
+    facing: east
+    half: top
+    shape: straight
+- block: SPRUCE_STAIRS
+  transformation: [1.0, 0, 0, 2.0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0]
+  properties:
+    facing: west
+    half: top
+    shape: straight
+
+# sides
+- block: SPRUCE_SLAB
+  transformation: [1.5, 0, 0, -1.0, 0, 0, -0.75, 1.0, 0, 0.75, 0, 1.0, 0, 0, 0, 1.0]
+  properties:
+    type: bottom
+  collision:
+    enable: false
+- block: SPRUCE_SLAB
+  transformation: [1.5, 0, 0, 0.5, 0, 0, -0.75, 1.0, 0, 0.75, 0, 1.0, 0, 0, 0, 1.0]
+  properties:
+    type: bottom
+  collision:
+    enable: false
+- block: SPRUCE_SLAB
+  transformation: [1.0, 0, 0, -1.0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0]
+  properties:
+    type: bottom
+  collision:
+    enable: false
+- block: SPRUCE_SLAB
+  transformation: [1.5, 0, 0, -1.0, 0, 0, 0.75, 0.25, 0, -0.75, 0, 0, 0, 0, 0, 1.0]
+  properties:
+    type: bottom
+  collision:
+    enable: false
+- block: SPRUCE_SLAB
+  transformation: [1.5, 0, 0, 0.5, 0, 0, 0.75, 0.25, 0, -0.75, 0, 0, 0, 0, 0, 1.0]
+  properties:
+    type: bottom
+  collision:
+    enable: false
+
+# chest
+- block: CHEST
+  transformation: [2.220446049250313e-16, 0, -0.75, 2.0, 0, 0.75, 0, 0.5, 1.0, 0, 0, 0, 0, 0, 0, 1.0]
+  collision:
+    enable: true
+    offset: [-0.8, 0.15, 0]
+    size: 0.4
+  storage:
+    type: DOUBLE_CHEST
+    name: "Airship Cargo"  # Custom inventory name
+
+# "ropes" up to balloon
+- block: SPRUCE_FENCE
+  transformation: [0.49240387650610395, -0.4489014381149419, 0.01507684480352291, -1.1875, 0.08682408883346548, 2.5458465647815043, -0.08550503583141744, 0.4375, 9.627715291671279e-17, 0.4558264663756935, 0.492403876506104, 0.6875, 0, 0, 0, 1.0]
+  collision:
+    enable: false
+- block: SPRUCE_FENCE
+  transformation: [0.0, -0.4558264663756945, -0.49240387650610384, -0.6875, 0.08682408883346615, 2.5458465647815034, -0.08550503583141766, 0.4375, 0.49240387650610373, -0.44890143811494565, 0.015076844803522838, -0.1875, 0, 0, 0, 1.0]
+  collision:
+    enable: false
+- block: SPRUCE_FENCE
+  transformation: [-0.49240387650610407, 0.4489014381149471, -0.01507684480352161, 2.1875, 0.08682408883346623, 2.545846564781506, -0.08550503583141456, 0.4375, -1.0156805951844206e-15, -0.4558264663756773, -0.49240387650610473, 0.3125, 0, 0, 0, 1.0]
+  collision:
+    enable: false
+- block: SPRUCE_FENCE
+  transformation: [0.0, 0.4558264663756844, 0.4924038765061043, 1.6875, 0.08682408883346586, 2.545846564781505, -0.08550503583141592, 0.4375, -0.49240387650610395, 0.4489014381149451, -0.015076844803521672, 1.1875, 0, 0, 0, 1.0]
+  collision:
+    enable: false
+
+items:
+# balloon
+- item: PLAYER_HEAD
+  transformation: [12.0, 0, 0, 0.5, 0, 4.5, 0, 5.1875, 0, 0, 4.5, 0.5, 0, 0, 0, 1.0]
+  components:
+    minecraft:profile:
+      properties:
+      - name: textures
+        value: eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNTA2ZTZkODNjZjdlZDVjZjdiZjBlMDE4ZWNiNjAzOWIwNDZkOGRjNmRiNTU2OTAxNGZjYWIzN2I2MTdmMTM5OSJ9fX0=

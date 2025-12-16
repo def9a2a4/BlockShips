@@ -1,3 +1,8 @@
+blockships/.gradle/
+blockships/build/
+blockships/bin/
+bin/
+
 # Compiled class file
 *.class
 

@@ -1,0 +1,723 @@
+# Block configuration for custom ship construction
+# Blocks not listed here are FORBIDDEN by default
+#
+# Collider format:
+#   collider: true                          # Default size (1.0), no offset
+#   collider: false                         # No collider
+#   collider: {size: 0.5, offset: [0,-0.5,0]}  # Custom size and/or offset
+#
+# Weight scale: -2 to 10 (used for density/buoyancy calculations)
+#   -2 = strong floatation (glowstone)
+#   0 = neutral
+#   1 = light (wool, glass)
+#   2 = medium (wood, redstone)
+#   3 = heavy (iron, copper, storage)
+#   4+ = very heavy (gold, diamond, netherite)
+#   null = excluded from density calculation (block exists but doesn't affect buoyancy)
+#
+# Buoyancy: Ships float based on mean density (totalWeight / blockCount)
+#   - density < air-density (0.0): becomes airship
+#   - density = water-density (2.5): floats at center of volume
+#   - density between air and water: interpolates waterline between bottom and center
+
+
+# === FLOATATION BLOCKS (weight: -10, lighter than air) ===
+glowstone:
+  allowed: true
+  weight: -5
+  collider: true
+
+sea_lantern:
+  allowed: true
+  weight: -3
+  collider: true
+
+beacon:
+  allowed: true
+  weight: -15
+  collider: true
+
+shroomlight:
+  allowed: true
+  weight: -5
+  collider: true
+
+ochre_froglight:
+  allowed: true
+  weight: -5
+  collider: true
+
+pearlescent_froglight:
+  allowed: true
+  weight: -5
+  collider: true
+
+verdant_froglight:
+  allowed: true
+  weight: -5
+  collider: true
+
+end_rod:
+  allowed: true
+  weight: -20
+  collider: false
+
+
+# === WOOD FAMILY (weight: 2) ===
+"#planks":
+  allowed: true
+  weight: 2
+  collider: true
+
+"#logs":
+  allowed: true
+  weight: 2
+  collider: true
+
+"#wooden_slabs":
+  allowed: true
+  weight: 2
+  collider:
+    type: conditional
+    rules:
+      - condition: {type: "BOTTOM"}
+        collider:
+          size: 0.5
+          offset: [0, 0, 0]
+      - condition: {type: "TOP"}
+        collider:
+          size: 0.5
+          offset: [0, 0.5, 0]
+      - condition: {type: "DOUBLE"}
+        collider: true
+
+"#wooden_stairs":
+  allowed: true
+  weight: 2
+  collider:
+    type: conditional
+    rules:
+      # acts like a half slab when bottom straight (a "normal" stair)
+      # having it be a step would require more than one collider, forget it for now
+      # todo: inner corner stairs should be a full block
+      - condition: {half: "BOTTOM"}
+        collider:
+          size: 0.5
+          offset: [0, 0, 0]
+        seat: true
+      # if top half, full block
+      - condition: {half: "TOP"}
+        collider: true
+
+"*_fence":
+  allowed: true
+  weight: 2
+  collider:
+    size: 0.275
+    offset: [0, 0.5, 0]
+  leadable: true
+
+"*_fence_gate":
+  allowed: true
+  weight: 2
+  collider: false
+
+"*_door":
+  allowed: true
+  weight: 2
+  collider: false
+
+"*_trapdoor":
+  allowed: true
+  weight: 2
+  collider: false
+
+"*_button":
+  allowed: true
+  weight: 2
+  collider: false
+
+"*_pressure_plate":
+  allowed: true
+  weight: 2
+  collider: false
+
+# === TEXTILES (weight: 1) ===
+"#wool":
+  allowed: true
+  weight: 1
+  collider: true
+
+"#wool_carpets":
+  allowed: true
+  weight: 1
+  collider: false
+  seat: true
+
+"#banners":
+  allowed: true
+  weight: 1
+  collider: false
+
+# === IRON (weight: 3) ===
+iron_block:
+  allowed: true
+  weight: 3
+  collider: true
+
+iron_bars:
+  allowed: true
+  weight: 3
+  collider: false
+
+chain:
+  allowed: true
+  weight: 3
+  collider: false
+
+# Copper chains - matches all oxidation variants (copper, exposed, weathered, oxidized, waxed)
+"*_copper_chain":
+  allowed: true
+  weight: 3
+  collider: false
+
+iron_door:
+  allowed: true
+  weight: 3
+  collider: false
+
+iron_trapdoor:
+  allowed: true
+  weight: 3
+  collider: false
+
+hopper:
+  allowed: true
+  weight: 3
+  collider: true
+  storage:
+    type: HOPPER
+    name: "Hopper"
+
+# === COPPER (weight: 3) ===
+# Matches all copper block variants including cut variants
+"*copper_block":
+  allowed: true
+  weight: 3
+  collider: true
+
+"*copper":
+  allowed: true
+  weight: 3
+  collider: true
+
+# Copper slabs - matches all variants (cut, exposed, weathered, oxidized, waxed, etc.)
+"*copper_slab":
+  allowed: true
+  weight: 3
+  collider:
+    type: conditional
+    rules:
+      - condition: {type: "BOTTOM"}
+        collider:
+          offset: [0, -0.5, 0]
+      - condition: {type: "TOP"}
+        collider: true
+      - condition: {type: "DOUBLE"}
+        collider: true
+
+# Copper stairs - matches all variants (cut, exposed, weathered, oxidized, waxed, etc.)
+"*copper_stairs":
+  allowed: true
+  weight: 3
+  collider:
+    type: conditional
+    rules:
+      - condition: {half: "BOTTOM", shape: "STRAIGHT"}
+        collider:
+          offset: [0, -0.5, 0]
+        seat: true
+      - condition: {half: "BOTTOM"}
+        collider: true
+      - condition: {half: "TOP"}
+        collider: true
+
+# Copper bulbs - matches all variants
+"*copper_bulb":
+  allowed: true
+  weight: 3
+  collider: true
+
+# Copper grates - matches all variants
+"*copper_grate":
+  allowed: true
+  weight: 3
+  collider:
+    size: 0.5  # TODO: Decide if this should be 0.5 or false
+
+# Copper doors - matches all variants
+"*copper_door":
+  allowed: true
+  weight: 3
+  collider: false
+
+# Copper trapdoors - matches all variants
+"*copper_trapdoor":
+  allowed: true
+  weight: 3
+  collider: false
+
+lightning_rod:
+  allowed: true
+  weight: 3
+  collider:
+    size: 0.1
+
+# === PRECIOUS BLOCKS (weight: variable. allows for tuning ballast) ===
+gold_block:
+  allowed: true
+  weight: 6
+  collider: true
+
+diamond_block:
+  allowed: true
+  weight: 8
+  collider: true
+
+netherite_block:
+  allowed: true
+  weight: 10
+  collider: true
+
+emerald_block:
+  allowed: true
+  weight: 7
+  collider: true
+
+lapis_block:
+  allowed: true
+  weight: 5
+  collider: true
+
+raw_iron_block:
+  allowed: true
+  weight: 4
+  collider: true
+
+raw_copper_block:
+  allowed: true
+  weight: 3
+  collider: true
+
+raw_gold_block:
+  allowed: true
+  weight: 6
+  collider: true
+
+# === REDSTONE (weight: variable) ===
+redstone_wire:
+  allowed: true
+  weight: 1
+  collider: false
+
+redstone_torch:
+  allowed: true
+  weight: 1
+  collider: false
+
+redstone_wall_torch:
+  allowed: true
+  weight: 1
+  collider: false
+
+redstone_block:
+  allowed: true
+  weight: 2
+  collider: true
+
+repeater:
+  allowed: true
+  weight: 1
+  collider: false
+
+comparator:
+  allowed: true
+  weight: 1
+  collider: false
+
+observer:
+  allowed: true
+  weight: 1
+  collider: true
+
+lever:
+  allowed: true
+  weight: 1
+  collider: false
+
+dispenser:
+  allowed: true
+  weight: 2
+  collider: true
+  storage:
+    type: DROPPER
+    name: "Dispenser"
+
+dropper:
+  allowed: true
+  weight: 2
+  collider: true
+  storage:
+    type: DROPPER
+    name: "Dropper"
+
+# === STORAGE (weight: 2-3) ===
+chest:
+  allowed: true
+  weight: 2
+  collider:
+    size: 0.9
+  storage:
+    type: CHEST
+    name: "Chest"
+  display_rotation: true  # BlockDisplay ignores facing property
+
+trapped_chest:
+  allowed: true
+  weight: 2
+  collider:
+    size: 0.9
+  storage:
+    type: CHEST
+    name: "Trapped Chest"
+  display_rotation: true
+
+"*copper_chest":
+  allowed: true
+  weight: 3
+  collider:
+    size: 0.9
+  storage:
+    type: CHEST
+    name: "Copper Chest"
+  display_rotation: true
+
+barrel:
+  allowed: true
+  weight: 2
+  collider: true
+  storage:
+    type: CHEST
+    name: "Barrel"
+  display_rotation: true
+
+furnace:
+  allowed: true
+  weight: 3
+  collider: true
+
+blast_furnace:
+  allowed: true
+  weight: 3
+  collider: true
+
+smoker:
+  allowed: true
+  weight: 3
+  collider: true
+
+crafting_table:
+  allowed: true
+  weight: 2
+  collider: true
+  interaction: true
+
+"*_shulker_box":
+  allowed: true
+  weight: 3
+  collider: true
+  storage:
+    type: CHEST
+    name: "Shulker Box"
+
+# === GLASS (weight: 1) ===
+glass:
+  allowed: true
+  weight: 1
+  collider: true
+
+"*_stained_glass":
+  allowed: true
+  weight: 1
+  collider: true
+
+tinted_glass:
+  allowed: true
+  weight: 1
+  collider: true
+
+glass_pane:
+  allowed: true
+  weight: 1
+  collider: false
+
+"*_stained_glass_pane":
+  allowed: true
+  weight: 1
+  collider: false
+
+# === UTILITY (weight: 2-4) ===
+cartography_table:
+  allowed: true
+  weight: 2
+  collider: true
+  interaction: true
+
+loom:
+  allowed: true
+  weight: 2
+  collider: true
+  interaction: true
+
+anvil:
+  allowed: true
+  weight: 4
+  collider: true
+  interaction: true
+
+chipped_anvil:
+  allowed: true
+  weight: 4
+  collider: true
+  interaction: true
+
+damaged_anvil:
+  allowed: true
+  weight: 4
+  collider: true
+  interaction: true
+
+grindstone:
+  allowed: true
+  weight: 3
+  collider: true
+  interaction: true
+
+smithing_table:
+  allowed: true
+  weight: 3
+  collider: true
+  interaction: true
+
+stonecutter:
+  allowed: true
+  weight: 3
+  collider: true
+  interaction: true
+
+enchanting_table:
+  allowed: true
+  weight: 5
+  collider: true
+  interaction: true
+
+lectern:
+  allowed: true
+  weight: 2
+  collider: true
+
+
+# === LIGHTING (weight: 1, except glowstone) ===
+torch:
+  allowed: true
+  weight: 1
+  collider: false
+
+wall_torch:
+  allowed: true
+  weight: 1
+  collider: false
+
+soul_torch:
+  allowed: true
+  weight: 1
+  collider: false
+
+soul_wall_torch:
+  allowed: true
+  weight: 1
+  collider: false
+
+lantern:
+  allowed: true
+  weight: 1
+  collider: false
+
+soul_lantern:
+  allowed: true
+  weight: 1
+  collider: false
+
+# misc
+
+bookshelf:
+  allowed: true
+  weight: 1
+  collider: true
+
+"#signs":
+  allowed: true
+  weight: 1
+  collider: false
+
+"#all_hanging_signs":
+  allowed: true
+  weight: 1
+  collider: false
+
+# === HEADS & SKULLS (weight: 1) ===
+player_head:
+  allowed: true
+  weight: 1
+  collider:
+    size: 0.5
+
+player_wall_head:
+  allowed: true
+  weight: 1
+  collider: false
+
+zombie_head:
+  allowed: true
+  collider:
+    size: 0.5
+
+zombie_wall_head:
+  allowed: true
+  weight: 1
+  collider: false
+
+skeleton_skull:
+  allowed: true
+  weight: 1
+  collider:
+    size: 0.5
+
+skeleton_wall_skull:
+  allowed: true
+  weight: 1
+  collider: false
+
+wither_skeleton_skull:
+  allowed: true
+  weight: 1
+  collider:
+    size: 0.5
+
+wither_skeleton_wall_skull:
+  allowed: true
+  weight: 1
+  collider: false
+
+creeper_head:
+  allowed: true
+  weight: 1
+  collider:
+    size: 0.5
+
+creeper_wall_head:
+  allowed: true
+  weight: 1
+  collider: false
+
+dragon_head:
+  allowed: true
+  weight: 1
+  collider: true
+
+dragon_wall_head:
+  allowed: true
+  weight: 1
+  collider: true
+
+piglin_head:
+  allowed: true
+  weight: 1
+  collider:
+    size: 0.5
+
+piglin_wall_head:
+  allowed: true
+  weight: 1
+  collider: false
+
+# === WALLS (weight: 3) ===
+"#walls":
+  allowed: true
+  weight: 3
+  collider:
+    size: 0.5
+    offset: [0, 0.5, 0]
+
+# === MISC BLOCKS ===
+end_stone_bricks:
+  allowed: true
+  weight: 3
+  collider: true
+
+ladder:
+  allowed: true
+  weight: 1
+  collider: false
+
+obsidian:
+  allowed: true
+  weight: 10
+  collider: true
+
+brewing_stand:
+  allowed: true
+  weight: 2
+  collider: false
+
+# === END BLOCKS (Purpur) ===
+purpur_block:
+  allowed: true
+  weight: 2
+  collider: true
+
+purpur_pillar:
+  allowed: true
+  weight: 2
+  collider: true
+
+purpur_slab:
+  allowed: true
+  weight: 2
+  collider:
+    type: conditional
+    rules:
+      - condition: {type: "BOTTOM"}
+        collider:
+          size: 0.5
+          offset: [0, 0, 0]
+      - condition: {type: "TOP"}
+        collider:
+          size: 0.5
+          offset: [0, 0.5, 0]
+      - condition: {type: "DOUBLE"}
+        collider: true
+
+purpur_stairs:
+  allowed: true
+  weight: 2
+  collider:
+    type: conditional
+    rules:
+      - condition: {half: "BOTTOM"}
+        collider:
+          size: 0.5
+          offset: [0, 0, 0]
+        seat: true
+      - condition: {half: "TOP"}
+        collider: true

@@ -1,0 +1,32 @@
+name: BlockShips
+main: anon.def9a2a4.blockships.BlockShipsPlugin
+version: ${version}
+api-version: 1.21
+author: You
+description: Rideable display entity ships with collision and persistence.
+softdepend: [ProtocolLib]
+
+commands:
+  blockships:
+    description: BlockShips plugin commands
+    usage: |
+      /blockships reload - Reload the plugin configuration
+      /blockships give <shiptype> - Give yourself a ship kit
+      /blockships recipes [player] - Unlock all recipes for a player
+      /blockships forcedisassembleall - Force-disassemble all custom ships
+      /blockships killentities - Remove all BlockShips entities
+    permission: blockships.reload
+
+permissions:
+  blockships.reload:
+    description: Allows reloading the plugin configuration
+    default: op
+  blockships.give:
+    description: Allows giving ship kits
+    default: op
+  blockships.recipes:
+    description: Allows unlocking recipes for players
+    default: op
+  blockships.admin:
+    description: Allows admin commands (forcedisassembleall, killentities)
+    default: op

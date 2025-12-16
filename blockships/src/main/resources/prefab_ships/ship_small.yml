@@ -1,0 +1,124 @@
+# Initial rotation when ship spawns (yaw, pitch, roll) in degrees
+# yaw: 0=north, 90=east, 180=south, 270=west
+initial-rotation: [-90.0, 0.0, 0.0]
+
+# Position offset relative to boat in local space (x, y, z)
+position-offset: [0.75, -0.75, -0.5]
+
+# Global collision offset for all hitboxes relative to boat in local space (x, y, z)
+# If not specified, defaults to position-offset
+# Per-block collision offsets are added to this global offset
+collision-offset: [1.25, 1.25, 0]
+
+# 3x3 Rotation transformation matrix (row-major)
+# Maps boat rotation [yaw, pitch, roll] to ship rotation [yaw', pitch', roll']
+# Identity matrix (no transformation):
+rotation-matrix: [
+  1.0, 0.0, 0.0,
+  0.0, 1.0, 0.0,
+  0.0, 0.0, 1.0
+]
+
+# Water floating offset: Y-position offset from water surface where ship floats (blocks)
+# Positive values = float above surface, negative = sink below surface
+# This is relative to the vehicle (root armor stand) position
+water-float-offset: -1.75
+
+blocks:
+# Per-block collision configuration format (all fields optional):
+# collision:
+#   enable: true/false  # Enable/disable collision (default: true)
+#   size: 1.0           # Scale shulker size (default: 1.0)
+#   offset: [0, 0, 0]   # Position offset relative to global collision-offset (default: [0, 0, 0])
+# Seat configuration format (all fields optional):
+# seat: true                 # Simple passenger seat at block position
+# seat:
+#   is_driver: true/false    # Driver seat (default: false)
+#   offset: [0, 0, 0]        # Additional offset from block center (default: [0, 0, 0])
+
+
+# bottom slabs -- offset shulkers downwards by 0.5
+## rear (driver seat)
+- block: SPRUCE_SLAB
+  transformation: [1.0, 0.0, 0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+  properties:
+    type: bottom
+  collision:
+    offset: [0, -0.5, 0]
+  seat:
+    is_driver: true
+## middle (passenger seat)
+- block: SPRUCE_SLAB
+  transformation: [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+  properties:
+    type: bottom
+  collision:
+    offset: [0, -0.5, 0]
+  seat:
+    is_driver: false
+## front (chest on top of this, not a seat)
+- block: SPRUCE_SLAB
+  transformation: [1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+  properties:
+    type: bottom
+  collision:
+    offset: [0, -0.5, 0]
+
+# front and back (rear stairs is the lead attachment point)
+- block: SPRUCE_STAIRS
+  transformation: [1.0, 0.0, 0.0, -2.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+  properties:
+    facing: east
+    half: top
+    shape: straight
+  collision:
+    enable: true
+  leadable: true
+
+- block: SPRUCE_STAIRS
+  transformation: [1.0, 0.0, 0.0, 2.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+  properties:
+    facing: west
+    half: top
+    shape: straight
+
+# chest with storage inventory
+- block: CHEST
+  transformation: [0, 0.0, -0.75, 2.0, 0.0, 0.75, 0.0, 0.5, 1.0, 0.0, 0, 0.0, 0.0, 0.0, 0.0, 1.0]
+  collision:
+    enable: true
+    offset: [-0.8, 0.15, 0]
+    size: 0.4
+  storage:
+    type: DOUBLE_CHEST        # CHEST (27 slots), DOUBLE_CHEST (54), DROPPER (9), HOPPER (5)
+    name: "Ship Cargo"  # Custom inventory name
+
+# sides of the ship, no collision
+- block: SPRUCE_SLAB
+  transformation: [1.625, 0.0, 0.0, -1.125, 0.0, 0, -0.75, 1.0, 0.0, 0.75, 0, 1.0, 0.0, 0.0, 0.0, 1.0]
+  properties:
+    type: bottom
+  collision:
+    enable: false
+- block: SPRUCE_SLAB
+  transformation: [1.625, 0.0, 0.0, 0.5, 0.0, 0, -0.75, 1.0, 0.0, 0.75, 0, 1.0, 0.0, 0.0, 0.0, 1.0]
+  properties:
+    type: bottom
+  collision:
+    enable: false
+- block: SPRUCE_SLAB
+  transformation: [1.625, 0.0, 0.0, -1.125, 0.0, 0.0, 0.75, 0.25, 0.0, -0.75, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+  properties:
+    type: bottom
+  collision:
+    enable: false
+- block: SPRUCE_SLAB
+  transformation: [1.625, 0.0, 0.0, 0.5, 0.0, 0.0, 0.75, 0.25, 0.0, -0.75, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+  properties:
+    type: bottom
+  collision:
+    enable: false
+# banner made custom
+items:
+- item: WHITE_BANNER
+  transformation: [0.0, 0.0, -1.0, -1.25, 0.0, 1.0, 0.0, 1.5, 3.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 1.0]

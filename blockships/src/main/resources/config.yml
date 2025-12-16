@@ -1,0 +1,298 @@
+# BlockShips Plugin Configuration
+
+# Custom block ships configuration (assembled from ship wheels)
+custom-ships:
+  display-offset: [0, -2, 0]  # Offset for BlockDisplay entities (compensates for ArmorStand base height)
+  collision-offset: [0.5, 0, 0.5]    # Additional offset for collision boxes
+  max-ship-size: 1000  # Maximum number of blocks in a custom ship
+
+  # Buoyancy system - weight-based floating
+  # Ships float based on their density (total weight / block count) compared to water density
+  # - Density < water: floats higher (surface offset increases)
+  # - Density = water: neutral (floats at water surface)
+  # - Density > water: sinks lower (surface offset decreases, eventually sinks)
+  buoyancy:
+    # Reference density of air (ships lighter than this become airships)
+    air-density: 0.0
+    # Reference density of water (blocks.yml uses 0 to 4 weight scale for most blocks)
+    # Ships with density = water-density float at their center of volume
+    # Ships between air and water density interpolate between bottom and center
+    water-density: 3
+    # Buoyancy strength: how fast ship moves toward target height (0.05 = smooth, 0.2 = fast)
+    strength: 0.05
+    # Buoyancy damping: velocity damping to prevent oscillation (0.5 = stable)
+    damping: 0.5
+
+  # Airship controls (for custom ships lighter than air)
+  # Ships with density < air-density automatically become airships
+  airship-controls:
+    # Vertical acceleration when pressing Space (lift) or Sprint (descend)
+    lift-acceleration: 0.05
+    descend-acceleration: 0.05
+    # Maximum vertical speed in blocks per tick
+    max-vertical-speed: 0.3
+    # Vertical drag when not pressing vertical controls (0.9 = slow descent, 1.0 = no drag)
+    vertical-drag: 0.9
+    # Small forward nudge during vertical movement to ensure movement detection
+    vertical-forward-nudge: 0.011
+
+# Global physics settings
+physics:
+  # Deck physics velocity thresholds
+  # Minimum velocity magnitude to transfer to players standing on deck (prevents jitter)
+  deck-physics-min-velocity: 0.1
+  # Maximum velocity magnitude to transfer (prevents velocity spikes from bugs)
+  deck-physics-max-velocity: 10.0
+
+  # Idle detection settings
+  # Number of ticks to wait before stopping the update task when ship is idle
+  idle-ticks-before-stop: 10
+  # How often (in ticks) to check for movement when ship is idle
+  idle-check-interval: 10
+  # Minimum movement (blocks/tick) required to update armor stands and displays
+  movement-threshold: 0.001
+  # Minimum rotation (degrees) required to update armor stands and displays
+  rotation-threshold: 0.001
+  # Radius in blocks to check for nearby players (for unmanned drag detection)
+  player-proximity-radius: 2.0
+
+# Cannon system configuration
+cannons:
+  # Cooldown between cannon fires in milliseconds (per cannon)
+  cooldown-ms: 1000
+
+# Entity masses for collision physics (global settings)
+entity-masses:
+  boat: 10.0         # Boats, minecarts
+  mob-small: 5.0     # Chickens, rabbits, bats
+  mob-medium: 10.0    # Players, zombies, cows, horses
+  mob-large: 20.0    # Iron golems, wardens, ravagers
+
+# Custom items (intermediate crafting ingredients)
+custom-items:
+  balloon:
+    display-name: "{VARIANT} Ship Balloon"
+    base-material: PLAYER_HEAD
+    texture-set: BALLOONS
+    variant-source: WOOL
+    stackable: false
+    recipe:
+      pattern:
+        - "WWW"
+        - "WMW"
+        - "WWW"
+      ingredients:
+        W: ["*_WOOL"]
+        M: [PHANTOM_MEMBRANE]
+      result-name: "{VARIANT} Ship Balloon"
+      result-item: PLAYER_HEAD
+      result-texture-set: BALLOONS
+
+  ship_wheel:
+    display-name: "Ship Wheel"
+    base-material: PLAYER_HEAD
+    texture-set: SHIP_WHEEL_SET
+    variant-source: GOLD_BLOCK
+    stackable: false
+    recipe:
+      pattern:
+        - " C "
+        - "CGC"
+        - "MCF"
+      ingredients:
+        C: [COPPER_BLOCK]
+        G: [GOLD_BLOCK]
+        M: [COMPASS]
+        F: [BLAST_FURNACE]
+      result-name: "Ship Wheel"
+      result-item: PLAYER_HEAD
+      result-texture-set: SHIP_WHEEL_SET
+
+# list of ships
+ships:
+  smallship:
+    # Path to the ship model YAML file
+    model-path: prefab_ships/ship_small.yml
+
+    # Crafting recipe for this ship type
+    recipe:
+      # 3x3 shaped crafting pattern (each string is a row)
+      pattern:
+        - "PBP"
+        - "PCP"
+        - "PCP"
+      # Ingredient definitions (letter -> list of valid materials)
+      # Use wildcards like "*_PLANKS" or "*_BANNER" to match all variants
+      ingredients:
+        P: ["*_PLANKS"]
+        B: ["*_BANNER"]
+        C: [CHEST]
+      # Ship kit item customization
+      # Use {WOOD_TYPE} as a template variable (e.g., "Small {WOOD_TYPE} Ship Kit" -> "Small Oak Ship Kit")
+      result-name: "{WOOD_TYPE} Small Ship Kit"
+      # Item type for ship kit (can be PLAYER_HEAD, PAPER, or any item)
+      result-item: PLAYER_HEAD
+      # Reference to texture set defined in items.yml (e.g., CRATES, BALLOONS)
+      result-texture-set: CRATES
+
+    # Set to true to make collision boxes glow (useful for debugging)
+    collision-debug-glow: false
+
+    controls:
+      # Maximum forward speed in blocks per tick
+      max-speed: 0.55
+      # Speed increase per tick when accelerating (W key)
+      acceleration: 0.02
+
+      # Deceleration & drag rates
+      # Active deceleration: Speed decrease per tick when pressing S (additive)
+      active-deceleration: 0.025
+      # Mounted drag: Speed multiplier when driver aboard but not pressing W/S (multiplicative)
+      mounted-drag: 0.995
+      # Unmanned drag: Speed multiplier when players nearby but not driving (multiplicative)
+      unmanned-drag: 0.99
+      # Idle drag: Speed multiplier when no players nearby (multiplicative)
+      idle-drag: 0.98
+      # Minimum movement threshold: Below this speed, ship stops completely (prevents creeping)
+      min-movement-threshold: 0.01
+
+      # Rotation controls
+      # Maximum rotation speed in degrees per tick when steering
+      rotation-speed: 1.5
+      # Rotation speed increase per tick when pressing A/D (for smooth turning)
+      rotation-acceleration: 0.3
+      # Rotation speed decrease per tick when no A/D input (momentum decay)
+      rotation-deceleration: 0.15
+
+      # Water buoyancy (spring-based floating)
+      # Buoyancy strength: How strongly ship is pushed toward target float height (0.0-1.0)
+      # Higher values = faster response to water surface
+      buoyancy-strength: 0.05
+      # Buoyancy damping: Velocity damping to prevent oscillation (0.0-1.0)
+      # Higher values = less bouncing, more stable floating
+      buoyancy-damping: 0.5
+
+    # Health system configuration
+    # Maximum health points (players see this as hearts on the health bar)
+    max-health: 20.0
+    # Health regeneration rate in HP per second (1.0 = 1 HP every second)
+    health-regen-per-second: 0.0
+
+    # Collision detection and physics
+    collision:
+      # Ship mass for collision physics (this ship type)
+      mass: 100.0
+      # Overall collision response strength multiplier
+      response-strength: 1.0
+      # Terrain collision force multiplier (how hard terrain pushes back)
+      terrain-strength: 2.0
+      # How much ship speed amplifies terrain collision force (1.0 = no scaling, 10.0 = 10x at max speed)
+      terrain-speed-multiplier: 10.0
+      # Minimum penetration depth to trigger collision response (blocks)
+      min-penetration: 0.1
+      # Collision force retention per tick (0.0-1.0, higher = slower decay, 1.0 = no decay)
+      force-decay: 0.7
+  bigship:
+    model-path: prefab_ships/ship_big.yml
+
+    # Crafting recipe for this ship type (bigger ship = more materials)
+    recipe:
+      # 3x3 shaped crafting pattern (each string is a row)
+      pattern:
+        - "PBP"
+        - "CPC"
+        - "CCC"
+      # Ingredient definitions (letter -> list of valid materials)
+      # Use wildcards like "*_PLANKS" or "*_BANNER" to match all variants
+      ingredients:
+        P: ["*_PLANKS"]
+        B: ["*_BANNER"]
+        C: [CHEST]
+      # Ship kit item customization
+      # Use {WOOD_TYPE} as a template variable (e.g., "Small {WOOD_TYPE} Ship Kit" -> "Small Oak Ship Kit")
+      result-name: "{WOOD_TYPE} Large Ship Kit"
+      # Item type for ship kit (can be PLAYER_HEAD, PAPER, or any item)
+      result-item: PLAYER_HEAD
+      # Reference to texture set defined in items.yml (e.g., CRATES, BALLOONS)
+      result-texture-set: CRATES
+
+    collision-debug-glow: false
+
+    controls:
+      max-speed: 0.55
+      acceleration: 0.02
+      active-deceleration: 0.025
+      mounted-drag: 0.995
+      unmanned-drag: 0.99
+      idle-drag: 0.98
+      min-movement-threshold: 0.01
+
+      rotation-speed: 1.5
+      rotation-acceleration: 0.3
+      rotation-deceleration: 0.15
+
+      buoyancy-strength: 0.05
+      buoyancy-damping: 0.5
+
+    # Health system configuration
+    max-health: 50.0
+    health-regen-per-second: 0.0
+
+    collision:
+      mass: 100.0
+      response-strength: 1.0
+      terrain-strength: 2.0
+      terrain-speed-multiplier: 10.0
+      min-penetration: 0.1
+      force-decay: 0.7
+
+  smallairship:
+    type: airship
+    model-path: prefab_ships/airship_small.yml
+
+    recipe:
+      pattern:
+        - "BBB"
+        - "PCC"
+        - "PPP"
+      ingredients:
+        B: ["blockships:balloon"]  # Custom balloon items
+        P: ["*_PLANKS"]
+        C: [CHEST]
+      result-name: "{WOOD_TYPE} Small Airship Kit"
+      result-item: PLAYER_HEAD
+      result-texture-set: CRATES
+
+    collision-debug-glow: false
+
+    controls:
+      max-speed: 0.4
+      acceleration: 0.015
+      active-deceleration: 0.02
+      mounted-drag: 0.995
+      unmanned-drag: 0.99
+      idle-drag: 0.98
+      min-movement-threshold: 0.01
+
+      rotation-speed: 1.2
+      rotation-acceleration: 0.25
+      rotation-deceleration: 0.15
+
+      # Airship-specific controls
+      lift-acceleration: 0.05
+      descend-acceleration: 0.05
+      max-vertical-speed: 0.3
+      vertical-drag: 0.9
+      vertical-forward-nudge: 0.011  # Small forward movement during vertical travel (must exceed movement-threshold)
+
+    max-health: 25.0
+    health-regen-per-second: 0.0
+
+    collision:
+      mass: 80.0
+      response-strength: 1.0
+      terrain-strength: 2.0
+      terrain-speed-multiplier: 10.0
+      min-penetration: 0.1
+      force-decay: 0.7
+
