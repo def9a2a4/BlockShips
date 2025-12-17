@@ -118,7 +118,7 @@ public final class ShipModel {
         return new Vector3f(defaultValue);
     }
 
-    public static ShipModel fromFile(JavaPlugin plugin, String filePath) {
+    public static ShipModel fromFile(JavaPlugin plugin, String filePath, String shipType) {
         // Load model file
         java.io.File modelFile = new java.io.File(plugin.getDataFolder(), filePath);
         if (!modelFile.exists()) {
@@ -345,9 +345,9 @@ public final class ShipModel {
         // Parse water float offset (default to 0.0)
         float waterFloatOffset = (float) config.getDouble("water-float-offset", 0.0);
 
-        // Parse health system configuration
-        double maxHealth = config.getDouble("max-health", 40.0);
-        double healthRegenPerSecond = config.getDouble("health-regen-per-second", 2.0);
+        // Parse health system configuration from main config (not prefab YAML)
+        double maxHealth = plugin.getConfig().getDouble("ships." + shipType + ".max-health", 40.0);
+        double healthRegenPerSecond = plugin.getConfig().getDouble("ships." + shipType + ".health-regen-per-second", 2.0);
 
         // Validate seat configuration
         if (seats.isEmpty()) {

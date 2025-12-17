@@ -280,7 +280,7 @@ public class DisplayShip implements Listener {
         for (String shipType : shipsSection.getKeys(false)) {
             String modelPath = plugin.getConfig().getString("ships." + shipType + ".model-path");
             if (modelPath != null) {
-                ShipModel model = ShipModel.fromFile(plugin, modelPath);
+                ShipModel model = ShipModel.fromFile(plugin, modelPath, shipType);
                 shipModels.put(shipType, model);
                 loadedShips.add(shipType + " (" + model.parts.size() + " blocks)");
             }
@@ -448,7 +448,7 @@ public class DisplayShip implements Listener {
                 return null;
             }
             try {
-                return ShipModel.fromFile(plugin, modelPath);
+                return ShipModel.fromFile(plugin, modelPath, state.shipType);
             } catch (Exception e) {
                 plugin.getLogger().warning("Failed to load model file " + modelPath + ": " + e.getMessage());
                 return null;

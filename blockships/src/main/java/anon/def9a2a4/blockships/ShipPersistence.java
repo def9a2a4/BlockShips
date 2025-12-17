@@ -93,7 +93,7 @@ public final class ShipPersistence {
                     }
 
                     try {
-                        model = ShipModel.fromFile(plugin, modelPath);
+                        model = ShipModel.fromFile(plugin, modelPath, state.shipType);
                     } catch (Exception e) {
                         plugin.getLogger().warning("Skipping ship with missing model: " + modelPath);
                         failed++;
