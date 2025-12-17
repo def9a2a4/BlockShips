@@ -19,30 +19,7 @@ Ships can include:
 - **Storage** - Chests, barrels, dispensers remain accessible
 - **Lead points** - Anything leashed to a fence will stay tied to the ship. You can lead things to the ship while its moving. Prefab ships have a single lead point.
 
-## Prefab Ships
-
-Spawn ready-to-use ships, with customizable banners/colors/wood types:
-
-- **Small Ship** - Fast, lightweight water vessel
-- **Large Ship** - Larger water vessel with more health
-- **Small Airship** - Floats in the air with vertical controls
-
-## Physics System
-- **Walk on your ships** - Players can walk around on deck while sailing/flying. this is still buggy!
-- **Buoyancy** - Ships float based on block weight and density. this is buggy sometimes!
-- **Movement** - Acceleration, drag, and collision response
-- **Collision detection** - Ships interact with terrain and entities (interacting with other ships is buggy)
-
-# Installation
-
-1. Download the BlockShips jar file
-2. **IMPORTANT: Download [ProtocolLib](https://www.spigotmc.org/resources/protocollib.1997/)**
-3. Place both jars in your server's `plugins` folder
-4. Restart the server
-
-# Usage
-
-## Building Custom Ships
+## Custom Ships
 
 1. Build a structure from allowed blocks (see or edit this in `blocks.yml`)
   - generally, wood/metal/functional blocks are allowed, while stone/dirt/other natural blocks are not
@@ -53,10 +30,21 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 6. Right-click again to board and steer
 7. Right-click the wheel, or sneak right-click, to open menu and disassemble
 
-## Getting a prefab Ship
+## Prefab Ships
 
-**Crafting:** Use `/blockships recipes` to unlock crafting recipes (or unlock normally), then craft ships at a crafting table.
+Spawn ready-to-use ships, with customizable banners/colors/wood types:
+
+- **Small Ship** - Fast, lightweight water vessel
+- **Large Ship** - Larger water vessel with more health
+- **Small Airship** - Floats in the air with vertical controls
+
 **Command:** `/blockships give <small_ship|large_ship|small_airship>`
+
+## Physics System
+- **Walk on your ships** - Players can walk around on deck while sailing/flying. this is still buggy!
+- **Buoyancy** - Ships float based on block weight and density. this is buggy sometimes!
+- **Movement** - Acceleration, drag, and collision response
+- **Collision detection** - Ships interact with terrain and entities (interacting with other ships is buggy)
 
 ## Controls
 
@@ -69,6 +57,20 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 | Space  | Ascend (airships only)  |
 | Sprint | Descend (airships only) |
 
+
+
+## Crafting Recipes
+
+| Item                                                              | Recipe                                                   |
+| :---------------------------------------------------------------- | :------------------------------------------------------- |
+| **Ship Wheel**                        | ![Ship Wheel](docs/assets/crafting/ship_wheel.png)       |
+| **Small Ship**<br>*Wood type, banner customizable*                | ![Small Ship](docs/assets/crafting/small_ship.png)       |
+| **Large Ship**<br>*Wood type, banner customizable*                | ![Large Ship](docs/assets/crafting/large_ship.png)       |
+| **Ship Balloon**<br>*Wool color customizable*                   | ![Ship Balloon](docs/assets/crafting/ship_balloon.png)   |
+| **Small Airship**<br>*Wood type, balloon type customizable* | ![Small Airship](docs/assets/crafting/small_airship.png) |
+
+
+
 ## Commands
 
 | Command                           | Description                                  | Permission           |
@@ -79,15 +81,12 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 | `/blockships forcedisassembleall` | **(DANGEROUS) Disassemble all custom ships** | `blockships.admin`   |
 | `/blockships killentities`        | **(DANGEROUS) Remove all ship entities**     | `blockships.admin`   |
 
-## Crafting Recipes
+# Installation
 
-|                          Recipe                          |
-| :------------------------------------------------------: |
-|    ![Ship Wheel](docs/assets/crafting/ship_wheel.png)    |
-|    ![Small Ship](docs/assets/crafting/small_ship.png)    |
-|    ![Large Ship](docs/assets/crafting/large_ship.png)    |
-| ![Small Airship](docs/assets/crafting/small_airship.png) |
-|  ![Ship Balloon](docs/assets/crafting/ship_balloon.png)  |
+1. Download the BlockShips jar file
+2. **IMPORTANT: Download [ProtocolLib](https://www.spigotmc.org/resources/protocollib.1997/)**
+3. Place both jars in your server's `plugins` folder
+4. Restart the server
 
 # Configuration
 
