@@ -2,12 +2,18 @@
 
 A Minecraft plugin that lets players create rideable, physics-enabled ships. Build custom ships from blocks or spawn pre-built vessels, then sail the seas or take to the skies.
 
+![BlockShips](docs/assets/main.png)
+
 # Features
 
 Ships can include:
 - **Functional blocks** - Crafting tables, anvils, enchanting tables work as normal. (furnaces/brewing stands don't yet work)
 - **Seats** - Stairs for passengers
 - **Cannons** - a dispenser with a block of obsidian behind it will shoot its contents. fire all through the ship menu, or right click on the obsidian to fire.
+
+|                  Cannons Firing                   |                                         Cannon Menu                                          |
+| :-----------------------------------------------: | :------------------------------------------------------------------------------------------: |
+| ![Cannons Firing](docs/assets/cannons_firing.png) | ![Cannon Menu](docs/assets/menu_cannons.png) (or, right click obsidian to fire individually) |
 - **Storage** - Chests, barrels, dispensers remain accessible
 - **Lead points** - Anything leashed to a fence will stay tied to the ship. You can lead things to the ship while its moving. Prefab ships have a single lead point.
 
@@ -70,6 +76,16 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 | `/blockships recipes [player]`    | Unlock crafting recipes                      | `blockships.recipes` |
 | `/blockships forcedisassembleall` | **(DANGEROUS) Disassemble all custom ships** | `blockships.admin`   |
 | `/blockships killentities`        | **(DANGEROUS) Remove all ship entities**     | `blockships.admin`   |
+
+## Crafting Recipes
+
+|                          Recipe                          |
+| :------------------------------------------------------: |
+|    ![Ship Wheel](docs/assets/crafting/ship_wheel.png)    |
+|    ![Small Ship](docs/assets/crafting/small_ship.png)    |
+|    ![Large Ship](docs/assets/crafting/large_ship.png)    |
+| ![Small Airship](docs/assets/crafting/small_airship.png) |
+|  ![Ship Balloon](docs/assets/crafting/ship_balloon.png)  |
 
 # Configuration
 
