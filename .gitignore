@@ -2,6 +2,7 @@ blockships/.gradle/
 blockships/build/
 blockships/bin/
 bin/
+server/
 
 # Compiled class file
 *.class
