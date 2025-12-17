@@ -66,11 +66,17 @@ public class CustomItem {
 
         // Add lore
         List<net.kyori.adventure.text.Component> lore = new ArrayList<>();
-        lore.add(net.kyori.adventure.text.Component.text("Type: " + formatVariantName(variant))
-                .color(net.kyori.adventure.text.format.NamedTextColor.GRAY));
-        // Store variant in lore for easy extraction (used for airship balloon colors)
-        lore.add(net.kyori.adventure.text.Component.text("Variant: " + variant)
-                .color(net.kyori.adventure.text.format.NamedTextColor.DARK_GRAY));
+        if (id.equals("ship_wheel")) {
+            // Ship wheel has special lore with usage instructions
+            lore.add(net.kyori.adventure.text.Component.text("Place down and right click to open menu")
+                    .color(net.kyori.adventure.text.format.NamedTextColor.GRAY));
+        } else {
+            lore.add(net.kyori.adventure.text.Component.text("Type: " + formatVariantName(variant))
+                    .color(net.kyori.adventure.text.format.NamedTextColor.GRAY));
+            // Store variant in lore for easy extraction (used for airship balloon colors)
+            lore.add(net.kyori.adventure.text.Component.text("Variant: " + variant)
+                    .color(net.kyori.adventure.text.format.NamedTextColor.DARK_GRAY));
+        }
         meta.lore(lore);
 
         // Apply texture if this is a player head
