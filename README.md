@@ -4,6 +4,8 @@ A Minecraft plugin that lets players create rideable, physics-enabled ships. Bui
 
 ## **WARNING:** THIS PROJECT IS IN PRE-ALPHA. EXPECT BUGS, MISSING FEATURES, AND BREAKING CHANGES. USE AT YOUR OWN RISK, AND BACKUP YOUR WORLD OFTEN. THE DEVELOPER IS NOT RESPONSIBLE FOR ANY DAMAGE CAUSED BY THIS PLUGIN.
 
+Download on Modrinth: [modrinth.com/plugin/blockships](https://modrinth.com/plugin/blockships)
+
 ![BlockShips](docs/assets/main.png)
 
 # Features
@@ -83,7 +85,7 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 
 # Installation
 
-1. Download the BlockShips jar file
+1. Download the BlockShips jar file from modrinth: [modrinth.com/plugin/blockships](https://modrinth.com/plugin/blockships)
 2. **IMPORTANT: Download [ProtocolLib](https://www.spigotmc.org/resources/protocollib.1997/)**
 3. Place both jars in your server's `plugins` folder
 4. Restart the server
@@ -103,6 +105,8 @@ Configure which blocks can be used in custom ships:
 - **Collider** - Custom collision shapes
 - **Seat/storage** - Special block behaviors
 
+
+
 # Inspiration
 
 This plugin is inspired by mods which also implement rideable ships, as well as plugins which have attempted similar functionality. I made this plugin because I realized that with the addition of display entities, it might be possible to create a better ship plugin than previously possible, but without requiring any client-side mods. No code from any of other project has been used. In particular, this plugin was inspired by:
@@ -114,5 +118,9 @@ This plugin is inspired by mods which also implement rideable ships, as well as 
 
 # License
 
-You are free to use this plugin only for non-commercial projects and servers. For commercial use, please contact the author for a license. For more details, see the `LICENSE.txt` file.
+You are free to use this plugin only for non-commercial projects and servers. For commercial use, please contact the author for a license. For more details, see the [`LICENSE.txt`](https://raw.githubusercontent.com/def9a2a4/BlockShips/refs/heads/main/LICENSE.txt) file.
 
+
+# Developing
+
+You will need java and gradle installed. Running `make build` will compile the plugin and create a jar file in `bin/`.
