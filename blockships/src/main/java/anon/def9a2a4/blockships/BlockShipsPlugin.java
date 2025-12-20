@@ -13,6 +13,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bstats.bukkit.Metrics;
 
 public class BlockShipsPlugin extends JavaPlugin {
 
@@ -22,6 +23,9 @@ public class BlockShipsPlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
+        int pluginId = 28443;
+        new Metrics(this, pluginId);
+
         saveDefaultConfig();
 
         // Load global physics config

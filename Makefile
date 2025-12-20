@@ -1,8 +1,8 @@
 
 .PHONY: build
 build:
-	cd blockships && gradle build
-	cp blockships/build/libs/*.jar bin
+	cd blockships && gradle shadowJar
+	cp blockships/build/libs/BlockShips-*.jar bin
 
 .PHONY: clean
 clean:
