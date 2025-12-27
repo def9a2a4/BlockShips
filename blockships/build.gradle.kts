@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "anon.def9a2a4"
-version = "0.0.2"
+version = "0.0.3"
 
 java {
     toolchain {
@@ -21,7 +21,7 @@ repositories {
 }
 
 dependencies {
-    compileOnly("io.papermc.paper:paper-api:1.21.10-R0.1-SNAPSHOT")
+    compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
     compileOnly("net.dmulloy2:ProtocolLib:5.3.0")
     implementation("org.bstats:bstats-bukkit:3.1.0")
 }
