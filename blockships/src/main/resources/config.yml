@@ -100,8 +100,8 @@ custom-items:
         - "CGC"
         - "MCF"
       ingredients:
-        C: [COPPER_BLOCK]
-        G: [GOLD_BLOCK]
+        C: [COPPER_INGOT]
+        G: [GOLD_INGOT]
         M: [COMPASS]
         F: [BLAST_FURNACE]
       result-name: "Ship Wheel"
