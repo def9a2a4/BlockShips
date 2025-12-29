@@ -1612,6 +1612,9 @@ public class DisplayShip implements Listener {
         Block block = event.getBlock();
         if (!isShipWheelBlock(block)) return;
 
+        // Cancel event to prevent other plugins (like HeadSmith) from also handling this
+        event.setCancelled(true);
+
         ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
         ShipWheelData wheelData = manager.getWheelAt(block.getLocation());
 
@@ -1624,6 +1627,9 @@ public class DisplayShip implements Listener {
 
             // Remove wheel (this also destroys the ship if assembled)
             manager.removeWheel(block.getLocation());
+
+            // Manually remove the block since we cancelled the event
+            block.setType(Material.AIR);
 
             // Drop ship wheel item
             World world = block.getWorld();
