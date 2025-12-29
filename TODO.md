@@ -3,6 +3,7 @@
 - still buggy moment on recently parked ship, but grid align fixes it? our fine grid align didnt work
 - player does not get moved along with a ship, does not inherit velocity properly
 - ship to ship collisions not working, temporarily disabled
+- fix: `[WARN]: [BlockShips] Unknown material: chain` on startup -- chains are now iron chains due to addition of copper chains
 
 # FEATURES
 
