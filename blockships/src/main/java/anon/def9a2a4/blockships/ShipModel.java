@@ -12,6 +12,19 @@ import org.joml.*;
 import java.util.*;
 
 public final class ShipModel {
+    /**
+     * Safely parses a BlockFace from a map, returning a default value on failure.
+     */
+    private static BlockFace safeBlockFace(Map<String, Object> map, String key, BlockFace defaultValue) {
+        Object val = map.get(key);
+        if (val == null) return defaultValue;
+        try {
+            return BlockFace.valueOf(val.toString().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return defaultValue;
+        }
+    }
+
     public final List<ModelPart> parts;
     public final List<ItemPart> items;
     public final Vector3f initialRotation;  // yaw, pitch, roll in degrees
@@ -546,7 +559,7 @@ public final class ShipModel {
         public static CannonInfo fromMap(Map<String, Object> map) {
             int dispenserBlockIndex = ((Number) map.get("dispenser_block_index")).intValue();
             int obsidianBlockIndex = ((Number) map.get("obsidian_block_index")).intValue();
-            BlockFace localFacing = BlockFace.valueOf((String) map.get("local_facing"));
+            BlockFace localFacing = safeBlockFace(map, "local_facing", BlockFace.NORTH);
             @SuppressWarnings("unchecked")
             List<Number> posList = (List<Number>) map.get("local_position");
             Vector3f localPosition = new Vector3f(

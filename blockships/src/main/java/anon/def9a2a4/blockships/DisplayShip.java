@@ -1013,7 +1013,7 @@ public class DisplayShip implements Listener {
                 shulker.addPassenger(player);
                 inst.occupySeat(seatIndex);
                 // Update timestamp after successful mount
-                lastShulkerInteraction.put(player.getUniqueId(), System.currentTimeMillis());
+                recordShulkerInteraction(player.getUniqueId());
                 e.setCancelled(true);
                 return;
             }
@@ -1032,7 +1032,7 @@ public class DisplayShip implements Listener {
                 inst.occupySeat(idx);
             }
             // Update timestamp after successful mount
-            lastShulkerInteraction.put(player.getUniqueId(), System.currentTimeMillis());
+            recordShulkerInteraction(player.getUniqueId());
         }
         e.setCancelled(true);
     }
@@ -1638,5 +1638,16 @@ public class DisplayShip implements Listener {
             ItemStack wheelItem = createShipWheelItem();
             world.dropItemNaturally(block.getLocation(), wheelItem);
         }
+    }
+
+    /**
+     * Records a shulker interaction timestamp for cooldown tracking.
+     * Also cleans up stale entries to prevent memory leaks.
+     */
+    private void recordShulkerInteraction(UUID playerId) {
+        long now = System.currentTimeMillis();
+        // Clean up entries older than 1 second to prevent unbounded growth
+        lastShulkerInteraction.entrySet().removeIf(e -> (now - e.getValue()) > 1000);
+        lastShulkerInteraction.put(playerId, now);
     }
 }

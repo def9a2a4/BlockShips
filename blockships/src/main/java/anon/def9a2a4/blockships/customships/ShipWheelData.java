@@ -17,6 +17,19 @@ import java.util.UUID;
  * Associates a player head block with its orientation and optional assembled ship.
  */
 public class ShipWheelData {
+    /**
+     * Safely parses a BlockFace from a map, returning a default value on failure.
+     */
+    private static BlockFace safeBlockFace(Map<?, ?> map, String key, BlockFace defaultValue) {
+        Object val = map.get(key);
+        if (val == null) return defaultValue;
+        try {
+            return BlockFace.valueOf(val.toString().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return defaultValue;
+        }
+    }
+
     private Location blockLocation;
     private BlockFace facing;
     private UUID assembledShipUUID;  // UUID of ship if assembled, null if not
@@ -300,7 +313,7 @@ public class ShipWheelData {
             ((Number) map.get("x")).intValue(),
             ((Number) map.get("y")).intValue(),
             ((Number) map.get("z")).intValue());
-        BlockFace facing = BlockFace.valueOf((String) map.get("facing"));
+        BlockFace facing = safeBlockFace(map, "facing", BlockFace.NORTH);
 
         ShipWheelData data = new ShipWheelData(loc, facing);
 

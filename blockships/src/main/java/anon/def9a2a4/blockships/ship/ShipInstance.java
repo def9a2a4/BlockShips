@@ -40,6 +40,20 @@ public class ShipInstance {
         PLAYER_PROXIMITY_RADIUS_SQ = PLAYER_PROXIMITY_RADIUS * PLAYER_PROXIMITY_RADIUS;
     }
 
+    /**
+     * Safely parses a BlockFace from a YAML map, returning a default value on failure.
+     * Handles null values and invalid enum names gracefully.
+     */
+    static BlockFace safeBlockFace(Map<String, Object> yaml, String key, BlockFace defaultValue) {
+        Object val = yaml.get(key);
+        if (val == null) return defaultValue;
+        try {
+            return BlockFace.valueOf(val.toString().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return defaultValue;
+        }
+    }
+
     public final JavaPlugin plugin;
     public final ShipModel model;
     public final String shipType;  // Ship type identifier (e.g., "smallship", "bigship")
@@ -377,19 +391,20 @@ public class ShipInstance {
                         boolean isWallSkull = p.rawYaml.containsKey("skull_facing");
                         if (p.rawYaml.containsKey("skull_rotation")) {
                             // Floor head: 16-step rotation
-                            BlockFace rotation = BlockFace.valueOf((String) p.rawYaml.get("skull_rotation"));
+                            BlockFace rotation = safeBlockFace(p.rawYaml, "skull_rotation", BlockFace.NORTH);
                             skullYaw = getYawFromBlockFace(rotation);
                         } else if (isWallSkull) {
                             // Wall head: 4-direction facing
-                            BlockFace facing = BlockFace.valueOf((String) p.rawYaml.get("skull_facing"));
+                            BlockFace facing = safeBlockFace(p.rawYaml, "skull_facing", BlockFace.NORTH);
                             skullYaw = getYawFromBlockFace(facing);
                         }
 
                         // Position skull: move to block center, rotate
                         if (isWallSkull) {
-                            // Wall skulls: +0.25 Y offset, +180° yaw
+                            // Wall skulls: +0.25 Y offset, +180° yaw, +0.25 Z toward wall
                             skullTransform.translate(0.5f, 0.5f + 0.25f, 0.5f);
                             skullTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw + 180));
+                            skullTransform.translate(0.0f, 0.0f, 0.25f);
                         } else {
                             // Floor skulls: centered at block center
                             skullTransform.translate(0.5f, 0.5f, 0.5f);
@@ -411,11 +426,11 @@ public class ShipInstance {
                         float bannerYaw = 0.0f;
                         if (isWallBanner) {
                             // Wall banner: 4-direction facing
-                            BlockFace facing = BlockFace.valueOf((String) p.rawYaml.get("banner_facing"));
+                            BlockFace facing = safeBlockFace(p.rawYaml, "banner_facing", BlockFace.NORTH);
                             bannerYaw = getYawFromBlockFace(facing);
                         } else if (p.rawYaml.containsKey("banner_rotation")) {
                             // Standing banner: 16-step rotation
-                            BlockFace rotation = BlockFace.valueOf((String) p.rawYaml.get("banner_rotation"));
+                            BlockFace rotation = safeBlockFace(p.rawYaml, "banner_rotation", BlockFace.NORTH);
                             bannerYaw = getYawFromBlockFace(rotation);
                         }
 
@@ -445,16 +460,17 @@ public class ShipInstance {
                     float skullYaw = 0.0f;
                     boolean isWallSkull = p.rawYaml.containsKey("skull_facing");
                     if (p.rawYaml.containsKey("skull_rotation")) {
-                        BlockFace rotation = BlockFace.valueOf((String) p.rawYaml.get("skull_rotation"));
+                        BlockFace rotation = safeBlockFace(p.rawYaml, "skull_rotation", BlockFace.NORTH);
                         skullYaw = getYawFromBlockFace(rotation);
                     } else if (isWallSkull) {
-                        BlockFace facing = BlockFace.valueOf((String) p.rawYaml.get("skull_facing"));
+                        BlockFace facing = safeBlockFace(p.rawYaml, "skull_facing", BlockFace.NORTH);
                         skullYaw = getYawFromBlockFace(facing);
                     }
                     if (isWallSkull) {
-                        // Wall skulls: +0.25 Y offset, +180° yaw
+                        // Wall skulls: +0.25 Y offset, +180° yaw, +0.25 Z toward wall
                         displayTransform.translate(0.5f, 0.5f + 0.25f, 0.5f);
                         displayTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw + 180));
+                        displayTransform.translate(0.0f, 0.0f, 0.25f);
                     } else {
                         // Floor skulls: centered at block center
                         displayTransform.translate(0.5f, 0.5f, 0.5f);
@@ -465,10 +481,10 @@ public class ShipInstance {
                     boolean isWallBanner = p.rawYaml.containsKey("banner_facing");
                     float bannerYaw = 0.0f;
                     if (isWallBanner) {
-                        BlockFace facing = BlockFace.valueOf((String) p.rawYaml.get("banner_facing"));
+                        BlockFace facing = safeBlockFace(p.rawYaml, "banner_facing", BlockFace.NORTH);
                         bannerYaw = getYawFromBlockFace(facing);
                     } else if (p.rawYaml.containsKey("banner_rotation")) {
-                        BlockFace rotation = BlockFace.valueOf((String) p.rawYaml.get("banner_rotation"));
+                        BlockFace rotation = safeBlockFace(p.rawYaml, "banner_rotation", BlockFace.NORTH);
                         bannerYaw = getYawFromBlockFace(rotation);
                     }
                     float bannerScale = 2f;
@@ -1642,10 +1658,10 @@ public class ShipInstance {
             if (hasSkullProfile) {
                 float skullYaw = 0.0f;
                 if (part.rawYaml.containsKey("skull_rotation")) {
-                    BlockFace rotation = BlockFace.valueOf((String) part.rawYaml.get("skull_rotation"));
+                    BlockFace rotation = safeBlockFace(part.rawYaml, "skull_rotation", BlockFace.NORTH);
                     skullYaw = getYawFromBlockFace(rotation);
                 } else if (part.rawYaml.containsKey("skull_facing")) {
-                    BlockFace facing = BlockFace.valueOf((String) part.rawYaml.get("skull_facing"));
+                    BlockFace facing = safeBlockFace(part.rawYaml, "skull_facing", BlockFace.NORTH);
                     skullYaw = getYawFromBlockFace(facing);
                 }
                 transform.translate(0.5f, 0.5f, 0.5f);
@@ -1654,10 +1670,10 @@ public class ShipInstance {
                 boolean isWallBanner = part.rawYaml.containsKey("banner_facing");
                 float bannerYaw = 0.0f;
                 if (isWallBanner) {
-                    BlockFace facing = BlockFace.valueOf((String) part.rawYaml.get("banner_facing"));
+                    BlockFace facing = safeBlockFace(part.rawYaml, "banner_facing", BlockFace.NORTH);
                     bannerYaw = getYawFromBlockFace(facing);
                 } else if (part.rawYaml.containsKey("banner_rotation")) {
-                    BlockFace rotation = BlockFace.valueOf((String) part.rawYaml.get("banner_rotation"));
+                    BlockFace rotation = safeBlockFace(part.rawYaml, "banner_rotation", BlockFace.NORTH);
                     bannerYaw = getYawFromBlockFace(rotation);
                 }
                 float bannerScale = 2f;
@@ -1858,10 +1874,10 @@ public class ShipInstance {
                         Matrix4f skullTransform = new Matrix4f(finalTransform);
                         float skullYaw = 0.0f;
                         if (p.rawYaml.containsKey("skull_rotation")) {
-                            BlockFace rotation = BlockFace.valueOf((String) p.rawYaml.get("skull_rotation"));
+                            BlockFace rotation = safeBlockFace(p.rawYaml, "skull_rotation", BlockFace.NORTH);
                             skullYaw = getYawFromBlockFace(rotation);
                         } else if (p.rawYaml.containsKey("skull_facing")) {
-                            BlockFace facing = BlockFace.valueOf((String) p.rawYaml.get("skull_facing"));
+                            BlockFace facing = safeBlockFace(p.rawYaml, "skull_facing", BlockFace.NORTH);
                             skullYaw = getYawFromBlockFace(facing);
                         }
                         skullTransform.translate(0.5f, 0.5f, 0.5f);
@@ -1873,10 +1889,10 @@ public class ShipInstance {
                         Matrix4f bannerTransform = new Matrix4f(finalTransform);
                         float bannerYaw = 0.0f;
                         if (isWallBanner) {
-                            BlockFace facing = BlockFace.valueOf((String) p.rawYaml.get("banner_facing"));
+                            BlockFace facing = safeBlockFace(p.rawYaml, "banner_facing", BlockFace.NORTH);
                             bannerYaw = getYawFromBlockFace(facing);
                         } else if (p.rawYaml.containsKey("banner_rotation")) {
-                            BlockFace rotation = BlockFace.valueOf((String) p.rawYaml.get("banner_rotation"));
+                            BlockFace rotation = safeBlockFace(p.rawYaml, "banner_rotation", BlockFace.NORTH);
                             bannerYaw = getYawFromBlockFace(rotation);
                         }
                         float bannerScale = 2f;
@@ -1897,10 +1913,10 @@ public class ShipInstance {
                 if (hasSkullProfile) {
                     float skullYaw = 0.0f;
                     if (p.rawYaml.containsKey("skull_rotation")) {
-                        BlockFace rotation = BlockFace.valueOf((String) p.rawYaml.get("skull_rotation"));
+                        BlockFace rotation = safeBlockFace(p.rawYaml, "skull_rotation", BlockFace.NORTH);
                         skullYaw = getYawFromBlockFace(rotation);
                     } else if (p.rawYaml.containsKey("skull_facing")) {
-                        BlockFace facing = BlockFace.valueOf((String) p.rawYaml.get("skull_facing"));
+                        BlockFace facing = safeBlockFace(p.rawYaml, "skull_facing", BlockFace.NORTH);
                         skullYaw = getYawFromBlockFace(facing);
                     }
                     displayTransform.translate(0.5f, 0.5f, 0.5f);
@@ -1909,10 +1925,10 @@ public class ShipInstance {
                     boolean isWallBanner = p.rawYaml.containsKey("banner_facing");
                     float bannerYaw = 0.0f;
                     if (isWallBanner) {
-                        BlockFace facing = BlockFace.valueOf((String) p.rawYaml.get("banner_facing"));
+                        BlockFace facing = safeBlockFace(p.rawYaml, "banner_facing", BlockFace.NORTH);
                         bannerYaw = getYawFromBlockFace(facing);
                     } else if (p.rawYaml.containsKey("banner_rotation")) {
-                        BlockFace rotation = BlockFace.valueOf((String) p.rawYaml.get("banner_rotation"));
+                        BlockFace rotation = safeBlockFace(p.rawYaml, "banner_rotation", BlockFace.NORTH);
                         bannerYaw = getYawFromBlockFace(rotation);
                     }
                     float bannerScale = 2f;
