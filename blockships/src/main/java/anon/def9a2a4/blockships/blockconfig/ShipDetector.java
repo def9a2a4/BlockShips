@@ -24,22 +24,41 @@ public class ShipDetector {
 
     private final BlockConfigManager configManager;
     private final int maxShipSize;
+    private final int maxScanSize;
 
-    public ShipDetector(int maxShipSize) {
+    public ShipDetector(int maxShipSize, int maxScanSize) {
         this.configManager = BlockConfigManager.getInstance();
         this.maxShipSize = maxShipSize;
+        this.maxScanSize = maxScanSize;
+    }
+
+    /**
+     * Internal result for detectShipInternal with scan state.
+     */
+    private static class InternalScanResult {
+        final Set<Location> blocks;
+        final boolean exceededLimit;
+        final boolean scanLimitHit;
+
+        InternalScanResult(Set<Location> blocks, boolean exceededLimit, boolean scanLimitHit) {
+            this.blocks = blocks;
+            this.exceededLimit = exceededLimit;
+            this.scanLimitHit = scanLimitHit;
+        }
     }
 
     /**
      * Detect all ship blocks starting from the ship wheel location.
      * Uses BFS flood fill with 6-direction expansion.
+     * Continues scanning past maxShipSize up to maxScanSize to report actual size.
      *
      * @param startLocation The ship wheel location
-     * @return Set of all blocks that are part of the ship, or null if detection failed
+     * @return Internal result with blocks and status flags
      */
-    public Set<Location> detectShip(Location startLocation) {
+    private InternalScanResult detectShipInternal(Location startLocation) {
         Set<Location> shipBlocks = new HashSet<>();
         Queue<Location> frontier = new LinkedList<>();
+        boolean exceededLimit = false;
 
         // Start with the initial location
         frontier.add(startLocation.clone());
@@ -58,10 +77,14 @@ public class ShipDetector {
                     continue;
                 }
 
-                // Check if we've hit the size limit
+                // Check if we've hit the scan limit (hard stop)
+                if (shipBlocks.size() >= maxScanSize) {
+                    return new InternalScanResult(shipBlocks, true, true);
+                }
+
+                // Check if we've exceeded the ship size limit (continue scanning but mark as exceeded)
                 if (shipBlocks.size() >= maxShipSize) {
-                    // Ship too large, return null to indicate failure
-                    return null;
+                    exceededLimit = true;
                 }
 
                 // Check if the block is allowed
@@ -84,24 +107,49 @@ public class ShipDetector {
             }
         }
 
-        return shipBlocks;
+        return new InternalScanResult(shipBlocks, exceededLimit, false);
+    }
+
+    /**
+     * Detect all ship blocks starting from the ship wheel location.
+     * Uses BFS flood fill with 6-direction expansion.
+     *
+     * @param startLocation The ship wheel location
+     * @return Set of all blocks that are part of the ship, or null if detection failed
+     */
+    public Set<Location> detectShip(Location startLocation) {
+        InternalScanResult result = detectShipInternal(startLocation);
+        if (result.exceededLimit) {
+            return null;
+        }
+        return result.blocks;
     }
 
     /**
      * Detect ship and return detailed information about the ship.
      */
     public ShipDetectionResult detectShipDetailed(Location startLocation) {
-        Set<Location> blocks = detectShip(startLocation);
+        InternalScanResult result = detectShipInternal(startLocation);
 
-        if (blocks == null) {
-            return new ShipDetectionResult(false, "Ship exceeds maximum size of " + maxShipSize + " blocks", null);
+        if (result.blocks.isEmpty()) {
+            return new ShipDetectionResult(false, "No valid blocks found for ship", null, 0, false);
         }
 
-        if (blocks.isEmpty()) {
-            return new ShipDetectionResult(false, "No valid blocks found for ship", null);
+        int blockCount = result.blocks.size();
+
+        if (result.scanLimitHit) {
+            // Ship so big we stopped counting
+            String message = "Ship has at least " + blockCount + " blocks (stopped scanning), maximum is " + maxShipSize;
+            return new ShipDetectionResult(false, message, null, blockCount, true);
         }
 
-        return new ShipDetectionResult(true, "Successfully detected ship with " + blocks.size() + " blocks", blocks);
+        if (result.exceededLimit) {
+            // Ship over limit but fully scanned
+            String message = "Ship has " + blockCount + " blocks which exceeds the maximum of " + maxShipSize;
+            return new ShipDetectionResult(false, message, null, blockCount, false);
+        }
+
+        return new ShipDetectionResult(true, "Successfully detected ship with " + blockCount + " blocks", result.blocks, blockCount, false);
     }
 
     /**
@@ -111,11 +159,15 @@ public class ShipDetector {
         private final boolean success;
         private final String message;
         private final Set<Location> blocks;
+        private final int blockCount;
+        private final boolean scanLimitHit;
 
-        public ShipDetectionResult(boolean success, String message, Set<Location> blocks) {
+        public ShipDetectionResult(boolean success, String message, Set<Location> blocks, int blockCount, boolean scanLimitHit) {
             this.success = success;
             this.message = message;
             this.blocks = blocks;
+            this.blockCount = blockCount;
+            this.scanLimitHit = scanLimitHit;
         }
 
         public boolean isSuccess() {
@@ -131,7 +183,11 @@ public class ShipDetector {
         }
 
         public int getBlockCount() {
-            return blocks != null ? blocks.size() : 0;
+            return blockCount;
+        }
+
+        public boolean isScanLimitHit() {
+            return scanLimitHit;
         }
     }
 }

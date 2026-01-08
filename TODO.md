@@ -8,6 +8,12 @@
 - if ship is over the max size, still report how big it is
 - fix ship wheel blocks on walls
 
+# ISSUES
+
+- lastShulkerInteraction HashMap in DisplayShip grows unbounded
+- Unsafe BlockFace.valueOf() calls and YAML parsing without null checks
+- InputStreams in BlockConfigManager not properly closed
+
 # FEATURES
 
 - allow setting extra colliders in a model. have this just be another list at the end, separate from blocks and items

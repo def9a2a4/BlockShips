@@ -1362,7 +1362,8 @@ public class DisplayShip implements Listener {
      * Helper: Check if a block is a placed ship wheel
      */
     private boolean isShipWheelBlock(Block block) {
-        if (block.getType() != Material.PLAYER_HEAD) return false;
+        Material type = block.getType();
+        if (type != Material.PLAYER_HEAD && type != Material.PLAYER_WALL_HEAD) return false;
         ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
         return manager.getWheelAt(block.getLocation()) != null;
     }
@@ -1398,13 +1399,12 @@ public class DisplayShip implements Listener {
 
         Player player = event.getPlayer();
 
-        // Place the player head block first
-        targetBlock.setType(Material.PLAYER_HEAD);
-
-        // Determine wheel facing direction and set rotation FIRST
+        // Determine wheel facing direction and set block type + rotation
         BlockFace wheelFacing;
         if (face == BlockFace.UP || face == BlockFace.DOWN) {
-            // Placing on floor/ceiling - use Rotatable interface
+            // Placing on floor/ceiling - use PLAYER_HEAD with Rotatable interface
+            targetBlock.setType(Material.PLAYER_HEAD);
+
             // Player's facing becomes the ship's "front"
             float yaw = ShipWheelData.snapToNearestCardinal(player.getLocation().getYaw());
             wheelFacing = ShipWheelData.yawToBlockFace(yaw);
@@ -1435,7 +1435,9 @@ public class DisplayShip implements Listener {
                 targetBlock.setBlockData(rotatable);
             }
         } else {
-            // Placing on wall - use Directional interface
+            // Placing on wall - use PLAYER_WALL_HEAD with Directional interface
+            targetBlock.setType(Material.PLAYER_WALL_HEAD);
+
             // The wall itself is the ship's "front"
             wheelFacing = face;
 

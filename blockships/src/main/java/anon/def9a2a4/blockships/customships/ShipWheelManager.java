@@ -659,17 +659,15 @@ public class ShipWheelManager {
 
         // Get max ship size from config
         int maxShipSize = ((BlockShipsPlugin) plugin).getConfig().getInt("custom-ships.max-ship-size", 1000);
+        int maxScanSize = ((BlockShipsPlugin) plugin).getConfig().getInt("custom-ships.max-scan-size", 5000);
 
         // Run ship detection
-        ShipDetector detector = new ShipDetector(maxShipSize);
+        ShipDetector detector = new ShipDetector(maxShipSize, maxScanSize);
         ShipDetector.ShipDetectionResult result = detector.detectShipDetailed(wheelLoc);
 
         if (!result.isSuccess()) {
             // Detection failed - ship too large or other error
             player.sendMessage("§c" + result.getMessage());
-            if (result.getBlockCount() > 0) {
-                player.sendMessage("§7Try breaking it into smaller sections");
-            }
             return false;
         }
 
