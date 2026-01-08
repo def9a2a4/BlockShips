@@ -4,6 +4,9 @@
 - player does not get moved along with a ship, does not inherit velocity properly
 - ship to ship collisions not working, temporarily disabled
 - fix: `[WARN]: [BlockShips] Unknown material: chain` on startup -- chains are now iron chains due to addition of copper chains
+- fix tab completion of commands
+- if ship is over the max size, still report how big it is
+- fix ship wheel blocks on walls
 
 # FEATURES
 
