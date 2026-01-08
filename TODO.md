@@ -5,6 +5,7 @@
 - ship to ship collisions not working, temporarily disabled
 - fix: `[WARN]: [BlockShips] Unknown material: chain` on startup -- chains are now iron chains due to addition of copper chains
 - fix heads on walls display and colliders
+- multiple ships wheels is buggy?
 
 # FEATURES
 
