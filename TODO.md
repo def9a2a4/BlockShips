@@ -7,6 +7,7 @@
 - fix tab completion of commands
 - if ship is over the max size, still report how big it is
 - fix ship wheel blocks on walls
+- fix heads on walls in general
 
 # ISSUES
 

@@ -374,20 +374,27 @@ public class ShipInstance {
 
                         // Calculate yaw from stored rotation data
                         float skullYaw = 0.0f;
+                        boolean isWallSkull = p.rawYaml.containsKey("skull_facing");
                         if (p.rawYaml.containsKey("skull_rotation")) {
                             // Floor head: 16-step rotation
                             BlockFace rotation = BlockFace.valueOf((String) p.rawYaml.get("skull_rotation"));
                             skullYaw = getYawFromBlockFace(rotation);
-                        } else if (p.rawYaml.containsKey("skull_facing")) {
+                        } else if (isWallSkull) {
                             // Wall head: 4-direction facing
                             BlockFace facing = BlockFace.valueOf((String) p.rawYaml.get("skull_facing"));
                             skullYaw = getYawFromBlockFace(facing);
                         }
 
-                        // Position skull: move to block center, rotate, then offset
-                        // Needs: up 0.5, left 0.5, forward 0.5
-                        skullTransform.translate(0.5f, 0.5f, 0.5f);  // Move to block center
-                        skullTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw));
+                        // Position skull: move to block center, rotate
+                        if (isWallSkull) {
+                            // Wall skulls: +0.25 Y offset, +180° yaw
+                            skullTransform.translate(0.5f, 0.5f + 0.25f, 0.5f);
+                            skullTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw + 180));
+                        } else {
+                            // Floor skulls: centered at block center
+                            skullTransform.translate(0.5f, 0.5f, 0.5f);
+                            skullTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw));
+                        }
 
                         id.setTransformationMatrix(skullTransform);
                     } else {
@@ -436,15 +443,23 @@ public class ShipInstance {
                 if (hasSkullProfile) {
                     // Apply skull rotation to displayTransform (must match spawn transforms above)
                     float skullYaw = 0.0f;
+                    boolean isWallSkull = p.rawYaml.containsKey("skull_facing");
                     if (p.rawYaml.containsKey("skull_rotation")) {
                         BlockFace rotation = BlockFace.valueOf((String) p.rawYaml.get("skull_rotation"));
                         skullYaw = getYawFromBlockFace(rotation);
-                    } else if (p.rawYaml.containsKey("skull_facing")) {
+                    } else if (isWallSkull) {
                         BlockFace facing = BlockFace.valueOf((String) p.rawYaml.get("skull_facing"));
                         skullYaw = getYawFromBlockFace(facing);
                     }
-                    displayTransform.translate(0.5f, 0.5f, 0.5f);
-                    displayTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw));
+                    if (isWallSkull) {
+                        // Wall skulls: +0.25 Y offset, +180° yaw
+                        displayTransform.translate(0.5f, 0.5f + 0.25f, 0.5f);
+                        displayTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw + 180));
+                    } else {
+                        // Floor skulls: centered at block center
+                        displayTransform.translate(0.5f, 0.5f, 0.5f);
+                        displayTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw));
+                    }
                 } else if (hasBannerPatterns) {
                     // Apply banner rotation to displayTransform (must match spawn transforms above)
                     boolean isWallBanner = p.rawYaml.containsKey("banner_facing");

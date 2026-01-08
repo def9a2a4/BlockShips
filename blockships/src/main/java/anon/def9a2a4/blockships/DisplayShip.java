@@ -1438,12 +1438,12 @@ public class DisplayShip implements Listener {
             // Placing on wall - use PLAYER_WALL_HEAD with Directional interface
             targetBlock.setType(Material.PLAYER_WALL_HEAD);
 
-            // The wall itself is the ship's "front"
-            wheelFacing = face;
+            // Ship faces INTO the wall (opposite of the clicked face)
+            wheelFacing = face.getOppositeFace();
 
             if (targetBlock.getBlockData() instanceof org.bukkit.block.data.Directional) {
                 org.bukkit.block.data.Directional directional = (org.bukkit.block.data.Directional) targetBlock.getBlockData();
-                directional.setFacing(wheelFacing);
+                directional.setFacing(face);  // Block faces outward (clicked face)
                 targetBlock.setBlockData(directional);
             }
         }
