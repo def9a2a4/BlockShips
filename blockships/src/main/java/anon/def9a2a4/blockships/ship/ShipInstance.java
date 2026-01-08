@@ -44,7 +44,7 @@ public class ShipInstance {
      * Safely parses a BlockFace from a YAML map, returning a default value on failure.
      * Handles null values and invalid enum names gracefully.
      */
-    static BlockFace safeBlockFace(Map<String, Object> yaml, String key, BlockFace defaultValue) {
+    static BlockFace safeBlockFace(Map<?, ?> yaml, String key, BlockFace defaultValue) {
         Object val = yaml.get(key);
         if (val == null) return defaultValue;
         try {

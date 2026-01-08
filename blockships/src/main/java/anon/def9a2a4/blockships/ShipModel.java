@@ -15,7 +15,7 @@ public final class ShipModel {
     /**
      * Safely parses a BlockFace from a map, returning a default value on failure.
      */
-    private static BlockFace safeBlockFace(Map<String, Object> map, String key, BlockFace defaultValue) {
+    private static BlockFace safeBlockFace(Map<?, ?> map, String key, BlockFace defaultValue) {
         Object val = map.get(key);
         if (val == null) return defaultValue;
         try {
