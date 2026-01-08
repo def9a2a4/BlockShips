@@ -15,6 +15,9 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bstats.bukkit.Metrics;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class BlockShipsPlugin extends JavaPlugin {
 
     private DisplayShip displayShip;
@@ -111,8 +114,9 @@ public class BlockShipsPlugin extends JavaPlugin {
                 }
 
                 if (args.length < 2) {
-                    sender.sendMessage("Usage: /blockships give <shiptype>");
-                    sender.sendMessage("Available ship types:");
+                    sender.sendMessage("Usage: /blockships give <item>");
+                    sender.sendMessage("Available items:");
+                    sender.sendMessage("  - ship_wheel");
                     var shipsSection = getConfig().getConfigurationSection("ships");
                     if (shipsSection != null) {
                         for (String shipType : shipsSection.getKeys(false)) {
@@ -122,12 +126,21 @@ public class BlockShipsPlugin extends JavaPlugin {
                     return true;
                 }
 
-                String shipType = args[1].toLowerCase();
+                String itemType = args[1].toLowerCase();
+
+                // Handle ship_wheel specially
+                if (itemType.equals("ship_wheel")) {
+                    ItemStack wheel = displayShip.createShipWheelItem();
+                    player.getInventory().addItem(wheel);
+                    sender.sendMessage("Gave you a ship wheel!");
+                    return true;
+                }
 
                 // Verify ship type exists in config
-                if (!getConfig().contains("ships." + shipType)) {
-                    sender.sendMessage("Unknown ship type: " + shipType);
-                    sender.sendMessage("Available ship types:");
+                if (!getConfig().contains("ships." + itemType)) {
+                    sender.sendMessage("Unknown item: " + itemType);
+                    sender.sendMessage("Available items:");
+                    sender.sendMessage("  - ship_wheel");
                     var shipsSection = getConfig().getConfigurationSection("ships");
                     if (shipsSection != null) {
                         for (String type : shipsSection.getKeys(false)) {
@@ -139,11 +152,11 @@ public class BlockShipsPlugin extends JavaPlugin {
 
                 // Create ship kit with default wood (SPRUCE) and banner (WHITE)
                 ItemStack defaultBanner = new ItemStack(Material.WHITE_BANNER);
-                ItemStack shipKit = DisplayShip.createShipKit(shipType, defaultBanner, "SPRUCE", this);
+                ItemStack shipKit = DisplayShip.createShipKit(itemType, defaultBanner, "SPRUCE", this);
 
                 // Give to player
                 player.getInventory().addItem(shipKit);
-                sender.sendMessage("Gave you a " + shipType + " ship kit!");
+                sender.sendMessage("Gave you a " + itemType + " ship kit!");
                 return true;
             }
 
@@ -236,5 +249,59 @@ public class BlockShipsPlugin extends JavaPlugin {
             }
         }
         return false;
+    }
+
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        if (!command.getName().equalsIgnoreCase("blockships")) {
+            return null;
+        }
+
+        List<String> completions = new ArrayList<>();
+
+        if (args.length == 1) {
+            // Complete subcommands based on permissions
+            List<String> subcommands = new ArrayList<>();
+            if (sender.hasPermission("blockships.reload")) subcommands.add("reload");
+            if (sender.hasPermission("blockships.give")) subcommands.add("give");
+            if (sender.hasPermission("blockships.recipes")) subcommands.add("recipes");
+            if (sender.hasPermission("blockships.admin")) {
+                subcommands.add("forcedisassembleall");
+                subcommands.add("killentities");
+            }
+
+            for (String sub : subcommands) {
+                if (sub.toLowerCase().startsWith(args[0].toLowerCase())) {
+                    completions.add(sub);
+                }
+            }
+        } else if (args.length == 2) {
+            String subcommand = args[0].toLowerCase();
+
+            if (subcommand.equals("give") && sender.hasPermission("blockships.give")) {
+                // Complete with ship_wheel and ship types from config
+                List<String> types = new ArrayList<>();
+                types.add("ship_wheel");
+                var shipsSection = getConfig().getConfigurationSection("ships");
+                if (shipsSection != null) {
+                    types.addAll(shipsSection.getKeys(false));
+                }
+
+                for (String type : types) {
+                    if (type.toLowerCase().startsWith(args[1].toLowerCase())) {
+                        completions.add(type);
+                    }
+                }
+            } else if (subcommand.equals("recipes") && sender.hasPermission("blockships.recipes")) {
+                // Complete online player names
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    if (player.getName().toLowerCase().startsWith(args[1].toLowerCase())) {
+                        completions.add(player.getName());
+                    }
+                }
+            }
+        }
+
+        return completions;
     }
 }
