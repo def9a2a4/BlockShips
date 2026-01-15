@@ -21,9 +21,13 @@ import org.bukkit.entity.Projectile;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.PrepareItemCraftEvent;
+import org.bukkit.event.player.PlayerAdvancementDoneEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
+import org.bukkit.advancement.Advancement;
+import org.bukkit.advancement.AdvancementProgress;
 import org.bukkit.event.vehicle.VehicleExitEvent;
 import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.event.world.ChunkUnloadEvent;
@@ -468,6 +472,35 @@ public class DisplayShip implements Listener {
      */
     public int unlockAllRecipes(Player player) {
         return ItemUtil.unlockAllRecipesForPlayer(player, registeredRecipes, plugin);
+    }
+
+    /**
+     * Unlocks recipes when a player completes the configured advancement.
+     */
+    @EventHandler
+    public void onPlayerAdvancementDone(PlayerAdvancementDoneEvent event) {
+        String configuredAdvancement = plugin.getConfig().getString("recipe-unlock.advancement", "minecraft:story/smelt_iron");
+        if (event.getAdvancement().getKey().toString().equals(configuredAdvancement)) {
+            ItemUtil.unlockAllRecipesForPlayer(event.getPlayer(), registeredRecipes, plugin);
+        }
+    }
+
+    /**
+     * Unlocks recipes for players who already have the configured advancement when they join.
+     */
+    @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        String configuredAdvancement = plugin.getConfig().getString("recipe-unlock.advancement", "minecraft:story/smelt_iron");
+        NamespacedKey key = NamespacedKey.fromString(configuredAdvancement);
+        if (key == null) return;
+
+        Advancement advancement = Bukkit.getAdvancement(key);
+        if (advancement == null) return;
+
+        AdvancementProgress progress = event.getPlayer().getAdvancementProgress(advancement);
+        if (progress.isDone()) {
+            ItemUtil.unlockAllRecipesForPlayer(event.getPlayer(), registeredRecipes, plugin);
+        }
     }
 
     /**

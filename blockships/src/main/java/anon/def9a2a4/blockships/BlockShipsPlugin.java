@@ -105,6 +105,15 @@ public class BlockShipsPlugin extends JavaPlugin {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (command.getName().equalsIgnoreCase("blockships")) {
+            // Warn if ProtocolLib is missing
+            if (steeringListener == null) {
+                sender.sendMessage("");
+                sender.sendMessage("§c§l⚠ WARNING: ProtocolLib not found! ⚠");
+                sender.sendMessage("§cWASD ship controls will not work without it.");
+                sender.sendMessage("§7Download: §bhttps://www.spigotmc.org/resources/protocollib.1997/");
+                sender.sendMessage("");
+            }
+
             // Show help when no args or "help" subcommand
             if (args.length == 0 || args[0].equalsIgnoreCase("help")) {
                 sendHelp(sender);
@@ -301,9 +310,22 @@ public class BlockShipsPlugin extends JavaPlugin {
 
                 int removedCount = 0;
 
-                // First destroy all registered ships (cleans up properly)
-                int shipCount = ShipRegistry.getAllShips().size();
+                // Before destroying, collect ship info for YAML cleanup
+                List<ShipInstance> shipsToRemove = new ArrayList<>(ShipRegistry.getAllShips());
+                int shipCount = shipsToRemove.size();
+
+                // Destroy all registered ships (cleans up entities)
                 ShipRegistry.destroyAll();
+
+                // Clean up YAML storage for destroyed ships (only loaded chunks)
+                ShipWorldData shipWorldData = displayShip.getShipWorldData();
+                for (ShipInstance ship : shipsToRemove) {
+                    World world = ship.vehicle.getLocation().getWorld();
+                    if (world != null) {
+                        shipWorldData.removeShip(world, ship.id);
+                    }
+                }
+                shipWorldData.saveAllChunkIndices();
 
                 // Then clean up any orphaned entities with ship tags
                 for (World world : Bukkit.getWorlds()) {

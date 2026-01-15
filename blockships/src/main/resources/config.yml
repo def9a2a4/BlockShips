@@ -1,5 +1,11 @@
 # BlockShips Plugin Configuration
 
+# Recipe unlock settings
+# When a player completes the specified advancement, all BlockShips recipes are unlocked
+# Players who already have the advancement will receive recipes when they join
+recipe-unlock:
+  advancement: "minecraft:story/smelt_iron"  # "Acquire Hardware" advancement
+
 # Custom block ships configuration (assembled from ship wheels)
 custom-ships:
   display-offset: [0, -2, 0]  # Offset for BlockDisplay entities (compensates for ArmorStand base height)
