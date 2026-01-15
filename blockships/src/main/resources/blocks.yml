@@ -170,7 +170,12 @@ iron_bars:
   weight: 3
   collider: false
 
-chain:
+iron_chain:
+  allowed: true
+  weight: 3
+  collider: false
+
+copper_chain:
   allowed: true
   weight: 3
   collider: false

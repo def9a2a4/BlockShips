@@ -2,6 +2,7 @@
 .PHONY: build
 build:
 	cd blockships && gradle shadowJar
+	mkdir -p bin
 	cp blockships/build/libs/BlockShips-*.jar bin
 
 .PHONY: clean
