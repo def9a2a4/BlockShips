@@ -10,12 +10,13 @@ commands:
   blockships:
     description: BlockShips plugin commands
     usage: |
+      /blockships help - Show help and list all commands
+      /blockships info - Show ship and wheel statistics
       /blockships reload - Reload the plugin configuration
-      /blockships give <shiptype> - Give yourself a ship kit
-      /blockships recipes [player] - Unlock all recipes for a player
-      /blockships forcedisassembleall - Force-disassemble all custom ships
-      /blockships killentities - Remove all BlockShips entities
-    permission: blockships.reload
+      /blockships give <item> - Give yourself a ship wheel or ship kit
+      /blockships recipes [player] - Unlock all BlockShips recipes
+      /blockships forcedisassembleall - Force-disassemble all assembled ships
+      /blockships killentities - Remove all BlockShips entities from worlds
 
 permissions:
   blockships.reload:

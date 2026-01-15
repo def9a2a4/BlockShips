@@ -40,7 +40,7 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 - **Large Ship** - Larger water vessel with more health
 - **Small Airship** - Floats in the air with vertical controls
 
-**Command:** `/blockships give <small_ship|large_ship|small_airship>`
+**Command:** `/blockships give <item>` (items: `ship_wheel`, `small_ship`, `large_ship`, `small_airship`)
 
 ## Physics System
 - **Walk on your ships** - Players can walk around on deck while sailing/flying. this is still buggy!
@@ -77,8 +77,10 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 
 | Command                           | Description                                  | Permission           |
 | --------------------------------- | -------------------------------------------- | -------------------- |
+| `/blockships help`                | Show help and list all commands              | -                    |
+| `/blockships info`                | Show ship and wheel statistics               | -                    |
 | `/blockships reload`              | Reload configuration                         | `blockships.reload`  |
-| `/blockships give <type>`         | Give yourself a prefab ship kit              | `blockships.give`    |
+| `/blockships give <item>`         | Give yourself a ship wheel or ship kit       | `blockships.give`    |
 | `/blockships recipes [player]`    | Unlock crafting recipes                      | `blockships.recipes` |
 | `/blockships forcedisassembleall` | **(DANGEROUS) Disassemble all custom ships** | `blockships.admin`   |
 | `/blockships killentities`        | **(DANGEROUS) Remove all ship entities**     | `blockships.admin`   |

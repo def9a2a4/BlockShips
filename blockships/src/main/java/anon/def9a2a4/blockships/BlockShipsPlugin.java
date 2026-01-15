@@ -82,10 +82,66 @@ public class BlockShipsPlugin extends JavaPlugin {
         return shipWheelManager;
     }
 
+    private void sendHelp(CommandSender sender) {
+        sender.sendMessage("§6=== BlockShips v" + getDescription().getVersion() + " ===");
+        sender.sendMessage("§e/blockships help §7- Show this help message");
+        sender.sendMessage("§e/blockships info §7- Show ship and wheel statistics");
+        if (sender.hasPermission("blockships.reload")) {
+            sender.sendMessage("§e/blockships reload §7- Reload the plugin configuration");
+        }
+        if (sender.hasPermission("blockships.give")) {
+            sender.sendMessage("§e/blockships give <item> §7- Give yourself a ship wheel or ship kit");
+        }
+        if (sender.hasPermission("blockships.recipes")) {
+            sender.sendMessage("§e/blockships recipes [player] §7- Unlock all BlockShips recipes");
+        }
+        if (sender.hasPermission("blockships.admin")) {
+            sender.sendMessage("§e/blockships forcedisassembleall §7- Force-disassemble all assembled ships §c§l[DANGEROUS]");
+            sender.sendMessage("§e/blockships killentities §7- Remove all BlockShips entities from worlds §c§l[DANGEROUS]");
+        }
+        sender.sendMessage("§7Found a bug? Report it at: §bhttps://github.com/def9a2a4/BlockShips/issues");
+    }
+
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (command.getName().equalsIgnoreCase("blockships")) {
-            if (args.length > 0 && args[0].equalsIgnoreCase("reload")) {
+            // Show help when no args or "help" subcommand
+            if (args.length == 0 || args[0].equalsIgnoreCase("help")) {
+                sendHelp(sender);
+                return true;
+            }
+
+            if (args[0].equalsIgnoreCase("info")) {
+                // Count prefab ships (non-custom) and custom ships
+                int prefabLoaded = 0, prefabUnloaded = 0;
+                int customLoaded = 0, customUnloaded = 0;
+
+                for (ShipInstance ship : ShipRegistry.getAllShips()) {
+                    boolean loaded = ship.vehicle.getLocation().isChunkLoaded();
+                    if ("custom".equals(ship.shipType)) {
+                        if (loaded) customLoaded++; else customUnloaded++;
+                    } else {
+                        if (loaded) prefabLoaded++; else prefabUnloaded++;
+                    }
+                }
+
+                // Count ship wheels not on assembled ships
+                int wheelsLoaded = 0, wheelsUnloaded = 0;
+                for (ShipWheelData wheel : shipWheelManager.getWheels()) {
+                    if (!wheel.isAssembled()) {
+                        boolean loaded = wheel.getBlockLocation().isChunkLoaded();
+                        if (loaded) wheelsLoaded++; else wheelsUnloaded++;
+                    }
+                }
+
+                sender.sendMessage("§6=== BlockShips Info ===");
+                sender.sendMessage("§ePrefab Ships: §a" + prefabLoaded + " loaded§7, §c" + prefabUnloaded + " unloaded");
+                sender.sendMessage("§eShip Wheels: §a" + wheelsLoaded + " loaded§7, §c" + wheelsUnloaded + " unloaded");
+                sender.sendMessage("§eCustom Ships: §a" + customLoaded + " loaded§7, §c" + customUnloaded + " unloaded");
+                return true;
+            }
+
+            if (args[0].equalsIgnoreCase("reload")) {
                 if (!sender.hasPermission("blockships.reload")) {
                     sender.sendMessage("You don't have permission to reload this plugin.");
                     return true;
@@ -102,7 +158,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                 return true;
             }
 
-            if (args.length > 0 && args[0].equalsIgnoreCase("give")) {
+            if (args[0].equalsIgnoreCase("give")) {
                 if (!(sender instanceof Player player)) {
                     sender.sendMessage("Only players can use this command.");
                     return true;
@@ -160,7 +216,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                 return true;
             }
 
-            if (args.length > 0 && args[0].equalsIgnoreCase("recipes")) {
+            if (args[0].equalsIgnoreCase("recipes")) {
                 if (!sender.hasPermission("blockships.recipes")) {
                     sender.sendMessage("You don't have permission to unlock recipes.");
                     return true;
@@ -196,9 +252,17 @@ public class BlockShipsPlugin extends JavaPlugin {
                 return true;
             }
 
-            if (args.length > 0 && args[0].equalsIgnoreCase("forcedisassembleall")) {
+            if (args[0].equalsIgnoreCase("forcedisassembleall")) {
                 if (!sender.hasPermission("blockships.admin")) {
                     sender.sendMessage("You don't have permission to use this command.");
+                    return true;
+                }
+
+                if (args.length < 2 || !args[1].equalsIgnoreCase("confirm")) {
+                    sender.sendMessage("§c§l⚠ WARNING ⚠");
+                    sender.sendMessage("§cThis will §lFORCE-DISASSEMBLE ALL ASSEMBLED SHIPS§c!");
+                    sender.sendMessage("");
+                    sender.sendMessage("§7Type §e/blockships forcedisassembleall confirm §7to confirm.");
                     return true;
                 }
 
@@ -221,9 +285,17 @@ public class BlockShipsPlugin extends JavaPlugin {
                 return true;
             }
 
-            if (args.length > 0 && args[0].equalsIgnoreCase("killentities")) {
+            if (args[0].equalsIgnoreCase("killentities")) {
                 if (!sender.hasPermission("blockships.admin")) {
                     sender.sendMessage("You don't have permission to use this command.");
+                    return true;
+                }
+
+                if (args.length < 2 || !args[1].equalsIgnoreCase("confirm")) {
+                    sender.sendMessage("§c§l⚠ WARNING ⚠");
+                    sender.sendMessage("§cThis will §lDESTROY ALL BLOCKSHIPS ENTITIES§c in all worlds!");
+                    sender.sendMessage("");
+                    sender.sendMessage("§7Type §e/blockships killentities confirm §7to confirm.");
                     return true;
                 }
 
@@ -262,6 +334,8 @@ public class BlockShipsPlugin extends JavaPlugin {
         if (args.length == 1) {
             // Complete subcommands based on permissions
             List<String> subcommands = new ArrayList<>();
+            subcommands.add("help");
+            subcommands.add("info");
             if (sender.hasPermission("blockships.reload")) subcommands.add("reload");
             if (sender.hasPermission("blockships.give")) subcommands.add("give");
             if (sender.hasPermission("blockships.recipes")) subcommands.add("recipes");
@@ -298,6 +372,12 @@ public class BlockShipsPlugin extends JavaPlugin {
                     if (player.getName().toLowerCase().startsWith(args[1].toLowerCase())) {
                         completions.add(player.getName());
                     }
+                }
+            } else if ((subcommand.equals("forcedisassembleall") || subcommand.equals("killentities"))
+                    && sender.hasPermission("blockships.admin")) {
+                // Complete with "confirm" for dangerous commands
+                if ("confirm".startsWith(args[1].toLowerCase())) {
+                    completions.add("confirm");
                 }
             }
         }
