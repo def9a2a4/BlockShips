@@ -53,4 +53,13 @@ public final class ShipRegistry {
         byId.clear();
         byVehicle.clear();
     }
+
+    /**
+     * Clears the registry without destroying entities.
+     * Used during shutdown to let Minecraft persist entities naturally.
+     */
+    public static void clear() {
+        byId.clear();
+        byVehicle.clear();
+    }
 }

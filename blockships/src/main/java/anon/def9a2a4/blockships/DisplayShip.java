@@ -339,9 +339,11 @@ public class DisplayShip implements Listener {
     }
 
     public void shutdown() {
-        // Save all ships to per-world storage before shutdown
+        // Save all ships to per-world storage - entities persist via Minecraft
         shipWorldData.saveAll();
-        ShipRegistry.destroyAll();
+        // Don't call destroyAll() - let entities persist for recovery on restart
+        // Just clear the in-memory registry
+        ShipRegistry.clear();
     }
 
     public ItemTextureManager getTextureManager() {
