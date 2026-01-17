@@ -6,6 +6,8 @@ A Minecraft plugin that lets players create rideable, physics-enabled ships. Bui
 
 Download on Modrinth: [modrinth.com/plugin/blockships](https://modrinth.com/plugin/blockships)
 
+![Demo video](docs/assets/demo_vid.webm)
+
 ![BlockShips](docs/assets/main.png)
 
 # Features
