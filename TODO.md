@@ -1,6 +1,7 @@
 # BUGS
 
-- still buggy moment on recently parked ship, but grid align fixes it? our fine grid align didnt work
+- investigate ships not being breakable sometimes?
+- still buggy momentum on recently parked ship, but grid align fixes it? our fine grid align didnt work
 - player does not get moved along with a ship, does not inherit velocity properly
 - ship to ship collisions not working, temporarily disabled
 - fix heads on walls display and colliders
