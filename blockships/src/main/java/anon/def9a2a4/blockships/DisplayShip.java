@@ -1567,6 +1567,9 @@ public class DisplayShip implements Listener {
         boolean stateChanged = false;
 
         switch (action) {
+            case HELP:
+                ShipWheelMenu.openHelpBook(player);
+                break;
             case DETECT:
                 manager.detectShip(player, wheelData);
                 // Refresh menu to update ship info lore

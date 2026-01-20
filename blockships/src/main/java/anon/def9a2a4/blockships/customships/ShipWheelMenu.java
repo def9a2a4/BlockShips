@@ -13,6 +13,10 @@ import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 
+import anon.def9a2a4.blockships.ItemUtil;
+import org.bukkit.inventory.meta.BookMeta;
+import org.bukkit.inventory.meta.SkullMeta;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -79,7 +83,22 @@ public class ShipWheelMenu {
     private static final String MENU_TITLE = ChatColor.DARK_BLUE + "Ship Wheel";
     private static final int MENU_SIZE = 27;  // 3 rows
 
+    // Help icon texture (question mark)
+    private static final String HELP_TEXTURE = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZGE5OWIwNWI5YTFkYjRkMjliNWU2NzNkNzdhZTU0YTc3ZWFiNjY4MTg1ODYwMzVjOGEyMDA1YWViODEwNjAyYSJ9fX0=";
+
+    // Help content - used for both lore and book
+    private static final String[][] HELP_SECTIONS = {
+        {"Controls", "WASD to move. Airship: Space for up, Sprint for down."},
+        {"Getting Started", "Place wheel on your build, open this menu by right-clicking the wheel, click the boat to assemble."},
+        {"Riding", "Right-click ship or seat to board. Sneak to exit."},
+        {"Menu & Disassembly", "Right-click the ship's wheel, or sneak + right-click anywhere on the ship. Click the pickaxe to disassemble."},
+        {"Cannons", "Dispenser + obsidian behind it. Right-click the obsidian to fire, or use the fireball in the menu."},
+        {"Functionality", "Chests, barrels, and other containers work on ships. Attach leads to fences to bring mobs or boats along. Stairs work as extra seats for players."},
+        {"Weight & Buoyancy", "Wood/wool = light, metals = heavy. Glowstone/end rods = lighter than air (airship!). Click the book to detect your ship and see more info."}
+    };
+
     // Menu item slots - Left group: detect/info, Right group: assemble/align/disassemble
+    private static final int HELP_SLOT = 0;
     private static final int DETECT_SLOT = 10;
     private static final int INFO_SLOT = 11;
     private static final int FIRE_CANNONS_SLOT = 12;
@@ -101,6 +120,9 @@ public class ShipWheelMenu {
         holder.setInventory(menu);
 
         boolean isAssembled = wheelData.isAssembled();
+
+        // Help/Info button (always available)
+        menu.setItem(HELP_SLOT, createHelpItem());
 
         // Detect Ship button (always available)
         ItemStack detectItem = new ItemStack(Material.ENDER_EYE);
@@ -219,6 +241,7 @@ public class ShipWheelMenu {
      * Represents an action that can be taken from the ship wheel menu.
      */
     public enum MenuAction {
+        HELP,
         DETECT,
         ASSEMBLE,
         ALIGN,
@@ -233,7 +256,9 @@ public class ShipWheelMenu {
      * Gets the action associated with a clicked slot.
      */
     public static MenuAction getActionFromSlot(int slot) {
-        if (slot == DETECT_SLOT) {
+        if (slot == HELP_SLOT) {
+            return MenuAction.HELP;
+        } else if (slot == DETECT_SLOT) {
             return MenuAction.DETECT;
         } else if (slot == ASSEMBLE_SLOT) {
             return MenuAction.ASSEMBLE;
@@ -346,5 +371,96 @@ public class ShipWheelMenu {
      */
     public static void updateInfoItem(Inventory inventory, ShipWheelData wheelData) {
         inventory.setItem(INFO_SLOT, createInfoItem(wheelData));
+    }
+
+    /**
+     * Creates the Help item with a question mark player head texture.
+     *
+     * @return The Help item with lore
+     */
+    private static ItemStack createHelpItem() {
+        ItemStack helpItem = new ItemStack(Material.PLAYER_HEAD);
+        SkullMeta skullMeta = (SkullMeta) helpItem.getItemMeta();
+        if (skullMeta != null) {
+            ItemUtil.applyPlayerHeadTextureFromBase64(skullMeta, HELP_TEXTURE,
+                Bukkit.getPluginManager().getPlugin("BlockShips"));
+            skullMeta.setDisplayName(ChatColor.AQUA + "Info");
+            skullMeta.setLore(createHelpLore());
+            helpItem.setItemMeta(skullMeta);
+        }
+        return helpItem;
+    }
+
+    /**
+     * Creates the lore text for the Help item (condensed, no blank lines).
+     *
+     * @return List of lore strings
+     */
+    private static List<String> createHelpLore() {
+        List<String> lore = new ArrayList<>();
+        for (String[] section : HELP_SECTIONS) {
+            lore.add(ChatColor.YELLOW + section[0]);
+            lore.add(ChatColor.GRAY + section[1]);
+        }
+        lore.add("");
+        lore.add(ChatColor.DARK_GRAY + "Click to open help book");
+        return lore;
+    }
+
+    private static final int BOOK_LINES_PER_PAGE = 12;
+    private static final int BOOK_CHARS_PER_LINE = 20;
+
+    /**
+     * Estimates the number of lines a section will take in the book.
+     */
+    private static int estimateSectionLines(String title, String content) {
+        // Title takes 1 line, content wraps based on chars per line, plus 1 blank line after
+        int contentLines = (int) Math.ceil((double) content.length() / BOOK_CHARS_PER_LINE);
+        return 1 + contentLines + 1;
+    }
+
+    /**
+     * Opens a help book for the player with detailed ship information.
+     *
+     * @param player The player to show the book to
+     */
+    public static void openHelpBook(Player player) {
+        ItemStack book = new ItemStack(Material.WRITTEN_BOOK);
+        BookMeta bookMeta = (BookMeta) book.getItemMeta();
+        if (bookMeta != null) {
+            bookMeta.setTitle("Ship Wheel Help");
+            bookMeta.setAuthor("BlockShips");
+
+            StringBuilder currentPage = new StringBuilder();
+            int currentLines = 0;
+
+            for (int i = 0; i < HELP_SECTIONS.length; i++) {
+                String title = HELP_SECTIONS[i][0];
+                String content = HELP_SECTIONS[i][1];
+                int sectionLines = estimateSectionLines(title, content);
+
+                // Check if this section fits on current page
+                if (currentLines > 0 && currentLines + sectionLines > BOOK_LINES_PER_PAGE) {
+                    // Add "next page" hint and start new page
+                    currentPage.append(ChatColor.GRAY).append(ChatColor.ITALIC).append("(next page >>>)");
+                    bookMeta.addPage(currentPage.toString());
+                    currentPage = new StringBuilder();
+                    currentLines = 0;
+                }
+
+                // Add section to current page
+                currentPage.append(ChatColor.DARK_BLUE).append(ChatColor.BOLD).append(title).append("\n");
+                currentPage.append(ChatColor.BLACK).append(content).append("\n\n");
+                currentLines += sectionLines;
+            }
+
+            // Add final page if it has content
+            if (currentPage.length() > 0) {
+                bookMeta.addPage(currentPage.toString());
+            }
+
+            book.setItemMeta(bookMeta);
+        }
+        player.openBook(book);
     }
 }
