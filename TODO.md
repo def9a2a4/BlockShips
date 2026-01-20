@@ -17,7 +17,8 @@
 # FEATURES
 
 - info/help in ship wheel GUI
-
+- implement furnaces (normal furnaces) on ships
+- add TileEntity serialization for campfires, chiseled bookshelves, decorated pots
 - custom ship stats:
   - base acceleration/rotation speed depends on total mass.
   - any blast furnaces connected via "copper network" to ships wheel will use fuel to increase acceleration/max speed/etc

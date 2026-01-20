@@ -44,14 +44,8 @@ public class ConfigValidator {
                 String diskContent = readFile(diskFile);
 
                 if (!jarContent.equals(diskContent)) {
-                    logger.warning("==================================================");
-                    logger.warning("CONFIG MISMATCH DETECTED: " + configPath);
-                    logger.warning("Your " + configPath + " differs from the bundled version.");
-                    logger.warning("Unless you know what you're doing, you should probably");
-                    logger.warning("delete plugins/BlockShips/" + configPath + " and restart.");
-                    logger.warning("To disable this message, set 'warn-config-mismatch: false'");
-                    logger.warning("in your config.yml");
-                    logger.warning("==================================================");
+                    logger.warning("Config mismatch: " + configPath + " (probably due to a recent plugin update)");
+                    logger.warning("Unless you know what you're doing, you should delete plugins/BlockShips/" + configPath + " and restart. Set 'warn-config-mismatch: false' in config.yml to disable.");
                 }
             } catch (IOException e) {
                 // Silently ignore read errors

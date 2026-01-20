@@ -630,7 +630,6 @@ public class ShipInstance {
                 final int finalBlockIndex = currentBlockIndex;
                 Shulker shulker = w.spawn(carrierSpawnLoc, Shulker.class, s -> {
                     s.setAI(false);
-                    s.setInvulnerable(true);
                     s.setGravity(false);
                     s.setSilent(true);
                     s.setPersistent(true);
@@ -2018,7 +2017,6 @@ public class ShipInstance {
                 final int finalBlockIndex = currentBlockIndex;
                 Shulker shulker = w.spawn(carrierSpawnLoc, Shulker.class, s -> {
                     s.setAI(false);
-                    s.setInvulnerable(true);
                     s.setGravity(false);
                     s.setSilent(true);
                     s.setPersistent(true);

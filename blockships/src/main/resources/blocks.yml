@@ -695,6 +695,48 @@ bell:
   weight: 3
   collider: true
 
+# === DECORATIVE (weight: 1-3) ===
+flower_pot:
+  allowed: true
+  weight: 1
+  collider: false
+
+"potted_*":
+  allowed: true
+  weight: 1
+  collider: false
+
+candle:
+  allowed: true
+  weight: 1
+  collider: false
+
+"*_candle":
+  allowed: true
+  weight: 1
+  collider: false
+
+# Cauldron variants (empty, water, lava, powder snow)
+cauldron:
+  allowed: true
+  weight: 3
+  collider: true
+
+water_cauldron:
+  allowed: true
+  weight: 3
+  collider: true
+
+lava_cauldron:
+  allowed: true
+  weight: 3
+  collider: true
+
+powder_snow_cauldron:
+  allowed: true
+  weight: 3
+  collider: true
+
 # === END BLOCKS (Purpur) ===
 purpur_block:
   allowed: true
