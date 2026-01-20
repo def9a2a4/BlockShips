@@ -23,6 +23,7 @@ public class BlockShipsPlugin extends JavaPlugin {
     private DisplayShip displayShip;
     private ShipSteeringListener steeringListener;
     private ShipWheelManager shipWheelManager;
+    private SpecialDrownedListener specialDrownedListener;
 
     @Override
     public void onEnable() {
@@ -62,6 +63,13 @@ public class BlockShipsPlugin extends JavaPlugin {
         shipWheelManager = new ShipWheelManager(this);
         shipWheelManager.loadAll();
 
+        // Initialize special drowned listener (spawns drowned holding ship wheels)
+        specialDrownedListener = new SpecialDrownedListener(this);
+        if (specialDrownedListener.isEnabled()) {
+            Bukkit.getPluginManager().registerEvents(specialDrownedListener, this);
+            getLogger().info("Special drowned spawning enabled.");
+        }
+
         getLogger().info("BlockShips enabled.");
     }
 
@@ -94,6 +102,7 @@ public class BlockShipsPlugin extends JavaPlugin {
         }
         if (sender.hasPermission("blockships.give")) {
             sender.sendMessage("§e/blockships give <item> §7- Give yourself a ship wheel or ship kit");
+            sender.sendMessage("§e/blockships spawndrowned §7- Spawn a special drowned at your location");
         }
         if (sender.hasPermission("blockships.recipes")) {
             sender.sendMessage("§e/blockships recipes [player] §7- Unlock all BlockShips recipes");
@@ -166,6 +175,10 @@ public class BlockShipsPlugin extends JavaPlugin {
                 }
                 // Reload block configuration
                 BlockConfigManager.getInstance().reloadConfig();
+                // Reload special drowned config
+                if (specialDrownedListener != null) {
+                    specialDrownedListener.reloadConfig();
+                }
                 sender.sendMessage("BlockShips config reloaded!");
                 return true;
             }
@@ -225,6 +238,31 @@ public class BlockShipsPlugin extends JavaPlugin {
                 // Give to player
                 player.getInventory().addItem(shipKit);
                 sender.sendMessage("Gave you a " + itemType + " ship kit!");
+                return true;
+            }
+
+            if (args[0].equalsIgnoreCase("spawndrowned")) {
+                if (!(sender instanceof Player player)) {
+                    sender.sendMessage("Only players can use this command.");
+                    return true;
+                }
+
+                if (!sender.hasPermission("blockships.give")) {
+                    sender.sendMessage("You don't have permission to spawn drowned.");
+                    return true;
+                }
+
+                if (specialDrownedListener == null) {
+                    sender.sendMessage("Special drowned spawning is not initialized.");
+                    return true;
+                }
+
+                var drowned = specialDrownedListener.spawnSpecialDrowned(player.getLocation());
+                if (drowned != null) {
+                    sender.sendMessage("Spawned a special drowned!");
+                } else {
+                    sender.sendMessage("Failed to spawn special drowned.");
+                }
                 return true;
             }
 
@@ -362,7 +400,10 @@ public class BlockShipsPlugin extends JavaPlugin {
             subcommands.add("help");
             subcommands.add("info");
             if (sender.hasPermission("blockships.reload")) subcommands.add("reload");
-            if (sender.hasPermission("blockships.give")) subcommands.add("give");
+            if (sender.hasPermission("blockships.give")) {
+                subcommands.add("give");
+                subcommands.add("spawndrowned");
+            }
             if (sender.hasPermission("blockships.recipes")) subcommands.add("recipes");
             if (sender.hasPermission("blockships.admin")) {
                 subcommands.add("forcedisassembleall");
