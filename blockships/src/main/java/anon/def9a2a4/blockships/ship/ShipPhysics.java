@@ -216,7 +216,13 @@ public class ShipPhysics {
      * Check if a block is water or a waterlogged block (kelp, sea grass, etc.).
      */
     private boolean isWaterOrWaterlogged(org.bukkit.block.Block block) {
-        if (block.getType() == Material.WATER) {
+        Material type = block.getType();
+        if (type == Material.WATER) {
+            return true;
+        }
+        // Seagrass and kelp exist in water but don't implement Waterlogged
+        if (type == Material.SEAGRASS || type == Material.TALL_SEAGRASS
+                || type == Material.KELP || type == Material.KELP_PLANT) {
             return true;
         }
         if (block.getBlockData() instanceof Waterlogged waterlogged) {
