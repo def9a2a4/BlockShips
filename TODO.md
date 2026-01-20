@@ -1,21 +1,28 @@
 # BUGS
 
 - investigate ships not being breakable sometimes?
+- collisions on prefab ships too forceful
+- prefab ship (medium) needs more seats
 - still buggy momentum on recently parked ship, but grid align fixes it? our fine grid align didnt work
 - player does not get moved along with a ship, does not inherit velocity properly
 - ship to ship collisions not working, temporarily disabled
 - fix heads on walls display and colliders
 - multiple ships wheels is buggy?
 - recognize waterlogged blocks (in particular kelp) as water when doing flotation calculations
+- hay bales should be allowed blocks
 
 # FEATURES
+
+- info/help in ship wheel GUI
+
+- custom ship stats:
+  - base acceleration/rotation speed depends on total mass.
+  - any blast furnaces connected via "copper network" to ships wheel will use fuel to increase acceleration/max speed/etc
+  - stats (fuel, number of "engines") displayed in ship info
 
 - allow setting extra colliders in a model. have this just be another list at the end, separate from blocks and items
   - this is useful for large balloons. the balloon might be a giant item display entity and we might want to have one or more large colliders for it
 
-- custom ship stats:
-  - acceleration/rotation speed depends on total mass.
-  - any blast furnaces connected via "copper pipe" to ship will use fuel to increase acceleration/max speed/etc
 
 
 ## MAYBE
