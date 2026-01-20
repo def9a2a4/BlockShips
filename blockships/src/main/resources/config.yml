@@ -195,7 +195,7 @@ ships:
       # Overall collision response strength multiplier
       response-strength: 1.0
       # Terrain collision force multiplier (how hard terrain pushes back)
-      terrain-strength: 2.0
+      terrain-strength: 1.0
       # How much ship speed amplifies terrain collision force (1.0 = no scaling, 10.0 = 10x at max speed)
       terrain-speed-multiplier: 10.0
       # Minimum penetration depth to trigger collision response (blocks)
