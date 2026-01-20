@@ -685,6 +685,16 @@ brewing_stand:
   weight: 2
   collider: false
 
+hay_block:
+  allowed: true
+  weight: 1
+  collider: true
+
+bell:
+  allowed: true
+  weight: 3
+  collider: true
+
 # === END BLOCKS (Purpur) ===
 purpur_block:
   allowed: true

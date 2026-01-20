@@ -31,6 +31,9 @@ public class BlockShipsPlugin extends JavaPlugin {
 
         saveDefaultConfig();
 
+        // Check for config mismatches
+        ConfigValidator.checkConfigMismatches(this);
+
         // Load global physics config
         ShipInstance.loadGlobalPhysicsConfig(this);
 

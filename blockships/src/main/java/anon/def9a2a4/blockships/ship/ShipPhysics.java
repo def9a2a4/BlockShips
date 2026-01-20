@@ -4,6 +4,7 @@ import anon.def9a2a4.blockships.ShipConfig;
 import anon.def9a2a4.blockships.ShipTags;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.block.data.Waterlogged;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Shulker;
@@ -40,7 +41,6 @@ public class ShipPhysics {
         if (!ship.vehicle.isValid() || ship.vehicle.isDead()) return;
 
         Location vehicleLoc = ship.vehicle.getLocation();
-        Material below = vehicleLoc.clone().subtract(0, 0.5, 0).getBlock().getType();
         ShipConfig config = ship.config;
 
         // Apply acceleration/deceleration based on input state
@@ -66,7 +66,7 @@ public class ShipPhysics {
             }
 
             // Apply extra drag in water
-            if (below == Material.WATER) {
+            if (isWaterOrWaterlogged(vehicleLoc.clone().subtract(0, 0.5, 0).getBlock())) {
                 dragMultiplier *= 0.98f;
             }
 
@@ -145,15 +145,13 @@ public class ShipPhysics {
      */
     private void handleBuoyancy(Location vehicleLoc) {
         ShipConfig config = ship.config;
-        Material below = vehicleLoc.clone().subtract(0, 0.5, 0).getBlock().getType();
 
         // For custom ships, check water at the ship's lowest point (hull), not at the wheel
         double hullCheckY = vehicleLoc.getY() + ship.model.minY;
         Location hullCheckLoc = vehicleLoc.clone();
         hullCheckLoc.setY(hullCheckY);
-        Material atHull = hullCheckLoc.getBlock().getType();
-        Material belowHull = hullCheckLoc.clone().subtract(0, 1, 0).getBlock().getType();
-        boolean inWater = (atHull == Material.WATER || belowHull == Material.WATER);
+        boolean inWater = isWaterOrWaterlogged(hullCheckLoc.getBlock())
+            || isWaterOrWaterlogged(hullCheckLoc.clone().subtract(0, 1, 0).getBlock());
 
         if (inWater) {
             // Find water surface Y level by scanning a fixed column
@@ -167,8 +165,7 @@ public class ShipPhysics {
             // Scan downward to find air-water boundary
             for (int y = startY; y >= endY; y--) {
                 waterCheckLoc.setY(y);
-                Material blockType = waterCheckLoc.getBlock().getType();
-                if (blockType == Material.WATER) {
+                if (isWaterOrWaterlogged(waterCheckLoc.getBlock())) {
                     waterSurfaceY = y + 1;
                     break;
                 }
@@ -213,6 +210,19 @@ public class ShipPhysics {
                 currentYVelocity = 0.0f;
             }
         }
+    }
+
+    /**
+     * Check if a block is water or a waterlogged block (kelp, sea grass, etc.).
+     */
+    private boolean isWaterOrWaterlogged(org.bukkit.block.Block block) {
+        if (block.getType() == Material.WATER) {
+            return true;
+        }
+        if (block.getBlockData() instanceof Waterlogged waterlogged) {
+            return waterlogged.isWaterlogged();
+        }
+        return false;
     }
 
     /**

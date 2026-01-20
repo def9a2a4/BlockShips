@@ -1,5 +1,8 @@
 # BlockShips Plugin Configuration
 
+# Set to false to disable config mismatch warnings on startup
+warn-config-mismatch: true
+
 # Recipe unlock settings
 # When a player completes the specified advancement, all BlockShips recipes are unlocked
 # Players who already have the advancement will receive recipes when they join

@@ -8,8 +8,11 @@
 - ship to ship collisions not working, temporarily disabled
 - fix heads on walls display and colliders
 - multiple ships wheels is buggy?
-- recognize waterlogged blocks (in particular kelp) as water when doing flotation calculations
-- hay bales should be allowed blocks
+- ladder duplication bug
+
+
+- [x] recognize waterlogged blocks (in particular kelp) as water when doing flotation calculations
+- [x] hay bales should be allowed blocks
 
 # FEATURES
 
@@ -44,3 +47,5 @@
 
 - ShipInstance has lots of duplication of code for banner/player head rotation/position etc etc. refactor this mess.
 
+
+# RECENTLY FIXED
