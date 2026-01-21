@@ -22,6 +22,9 @@ Ships can include:
 | ![Cannons Firing](docs/assets/cannons_firing.png) | ![Cannon Menu](docs/assets/menu_cannons.png) (or, right click obsidian to fire individually) |
 - **Storage** - Chests, barrels, dispensers remain accessible
 - **Lead points** - Anything leashed to a fence will stay tied to the ship. You can lead things to the ship while its moving. Prefab ships have a single lead point.
+- **Health & damage** - Ships have health, take damage from collisions/attacks, and regenerate over time. Visual and audio feedback on hits.
+- **Movement Sounds** - Movement sounds in water and air (volume configurable in config.yml)
+- **Special drowned** - Rare drowned mobs (5% spawn chance) drop ship wheels as an alternative to crafting
 
 ## Custom Ships
 
