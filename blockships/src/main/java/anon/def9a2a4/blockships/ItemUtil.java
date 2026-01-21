@@ -201,31 +201,18 @@ public class ItemUtil {
      * @return The number of recipes unlocked
      */
     public static int unlockAllRecipesForPlayer(Player player, List<NamespacedKey> registeredRecipes, Plugin plugin) {
-        plugin.getLogger().info("Unlocking " + registeredRecipes.size() + " recipe(s) for player " + player.getName());
-
         if (registeredRecipes.isEmpty()) {
             plugin.getLogger().warning("No recipes registered yet! Make sure recipes were loaded on startup.");
             return 0;
         }
 
-        int count = 0;
-        List<NamespacedKey> keysToDiscover = new ArrayList<>();
-
-        for (NamespacedKey recipeKey : registeredRecipes) {
-            plugin.getLogger().info("Unlocking recipe: " + recipeKey);
-            keysToDiscover.add(recipeKey);
-            count++;
-        }
-
-        // Discover all recipes at once (more efficient and reliable)
-        int discovered = player.discoverRecipes(keysToDiscover);
-        plugin.getLogger().info("Player now has " + discovered + " new recipes discovered");
-        plugin.getLogger().info("Successfully unlocked " + count + " recipe(s) for " + player.getName());
+        // Discover all recipes at once
+        player.discoverRecipes(registeredRecipes);
 
         // Force update player's recipe book
         player.updateInventory();
 
-        return count;
+        return registeredRecipes.size();
     }
 
     /**
