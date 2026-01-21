@@ -1183,6 +1183,14 @@ public class DisplayShip implements Listener {
         ShipInstance inst = ShipRegistry.byId(shipId);
         if (inst == null || !inst.vehicle.isValid()) return;
 
+        // Ignore drowning damage - ships don't take drowning damage
+        // Set air to max int so this rarely fires again
+        if (e.getCause() == EntityDamageEvent.DamageCause.DROWNING) {
+            e.setCancelled(true);
+            shulker.setRemainingAir(Integer.MAX_VALUE);
+            return;
+        }
+
         // Cancel the damage to the shulker (keeps shulker effectively invulnerable)
         e.setCancelled(true);
 
