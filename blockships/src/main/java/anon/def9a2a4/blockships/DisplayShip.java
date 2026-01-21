@@ -16,6 +16,7 @@ import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.entity.Projectile;
 import org.bukkit.event.inventory.InventoryClickEvent;
@@ -1242,7 +1243,8 @@ public class DisplayShip implements Listener {
         }
 
         // Play lead break sound
-        shulker.getWorld().playSound(shulker.getLocation(), Sound.BLOCK_CHAIN_BREAK, 1.0f, 1.0f);
+        float leadVolume = (float) plugin.getConfig().getDouble("sounds.lead-break-volume", 1.0);
+        shulker.getWorld().playSound(shulker.getLocation(), Sound.BLOCK_CHAIN_BREAK, 1.0f * leadVolume, 1.0f);
     }
 
     /**
@@ -1335,6 +1337,11 @@ public class DisplayShip implements Listener {
             return;
         }
 
+        // Reduce suffocation damage by 75% - shulkers can briefly clip into blocks
+        if (e.getCause() == EntityDamageEvent.DamageCause.SUFFOCATION) {
+            e.setDamage(e.getDamage() * 0.25);
+        }
+
         // Cancel the damage to the shulker (keeps shulker effectively invulnerable)
         e.setCancelled(true);
 
@@ -1343,16 +1350,24 @@ public class DisplayShip implements Listener {
         double currentHealth = inst.vehicle.getHealth();
         double newHealth = currentHealth - damage;
 
+        double maxHealth = inst.vehicle.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getBaseValue();
+
         // Show health feedback to attacker via action bar
         if (e instanceof EntityDamageByEntityEvent damageByEntity) {
             Entity damager = damageByEntity.getDamager();
             if (damager instanceof Player attackerPlayer) {
-                double maxHealth = inst.vehicle.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getBaseValue();
                 int displayHealth = (int) java.lang.Math.ceil(java.lang.Math.max(0, newHealth));
                 String healthText = "§cShip Health: §f" + displayHealth + "/" + (int) maxHealth;
                 attackerPlayer.sendActionBar(net.kyori.adventure.text.Component.text(healthText));
             }
         }
+
+        // Damage feedback effects
+        spawnDamageParticles(shulker);
+        playDamageSound(shulker.getLocation());
+        double healthPercent = Math.max(0, newHealth) / maxHealth;
+        spawnWheelHealthParticles(inst, healthPercent);
+        notifyRidersOfHealth(inst, newHealth, maxHealth);
 
         // Check if ship should be destroyed (health reaches 0 or below)
         if (newHealth <= 0) {
@@ -1361,6 +1376,23 @@ public class DisplayShip implements Listener {
         } else {
             inst.vehicle.setHealth(newHealth);
         }
+    }
+
+    /**
+     * Prevent ship collider shulkers from dropping items if they die.
+     * This handles edge cases like /kill command or other plugins killing entities.
+     */
+    @EventHandler
+    public void onShulkerDeath(EntityDeathEvent e) {
+        if (!(e.getEntity() instanceof Shulker shulker)) return;
+
+        // Check if this shulker belongs to a ship
+        UUID shipId = ShipTags.extractShipId(shulker.getScoreboardTags());
+        if (shipId == null) return;
+
+        // Clear all drops - ship colliders should never drop items
+        e.getDrops().clear();
+        e.setDroppedExp(0);
     }
 
     /**
@@ -1389,14 +1421,21 @@ public class DisplayShip implements Listener {
         // Apply damage to ship health
         double currentHealth = inst.vehicle.getHealth();
         double newHealth = currentHealth - damage;
+        double maxHealth = inst.vehicle.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getBaseValue();
 
         // Show feedback if shooter is a player
         if (projectile.getShooter() instanceof Player player) {
-            double maxHealth = inst.vehicle.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getBaseValue();
             int displayHealth = (int) Math.ceil(Math.max(0, newHealth));
             String healthText = "§cShip Health: §f" + displayHealth + "/" + (int) maxHealth;
             player.sendActionBar(net.kyori.adventure.text.Component.text(healthText));
         }
+
+        // Damage feedback effects
+        spawnDamageParticles(shulker);
+        playDamageSound(shulker.getLocation());
+        double healthPercent = Math.max(0, newHealth) / maxHealth;
+        spawnWheelHealthParticles(inst, healthPercent);
+        notifyRidersOfHealth(inst, newHealth, maxHealth);
 
         if (newHealth <= 0) {
             inst.destroyAndDropItem();
@@ -1424,6 +1463,85 @@ public class DisplayShip implements Listener {
             return 0.0; // No impact damage
         }
         return 1.0; // Fallback for other projectiles
+    }
+
+    // ==================== Ship Damage Feedback Effects ====================
+
+    /**
+     * Spawns smoke particles at the damaged shulker location.
+     */
+    private void spawnDamageParticles(Shulker shulker) {
+        Location loc = shulker.getLocation().add(0, 0.5, 0);
+        World world = loc.getWorld();
+        if (world == null) return;
+
+        world.spawnParticle(Particle.SMOKE, loc, 8, 0.3, 0.3, 0.3, 0.02);
+        world.spawnParticle(Particle.CAMPFIRE_COSY_SMOKE, loc, 2, 0.1, 0.1, 0.1, 0.01);
+    }
+
+    /**
+     * Spawns health-colored particles at the ship's wheel location.
+     * Color interpolates from grey (full health) to red (zero health).
+     */
+    private void spawnWheelHealthParticles(ShipInstance ship, double healthPercent) {
+        CollisionBox wheelCollider = findWheelCollider(ship);
+        if (wheelCollider == null || wheelCollider.entity == null || !wheelCollider.entity.isValid()) return;
+
+        Location wheelLoc = wheelCollider.entity.getLocation().add(0, 0.5, 0);
+        World world = wheelLoc.getWorld();
+        if (world == null) return;
+
+        // Interpolate: grey (128,128,128) at 100% health -> red (255,0,0) at 0% health
+        double t = 1.0 - healthPercent;
+        int r = (int) (128 + t * 127);   // 128 -> 255
+        int g = (int) (128 * (1 - t));   // 128 -> 0
+        int b = (int) (128 * (1 - t));   // 128 -> 0
+
+        Color healthColor = Color.fromRGB(r, g, b);
+        Particle.DustOptions dustOptions = new Particle.DustOptions(healthColor, 1.5f);
+        world.spawnParticle(Particle.DUST, wheelLoc, 2, 0.1, 0.1, 0.1, 0, dustOptions);
+    }
+
+    /**
+     * Finds the wheel collider (the one at position 0,0,0 in the ship's coordinate system).
+     */
+    private CollisionBox findWheelCollider(ShipInstance ship) {
+        for (CollisionBox collider : ship.colliders) {
+            org.joml.Vector3f translation = new org.joml.Vector3f();
+            collider.base.getTranslation(translation);
+            if (Math.abs(translation.x) < 0.01f && Math.abs(translation.y) < 0.01f && Math.abs(translation.z) < 0.01f) {
+                return collider;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Plays a damage sound at the given location.
+     */
+    private void playDamageSound(Location location) {
+        World world = location.getWorld();
+        if (world == null) return;
+        float volume = (float) plugin.getConfig().getDouble("sounds.damage-volume", 0.1);
+        world.playSound(location, Sound.ENTITY_ZOMBIE_ATTACK_WOODEN_DOOR, 0.8f * volume, 1.2f);
+    }
+
+    /**
+     * Sends ship health information to all players riding the ship via action bar.
+     */
+    private void notifyRidersOfHealth(ShipInstance ship, double currentHealth, double maxHealth) {
+        int displayHealth = (int) Math.ceil(Math.max(0, currentHealth));
+        String healthText = "§cShip Health: §f" + displayHealth + "/" + (int) maxHealth;
+
+        for (Shulker seat : ship.seatShulkers) {
+            if (seat != null && seat.isValid()) {
+                for (Entity passenger : seat.getPassengers()) {
+                    if (passenger instanceof Player player) {
+                        player.sendActionBar(net.kyori.adventure.text.Component.text(healthText));
+                    }
+                }
+            }
+        }
     }
 
     /**

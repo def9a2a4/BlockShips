@@ -4,6 +4,7 @@ import anon.def9a2a4.blockships.ShipConfig;
 import anon.def9a2a4.blockships.ShipTags;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.Sound;
 import org.bukkit.block.data.Waterlogged;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
@@ -28,6 +29,9 @@ public class ShipPhysics {
     public float currentYVelocity = 0.0f;
     public float currentRotationVelocity = 0.0f;
     public Vector3f collisionForce = new Vector3f(0, 0, 0);
+
+    // Sound cooldown (ticks until next sound can play)
+    private int soundCooldown = 0;
 
     public ShipPhysics(ShipInstance ship) {
         this.ship = ship;
@@ -137,6 +141,26 @@ public class ShipPhysics {
             Location newLoc = ship.vehicle.getLocation();
             newLoc.setYaw(newYaw);
             ship.vehicle.teleport(newLoc);
+        }
+
+        // Play movement sounds
+        if (soundCooldown > 0) {
+            soundCooldown--;
+        }
+
+        float totalSpeed = Math.abs(currentSpeed);
+        if (ship.isAirship) {
+            totalSpeed = Math.max(totalSpeed, Math.abs(currentYVelocity));
+        }
+
+        float minSpeed = ship.isAirship ? config.airshipSoundMinSpeed : config.soundMinSpeed;
+        if (totalSpeed >= minSpeed && soundCooldown == 0) {
+            Location loc = ship.vehicle.getLocation();
+            Sound sound = ship.isAirship ? Sound.ITEM_ELYTRA_FLYING : Sound.ENTITY_BOAT_PADDLE_WATER;
+            float baseVolume = ship.isAirship ? config.airshipSoundVolume : config.soundVolume;
+            float movementVolume = (float) ship.plugin.getConfig().getDouble("sounds.movement-volume", 0.5);
+            loc.getWorld().playSound(loc, sound, baseVolume * movementVolume, config.soundPitch);
+            soundCooldown = ship.isAirship ? config.airshipSoundIntervalTicks : config.soundIntervalTicks;
         }
     }
 

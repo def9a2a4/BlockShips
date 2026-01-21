@@ -88,6 +88,17 @@ cannons:
   # Cooldown between cannon fires in milliseconds (per cannon)
   cooldown-ms: 1000
 
+# Sound settings (global volume multipliers)
+sounds:
+  # Volume multiplier for ship damage sounds (0.0 = disabled, 1.0 = normal)
+  damage-volume: 0.1
+  # Volume multiplier for movement sounds - boat paddle and elytra whoosh (0.0 = disabled, 1.0 = normal)
+  movement-volume: 0.5
+  # Volume multiplier for cannon fire sounds (0.0 = disabled, 1.0 = normal)
+  cannon-volume: 0.35
+  # Volume multiplier for lead break sounds (0.0 = disabled, 1.0 = normal)
+  lead-break-volume: 1.0
+
 # Entity masses for collision physics (global settings)
 entity-masses:
   boat: 10.0         # Boats, minecarts

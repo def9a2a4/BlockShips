@@ -61,6 +61,15 @@ public class ShipConfig {
     public final Vector3f customDisplayOffset;
     public final Vector3f customCollisionOffset;
 
+    // Sound settings
+    public final float soundMinSpeed;
+    public final float airshipSoundMinSpeed;
+    public final int soundIntervalTicks;
+    public final int airshipSoundIntervalTicks;
+    public final float soundVolume;
+    public final float airshipSoundVolume;
+    public final float soundPitch;
+
     private ShipConfig(Builder b) {
         this.collisionDebugGlow = b.collisionDebugGlow;
         this.maxSpeed = b.maxSpeed;
@@ -100,6 +109,13 @@ public class ShipConfig {
         this.mobLargeMass = b.mobLargeMass;
         this.customDisplayOffset = b.customDisplayOffset;
         this.customCollisionOffset = b.customCollisionOffset;
+        this.soundMinSpeed = b.soundMinSpeed;
+        this.airshipSoundMinSpeed = b.airshipSoundMinSpeed;
+        this.soundIntervalTicks = b.soundIntervalTicks;
+        this.airshipSoundIntervalTicks = b.airshipSoundIntervalTicks;
+        this.soundVolume = b.soundVolume;
+        this.airshipSoundVolume = b.airshipSoundVolume;
+        this.soundPitch = b.soundPitch;
     }
 
     /**
@@ -184,6 +200,14 @@ public class ShipConfig {
             // Custom ship offsets (only used for custom ships, but loaded for all)
             .customDisplayOffset(readVector3f(cfg, "custom-ships.display-offset", new Vector3f(0, 1.975f, 0)))
             .customCollisionOffset(readVector3f(cfg, "custom-ships.collision-offset", new Vector3f(0, 0, 0)))
+            // Movement sound settings (per-ship with fallback to global)
+            .soundMinSpeed((float) cfg.getDouble(p + "movement-sounds.min-speed", cfg.getDouble("sounds.min-speed", 0.1)))
+            .airshipSoundMinSpeed((float) cfg.getDouble(p + "movement-sounds.airship-min-speed", cfg.getDouble("sounds.airship-min-speed", 0.45)))
+            .soundIntervalTicks(cfg.getInt(p + "movement-sounds.interval-ticks", cfg.getInt("sounds.interval-ticks", 20)))
+            .airshipSoundIntervalTicks(cfg.getInt(p + "movement-sounds.airship-interval-ticks", cfg.getInt("sounds.airship-interval-ticks", 12)))
+            .soundVolume((float) cfg.getDouble(p + "movement-sounds.volume", cfg.getDouble("sounds.volume", 1.5)))
+            .airshipSoundVolume((float) cfg.getDouble(p + "movement-sounds.airship-volume", cfg.getDouble("sounds.airship-volume", 0.15)))
+            .soundPitch((float) cfg.getDouble(p + "movement-sounds.pitch", cfg.getDouble("sounds.pitch", 1.0)))
             .build();
     }
 
@@ -238,6 +262,13 @@ public class ShipConfig {
         float mobLargeMass = 200.0f;
         Vector3f customDisplayOffset = new Vector3f(0, 1.975f, 0);
         Vector3f customCollisionOffset = new Vector3f(0, 0, 0);
+        float soundMinSpeed = 0.1f;
+        float airshipSoundMinSpeed = 0.45f;
+        int soundIntervalTicks = 20;
+        int airshipSoundIntervalTicks = 12;
+        float soundVolume = 1.5f;
+        float airshipSoundVolume = 0.15f;
+        float soundPitch = 1.0f;
 
         Builder collisionDebugGlow(boolean v) { collisionDebugGlow = v; return this; }
         Builder maxSpeed(float v) { maxSpeed = v; return this; }
@@ -277,6 +308,13 @@ public class ShipConfig {
         Builder mobLargeMass(float v) { mobLargeMass = v; return this; }
         Builder customDisplayOffset(Vector3f v) { customDisplayOffset = v; return this; }
         Builder customCollisionOffset(Vector3f v) { customCollisionOffset = v; return this; }
+        Builder soundMinSpeed(float v) { soundMinSpeed = v; return this; }
+        Builder airshipSoundMinSpeed(float v) { airshipSoundMinSpeed = v; return this; }
+        Builder soundIntervalTicks(int v) { soundIntervalTicks = v; return this; }
+        Builder airshipSoundIntervalTicks(int v) { airshipSoundIntervalTicks = v; return this; }
+        Builder soundVolume(float v) { soundVolume = v; return this; }
+        Builder airshipSoundVolume(float v) { airshipSoundVolume = v; return this; }
+        Builder soundPitch(float v) { soundPitch = v; return this; }
 
         ShipConfig build() { return new ShipConfig(this); }
     }

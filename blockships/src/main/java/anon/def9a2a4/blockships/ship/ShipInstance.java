@@ -1324,6 +1324,9 @@ public class ShipInstance {
     public void destroyAndDropItem() {
         if (!vehicle.isValid()) return;
 
+        // Notify all riding players before destruction
+        notifyRidersOfDestruction();
+
         Location dropLocation = vehicle.getLocation();
         World world = dropLocation.getWorld();
 
@@ -1408,7 +1411,23 @@ public class ShipInstance {
     private void spawnDestructionExplosions(World world, List<Location> locations) {
         for (Location loc : locations) {
             // Small explosion: does entity damage, no block damage
-            world.createExplosion(loc, 1.5f, false, false);
+            world.createExplosion(loc, 1.0f, false, false);
+        }
+    }
+
+    /**
+     * Notifies all players riding the ship that it has been destroyed.
+     * Called before ship destruction when health reaches 0.
+     */
+    private void notifyRidersOfDestruction() {
+        for (Shulker seat : seatShulkers) {
+            if (seat != null && seat.isValid()) {
+                for (Entity passenger : seat.getPassengers()) {
+                    if (passenger instanceof Player player) {
+                        player.sendMessage("§c§lYour ship has been destroyed!");
+                    }
+                }
+            }
         }
     }
 
@@ -2295,6 +2314,7 @@ public class ShipInstance {
         world.spawnParticle(Particle.CAMPFIRE_COSY_SMOKE, loc, 3, 0.05, 0.05, 0.05, 0.01);
 
         // Sound effect
-        world.playSound(loc, Sound.ENTITY_GENERIC_EXPLODE, 0.5f, 1.5f);
+        float cannonVolume = (float) plugin.getConfig().getDouble("sounds.cannon-volume", 0.35);
+        world.playSound(loc, Sound.ENTITY_GENERIC_EXPLODE, 0.5f * cannonVolume, 1.5f);
     }
 }
