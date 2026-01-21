@@ -381,14 +381,20 @@ public class DisplayShip implements Listener {
     /**
      * Handles chunk load events.
      * Looks up ships in the chunk from per-world data, creates ShipInstance, and recovers entity references.
+     * Also handles incremental recovery for ships that span multiple chunks.
      */
     @EventHandler
     public void onChunkLoad(ChunkLoadEvent event) {
         org.bukkit.Chunk chunk = event.getChunk();
+
+        // Track ships that failed recovery in this event to avoid duplicate attempts in Part 3
+        Set<UUID> failedRecoveryThisEvent = new HashSet<>();
+
+        // PART 1: Normal recovery for ships indexed in this chunk
         List<UUID> shipIds = shipWorldData.getShipsInChunk(event.getWorld(), chunk.getX(), chunk.getZ());
 
         for (UUID shipId : shipIds) {
-            // Skip if already in registry (shouldn't happen, but defensive)
+            // Skip if already in registry
             if (ShipRegistry.byId(shipId) != null) {
                 continue;
             }
@@ -402,7 +408,18 @@ public class DisplayShip implements Listener {
                 // Load ship metadata from per-world YAML
                 ShipPersistence.ShipState state = shipWorldData.loadShipMetadata(event.getWorld(), shipId);
                 if (state == null) {
-                    plugin.getLogger().warning("Ship " + shipId + " in chunk index but no metadata file found");
+                    // No metadata file - remove stale entry from chunk index
+                    shipWorldData.removeFromChunkIndex(event.getWorld(), shipId, chunk.getX(), chunk.getZ());
+                    continue;
+                }
+
+                // Count entities in this chunk only
+                int entitiesInChunk = countEntitiesInChunk(chunk, shipId);
+                if (entitiesInChunk == 0) {
+                    // No entities in indexed chunk - ship may have moved elsewhere
+                    // Remove stale index entry but keep metadata for recovery when actual chunk loads
+                    plugin.getLogger().fine("Ship " + shipId + " not in indexed chunk - removing stale index entry");
+                    shipWorldData.removeFromChunkIndex(event.getWorld(), shipId, chunk.getX(), chunk.getZ());
                     continue;
                 }
 
@@ -410,6 +427,7 @@ public class DisplayShip implements Listener {
                 ShipModel model = loadModelForState(state);
                 if (model == null) {
                     plugin.getLogger().warning("Could not load model for ship " + shipId + " (type: " + state.shipType + ")");
+                    failedRecoveryThisEvent.add(shipId);
                     continue;
                 }
 
@@ -417,21 +435,147 @@ public class DisplayShip implements Listener {
                 ShipInstance ship = ShipInstance.fromState(plugin, state, model);
                 if (ship == null) {
                     plugin.getLogger().warning("Failed to create ShipInstance for " + shipId);
+                    failedRecoveryThisEvent.add(shipId);
                     continue;
                 }
 
-                // Recover entity references from chunk
-                if (!ship.recoverEntities(chunk)) {
-                    plugin.getLogger().warning("Failed to recover entities for ship " + shipId + " - entities may be missing");
+                // Set expected entity count from metadata for incremental recovery tracking
+                ship.setExpectedEntityCount(state.entityCount);
+
+                // Try to recover - recoverEntities searches this chunk + 32-block radius
+                boolean recovered = ship.recoverEntities(chunk);
+
+                if (!recovered) {
+                    // Vehicle not found - remove from this chunk's index but keep metadata
+                    // Ship will be created when vehicle's chunk loads
+                    plugin.getLogger().info("Ship " + shipId + " vehicle not in this chunk - will recover when vehicle chunk loads");
+                    shipWorldData.removeFromChunkIndex(event.getWorld(), shipId, chunk.getX(), chunk.getZ());
+                    failedRecoveryThisEvent.add(shipId);
                     continue;
                 }
 
                 // Register recovered ship
                 ShipRegistry.register(ship);
-                plugin.getLogger().info("Recovered ship " + shipId + " from chunk load at " + chunk.getX() + "," + chunk.getZ());
+
+                // Log recovery status
+                if (!ship.isRecoveryComplete()) {
+                    plugin.getLogger().info("Ship " + shipId + " partially recovered - waiting for more chunks");
+                } else {
+                    plugin.getLogger().info("Recovered ship " + shipId + " from chunk load at " + chunk.getX() + "," + chunk.getZ());
+                }
             } finally {
                 shipsBeingRecovered.remove(shipId);
             }
+        }
+
+        // PART 2 & 3: Incremental recovery and orphan cleanup (single pass)
+        Set<UUID> processedIncompleteShips = new HashSet<>();
+        for (Entity e : chunk.getEntities()) {
+            UUID entityShipId = ShipTags.extractShipId(e.getScoreboardTags());
+            if (entityShipId == null) continue;
+
+            ShipInstance ship = ShipRegistry.byId(entityShipId);
+
+            if (ship != null) {
+                // Part 2: Incremental recovery for incomplete ships
+                // Use add() return value to process each ship only once per chunk
+                if (!ship.isRecoveryComplete() && processedIncompleteShips.add(entityShipId)) {
+                    ship.collectEntitiesFromChunk(chunk);
+                }
+            } else {
+                // Part 3: Ship not registered - check if recoverable or orphaned
+                // Skip if we already tried to recover this ship earlier in this event
+                if (failedRecoveryThisEvent.contains(entityShipId)) {
+                    continue;
+                }
+
+                if (!shipWorldData.hasMetadata(event.getWorld(), entityShipId)) {
+                    // No metadata - truly orphaned, remove entity
+                    e.remove();
+                    plugin.getLogger().fine("Removed orphaned entity " + e.getType() + " for deleted ship " + entityShipId);
+                } else if (ShipTags.isRoot(e.getScoreboardTags()) && e instanceof ArmorStand) {
+                    // Found vehicle for unregistered ship with metadata - attempt recovery
+                    // This handles ships that moved chunks between save and load
+                    if (shipsBeingRecovered.add(entityShipId)) {
+                        try {
+                            recoverShipFromVehicle(event.getWorld(), chunk, entityShipId, (ArmorStand) e, failedRecoveryThisEvent);
+                        } finally {
+                            shipsBeingRecovered.remove(entityShipId);
+                        }
+                    }
+                }
+                // Other entities (displays, colliders) will be picked up once ship is registered
+            }
+        }
+    }
+
+    /**
+     * Counts ship entities in a chunk without modifying any state.
+     */
+    private int countEntitiesInChunk(org.bukkit.Chunk chunk, UUID shipId) {
+        String shipTagPrefix = ShipTags.shipTag(shipId);
+        int count = 0;
+        for (Entity e : chunk.getEntities()) {
+            for (String tag : e.getScoreboardTags()) {
+                if (tag.startsWith(shipTagPrefix)) {
+                    count++;
+                    break;
+                }
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Recovers a ship starting from its vehicle entity.
+     * Used when ship entities are found in a chunk that isn't in the chunk index.
+     * @param failedRecoveryThisEvent Set to track ships that fail recovery (prevents duplicate attempts)
+     */
+    private void recoverShipFromVehicle(World world, org.bukkit.Chunk chunk, UUID shipId, ArmorStand vehicle, Set<UUID> failedRecoveryThisEvent) {
+        // Load metadata
+        ShipPersistence.ShipState state = shipWorldData.loadShipMetadata(world, shipId);
+        if (state == null) {
+            plugin.getLogger().fine("Ship " + shipId + " has vehicle but no metadata - removing orphan");
+            vehicle.remove();
+            return;
+        }
+
+        // Load model
+        ShipModel model = loadModelForState(state);
+        if (model == null) {
+            plugin.getLogger().warning("Could not load model for ship " + shipId);
+            failedRecoveryThisEvent.add(shipId);
+            return;
+        }
+
+        // Create ShipInstance
+        ShipInstance ship = ShipInstance.fromState(plugin, state, model);
+        if (ship == null) {
+            plugin.getLogger().warning("Failed to create ShipInstance for " + shipId);
+            failedRecoveryThisEvent.add(shipId);
+            return;
+        }
+
+        // Set expected entity count
+        ship.setExpectedEntityCount(state.entityCount);
+
+        // Recover entities
+        if (!ship.recoverEntities(chunk)) {
+            plugin.getLogger().warning("Failed to recover ship " + shipId + " from vehicle - will retry on next chunk load");
+            failedRecoveryThisEvent.add(shipId);
+            return;
+        }
+
+        // Register and update chunk index
+        ShipRegistry.register(ship);
+        Location loc = vehicle.getLocation();
+        shipWorldData.addToChunkIndex(world, shipId, loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
+        shipWorldData.saveAllChunkIndices();
+
+        if (!ship.isRecoveryComplete()) {
+            plugin.getLogger().info("Ship " + shipId + " recovered from moved location - waiting for more chunks");
+        } else {
+            plugin.getLogger().info("Ship " + shipId + " recovered from moved location at " + chunk.getX() + "," + chunk.getZ());
         }
     }
 

@@ -9,6 +9,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Manages per-world ship data storage for chunk-based loading.
@@ -23,6 +24,12 @@ public class ShipWorldData {
 
     // In-memory chunk indices: world name -> "x,z" -> list of ship UUIDs
     private final Map<String, Map<String, List<UUID>>> chunkIndices = new HashMap<>();
+
+    // Cache of metadata existence checks (true = exists, false = doesn't exist)
+    // Using ConcurrentHashMap for thread-safe access from chunk load events
+    private final Map<String, Boolean> metadataExistsCache = new ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicLong lastCacheClear = new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis());
+    private static final long CACHE_CLEAR_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
     public ShipWorldData(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -44,14 +51,17 @@ public class ShipWorldData {
 
     /**
      * Adds a ship to the chunk index.
+     * Prevents duplicate entries for the same ship in the same chunk.
      */
     public void addToChunkIndex(World world, UUID shipId, int chunkX, int chunkZ) {
         String worldName = world.getName();
         String key = chunkX + "," + chunkZ;
 
-        chunkIndices.computeIfAbsent(worldName, k -> new HashMap<>())
-                    .computeIfAbsent(key, k -> new ArrayList<>())
-                    .add(shipId);
+        List<UUID> ships = chunkIndices.computeIfAbsent(worldName, k -> new HashMap<>())
+                                       .computeIfAbsent(key, k -> new ArrayList<>());
+        if (!ships.contains(shipId)) {
+            ships.add(shipId);
+        }
     }
 
     /**
@@ -147,8 +157,13 @@ public class ShipWorldData {
             config.set("inventories", inventories);
         }
 
+        // Entity count for recovery validation
+        config.set("entity_count", ship.countEntities());
+
         try {
             config.save(shipFile);
+            // Populate cache on successful save
+            metadataExistsCache.put(world.getName() + ":" + ship.id, true);
         } catch (IOException e) {
             plugin.getLogger().severe("Failed to save ship metadata for " + ship.id + ": " + e.getMessage());
         }
@@ -193,6 +208,9 @@ public class ShipWorldData {
             }
         }
 
+        // Entity count for recovery validation (default 0 for legacy data)
+        int entityCount = config.getInt("entity_count", 0);
+
         // Create ShipState without position (position comes from recovered vehicle)
         return new ShipPersistence.ShipState(
             UUID.fromString(id),
@@ -205,14 +223,45 @@ public class ShipWorldData {
             woodType,
             balloonColor,
             inventoryData,
-            modelData
+            modelData,
+            entityCount
         );
+    }
+
+    /**
+     * Checks if metadata exists for a ship, using cache.
+     * Much faster than loadShipMetadata() for orphan cleanup.
+     * Caches both positive and negative results to avoid repeated file I/O.
+     */
+    public boolean hasMetadata(World world, UUID shipId) {
+        // Clear cache periodically using atomic compare-and-set to avoid race conditions
+        long now = System.currentTimeMillis();
+        long lastClear = lastCacheClear.get();
+        if (now - lastClear > CACHE_CLEAR_INTERVAL_MS) {
+            if (lastCacheClear.compareAndSet(lastClear, now)) {
+                metadataExistsCache.clear();
+            }
+        }
+
+        String cacheKey = world.getName() + ":" + shipId;
+        Boolean cached = metadataExistsCache.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+
+        // Check file exists and cache the result
+        boolean exists = getShipFile(world.getName(), shipId).exists();
+        metadataExistsCache.put(cacheKey, exists);
+        return exists;
     }
 
     /**
      * Removes a ship from storage completely.
      */
     public void removeShip(World world, UUID shipId) {
+        // Update cache to indicate file no longer exists
+        metadataExistsCache.put(world.getName() + ":" + shipId, false);
+
         // Remove ship file
         File shipFile = getShipFile(world.getName(), shipId);
         if (shipFile.exists()) {
@@ -270,13 +319,65 @@ public class ShipWorldData {
             }
         }
 
+        // Validate chunk indices - remove entries for ships with missing metadata files
+        int removedStale = validateAndCleanChunkIndices();
+
         int totalShips = chunkIndices.values().stream()
             .flatMap(m -> m.values().stream())
             .mapToInt(List::size)
             .sum();
-        if (totalShips > 0) {
-            plugin.getLogger().info("Loaded chunk indices for " + totalShips + " ship entries across " + chunkIndices.size() + " worlds");
+        if (totalShips > 0 || removedStale > 0) {
+            plugin.getLogger().info("Loaded chunk indices: " + totalShips + " valid ship entries" +
+                (removedStale > 0 ? ", removed " + removedStale + " stale entries" : ""));
         }
+    }
+
+    /**
+     * Validates chunk indices and removes entries for ships with missing metadata files.
+     * Also removes duplicate UUIDs within the same chunk.
+     * @return The number of stale entries removed
+     */
+    private int validateAndCleanChunkIndices() {
+        int removedCount = 0;
+
+        for (String worldName : new ArrayList<>(chunkIndices.keySet())) {
+            Map<String, List<UUID>> worldIndex = chunkIndices.get(worldName);
+
+            for (String chunkKey : new ArrayList<>(worldIndex.keySet())) {
+                List<UUID> ships = worldIndex.get(chunkKey);
+
+                // Remove duplicates and ships with missing metadata files
+                Set<UUID> seen = new HashSet<>();
+                Iterator<UUID> iter = ships.iterator();
+                while (iter.hasNext()) {
+                    UUID uuid = iter.next();
+                    // Remove if duplicate or missing metadata file
+                    if (seen.contains(uuid) || !getShipFile(worldName, uuid).exists()) {
+                        iter.remove();
+                        removedCount++;
+                    } else {
+                        seen.add(uuid);
+                    }
+                }
+
+                // Remove empty chunk entries
+                if (ships.isEmpty()) {
+                    worldIndex.remove(chunkKey);
+                }
+            }
+
+            // Remove empty world entries
+            if (worldIndex.isEmpty()) {
+                chunkIndices.remove(worldName);
+            }
+        }
+
+        // Save cleaned indices if we removed anything
+        if (removedCount > 0) {
+            saveAllChunkIndices();
+        }
+
+        return removedCount;
     }
 
     /**

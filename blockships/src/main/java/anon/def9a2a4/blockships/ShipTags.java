@@ -198,6 +198,15 @@ public final class ShipTags {
         return tags.contains(PARENT_TAG);
     }
 
+    public static boolean isRoot(Set<String> tags) {
+        for (String tag : tags) {
+            if (tag.startsWith(SHIP_PREFIX) && tag.endsWith(":root")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static boolean isCarrier(Set<String> tags) {
         return tags.contains(CARRIER_TAG);
     }

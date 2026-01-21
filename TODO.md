@@ -1,7 +1,5 @@
 # BUGS
 
-- investigate ships not being breakable sometimes?
-- collisions on prefab ships too forceful
 - prefab ship (medium) needs more seats
 - still buggy momentum on recently parked ship, but grid align fixes it? our fine grid align didnt work
 - player does not get moved along with a ship, does not inherit velocity properly
@@ -9,8 +7,11 @@
 - fix heads on walls display and colliders
 - multiple ships wheels is buggy?
 - ladder duplication bug
+- loading colliders for really large ships sometimes goes wrong
 
 
+- [x] investigate ships not being breakable sometimes?
+- [x] collisions on prefab ships too forceful
 - [x] recognize waterlogged blocks (in particular kelp) as water when doing flotation calculations
 - [x] hay bales should be allowed blocks
 

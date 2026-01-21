@@ -215,10 +215,11 @@ public final class ShipPersistence {
         public final String balloonColor;  // Balloon color for airships (e.g., "WHITE", "RED")
         public final Map<Integer, String> inventoryData;  // Block index -> Base64 serialized inventory contents
         public final Map<String, Object> modelData;  // Serialized model (for custom ships only, null for prefab)
+        public final int entityCount;  // Expected entity count for recovery validation
 
         public ShipState(UUID id, String shipType, String modelPath, String worldName, double x, double y, double z,
                          float yaw, float pitch, String bannerData, String woodType, String balloonColor,
-                         Map<Integer, String> inventoryData, Map<String, Object> modelData) {
+                         Map<Integer, String> inventoryData, Map<String, Object> modelData, int entityCount) {
             this.id = id;
             this.shipType = shipType;
             this.modelPath = modelPath;
@@ -233,6 +234,7 @@ public final class ShipPersistence {
             this.balloonColor = balloonColor;
             this.inventoryData = inventoryData;
             this.modelData = modelData;
+            this.entityCount = entityCount;
         }
 
         // Create ShipState from a ShipInstance
@@ -281,6 +283,9 @@ public final class ShipPersistence {
                 modelData = inst.sourceModel.toMap();
             }
 
+            // Calculate entity count for recovery validation
+            int entityCount = inst.countEntities();
+
             return new ShipState(
                 inst.id,
                 inst.shipType,
@@ -295,7 +300,8 @@ public final class ShipPersistence {
                 inst.customization.getWoodType(),
                 inst.customization.getBalloonColor(),
                 inventoryData,
-                modelData
+                modelData,
+                entityCount
             );
         }
 
@@ -334,6 +340,10 @@ public final class ShipPersistence {
             if (modelData != null) {
                 map.put("model_data", modelData);
             }
+
+            // Save entity count for recovery validation
+            map.put("entity_count", entityCount);
+
             return map;
         }
 
@@ -365,6 +375,11 @@ public final class ShipPersistence {
             // Model path may be null for custom ships
             String modelPath = map.containsKey("model") ? String.valueOf(map.get("model")) : null;
 
+            // Entity count (default to 0 for legacy data without this field)
+            int entityCount = map.containsKey("entity_count")
+                ? ((Number) map.get("entity_count")).intValue()
+                : 0;
+
             return new ShipState(
                 UUID.fromString(String.valueOf(map.get("id"))),
                 shipType,
@@ -379,7 +394,8 @@ public final class ShipPersistence {
                 woodType,
                 balloonColor,
                 inventoryData,
-                modelData
+                modelData,
+                entityCount
             );
         }
     }

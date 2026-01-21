@@ -117,6 +117,17 @@ public class ShipInstance {
     // Chunk tracking for persistence - updated on movement
     private int currentChunkX, currentChunkZ;
 
+    // Incremental recovery tracking
+    private int expectedEntityCount = 0;
+    private boolean recoveryComplete = true;  // true for newly spawned ships
+
+    // Temporary storage for incremental recovery (carrier/shulker pairing)
+    private final Map<Integer, Entity> pendingCarriers = new HashMap<>();
+    private final Map<Integer, Shulker> pendingShulkers = new HashMap<>();
+
+    // Fast lookup for recovered display indices (O(1) vs O(n) iteration with tag parsing)
+    private final Set<Integer> recoveredDisplayIndices = new HashSet<>();
+
     /**
      * Private constructor for creating ShipInstance without spawning entities.
      * Used by fromState() factory method for chunk load recovery.
@@ -770,7 +781,7 @@ public class ShipInstance {
                             return; // Chunk unloaded, suspend ship but don't destroy
                         }
                         if (vehicle.isDead() || !vehicle.isValid()) {
-                            destroy();
+                            destroyWithPersistenceCleanup();
                             cancel();
                             return;
                         }
@@ -780,6 +791,18 @@ public class ShipInstance {
                 task.runTaskTimer(plugin, 0L, 1L);
             }
         }.runTaskLater(plugin, 1L);
+    }
+
+    /**
+     * Helper method to destroy ship with persistence cleanup.
+     * Used by tick tasks when the vehicle is dead/invalid.
+     */
+    private void destroyWithPersistenceCleanup() {
+        if (plugin instanceof BlockShipsPlugin bsp && bsp.getDisplayShip() != null) {
+            destroyWithCleanup(bsp.getDisplayShip().getShipWorldData());
+        } else {
+            destroy();
+        }
     }
 
     /**
@@ -1011,7 +1034,7 @@ public class ShipInstance {
 
         if (currentChunkX != newChunkX || currentChunkZ != newChunkZ) {
             // Update chunk index in per-world storage
-            if (plugin instanceof BlockShipsPlugin bsp) {
+            if (plugin instanceof BlockShipsPlugin bsp && bsp.getDisplayShip() != null) {
                 ShipWorldData worldData = bsp.getDisplayShip().getShipWorldData();
                 worldData.updateChunkIndex(currentVehicleLoc.getWorld(), this.id,
                     currentChunkX, currentChunkZ, newChunkX, newChunkZ);
@@ -1166,7 +1189,7 @@ public class ShipInstance {
                     return; // Chunk unloaded, suspend ship but don't destroy
                 }
                 if (vehicle.isDead() || !vehicle.isValid()) {
-                    destroy();
+                    destroyWithPersistenceCleanup();
                     cancel();
                     return;
                 }
@@ -1192,7 +1215,7 @@ public class ShipInstance {
                                 return; // Chunk unloaded, suspend ship but don't destroy
                             }
                             if (vehicle.isDead() || !vehicle.isValid()) {
-                                destroy();
+                                destroyWithPersistenceCleanup();
                                 cancel();
                                 return;
                             }
@@ -1359,7 +1382,7 @@ public class ShipInstance {
         if (world != null) {
             if ("custom".equals(shipType)) {
                 // Custom ships drop the ship wheel item (fallback)
-                if (plugin instanceof BlockShipsPlugin bsp) {
+                if (plugin instanceof BlockShipsPlugin bsp && bsp.getDisplayShip() != null) {
                     ItemStack shipWheel = bsp.getDisplayShip().createShipWheelItem();
                     world.dropItemNaturally(dropLocation, shipWheel);
                 }
@@ -1370,8 +1393,12 @@ public class ShipInstance {
             }
         }
 
-        // Clean up all entities
-        destroy();
+        // Clean up all entities and persistence storage
+        if (plugin instanceof BlockShipsPlugin bsp && bsp.getDisplayShip() != null) {
+            destroyWithCleanup(bsp.getDisplayShip().getShipWorldData());
+        } else {
+            destroy();
+        }
     }
 
     /**
@@ -1477,6 +1504,7 @@ public class ShipInstance {
 
         // 3. Recover displays by index
         displays.clear();
+        recoveredDisplayIndices.clear();
         Map<Integer, Display> displaysByIdx = new TreeMap<>();
         for (Entity e : shipEntities) {
             if (e instanceof Display d && !ShipTags.isParent(e.getScoreboardTags())) {
@@ -1493,6 +1521,7 @@ public class ShipInstance {
             if (d != null) {
                 Matrix4f transform = getTransformForDisplayIndex(i);
                 displays.add(new DisplayInstance(d, transform));
+                recoveredDisplayIndices.add(i);
             }
         }
 
@@ -1619,7 +1648,7 @@ public class ShipInstance {
                     return;
                 }
                 if (vehicle.isDead() || !vehicle.isValid()) {
-                    destroy();
+                    destroyWithPersistenceCleanup();
                     cancel();
                     return;
                 }
@@ -1715,6 +1744,7 @@ public class ShipInstance {
         // Clear references (they'll be stale anyway after chunk unloads)
         parent = null;
         displays.clear();
+        recoveredDisplayIndices.clear();
         colliders.clear();
         seatShulkers.clear();
         // vehicle reference is kept but may become stale
@@ -1742,7 +1772,230 @@ public class ShipInstance {
         }
         // Remove root vehicle
         if (vehicle.isValid()) vehicle.remove();
+        // Clear incremental recovery state
+        pendingCarriers.clear();
+        pendingShulkers.clear();
         ShipRegistry.unregister(this);
+    }
+
+    /**
+     * Destroys the ship and cleans up persistence storage (metadata file and chunk index).
+     * Use this instead of destroy() when the ship should be permanently removed.
+     */
+    public void destroyWithCleanup(ShipWorldData shipWorldData) {
+        // Get world before destroy() removes the vehicle - handle null/invalid vehicle
+        World world = (vehicle != null && vehicle.isValid()) ? vehicle.getLocation().getWorld() : null;
+        destroy();  // Remove entities and unregister
+        if (world != null && shipWorldData != null) {
+            shipWorldData.removeShip(world, this.id);
+            shipWorldData.saveAllChunkIndices();
+        }
+    }
+
+    /**
+     * Counts the total number of entities that make up this ship.
+     * Calculated from model structure to ensure consistent counts regardless of recovery state.
+     * Used for persistence to validate recovery completeness.
+     *
+     * Note: leadableShulker is NOT counted separately - it's one of the collision shulkers
+     * that also has a leadable tag. The shulker is already counted in the colliders.
+     */
+    public int countEntities() {
+        int count = 2;  // vehicle + parent (always present)
+        count += model.parts.size();  // block displays
+        count += model.items.size();  // item displays
+        // Each part with collision gets carrier + shulker (leadable shulkers are included here)
+        count += (int) model.parts.stream().filter(p -> p.collision != null).count() * 2;
+        count += model.seats.size();  // seat shulkers
+        return count;
+    }
+
+    /**
+     * Counts the number of currently valid/recovered entities.
+     * Used during recovery to check how many entities were found.
+     * Note: leadableShulker is not counted separately as it's already included in colliders.
+     */
+    public int countRecoveredEntities() {
+        int count = 0;
+        if (vehicle != null && vehicle.isValid()) count++;
+        if (parent != null && parent.isValid()) count++;
+        count += displays.size();
+        count += colliders.size() * 2;  // carrier + shulker per collider (leadableShulker is one of these)
+        count += (int) seatShulkers.stream().filter(s -> s != null && s.isValid()).count();
+        return count;
+    }
+
+    // ===== Incremental Recovery Methods =====
+
+    /**
+     * Sets the expected entity count for recovery completeness tracking.
+     * Called during chunk load recovery with the value from saved metadata.
+     */
+    public void setExpectedEntityCount(int count) {
+        this.expectedEntityCount = count;
+        this.recoveryComplete = (count == 0) || (countRecoveredEntities() >= count);
+    }
+
+    /**
+     * Returns true if all expected entities have been recovered.
+     */
+    public boolean isRecoveryComplete() {
+        return recoveryComplete;
+    }
+
+    /**
+     * Collects any entities belonging to this ship from a newly-loaded chunk.
+     * Called when chunks load and ship recovery is incomplete.
+     *
+     * @return Number of entities added to ship collections.
+     *         Returns 2 for a carrier+shulker pair since colliders count as 2 entities.
+     *         Entities waiting for their pair (pending carriers/shulkers) return 0 until matched.
+     *         This matches the counting in countEntities() and countRecoveredEntities().
+     */
+    public int collectEntitiesFromChunk(org.bukkit.Chunk chunk) {
+        if (recoveryComplete) return 0;
+
+        // Clean up any invalid pending entities
+        pendingCarriers.entrySet().removeIf(e -> !e.getValue().isValid());
+        pendingShulkers.entrySet().removeIf(e -> !e.getValue().isValid());
+
+        int added = 0;
+        for (Entity e : chunk.getEntities()) {
+            UUID entityShipId = ShipTags.extractShipId(e.getScoreboardTags());
+            if (!this.id.equals(entityShipId)) continue;
+            added += tryAddEntity(e);
+        }
+
+        if (added > 0) {
+            // Check for any pending carrier/shulker pairs that can now be combined
+            added += processPendingColliders();
+
+            int current = countRecoveredEntities();
+            if (current >= expectedEntityCount) {
+                recoveryComplete = true;
+                // Clear pending maps to release entity references
+                pendingCarriers.clear();
+                pendingShulkers.clear();
+                plugin.getLogger().info("Ship " + id + " recovery now complete (" + current + " entities)");
+            }
+        }
+        return added;
+    }
+
+    /**
+     * Attempts to add an entity to this ship's collections during incremental recovery.
+     *
+     * @return Number of entities added to ship collections:
+     *         - 0: Entity already exists, not recognized, or stored in pending map waiting for pair
+     *         - 1: Single entity added (display, seat shulker)
+     *         - 2: Carrier+shulker pair completed (both entities added to colliders)
+     */
+    private int tryAddEntity(Entity e) {
+        Set<String> tags = e.getScoreboardTags();
+
+        // Skip vehicle/parent - already have them from initial recovery
+        if (e instanceof ArmorStand && ShipTags.isRoot(tags)) return 0;
+        if (e instanceof BlockDisplay && ShipTags.isParent(tags)) return 0;
+
+        // Display entity
+        if (e instanceof Display d && !ShipTags.isParent(tags)) {
+            int idx = ShipTags.extractDisplayIndex(tags);
+            if (idx >= 0 && !hasDisplayAtIndex(idx)) {
+                Matrix4f transform = getTransformForDisplayIndex(idx);
+                displays.add(new DisplayInstance(d, transform));
+                recoveredDisplayIndices.add(idx);
+                return 1;
+            }
+        }
+
+        // Collider: need both carrier and shulker with matching block index
+        int blockIdx = ShipTags.extractBlockIndex(tags);
+        if (blockIdx >= 0 && blockIdx < model.parts.size() && !hasColliderAtIndex(blockIdx)) {
+            if (ShipTags.isCarrier(tags)) {
+                // Check if we already have a shulker waiting
+                Shulker pendingShulker = pendingShulkers.remove(blockIdx);
+                if (pendingShulker != null) {
+                    ShipModel.ModelPart part = model.parts.get(blockIdx);
+                    colliders.add(new CollisionBox(e, pendingShulker, new Matrix4f(part.local), part.collision, blockIdx));
+                    // Set leadable reference if this shulker is the lead attachment point
+                    if (leadableShulker == null && ShipTags.extractLeadableIndex(pendingShulker.getScoreboardTags()) >= 0) {
+                        leadableShulker = pendingShulker;
+                    }
+                    return 2;
+                } else {
+                    pendingCarriers.put(blockIdx, e);
+                    return 0;  // Don't count until paired with shulker
+                }
+            }
+            if (ShipTags.isCollider(tags) && e instanceof Shulker s) {
+                // Check if we already have a carrier waiting
+                Entity pendingCarrier = pendingCarriers.remove(blockIdx);
+                if (pendingCarrier != null) {
+                    ShipModel.ModelPart part = model.parts.get(blockIdx);
+                    colliders.add(new CollisionBox(pendingCarrier, s, new Matrix4f(part.local), part.collision, blockIdx));
+                    // Set leadable reference if this shulker is the lead attachment point
+                    if (leadableShulker == null && ShipTags.extractLeadableIndex(tags) >= 0) {
+                        leadableShulker = s;
+                    }
+                    return 2;
+                } else {
+                    pendingShulkers.put(blockIdx, s);
+                    return 0;  // Don't count until paired with carrier
+                }
+            }
+        }
+
+        // Seat shulker
+        int seatIdx = ShipTags.extractSeatIndex(tags);
+        if (seatIdx >= 0 && seatIdx < seatShulkers.size() && e instanceof Shulker s) {
+            if (seatShulkers.get(seatIdx) == null) {
+                seatShulkers.set(seatIdx, s);
+                return 1;
+            }
+        }
+
+        return 0;
+    }
+
+    /**
+     * Processes any pending carrier/shulker pairs that can now be combined.
+     */
+    private int processPendingColliders() {
+        int added = 0;
+        Iterator<Map.Entry<Integer, Entity>> iter = pendingCarriers.entrySet().iterator();
+        while (iter.hasNext()) {
+            Map.Entry<Integer, Entity> entry = iter.next();
+            int blockIdx = entry.getKey();
+            Shulker s = pendingShulkers.remove(blockIdx);
+            if (s != null) {
+                ShipModel.ModelPart part = model.parts.get(blockIdx);
+                colliders.add(new CollisionBox(entry.getValue(), s, new Matrix4f(part.local), part.collision, blockIdx));
+                // Set leadable reference if this shulker is the lead attachment point
+                if (leadableShulker == null && ShipTags.extractLeadableIndex(s.getScoreboardTags()) >= 0) {
+                    leadableShulker = s;
+                }
+                iter.remove();
+                added += 2;
+            }
+        }
+        return added;
+    }
+
+    /**
+     * Checks if a display entity at the given index already exists.
+     */
+    private boolean hasDisplayAtIndex(int index) {
+        return recoveredDisplayIndices.contains(index);
+    }
+
+    /**
+     * Checks if a collider at the given block index already exists.
+     */
+    private boolean hasColliderAtIndex(int blockIdx) {
+        for (CollisionBox cb : colliders) {
+            if (cb.blockIndex == blockIdx) return true;
+        }
+        return false;
     }
 
     // ===== Custom Ship Methods =====
