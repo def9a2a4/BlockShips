@@ -8,6 +8,10 @@ build:
 .PHONY: clean
 clean:
 	cd blockships && gradle clean
+	rm -rf bin
+	rm -rf blockships/build
+	rm -rf blockships/.gradle
+	rm -rf blockships/bin
 
 
 .PHONY: server-plugin-copy
