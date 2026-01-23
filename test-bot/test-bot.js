@@ -141,59 +141,96 @@ function findWaterBlockNorth(pos) {
 }
 
 /**
- * Find the nearest shulker (ship seat) entity
- * Increased range to 30 blocks for larger ships like bigship
+ * Find shulker entities within range, sorted by distance
+ * @param {number} maxDist - Maximum distance to search
+ * @returns {Array} Array of shulker entities sorted by distance (nearest first)
  */
-function findNearestShulker(maxDist = 30) {
+function findShulkers(maxDist = 30) {
   const shulkers = Object.values(bot.entities).filter(e =>
     e.name === 'shulker' &&
     e.position &&
     e.position.distanceTo(bot.entity.position) < maxDist
   )
-  if (shulkers.length === 0) return null
   shulkers.sort((a, b) =>
     a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position)
   )
-  return shulkers[0]
+  return shulkers
 }
 
 /**
- * Mount the nearest ship - for bigship, teleports near seat (1 up, 1 forward) then right-clicks
+ * Mount a ship by finding and right-clicking a seat shulker.
+ * For bigship, teleports to the stern area (where driver seat is) first.
+ * Tries multiple shulkers if the first doesn't work (to handle storage shulkers).
  */
 async function mountShip(shipType = null) {
-  const seat = findNearestShulker()
-  if (!seat) {
-    log('  No shulker seat found nearby')
-    return false
-  }
-
-  // Only teleport for bigship (seat is harder to reach)
+  // For bigship, the driver seat is at the stern (back) of the ship
+  // The ship places facing north (-Z), so stern is at higher Z
+  // First teleport to approximately where the driver seat should be
   if (shipType === 'bigship') {
-    const tpX = seat.position.x
-    const tpY = seat.position.y + 1  // 1 block up
-    const tpZ = seat.position.z - 1  // 1 block north (forward)
-    log(`  Teleporting to mount position: ${tpX.toFixed(1)}, ${tpY.toFixed(1)}, ${tpZ.toFixed(1)}`)
-    bot.chat(`/tp @s ${tpX.toFixed(1)} ${tpY.toFixed(1)} ${tpZ.toFixed(1)}`)
+    // Bigship driver seat is at local position (-0.375, 0.75, -2.875) relative to ship center
+    // Ship is placed at (0, 99, -1) on water, facing north
+    // After accounting for initial-rotation and position-offset, driver seat is roughly at stern
+    // Teleport to a position where we can reach the driver seat (towards +Z from ship center)
+    const sternPos = `${RUNWAY_X} 101 ${RUNWAY_Z - 1}`  // Approximate stern position
+    log(`  Teleporting to bigship stern area: ${sternPos}`)
+    bot.chat(`/tp @s ${sternPos}`)
     await sleep(500)
   }
 
-  let mounted = false
-  const handler = () => { mounted = true }
-  bot.on('mount', handler)
+  // Find all nearby shulkers
+  const shulkers = findShulkers()
+  if (shulkers.length === 0) {
+    log('  No shulker seats found nearby')
+    return false
+  }
+  log(`  Found ${shulkers.length} shulkers nearby`)
 
-  try {
-    await bot.lookAt(seat.position.offset(0, 0.5, 0))
-    await sleep(200)
-    await bot.useOn(seat)
-  } catch (e) {
-    log(`  Mount attempt error: ${e.message}`)
+  // Try to mount each shulker until we successfully mount the driver seat
+  // Driver seat is detected by checking if steering input causes movement
+  for (let i = 0; i < Math.min(shulkers.length, 5); i++) {
+    const seat = shulkers[i]
+    log(`  Trying shulker ${i + 1} at ${seat.position.toString()}`)
+
+    let mounted = false
+    const handler = () => { mounted = true }
+    bot.on('mount', handler)
+
+    try {
+      await bot.lookAt(seat.position.offset(0, 0.5, 0))
+      await sleep(200)
+      await bot.useOn(seat)
+    } catch (e) {
+      log(`  Mount attempt error: ${e.message}`)
+    }
+
+    // Wait for mount event
+    for (let j = 0; j < 20 && !mounted; j++) {
+      await sleep(100)
+    }
+    bot.removeListener('mount', handler)
+
+    if (bot.vehicle) {
+      // Successfully mounted something - check if it's the driver seat
+      // by sending a steering input and seeing if we move
+      const startPos = bot.entity.position.clone()
+      await steerShip(1.0, 0, false, 500)  // Brief forward input
+      await sleep(200)
+      const moved = bot.entity.position.distanceTo(startPos) > 0.1
+
+      if (moved) {
+        log(`  Mounted driver seat (shulker ${i + 1})`)
+        return true
+      } else {
+        // Not the driver seat - dismount and try next shulker
+        log(`  Shulker ${i + 1} is not driver seat (no movement), trying next...`)
+        bot.dismount()
+        await sleep(300)
+      }
+    }
   }
 
-  for (let i = 0; i < 20 && !mounted; i++) {
-    await sleep(100)
-  }
-  bot.removeListener('mount', handler)
-
+  // Fallback: if we're mounted to anything, return success
+  // (for ships with only one seat)
   return bot.vehicle !== null
 }
 
@@ -273,113 +310,26 @@ async function clickWheelMenu(action) {
 // =============================================================================
 
 /**
- * Test a prefab ship type (smallship, bigship, smallairship)
- */
-async function testPrefabShip(shipType) {
-  say(`=== TEST: ${shipType} movement ===`)
-
-  await cleanupShips()
-  await teleportToRunway()
-  await clearInventory()
-
-  // Give and equip
-  say(`Requesting ${shipType} kit...`)
-  bot.chat(`/blockships give ${shipType}`)
-  await sleep(1500)
-
-  const shipItem = bot.inventory.items().find(i => i.name === 'player_head')
-  if (!shipItem) {
-    fail(`${shipType}`, 'No ship item received in inventory')
-    return
-  }
-
-  say('Equipping ship item...')
-  await bot.equip(shipItem, 'hand')
-  await sleep(500)
-
-  // Place ship on water north
-  say('Looking for water block north...')
-  const water = findWaterBlockNorth(bot.entity.position)
-  if (!water) {
-    fail(`${shipType}`, 'No water block found north of position')
-    return
-  }
-
-  say(`Placing ship on water at ${water.position}...`)
-  try {
-    await bot.activateBlock(water)
-  } catch (e) {
-    log(`  activateBlock warning: ${e.message}`)
-  }
-  await sleep(3000)
-
-  // Verify ship spawned
-  const nearbyEntities = Object.values(bot.entities).filter(e => {
-    if (!e.position) return false
-    const dist = e.position.distanceTo(bot.entity.position)
-    return dist < 15 && (e.name === 'armor_stand' || e.name === 'shulker' || e.name === 'block_display')
-  })
-
-  if (nearbyEntities.length === 0) {
-    fail(`${shipType}`, 'No ship entities found after placement')
-    return
-  }
-  log(`  Found ${nearbyEntities.length} ship entities`)
-
-  // Clear inventory before mounting to avoid issues
-  await clearInventory()
-
-  // Mount ship (teleports for bigship only)
-  say('Mounting ship...')
-
-  if (!await mountShip(shipType)) {
-    fail(`${shipType}`, 'Failed to mount ship')
-    return
-  }
-  log(`  Mounted! Vehicle: ${bot.vehicle ? bot.vehicle.name : 'null'}`)
-
-  // Record position AFTER mounting (since mountShip teleports)
-  const startPos = bot.entity.position.clone()
-
-  // Move forward for 2 seconds
-  say('Moving forward for 2 seconds...')
-  await steerShip(1.0, 0, false, 2000)
-  await sleep(500)
-
-  // Dismount and check position
-  say('Dismounting...')
-  bot.dismount()
-  await sleep(500)
-
-  const endPos = bot.entity.position
-  const distance = startPos.distanceTo(endPos)
-
-  say(`Distance moved: ${distance.toFixed(2)} blocks`)
-
-  if (distance > 0.5) {
-    pass(`${shipType} movement (${distance.toFixed(1)} blocks)`)
-  } else {
-    fail(`${shipType} movement`, `Only moved ${distance.toFixed(2)} blocks`)
-  }
-}
-
-/**
- * Test all ship control inputs for a specific ship type
+ * Test ship controls with position verification
+ * Ships: verify forward (negative Z) and west (negative X) movement
+ * Airships: also verify upward (positive Y) movement
  */
 async function testShipControls(shipType) {
-  say(`=== TEST: ${shipType} controls ===`)
+  say(`=== TEST: ${shipType} ===`)
 
   await cleanupShips()
   await teleportToRunway()
   await clearInventory()
 
-  // Spawn the ship for controls test
+  const isAirship = shipType.includes('airship')
+
+  // Spawn the ship
   bot.chat(`/blockships give ${shipType}`)
   await sleep(1500)
 
   const shipItem = bot.inventory.items().find(i => i.name === 'player_head')
   if (!shipItem) {
-    fail(`${shipType} controls`, 'Could not get ship for controls test')
+    fail(shipType, 'Could not get ship item')
     return
   }
   await bot.equip(shipItem, 'hand')
@@ -387,7 +337,7 @@ async function testShipControls(shipType) {
 
   const water = findWaterBlockNorth(bot.entity.position)
   if (!water) {
-    fail(`${shipType} controls`, 'No water for controls test')
+    fail(shipType, 'No water found')
     return
   }
   try { await bot.activateBlock(water) } catch (e) {}
@@ -396,35 +346,66 @@ async function testShipControls(shipType) {
   // Clear inventory before mounting
   await clearInventory()
 
-  say('Mounting ship for controls test...')
+  say('Mounting ship...')
   if (!await mountShip(shipType)) {
-    fail(`${shipType} controls`, 'Could not mount ship for controls test')
+    fail(shipType, 'Could not mount ship')
     return
   }
 
-  const controls = [
-    { name: 'W (forward)', forward: 1.0, sideways: 0, jump: false, sprint: false },
-    { name: 'S (backward)', forward: -1.0, sideways: 0, jump: false, sprint: false },
-    { name: 'A (left turn)', forward: 0, sideways: 1.0, jump: false, sprint: false },
-    { name: 'D (right turn)', forward: 0, sideways: -1.0, jump: false, sprint: false },
-    { name: 'Space (jump/ascend)', forward: 0, sideways: 0, jump: true, sprint: false },
-    { name: 'Sprint (descend 1.21.2+)', forward: 0, sideways: 0, jump: false, sprint: true },
-    { name: 'W+A (forward-left)', forward: 1.0, sideways: 1.0, jump: false, sprint: false },
-    { name: 'W+D (forward-right)', forward: 1.0, sideways: -1.0, jump: false, sprint: false },
-    { name: 'S+Space (descend pre-1.21.2)', forward: -1.0, sideways: 0, jump: true, sprint: false },
-  ]
+  // Record start position AFTER mounting
+  const startPos = bot.entity.position.clone()
 
-  for (const ctrl of controls) {
-    say(`Testing ${ctrl.name}...`)
-    await steerShip(ctrl.forward, ctrl.sideways, ctrl.jump, 1000, ctrl.sprint)
-    await sleep(200)
+  // Test forward movement (W) - should move north (negative Z)
+  say('Testing forward (W)...')
+  await steerShip(1.0, 0, false, 1500)
+  await sleep(300)
+
+  // Test left turn + forward (A then W) - should result in westward movement (negative X)
+  say('Testing left turn (A) + forward (W)...')
+  await steerShip(0, 1.0, false, 500)  // turn left
+  await steerShip(1.0, 0, false, 1500)  // move forward (now heading west)
+  await sleep(300)
+
+  // For airships: test ascend (Space) - should move up (positive Y)
+  if (isAirship) {
+    say('Testing ascend (Space)...')
+    await steerShip(0, 0, true, 1500)
+    await sleep(300)
   }
 
-  say('Dismounting after controls test...')
+  // Dismount and verify position
+  say('Dismounting...')
   bot.dismount()
   await sleep(500)
 
-  pass(`${shipType} controls (all 9 combinations tested)`)
+  const endPos = bot.entity.position
+  const dz = endPos.z - startPos.z  // negative = forward (north)
+  const dx = endPos.x - startPos.x  // negative = west
+  const dy = endPos.y - startPos.y  // positive = up
+
+  say(`Movement: dX=${dx.toFixed(1)}, dY=${dy.toFixed(1)}, dZ=${dz.toFixed(1)}`)
+
+  // Verify positions
+  let passed = true
+
+  if (dz >= 0) {
+    fail(shipType, `Expected forward movement (negative Z), got dZ=${dz.toFixed(2)}`)
+    passed = false
+  }
+
+  if (dx >= 0) {
+    fail(shipType, `Expected west movement (negative X), got dX=${dx.toFixed(2)}`)
+    passed = false
+  }
+
+  if (isAirship && dy <= 0) {
+    fail(shipType, `Expected upward movement (positive Y), got dY=${dy.toFixed(2)}`)
+    passed = false
+  }
+
+  if (passed) {
+    pass(`${shipType} (forward, west${isAirship ? ', up' : ''})`)
+  }
 }
 
 /**
@@ -507,13 +488,12 @@ async function buildCustomShipBlocks(config) {
 }
 
 /**
- * Assemble and test a custom-built ship
+ * Assemble and test a custom-built ship with position verification
  * @param {string} testName - Name for pass/fail reporting
  * @param {Object} buildConfig - Config for buildCustomShipBlocks
- * @param {Array<{forward: number, sideways: number, jump: boolean, duration: number, label?: string}>} movements - Movement sequence
- * @param {number} minDistance - Minimum distance to pass (default 0.5)
+ * @param {boolean} isAirship - If true, also verify upward movement
  */
-async function testCustomShipBase(testName, buildConfig, movements, minDistance = 0.5) {
+async function testCustomShipBase(testName, buildConfig, isAirship = false) {
   say(`=== TEST: ${testName} ===`)
 
   await cleanupShips()
@@ -557,25 +537,56 @@ async function testCustomShipBase(testName, buildConfig, movements, minDistance 
   // Record start position AFTER mounting
   const startPos = bot.entity.position.clone()
 
-  // Execute movement sequence
-  for (const move of movements) {
-    if (move.label) say(move.label)
-    await steerShip(move.forward, move.sideways, move.jump, move.duration)
-  }
-  await sleep(500)
+  // Test forward movement (W) - should move north (negative Z)
+  say('Testing forward (W)...')
+  await steerShip(1.0, 0, false, 1500)
+  await sleep(300)
 
-  // Dismount and measure
+  // Test left turn + forward (A then W) - should result in westward movement (negative X)
+  say('Testing left turn (A) + forward (W)...')
+  await steerShip(0, 1.0, false, 500)  // turn left
+  await steerShip(1.0, 0, false, 1500)  // move forward (now heading west)
+  await sleep(300)
+
+  // For airships: test ascend (Space) - should move up (positive Y)
+  if (isAirship) {
+    say('Testing ascend (Space)...')
+    await steerShip(0, 0, true, 1500)
+    await sleep(300)
+  }
+
+  // Dismount and verify position
   say('Dismounting...')
   bot.dismount()
   await sleep(500)
 
-  const distance = startPos.distanceTo(bot.entity.position)
-  say(`${testName} moved ${distance.toFixed(2)} blocks`)
+  const endPos = bot.entity.position
+  const dz = endPos.z - startPos.z  // negative = forward (north)
+  const dx = endPos.x - startPos.x  // negative = west
+  const dy = endPos.y - startPos.y  // positive = up
 
-  if (distance > minDistance) {
-    pass(`${testName} (assembled and moved)`)
-  } else {
-    fail(testName, `Only moved ${distance.toFixed(2)} blocks`)
+  say(`Movement: dX=${dx.toFixed(1)}, dY=${dy.toFixed(1)}, dZ=${dz.toFixed(1)}`)
+
+  // Verify positions
+  let passed = true
+
+  if (dz >= 0) {
+    fail(testName, `Expected forward movement (negative Z), got dZ=${dz.toFixed(2)}`)
+    passed = false
+  }
+
+  if (dx >= 0) {
+    fail(testName, `Expected west movement (negative X), got dX=${dx.toFixed(2)}`)
+    passed = false
+  }
+
+  if (isAirship && dy <= 0) {
+    fail(testName, `Expected upward movement (positive Y), got dY=${dy.toFixed(2)}`)
+    passed = false
+  }
+
+  if (passed) {
+    pass(`${testName} (forward, west${isAirship ? ', up' : ''})`)
   }
 }
 
@@ -596,11 +607,7 @@ async function testCustomShip() {
     { x:  1, y: 0, z:  0, block: 'oak_planks' },
   ]
 
-  const movements = [
-    { forward: 1.0, sideways: 0, jump: false, duration: 2000, label: 'Moving forward...' }
-  ]
-
-  await testCustomShipBase('Custom ship', { blocks, placeWheelOnTop: true }, movements, 0.5)
+  await testCustomShipBase('custom_ship', { blocks, placeWheelOnTop: true }, false)
 }
 
 /**
@@ -623,13 +630,7 @@ async function testCustomAirship() {
     // Center is empty - wheel placed adjacent
   ]
 
-  const movements = [
-    { forward: 1.0, sideways: 0, jump: false, duration: 2000, label: 'Testing forward...' },
-    { forward: 0, sideways: 0, jump: true, duration: 2000, label: 'Testing ascend (jump)...' },
-    { forward: -1.0, sideways: 0, jump: true, duration: 1000, label: 'Testing descend (S+jump)...' },
-  ]
-
-  await testCustomShipBase('Custom airship', { blocks, placeWheelOnTop: false }, movements, 1.0)
+  await testCustomShipBase('custom_airship', { blocks, placeWheelOnTop: false }, true)
 }
 
 // =============================================================================
@@ -637,14 +638,11 @@ async function testCustomAirship() {
 // =============================================================================
 
 const TESTS = {
-  smallship: { name: 'Small Ship', fn: () => testPrefabShip('smallship') },
-  bigship: { name: 'Big Ship', fn: () => testPrefabShip('bigship') },
-  smallairship: { name: 'Small Airship', fn: () => testPrefabShip('smallairship') },
-  'controls-smallship': { name: 'Small Ship Controls', fn: () => testShipControls('smallship') },
-  'controls-bigship': { name: 'Big Ship Controls', fn: () => testShipControls('bigship') },
-  'controls-smallairship': { name: 'Small Airship Controls', fn: () => testShipControls('smallairship') },
-  customship: { name: 'Custom Ship', fn: testCustomShip },
-  customairship: { name: 'Custom Airship', fn: testCustomAirship },
+  smallship: { name: 'Small Ship', fn: () => testShipControls('smallship') },
+  bigship: { name: 'Big Ship', fn: () => testShipControls('bigship') },
+  smallairship: { name: 'Small Airship', fn: () => testShipControls('smallairship') },
+  custom_ship: { name: 'Custom Ship', fn: testCustomShip },
+  custom_airship: { name: 'Custom Airship', fn: testCustomAirship },
 }
 
 function listTests() {
