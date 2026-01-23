@@ -1,6 +1,10 @@
 # BUGS
 
 - ShipRegistry uses non-thread-safe HashMap but is accessed from multiple threads (chunk events, periodic saves). Use ConcurrentHashMap to prevent ConcurrentModificationException.
+- (pre-1.21.9) Rotation logic bug - delta rotation math in ShipInstance.java:1110-1130 has inconsistencies, displays may rotate incorrectly
+- (pre-1.21.9) Custom ship spawnYaw mismatch - initial spawn uses vehicle.getYaw() but recovery uses model.initialRotation.x, causing rotation snap after restart
+- (pre-1.21.9) spawnYaw not persisted to save data - ships rotated before restart may snap when loaded
+- Orphaned carrier on spawn failure - if shulker spawn fails after carrier created, ArmorStand is leaked
 - prefab ship (medium) needs more seats
 - still buggy momentum on recently parked ship, but grid align fixes it? our fine grid align didnt work
 - player does not get moved along with a ship, does not inherit velocity properly
@@ -49,6 +53,16 @@
 ## CODE QUALITY
 
 - ShipInstance has lots of duplication of code for banner/player head rotation/position etc etc. refactor this mess.
+- ServerVersion.java overflow at Minecraft 2.x - version number calculation assumes minor/patch < 100
+- Silent health regen failures after first tick in ShipInstance.java - only logs once, subsequent failures silent
+- Player disconnect handler in DisplayShip.java missing logging - hard to debug seat issues
+- SteerPacketCompat.logged field should be volatile for thread safety
 
 
 # RECENTLY FIXED
+
+- [x] Unsafe null dereference in DisplayShip.java getAttribute().getBaseValue() calls - added null checks
+- [x] AttributeCompat.getMaxHealth() javadoc claimed "never null" but could return null - fixed docs
+- [x] Reflection per packet in ShipSteeringListener - added version check + cached methods
+- [x] TeleportCompat called 50+ times/tick with unnecessary passenger operations - optimized
+- [x] Missing validity checks in ShipInstance.java passenger verification - added isValid() checks

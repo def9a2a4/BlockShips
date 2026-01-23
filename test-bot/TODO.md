@@ -1,0 +1,6 @@
+- steering doesnt work. bots appear to mount, move forward, and then unmount and look around instead of just steering
+- parallel testing is broken, bots fail to join after the first two?
+- runway fixes:
+  - no water for airships
+  - two thick bottom to avoid particle lag
+  - set air 1 wider in each direction
