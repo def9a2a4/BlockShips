@@ -620,7 +620,6 @@ public class ShipInstance {
 
             // Spawn collision shulker if this block has collision enabled
             if (p.collision.enable) {
-                plugin.getLogger().info("[DEBUG] Spawning collider for block " + currentBlockIndex);
                 Shulker spawnedShulker = null;
 
                 try {
@@ -630,7 +629,6 @@ public class ShipInstance {
                     carrierSpawnLoc.setPitch(0);
 
                     // Use ArmorStand as carrier (smooth interpolation)
-                    plugin.getLogger().info("[DEBUG] Spawning carrier ArmorStand...");
                     ArmorStand carrier = w.spawn(carrierSpawnLoc, ArmorStand.class, as -> {
                         try {
                             as.setInvisible(true);
@@ -643,17 +641,15 @@ public class ShipInstance {
                             as.addScoreboardTag(ShipTags.CARRIER_TAG);
                             as.addScoreboardTag(ShipTags.blockIndexTag(currentBlockIndex));
                         } catch (Throwable t) {
-                            plugin.getLogger().severe("[DEBUG] ArmorStand config failed for block " + currentBlockIndex + ": " + t.getMessage());
+                            plugin.getLogger().severe("ArmorStand config failed for block " + currentBlockIndex + ": " + t.getMessage());
                             t.printStackTrace();
                         }
                     });
-                    plugin.getLogger().info("[DEBUG] Carrier spawned for block " + currentBlockIndex);
 
                     // Spawn shulker as passenger for physical collision
                     // Apply size scaling via generic.scale attribute
                     float shulkerSize = p.collision.size;
                     final int finalBlockIndex = currentBlockIndex;
-                    plugin.getLogger().info("[DEBUG] Spawning Shulker...");
                     Shulker shulker = w.spawn(carrierSpawnLoc, Shulker.class, s -> {
                         try {
                             s.setAI(false);
@@ -714,23 +710,20 @@ public class ShipInstance {
                                 }
                             } catch (Throwable scaleError) {
                                 // Scale attribute not available on this version - shulker uses default size
-                                plugin.getLogger().warning("[DEBUG] Could not apply scale to shulker: " + scaleError.getMessage());
                             }
                         } catch (Throwable e) {
-                            plugin.getLogger().severe("[DEBUG] Shulker config failed for block " + finalBlockIndex + ": " + e.getMessage());
+                            plugin.getLogger().severe("Shulker config failed for block " + finalBlockIndex + ": " + e.getMessage());
                             e.printStackTrace();
                         }
                     });
-                    plugin.getLogger().info("[DEBUG] Shulker spawned for block " + currentBlockIndex);
 
                     // Mount shulker on carrier
                     carrier.addPassenger(shulker);
                     spawnedShulker = shulker;
 
                     colliders.add(new CollisionBox(carrier, shulker, new Matrix4f(p.local), p.collision, currentBlockIndex));
-                    plugin.getLogger().info("[DEBUG] Collider complete for block " + currentBlockIndex + ", total colliders: " + colliders.size());
                 } catch (Throwable e) {
-                    plugin.getLogger().severe("[DEBUG] Collider spawn FAILED for block " + currentBlockIndex + ": " + e.getMessage());
+                    plugin.getLogger().severe("Collider spawn failed for block " + currentBlockIndex + ": " + e.getMessage());
                     e.printStackTrace();
                 }
 
@@ -897,12 +890,6 @@ public class ShipInstance {
     public void updateCollisionPositions() {
         Location currentVehicleLoc = vehicle.getLocation();
 
-        // Debug: log once on first tick
-        if (firstTick) {
-            plugin.getLogger().info("[DEBUG] updateCollisionPositions called, " + colliders.size() + " colliders, vehicle at " +
-                String.format("%.2f, %.2f, %.2f", currentVehicleLoc.getX(), currentVehicleLoc.getY(), currentVehicleLoc.getZ()));
-        }
-
         // Calculate collision detection radius once (on first call after colliders are spawned)
         if (collisionRadius < 0) {
             calculateCollisionRadius();
@@ -992,16 +979,6 @@ public class ShipInstance {
                     cb.carrier.addPassenger(cb.entity);
                 }
 
-                // Debug: log carrier and shulker positions on first tick
-                if (isFirstTick) {
-                    Location actualCarrier = cb.carrier.getLocation();
-                    Location actualShulker = cb.entity.getLocation();
-                    plugin.getLogger().info("[DEBUG] Collider " + cb.blockIndex + " teleported:" +
-                        " target=" + String.format("%.2f,%.2f,%.2f", carrierLoc.getX(), carrierLoc.getY(), carrierLoc.getZ()) +
-                        " carrier=" + String.format("%.2f,%.2f,%.2f", actualCarrier.getX(), actualCarrier.getY(), actualCarrier.getZ()) +
-                        " shulker=" + String.format("%.2f,%.2f,%.2f", actualShulker.getX(), actualShulker.getY(), actualShulker.getZ()));
-                }
-
                 // Set carrier velocity for better client/server sync (skip on first tick)
                 if (!isFirstTick) {
                     cb.carrier.setVelocity(new org.bukkit.util.Vector(velocity.x, velocity.y, velocity.z));
@@ -1062,7 +1039,7 @@ public class ShipInstance {
         } catch (Throwable e) {
             // Log once and continue - don't crash the entire tick loop
             if (firstTick) {
-                plugin.getLogger().warning("[DEBUG] Health regeneration failed (will continue without it): " + e.getMessage());
+                plugin.getLogger().warning("Health regeneration failed (will continue without it): " + e.getMessage());
             }
         }
 
