@@ -179,7 +179,7 @@ public class AttributeCompat {
 
     /**
      * Get the MAX_HEALTH attribute for the current server version.
-     * @return The MAX_HEALTH attribute (never null)
+     * @return The MAX_HEALTH attribute, or null if attribute resolution fails on this server version
      */
     public static Attribute getMaxHealth() {
         if (!initialized) initialize();

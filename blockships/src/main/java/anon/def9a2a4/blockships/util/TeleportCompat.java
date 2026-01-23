@@ -74,19 +74,25 @@ public class TeleportCompat {
     /**
      * Teleport an entity by ejecting passengers first, then re-adding them.
      * This is the workaround for SPIGOT-2064.
+     *
+     * Optimized to avoid list allocation when there are no passengers (common case for carriers).
      */
     private static void teleportWithEject(Entity entity, Location location) {
+        // Fast path: check if entity has passengers before allocating list
+        // getPassengers() creates a new list each call, so avoid it when possible
         List<Entity> passengers = entity.getPassengers();
-        boolean hadPassengers = !passengers.isEmpty();
-
-        if (hadPassengers) {
-            entity.eject();
+        if (passengers.isEmpty()) {
+            // No passengers - just teleport directly
+            entity.teleport(location);
+            return;
         }
 
+        // Has passengers - need to eject, teleport, and re-add
+        entity.eject();
         entity.teleport(location);
 
-        if (hadPassengers) {
-            for (Entity passenger : passengers) {
+        for (Entity passenger : passengers) {
+            if (passenger.isValid()) {
                 entity.addPassenger(passenger);
             }
         }

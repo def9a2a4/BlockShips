@@ -23,6 +23,19 @@ public class ShipSteeringListener {
     private final JavaPlugin plugin;
     private final ProtocolManager protocolManager;
 
+    // Cached version check - true if server is 1.21.2+ (new Input record format)
+    private static final boolean USE_NEW_INPUT_FORMAT = anon.def9a2a4.blockships.util.ServerVersion.isAtLeast(1, 21, 2);
+
+    // Cached reflection methods for new format (only initialized if needed)
+    private static java.lang.reflect.Method forwardMethod;
+    private static java.lang.reflect.Method backwardMethod;
+    private static java.lang.reflect.Method leftMethod;
+    private static java.lang.reflect.Method rightMethod;
+    private static java.lang.reflect.Method jumpMethod;
+    private static java.lang.reflect.Method sprintMethod;
+    private static boolean methodsCached = false;
+    private static boolean methodsValid = false;
+
     public ShipSteeringListener(JavaPlugin plugin) {
         this.plugin = plugin;
         this.protocolManager = ProtocolLibrary.getProtocolManager();
@@ -53,65 +66,105 @@ public class ShipSteeringListener {
                 return;
             }
 
-            // Try new format first (1.21.2+): Input record with boolean methods
-            StructureModifier<Object> modifier = packet.getModifier();
-            if (modifier.size() >= 1) {
-                Object inputObj = modifier.read(0);
-                if (inputObj != null) {
-                    Class<?> inputClass = inputObj.getClass();
-
-                    // Check if this is the new Input record (has forward() method returning boolean)
-                    try {
-                        java.lang.reflect.Method forwardMethod = inputClass.getMethod("forward");
-                        if (forwardMethod.getReturnType() == boolean.class) {
-                            // New format (1.21.2+)
-                            boolean forward = (boolean) forwardMethod.invoke(inputObj);
-                            boolean backward = (boolean) inputClass.getMethod("backward").invoke(inputObj);
-                            boolean left = (boolean) inputClass.getMethod("left").invoke(inputObj);
-                            boolean right = (boolean) inputClass.getMethod("right").invoke(inputObj);
-                            boolean jump = (boolean) inputClass.getMethod("jump").invoke(inputObj);
-                            boolean sprint = (boolean) inputClass.getMethod("sprint").invoke(inputObj);
-
-                            ship.setInputState(forward, backward, left, right);
-                            ship.setVerticalInputState(jump, sprint);
-                            return;
-                        }
-                    } catch (NoSuchMethodException e) {
-                        // Not the new format, fall through to old format
-                    }
-                }
-            }
-
-            // Old format (1.21.1 and earlier): float sideways, float forward, boolean jump, boolean unmount
-            StructureModifier<Float> floats = packet.getFloat();
-            if (floats.size() >= 2) {
-                float sideways = floats.read(0);  // positive = left (A key), negative = right (D key)
-                float forward = floats.read(1);   // positive = forward (W key), negative = backward (S key)
-
-                // Convert floats to booleans (threshold at 0)
-                boolean isForward = forward > 0;
-                boolean isBackward = forward < 0;
-                boolean isLeft = sideways > 0;   // A key = positive sideways
-                boolean isRight = sideways < 0;  // D key = negative sideways
-
-                ship.setInputState(isForward, isBackward, isLeft, isRight);
-
-                // Old format also has jump and unmount booleans
-                StructureModifier<Boolean> bools = packet.getBooleans();
-                if (bools.size() >= 1) {
-                    boolean jump = bools.read(0);
-                    // Old packet format doesn't have sprint - use S + Space combo for descent
-                    // S + Space = descend (sprint=true, jump=false to prevent ascent)
-                    // Space only = ascend (sprint=false, jump=true)
-                    boolean descend = isBackward && jump;
-                    boolean ascend = jump && !isBackward;
-                    ship.setVerticalInputState(ascend, descend);
-                }
+            // Use version check to determine packet format (avoids reflection per packet)
+            if (USE_NEW_INPUT_FORMAT) {
+                handleNewInputFormat(packet, ship);
+            } else {
+                handleOldInputFormat(packet, ship);
             }
 
         } catch (Exception ex) {
             plugin.getLogger().warning("Error handling steering packet: " + ex.getMessage());
             ex.printStackTrace();
+        }
+    }
+
+    /**
+     * Handle new Input record format (1.21.2+) with cached reflection methods.
+     */
+    private void handleNewInputFormat(PacketContainer packet, ShipInstance ship) throws Exception {
+        StructureModifier<Object> modifier = packet.getModifier();
+        if (modifier.size() < 1) return;
+
+        Object inputObj = modifier.read(0);
+        if (inputObj == null) return;
+
+        // Cache reflection methods on first use
+        if (!methodsCached) {
+            cacheInputMethods(inputObj.getClass());
+        }
+
+        if (!methodsValid) {
+            // Methods couldn't be cached, fall back to old format
+            handleOldInputFormat(packet, ship);
+            return;
+        }
+
+        // Use cached methods
+        boolean forward = (boolean) forwardMethod.invoke(inputObj);
+        boolean backward = (boolean) backwardMethod.invoke(inputObj);
+        boolean left = (boolean) leftMethod.invoke(inputObj);
+        boolean right = (boolean) rightMethod.invoke(inputObj);
+        boolean jump = (boolean) jumpMethod.invoke(inputObj);
+        boolean sprint = (boolean) sprintMethod.invoke(inputObj);
+
+        ship.setInputState(forward, backward, left, right);
+        ship.setVerticalInputState(jump, sprint);
+    }
+
+    /**
+     * Cache reflection methods for the Input record class.
+     */
+    private synchronized void cacheInputMethods(Class<?> inputClass) {
+        if (methodsCached) return;
+        methodsCached = true;
+
+        try {
+            forwardMethod = inputClass.getMethod("forward");
+            backwardMethod = inputClass.getMethod("backward");
+            leftMethod = inputClass.getMethod("left");
+            rightMethod = inputClass.getMethod("right");
+            jumpMethod = inputClass.getMethod("jump");
+            sprintMethod = inputClass.getMethod("sprint");
+
+            // Verify return types are boolean
+            if (forwardMethod.getReturnType() == boolean.class) {
+                methodsValid = true;
+            }
+        } catch (NoSuchMethodException e) {
+            plugin.getLogger().warning("Failed to cache Input methods: " + e.getMessage());
+            methodsValid = false;
+        }
+    }
+
+    /**
+     * Handle old Input format (pre-1.21.2) with float sideways/forward and boolean jump.
+     */
+    private void handleOldInputFormat(PacketContainer packet, ShipInstance ship) {
+        StructureModifier<Float> floats = packet.getFloat();
+        if (floats.size() < 2) return;
+
+        float sideways = floats.read(0);  // positive = left (A key), negative = right (D key)
+        float forward = floats.read(1);   // positive = forward (W key), negative = backward (S key)
+
+        // Convert floats to booleans (threshold at 0)
+        boolean isForward = forward > 0;
+        boolean isBackward = forward < 0;
+        boolean isLeft = sideways > 0;   // A key = positive sideways
+        boolean isRight = sideways < 0;  // D key = negative sideways
+
+        ship.setInputState(isForward, isBackward, isLeft, isRight);
+
+        // Old format also has jump and unmount booleans
+        StructureModifier<Boolean> bools = packet.getBooleans();
+        if (bools.size() >= 1) {
+            boolean jump = bools.read(0);
+            // Old packet format doesn't have sprint - use S + Space combo for descent
+            // S + Space = descend (sprint=true, jump=false to prevent ascent)
+            // Space only = ascend (sprint=false, jump=true)
+            boolean descend = isBackward && jump;
+            boolean ascend = jump && !isBackward;
+            ship.setVerticalInputState(ascend, descend);
         }
     }
 

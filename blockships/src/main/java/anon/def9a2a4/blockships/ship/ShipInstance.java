@@ -975,7 +975,8 @@ public class ShipInstance {
                 // Shulker should follow carrier as passenger
 
                 // Verify passenger relationship is intact (can break on chunk reload)
-                if (!cb.carrier.getPassengers().contains(cb.entity)) {
+                // Only re-add if both carrier and shulker are still valid
+                if (cb.carrier.isValid() && cb.entity.isValid() && !cb.carrier.getPassengers().contains(cb.entity)) {
                     cb.carrier.addPassenger(cb.entity);
                 }
 

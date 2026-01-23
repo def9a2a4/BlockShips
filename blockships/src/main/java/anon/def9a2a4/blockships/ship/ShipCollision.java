@@ -287,6 +287,9 @@ public class ShipCollision {
     /**
      * Calculate collision force from terrain (blocks).
      */
+    // Maximum collisions to process per collision box (early termination optimization)
+    private static final int MAX_COLLISIONS_PER_BOX = 4;
+
     private Vector3f calculateTerrainCollisionForce(CollisionBox cb) {
         org.bukkit.util.BoundingBox shulkerBox = cb.entity.getBoundingBox();
         World world = cb.entity.getWorld();
@@ -302,6 +305,10 @@ public class ShipCollision {
         int minZ = (int) Math.floor(shulkerBox.getMinZ());
         int maxZ = (int) Math.ceil(shulkerBox.getMaxZ());
 
+        // Reuse single BoundingBox instance to avoid allocations in tight loop
+        org.bukkit.util.BoundingBox blockBox = new org.bukkit.util.BoundingBox(0, 0, 0, 1, 1, 1);
+
+        outerLoop:
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
                 for (int z = minZ; z <= maxZ; z++) {
@@ -312,11 +319,8 @@ public class ShipCollision {
                         continue;
                     }
 
-                    // Get block bounding box
-                    org.bukkit.util.BoundingBox blockBox = new org.bukkit.util.BoundingBox(
-                        x, y, z,
-                        x + 1, y + 1, z + 1
-                    );
+                    // Resize reusable bounding box to current block position
+                    blockBox.resize(x, y, z, x + 1, y + 1, z + 1);
 
                     // Check if shulker overlaps with block
                     if (shulkerBox.overlaps(blockBox)) {
@@ -327,6 +331,11 @@ public class ShipCollision {
                             float speedFactor = Math.max(1.0f, Math.abs(ship.physics.currentSpeed) * config.terrainSpeedMultiplier);
                             totalForce.add(force.mul(config.terrainCollisionStrength * speedFactor));
                             collisionCount++;
+
+                            // Early termination: enough collision data gathered
+                            if (collisionCount >= MAX_COLLISIONS_PER_BOX) {
+                                break outerLoop;
+                            }
                         }
                     }
                 }
