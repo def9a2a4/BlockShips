@@ -1,0 +1,134 @@
+name: Server Integration Test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        minecraft: ['1.21.1', '1.21.4', '1.21.8', '1.21.10', '1.21.11']
+        server: ['paper', 'purpur']
+
+    name: ${{ matrix.server }} ${{ matrix.minecraft }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build plugin
+        run: cd blockships && gradle build
+
+      - name: Download server JAR
+        run: |
+          mkdir -p test-server/plugins
+          PROJECT="${{ matrix.server }}"
+          VERSION="${{ matrix.minecraft }}"
+
+          if [ "$PROJECT" = "paper" ]; then
+            API_URL="https://api.papermc.io/v2/projects/paper/versions/${VERSION}/builds"
+            BUILD=$(curl -s "$API_URL" | jq -r '.builds[-1].build')
+            curl -o test-server/server.jar "https://api.papermc.io/v2/projects/paper/versions/${VERSION}/builds/${BUILD}/downloads/paper-${VERSION}-${BUILD}.jar"
+          else
+            API_URL="https://api.purpurmc.org/v2/purpur/${VERSION}"
+            BUILD=$(curl -s "$API_URL" | jq -r '.builds.latest')
+            curl -o test-server/server.jar "https://api.purpurmc.org/v2/purpur/${VERSION}/${BUILD}/download"
+          fi
+
+          echo "Downloaded $PROJECT $VERSION build $BUILD"
+
+      - name: Setup test server
+        run: |
+          cp blockships/build/libs/BlockShips-*.jar test-server/plugins/
+          echo "eula=true" > test-server/eula.txt
+          cat > test-server/server.properties << 'EOF'
+          online-mode=false
+          server-port=25565
+          level-type=flat
+          spawn-protection=0
+          max-tick-time=-1
+          EOF
+
+      - name: Start server and verify plugin
+        run: |
+          cd test-server
+
+          # Create a FIFO for sending commands to server stdin
+          mkfifo server_input
+
+          # Start server with FIFO as stdin, log to file, tail for live output
+          tail -f server_input | java -Xmx1G -Xms1G -jar server.jar nogui > server.log 2>&1 &
+          SERVER_PID=$!
+
+          # Also tail the log for live output in CI
+          tail -f server.log &
+          TAIL_PID=$!
+
+          # Wait for server to fully start (look for "Done" message)
+          for i in {1..120}; do
+            if grep -q "Done" server.log 2>/dev/null; then
+              echo ""
+              echo "========== Server started successfully =========="
+              break
+            fi
+            if ! kill -0 $SERVER_PID 2>/dev/null; then
+              echo ""
+              echo "========== Server process died unexpectedly =========="
+              cat server.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          # Check for plugin load success
+          if grep -q "BlockShips.*enabled" server.log; then
+            echo "✓ BlockShips plugin loaded successfully"
+          else
+            echo "✗ BlockShips plugin failed to load"
+            cat server.log
+            exit 1
+          fi
+
+          # Check for errors during startup
+          if grep -qE "ERROR.*BlockShips|BlockShips.*Exception" server.log; then
+            echo "✗ Errors detected in BlockShips plugin"
+            grep -E "ERROR.*BlockShips|BlockShips.*Exception" server.log
+            exit 1
+          fi
+
+          # Clean shutdown via console command
+          echo "stop" > server_input
+
+          # Wait for server to exit (max 30 seconds)
+          for i in {1..30}; do
+            if ! kill -0 $SERVER_PID 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          # Cleanup
+          kill $TAIL_PID 2>/dev/null || true
+          kill $SERVER_PID 2>/dev/null || true
+          rm -f server_input
+
+          echo "✓ Server test completed for ${{ matrix.server }} ${{ matrix.minecraft }}"
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-logs-${{ matrix.server }}-${{ matrix.minecraft }}
+          path: test-server/server.log
