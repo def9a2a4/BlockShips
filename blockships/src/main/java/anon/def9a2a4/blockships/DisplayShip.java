@@ -26,6 +26,8 @@ import org.bukkit.event.player.PlayerAdvancementDoneEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerKickEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
 import org.bukkit.advancement.Advancement;
 import org.bukkit.advancement.AdvancementProgress;
@@ -1312,6 +1314,42 @@ public class DisplayShip implements Listener {
                 }.runTaskLater(plugin, 2L);
             }
         }
+    }
+
+    /**
+     * Handle player disconnect while riding a ship to prevent entity removal.
+     * Must eject player BEFORE disconnect completes.
+     */
+    private void handlePlayerDisconnectOnShip(Player player) {
+        Entity vehicle = player.getVehicle();
+        if (vehicle == null) return;
+        if (!(vehicle instanceof Shulker shulker)) return;
+
+        Set<String> tags = shulker.getScoreboardTags();
+        if (!ShipTags.isShipEntity(tags)) return;
+
+        // Eject player to prevent entity removal
+        shulker.removePassenger(player);
+
+        // Free the seat (same logic as VehicleExitEvent)
+        UUID shipId = ShipTags.extractShipId(tags);
+        int seatIndex = ShipTags.extractSeatIndex(tags);
+        if (shipId != null && seatIndex >= 0) {
+            ShipInstance inst = ShipRegistry.byId(shipId);
+            if (inst != null) {
+                inst.freeSeat(seatIndex);
+            }
+        }
+    }
+
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent e) {
+        handlePlayerDisconnectOnShip(e.getPlayer());
+    }
+
+    @EventHandler
+    public void onPlayerKick(PlayerKickEvent e) {
+        handlePlayerDisconnectOnShip(e.getPlayer());
     }
 
     /**
