@@ -2,6 +2,7 @@ package anon.def9a2a4.blockships.ship;
 
 import anon.def9a2a4.blockships.ShipConfig;
 import anon.def9a2a4.blockships.ShipTags;
+import anon.def9a2a4.blockships.util.TeleportCompat;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Sound;
@@ -106,7 +107,7 @@ public class ShipPhysics {
             if (hasVerticalMovement) {
                 newLoc.add(0, currentYVelocity, 0);
             }
-            ship.vehicle.teleport(newLoc);
+            TeleportCompat.teleport(ship.vehicle, newLoc);
         }
 
         // Update rotation based on input state
@@ -140,7 +141,7 @@ public class ShipPhysics {
             float newYaw = ship.vehicle.getYaw() + currentRotationVelocity;
             Location newLoc = ship.vehicle.getLocation();
             newLoc.setYaw(newYaw);
-            ship.vehicle.teleport(newLoc);
+            TeleportCompat.teleport(ship.vehicle, newLoc);
         }
 
         // Play movement sounds
@@ -361,7 +362,7 @@ public class ShipPhysics {
         float pitch = loc.getPitch();
 
         Location snapped = new Location(loc.getWorld(), x, y, z, snappedYaw, pitch);
-        ship.vehicle.teleport(snapped);
+        TeleportCompat.teleport(ship.vehicle, snapped);
 
         // Update collision positions to sync with new location
         ship.updateCollisionPositions();
@@ -420,7 +421,7 @@ public class ShipPhysics {
 
         // Set the new aligned location
         Location aligned = new Location(loc.getWorld(), x, y, z, snappedYaw, snappedPitch);
-        ship.vehicle.teleport(aligned);
+        TeleportCompat.teleport(ship.vehicle, aligned);
 
         // Update collision positions immediately
         ship.updateCollisionPositions();

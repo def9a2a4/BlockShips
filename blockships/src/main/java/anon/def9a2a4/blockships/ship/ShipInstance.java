@@ -77,6 +77,7 @@ public class ShipInstance {
     private Location previousVehicleLocation;
     private float previousYaw;
     private float previousPitch;
+    private float spawnYaw;  // Track spawn yaw for pre-1.21.9 display rotation fix
     private int ticksSinceLastMovement = 0;
     private boolean taskStopped = false;
     private boolean firstTick = true; // Force first tick to update positions
@@ -285,6 +286,7 @@ public class ShipInstance {
         this.previousVehicleLocation = vehicle.getLocation().clone();
         this.previousYaw = vehicle.getYaw();
         this.previousPitch = vehicle.getPitch();
+        this.spawnYaw = vehicle.getYaw();  // Track spawn yaw for pre-1.21.9 display rotation
 
         // Initialize chunk tracking for persistence
         this.currentChunkX = vehicle.getLocation().getBlockX() >> 4;
@@ -1118,12 +1120,37 @@ public class ShipInstance {
         previousYaw = yaw;
         previousPitch = pitch;
 
-        // Build rotation matrix for initial rotation offset ONLY (not vehicle rotation)
-        // Vehicle rotation is inherited since displays are passengers of the vehicle
+        // Build rotation matrix for display entities
+        // On 1.21.9+: Vehicle rotation is inherited since displays are passengers of the vehicle
+        // On pre-1.21.9: Display's local coordinate system is "frozen" at spawn yaw, so we only
+        //                apply the DELTA rotation from spawn (not absolute yaw, which causes doubling)
         Matrix4f R_initial = new Matrix4f()
             .rotateY((float) java.lang.Math.toRadians(model.initialRotation.x))
             .rotateX((float) java.lang.Math.toRadians(model.initialRotation.y))
             .rotateZ((float) java.lang.Math.toRadians(model.initialRotation.z));
+
+        Matrix4f R;
+        if (TeleportCompat.needsPassengerEject()) {
+            // Pre-1.21.9: Apply only the DELTA rotation from spawn
+            // The display's frozen local coordinate system already has spawn_yaw
+            float deltaYaw = vehicle.getYaw() - spawnYaw;
+            float deltaPitch = vehicle.getPitch();  // Pitch starts at 0, so no spawn offset needed
+
+            Vector3f vehicleRot = new Vector3f(
+                (float) java.lang.Math.toRadians(-deltaYaw),
+                (float) java.lang.Math.toRadians(-deltaPitch),
+                0f
+            );
+            Vector3f transformedRot = model.rotationTransform.transform(vehicleRot, new Vector3f());
+            Matrix4f R_delta = new Matrix4f()
+                .rotateY(transformedRot.x)
+                .rotateX(transformedRot.y)
+                .rotateZ(transformedRot.z);
+            R = new Matrix4f(R_delta).mul(R_initial);
+        } else {
+            // 1.21.9+: Only initial rotation, vehicle rotation is inherited from passenger
+            R = R_initial;
+        }
 
         // Build translation matrix for position offset (in local space)
         Matrix4f T = new Matrix4f().translation(model.positionOffset);
@@ -1134,10 +1161,9 @@ public class ShipInstance {
             T_display.translate(config.customDisplayOffset);
         }
 
-        // Update each child's transformation: R_initial * T_display * display.base
-        // Only apply static rotations - vehicle rotation is inherited
+        // Update each child's transformation: R * T_display * display.base
         for (DisplayInstance di : displays) {
-            Matrix4f world = new Matrix4f(R_initial).mul(T_display).mul(di.base);
+            Matrix4f world = new Matrix4f(R).mul(T_display).mul(di.base);
             di.entity.setTransformationMatrix(world);
         }
     }
@@ -1710,8 +1736,8 @@ public class ShipInstance {
         updateCollisionPositions();
 
         // Update display transforms to match current vehicle orientation
-        // Build rotation matrix for initial rotation offset ONLY (not vehicle rotation)
-        // Vehicle rotation is inherited since displays are passengers of the vehicle
+        // At init time, use R_initial only - the display's frozen local coordinate system
+        // already has the spawn yaw (on pre-1.21.9), or vehicle rotation is inherited (on 1.21.9+)
         Matrix4f R_initial = new Matrix4f()
             .rotateY((float) java.lang.Math.toRadians(model.initialRotation.x))
             .rotateX((float) java.lang.Math.toRadians(model.initialRotation.y))
@@ -2150,7 +2176,7 @@ public class ShipInstance {
 
         // Set the new aligned location
         Location aligned = new Location(loc.getWorld(), x, y, z, snappedYaw, snappedPitch);
-        vehicle.teleport(aligned);
+        TeleportCompat.teleport(vehicle, aligned);
 
         // Update collision positions immediately so shulkers move with the ship
         updateCollisionPositions();

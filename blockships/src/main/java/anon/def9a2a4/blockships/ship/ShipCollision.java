@@ -3,6 +3,7 @@ package anon.def9a2a4.blockships.ship;
 import anon.def9a2a4.blockships.ShipConfig;
 import anon.def9a2a4.blockships.ShipRegistry;
 import anon.def9a2a4.blockships.ShipTags;
+import anon.def9a2a4.blockships.util.TeleportCompat;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
@@ -192,7 +193,7 @@ public class ShipCollision {
                     0,
                     forceDir.z * config.collisionResponseStrength * 0.3f
                 );
-                ship.vehicle.teleport(vehicleLoc);
+                TeleportCompat.teleport(ship.vehicle, vehicleLoc);
             }
         } else {
             // Ship is moving - apply resistance and sliding forces
@@ -220,7 +221,7 @@ public class ShipCollision {
                     0, // No Y movement
                     lateralForce.z * config.collisionResponseStrength
                 );
-                ship.vehicle.teleport(vehicleLoc);
+                TeleportCompat.teleport(ship.vehicle, vehicleLoc);
             }
         }
 
