@@ -1,6 +1,5 @@
 package anon.def9a2a4.blockships.util;
 
-import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.entity.Entity;
 
@@ -35,34 +34,13 @@ public class TeleportCompat {
         if (initialized) return;
         initialized = true;
 
-        // Parse server version to determine if we need the passenger eject workaround
-        // Format examples: "1.21.1-R0.1-SNAPSHOT", "1.21.9-R0.1-SNAPSHOT"
-        String bukkitVersion = Bukkit.getBukkitVersion();
-        LOGGER.info("[TeleportCompat] Detecting teleport behavior for version: " + bukkitVersion);
+        // 1.21.9+ has the fix, earlier versions need workaround (SPIGOT-2064)
+        needsPassengerEject = !ServerVersion.isAtLeast(1, 21, 9);
 
-        try {
-            // Extract major.minor.patch from version string
-            String[] parts = bukkitVersion.split("-")[0].split("\\.");
-            int major = Integer.parseInt(parts[0]);
-            int minor = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
-            int patch = parts.length > 2 ? Integer.parseInt(parts[2]) : 0;
-
-            // 1.21.9+ has the fix, earlier versions need workaround
-            // Compare as: major * 10000 + minor * 100 + patch
-            int version = major * 10000 + minor * 100 + patch;
-            int fixedVersion = 1 * 10000 + 21 * 100 + 9; // 1.21.9
-
-            needsPassengerEject = version < fixedVersion;
-
-            if (needsPassengerEject) {
-                LOGGER.info("[TeleportCompat] Version " + bukkitVersion + " requires passenger eject workaround (SPIGOT-2064)");
-            } else {
-                LOGGER.info("[TeleportCompat] Version " + bukkitVersion + " has native passenger teleport support");
-            }
-        } catch (Exception e) {
-            // If version parsing fails, assume we need the workaround (safer)
-            needsPassengerEject = true;
-            LOGGER.warning("[TeleportCompat] Could not parse version '" + bukkitVersion + "', assuming passenger eject needed: " + e.getMessage());
+        if (needsPassengerEject) {
+            LOGGER.info("[TeleportCompat] Version requires passenger eject workaround (SPIGOT-2064)");
+        } else {
+            LOGGER.info("[TeleportCompat] Version has native passenger teleport support");
         }
     }
 
