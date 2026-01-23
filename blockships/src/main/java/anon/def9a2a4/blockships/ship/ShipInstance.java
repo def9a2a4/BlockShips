@@ -1697,6 +1697,7 @@ public class ShipInstance {
         previousVehicleLocation = vehicle.getLocation().clone();
         previousYaw = vehicle.getYaw();
         previousPitch = vehicle.getPitch();
+        spawnYaw = vehicle.getYaw();  // Track spawn yaw for pre-1.21.9 display rotation fix
         firstTick = true;
 
         // Initialize chunk tracking for persistence
