@@ -50,7 +50,7 @@ server: server-plugin-copy server-start
 TEST_SERVER_DIR := test-server
 DOWNLOAD_CACHE := .download-cache
 SERVER_VARIANT ?= paper
-MINECRAFT_VERSION ?= 1.21.11
+MINECRAFT_VERSION ?= 1.21.1
 
 $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar:
 	@mkdir -p $(DOWNLOAD_CACHE)/plugins
@@ -160,6 +160,7 @@ clean-download-cache:
 test-bot-install:
 	cd test-bot && npm install
 
+# 	rm -f $(TEST_SERVER_DIR)/world/playerdata/30fecbe1-2271-3418-8553-d3ded0e95f56.dat
 .PHONY: test-bot-run
 test-bot-run:
 	cd test-bot && npm test

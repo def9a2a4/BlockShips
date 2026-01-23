@@ -1,5 +1,4 @@
 const mineflayer = require('mineflayer')
-const { Vec3 } = require('vec3')
 
 // Configuration
 const HOST = process.env.MC_HOST || 'localhost'
@@ -37,6 +36,12 @@ async function waitForChunks() {
   }
 }
 
+// Helper to say and log
+function say(msg) {
+  log(msg)
+  bot.chat(msg)
+}
+
 // Main test runner
 async function runTests() {
   log('Starting BlockShips test suite...')
@@ -47,6 +52,13 @@ async function runTests() {
   // Wait for server to be ready and OP the bot
   log('Waiting for operator permissions...')
   await sleep(3000)
+
+  // Set creative mode and flying
+  say('Setting creative mode and flying...')
+  bot.chat('/gamemode creative')
+  await sleep(500)
+  bot.creative.startFlying()
+  await sleep(500)
 
   try {
     // Test 1: Prefab ship spawning
@@ -77,15 +89,21 @@ async function runTests() {
 }
 
 async function testPrefabSpawn() {
-  log('Testing prefab ship spawning...')
+  say('=== TEST: Prefab ship spawning ===')
 
-  // First, ensure we have water nearby (10x10, 4 deep) with air clearance above
-  bot.chat('/fill ~-5 ~-4 ~-5 ~4 ~-1 ~4 minecraft:water')
+  // First, ensure we have water nearby (40x40, 8 deep) with air clearance above (20 high)
+  say('Step 1: Filling area with water and air...')
+  // Water: 40x40, 8 deep
+  bot.chat('/fill ~-10 ~-8 ~-10 ~9 ~-1 ~9 minecraft:water')
   await sleep(500)
-  bot.chat('/fill ~-5 ~0 ~-5 ~4 ~9 ~4 minecraft:air')
+  // Air: 40x40, 20 high - split into two chunks (top to bottom)
+  bot.chat('/fill ~-20 ~10 ~-20 ~19 ~19 ~19 minecraft:air')
+  await sleep(500)
+  bot.chat('/fill ~-20 ~0 ~-20 ~19 ~9 ~19 minecraft:air')
   await sleep(1000)
 
   // Request a ship kit
+  say('Step 2: Requesting ship kit...')
   bot.chat('/blockships give smallship')
   await sleep(1500)
 
@@ -98,18 +116,18 @@ async function testPrefabSpawn() {
   })
 
   if (!shipItem) {
+    say('FAIL: Did not receive ship item!')
     fail('Prefab spawn', 'Did not receive ship item in inventory')
     log(`  Inventory contains: ${items.map(i => i.name).join(', ') || 'empty'}`)
     return
   }
 
-  log(`  Found ship item: ${shipItem.name}`)
-
-  // Equip the ship item
+  say(`Step 3: Found ship item: ${shipItem.name}, equipping...`)
   await bot.equip(shipItem, 'hand')
   await sleep(500)
 
   // Find a water block to place on
+  say('Step 4: Looking for water block...')
   const pos = bot.entity.position
   let targetBlock = null
 
@@ -124,13 +142,12 @@ async function testPrefabSpawn() {
   }
 
   if (!targetBlock) {
+    say('FAIL: No water block found!')
     fail('Prefab spawn', 'No water block found to spawn ship on')
     return
   }
 
-  log(`  Found water at ${targetBlock.position}`)
-
-  // Right-click (activate) the water block to spawn ship
+  say(`Step 5: Found water at ${targetBlock.position}, spawning ship...`)
   try {
     await bot.activateBlock(targetBlock)
     await sleep(3000)
@@ -146,16 +163,19 @@ async function testPrefabSpawn() {
   })
 
   if (nearbyEntities.length > 0) {
+    say(`PASS: Ship spawned! Found ${nearbyEntities.length} entities`)
     pass(`Prefab spawn (found ${nearbyEntities.length} ship entities)`)
   } else {
+    say('FAIL: No ship entities found!')
     fail('Prefab spawn', 'No ship entities found after spawning')
   }
 }
 
 async function testShipMovement() {
-  log('Testing ship movement...')
+  say('=== TEST: Ship movement ===')
 
   // Find a shulker (seat) to mount
+  say('Step 1: Looking for shulker seat...')
   const shulkers = Object.values(bot.entities).filter(e =>
     e.name === 'shulker' &&
     e.position &&
@@ -163,6 +183,7 @@ async function testShipMovement() {
   )
 
   if (shulkers.length === 0) {
+    say('FAIL: No shulker found!')
     fail('Movement', 'No ship shulker found to mount')
     return
   }
@@ -173,63 +194,84 @@ async function testShipMovement() {
   )
 
   const seat = shulkers[0]
-  log(`  Found shulker seat at ${seat.position}`)
+  say(`Step 2: Found shulker at ${seat.position.toString()} (id: ${seat.id})`)
+
+  // Set up mount event listener
+  let mounted = false
+  const mountHandler = () => {
+    mounted = true
+    say(`Mount event fired! vehicle: ${bot.vehicle ? bot.vehicle.name : 'null'}`)
+  }
+  bot.on('mount', mountHandler)
 
   // Try to mount the ship by right-clicking the shulker
+  say('Step 3: Looking at shulker...')
   try {
-    // Walk closer to the shulker first
-    const goal = seat.position.offset(0, 0, 1)
-    await bot.lookAt(seat.position.offset(0, 1, 0))
-
-    // Use attack to interact (sometimes works better than activate for entities)
+    await bot.lookAt(seat.position.offset(0, 0.5, 0))
+    await sleep(200)
+    say('Step 4: Right-clicking shulker to mount...')
     await bot.useOn(seat)
-    await sleep(1000)
   } catch (err) {
-    log(`  Warning: mount error: ${err.message}`)
+    say(`Warning: useOn error: ${err.message}`)
   }
 
-  // Check if we're mounted
+  // Wait for mount event
+  say('Step 5: Waiting for mount event...')
+  for (let i = 0; i < 20 && !mounted; i++) {
+    await sleep(100)
+  }
+
+  bot.removeListener('mount', mountHandler)
+
+  const vehicleInfo = bot.vehicle ? `${bot.vehicle.name} (id: ${bot.vehicle.id})` : 'null'
+  say(`Step 6: Mount result - bot.vehicle = ${vehicleInfo}`)
+
   if (!bot.vehicle) {
-    // Try alternative: walk into it
-    log('  Direct mount failed, trying to walk onto ship...')
-    const targetPos = seat.position
-    try {
-      // Simple movement toward target
-      const direction = targetPos.minus(bot.entity.position).normalize()
-      bot.setControlState('forward', true)
-      await bot.lookAt(targetPos)
-      await sleep(2000)
-      bot.setControlState('forward', false)
-    } catch (err) {
-      log(`  Walk attempt error: ${err.message}`)
-    }
+    say('FAIL: Mount failed - bot.vehicle is null!')
+    say('STEER_VEHICLE packets will NOT be sent')
+    fail('Movement', 'Failed to mount ship - bot.vehicle is null')
+    return
   }
 
   // Record starting position
   const startPos = bot.entity.position.clone()
-  log(`  Starting position: ${startPos}`)
+  say(`Step 7: Starting position: ${startPos.toString()}`)
 
-  // Try to move the ship by pressing forward
-  log('  Pressing forward for 5 seconds...')
-  bot.setControlState('forward', true)
-  await sleep(5000)
-  bot.setControlState('forward', false)
+  // Manually send STEER_VEHICLE packets (mineflayer doesn't send them continuously)
+  say('Step 8: Sending STEER_VEHICLE packets for 5 seconds...')
+  const TICK_MS = 100  // Send every 100ms (10 packets/second) to avoid rate limiting
+  const DURATION_MS = 5000
+  const numTicks = DURATION_MS / TICK_MS
+
+  for (let i = 0; i < numTicks; i++) {
+    // Send STEER_VEHICLE packet with forward=1.0
+    bot._client.write('steer_vehicle', {
+      sideways: 0.0,
+      forward: 1.0,
+      jump: 0,
+      unmount: 0
+    })
+    await sleep(TICK_MS)
+  }
   await sleep(500)
 
   // Check final position
   const endPos = bot.entity.position
   const distance = startPos.distanceTo(endPos)
-  log(`  Ending position: ${endPos}`)
-  log(`  Distance moved: ${distance.toFixed(2)} blocks`)
+  say(`Step 9: Ending position: ${endPos.toString()}`)
+  say(`Step 10: Distance moved: ${distance.toFixed(2)} blocks`)
 
   if (distance > 0.5) {
+    say(`PASS: Moved ${distance.toFixed(1)} blocks!`)
     pass(`Movement (moved ${distance.toFixed(1)} blocks)`)
   } else {
+    say(`FAIL: Only moved ${distance.toFixed(2)} blocks`)
     fail('Movement', `Only moved ${distance.toFixed(2)} blocks`)
   }
 
   // Try to dismount
   if (bot.vehicle) {
+    say('Step 11: Dismounting...')
     bot.dismount()
   }
 }
@@ -255,7 +297,7 @@ bot.on('error', (err) => {
 })
 
 bot.on('kicked', (reason) => {
-  log(`Bot was kicked: ${reason}`)
+  log(`Bot was kicked: ${JSON.stringify(reason, null, 2)}`)
   process.exit(1)
 })
 
