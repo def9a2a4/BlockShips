@@ -646,7 +646,9 @@ public class ShipWheelManager {
             if (ship != null && ship.vehicle != null && ship.vehicle.isValid()) {
                 int blockCount = ship.model.parts.size();
                 double currentHealth = ship.vehicle.getHealth();
-                double maxHealth = ship.vehicle.getAttribute(anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth()).getBaseValue();
+                org.bukkit.attribute.Attribute maxHealthAttr = anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth();
+                org.bukkit.attribute.AttributeInstance maxHealthInstance = maxHealthAttr != null ? ship.vehicle.getAttribute(maxHealthAttr) : null;
+                double maxHealth = maxHealthInstance != null ? maxHealthInstance.getBaseValue() : 100.0;
                 wheelData.setLastDetectedStats(blockCount, ship.model.totalWeight, (int)maxHealth);
                 wheelData.setLastHealth(currentHealth, maxHealth);
                 // Store buoyancy data from ship model
@@ -928,9 +930,12 @@ public class ShipWheelManager {
             s.setCollidable(false);
             s.setPeek(0.0f);  // Closed shell
             // Set scale to 0.25 (quarter size)
-            var scaleAttr = s.getAttribute(anon.def9a2a4.blockships.util.AttributeCompat.getScale());
-            if (scaleAttr != null) {
-                scaleAttr.setBaseValue(0.25);
+            org.bukkit.attribute.Attribute scaleAttribute = anon.def9a2a4.blockships.util.AttributeCompat.getScale();
+            if (scaleAttribute != null) {
+                var scaleAttr = s.getAttribute(scaleAttribute);
+                if (scaleAttr != null) {
+                    scaleAttr.setBaseValue(0.25);
+                }
             }
         });
 

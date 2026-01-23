@@ -114,10 +114,11 @@ public class ShipSteeringListener {
 
     /**
      * Cache reflection methods for the Input record class.
+     * Note: methodsCached is set AFTER all fields are assigned to prevent race conditions
+     * where another thread sees methodsCached=true but reads null method fields.
      */
     private synchronized void cacheInputMethods(Class<?> inputClass) {
         if (methodsCached) return;
-        methodsCached = true;
 
         try {
             forwardMethod = inputClass.getMethod("forward");
@@ -131,9 +132,11 @@ public class ShipSteeringListener {
             if (forwardMethod.getReturnType() == boolean.class) {
                 methodsValid = true;
             }
+            methodsCached = true;  // Set AFTER all fields assigned
         } catch (NoSuchMethodException e) {
             plugin.getLogger().warning("Failed to cache Input methods: " + e.getMessage());
             methodsValid = false;
+            methodsCached = true;  // Still mark as cached to prevent retry
         }
     }
 

@@ -9,7 +9,11 @@ import org.bukkit.plugin.java.JavaPlugin;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Manages per-world ship data storage for chunk-based loading.
@@ -30,6 +34,15 @@ public class ShipWorldData {
     private final Map<String, Boolean> metadataExistsCache = new ConcurrentHashMap<>();
     private final java.util.concurrent.atomic.AtomicLong lastCacheClear = new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis());
     private static final long CACHE_CLEAR_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+    // Async I/O executor for non-blocking file operations
+    private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor(
+        r -> {
+            Thread t = new Thread(r, "BlockShips-IO");
+            t.setDaemon(true);
+            return t;
+        }
+    );
 
     public ShipWorldData(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -170,11 +183,20 @@ public class ShipWorldData {
     }
 
     /**
-     * Loads ship metadata from per-world storage.
+     * Loads ship metadata asynchronously from per-world storage.
+     * Returns a CompletableFuture that completes with the ShipState.
+     */
+    public CompletableFuture<ShipPersistence.ShipState> loadShipMetadataAsync(World world, UUID shipId) {
+        String worldName = world.getName();
+        return CompletableFuture.supplyAsync(() -> loadShipMetadataSync(worldName, shipId), ioExecutor);
+    }
+
+    /**
+     * Loads ship metadata from per-world storage (sync version for internal use).
      * Returns a ShipState without position data.
      */
-    public ShipPersistence.ShipState loadShipMetadata(World world, UUID shipId) {
-        File shipFile = getShipFile(world.getName(), shipId);
+    private ShipPersistence.ShipState loadShipMetadataSync(String worldName, UUID shipId) {
+        File shipFile = getShipFile(worldName, shipId);
         if (!shipFile.exists()) {
             return null;
         }
@@ -216,7 +238,7 @@ public class ShipWorldData {
             UUID.fromString(id),
             shipType,
             modelPath,
-            world.getName(),
+            worldName,
             0, 0, 0,  // Position will come from vehicle
             0, 0,     // Rotation will come from vehicle
             bannerData,
@@ -226,6 +248,14 @@ public class ShipWorldData {
             modelData,
             entityCount
         );
+    }
+
+    /**
+     * Loads ship metadata from per-world storage (synchronous).
+     * Returns a ShipState without position data.
+     */
+    public ShipPersistence.ShipState loadShipMetadata(World world, UUID shipId) {
+        return loadShipMetadataSync(world.getName(), shipId);
     }
 
     /**
@@ -438,5 +468,21 @@ public class ShipWorldData {
             worldIndex.values().forEach(ids::addAll);
         }
         return ids;
+    }
+
+    /**
+     * Shuts down the async I/O executor.
+     * Should be called on plugin disable.
+     */
+    public void shutdown() {
+        ioExecutor.shutdown();
+        try {
+            if (!ioExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                ioExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            ioExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 }

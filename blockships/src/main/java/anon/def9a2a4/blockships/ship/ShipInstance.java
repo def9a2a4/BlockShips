@@ -621,6 +621,7 @@ public class ShipInstance {
             // Spawn collision shulker if this block has collision enabled
             if (p.collision.enable) {
                 Shulker spawnedShulker = null;
+                ArmorStand carrier = null;
 
                 try {
                     // Create spawn location with zero rotation (carriers never rotate)
@@ -629,7 +630,7 @@ public class ShipInstance {
                     carrierSpawnLoc.setPitch(0);
 
                     // Use ArmorStand as carrier (smooth interpolation)
-                    ArmorStand carrier = w.spawn(carrierSpawnLoc, ArmorStand.class, as -> {
+                    carrier = w.spawn(carrierSpawnLoc, ArmorStand.class, as -> {
                         try {
                             as.setInvisible(true);
                             as.setInvulnerable(true);
@@ -650,72 +651,82 @@ public class ShipInstance {
                     // Apply size scaling via generic.scale attribute
                     float shulkerSize = p.collision.size;
                     final int finalBlockIndex = currentBlockIndex;
-                    Shulker shulker = w.spawn(carrierSpawnLoc, Shulker.class, s -> {
-                        try {
-                            s.setAI(false);
-                            s.setGravity(false);
-                            s.setSilent(true);
-                            s.setPersistent(true);
-                            s.setCollidable(true);
-                            s.setInvisible(true);
-                            s.setGlowing(config.collisionDebugGlow);  // Glow if debug mode enabled
-                            s.setPeek(0);  // Prevent shulker from peeking/moving up
-                            s.addScoreboardTag(ShipTags.shipTag(this.id));
-                            s.addScoreboardTag(ShipTags.COLLIDER_TAG);
-                            s.addScoreboardTag(ShipTags.blockIndexTag(finalBlockIndex));
-
-                            // Add seat tag if this block is a seat and populate seatShulkers list
-                            // Tag format: shipseat:{index}
-                            // Parsed in: DisplayShip.handleShulkerInteraction
-                            for (int seatIdx = 0; seatIdx < model.seats.size(); seatIdx++) {
-                                if (model.seats.get(seatIdx).blockIndex == finalBlockIndex) {
-                                    s.addScoreboardTag(ShipTags.seatTag(seatIdx));
-                                    // Store reference in seatShulkers list for fast lookup
-                                    seatShulkers.set(seatIdx, s);
-                                    break;
-                                }
-                            }
-
-                            // Add storage tag if this block has storage
-                            if (p.storage != null) {
-                                s.addScoreboardTag(ShipTags.storageTag(finalBlockIndex));
-                            }
-
-                            // Add interaction tag if this block opens an interaction GUI
-                            if (p.rawYaml.containsKey("interaction") && Boolean.TRUE.equals(p.rawYaml.get("interaction"))) {
-                                s.addScoreboardTag(ShipTags.interactTag(finalBlockIndex));
-                            }
-
-                            // Add leadable tag if this block can have leads attached (fences)
-                            if (p.rawYaml.containsKey("leadable") && Boolean.TRUE.equals(p.rawYaml.get("leadable"))) {
-                                s.addScoreboardTag(ShipTags.leadableTag(finalBlockIndex));
-                            }
-
-                            // Add cannon tag if this obsidian block is part of a cannon
-                            for (ShipModel.CannonInfo cannon : model.cannons) {
-                                if (cannon.obsidianBlockIndex == finalBlockIndex) {
-                                    s.addScoreboardTag(ShipTags.cannonTag(finalBlockIndex));
-                                    break;
-                                }
-                            }
-
-                            // Apply scale attribute to change collision box size (added in 1.20.5)
+                    final ArmorStand finalCarrier = carrier;
+                    Shulker shulker;
+                    try {
+                        shulker = w.spawn(carrierSpawnLoc, Shulker.class, s -> {
                             try {
-                                org.bukkit.attribute.Attribute scaleAttribute = anon.def9a2a4.blockships.util.AttributeCompat.getScale();
-                                if (scaleAttribute != null) {
-                                    org.bukkit.attribute.AttributeInstance scaleAttr = s.getAttribute(scaleAttribute);
-                                    if (scaleAttr != null) {
-                                        scaleAttr.setBaseValue(shulkerSize);
+                                s.setAI(false);
+                                s.setGravity(false);
+                                s.setSilent(true);
+                                s.setPersistent(true);
+                                s.setCollidable(true);
+                                s.setInvisible(true);
+                                s.setGlowing(config.collisionDebugGlow);  // Glow if debug mode enabled
+                                s.setPeek(0);  // Prevent shulker from peeking/moving up
+                                s.addScoreboardTag(ShipTags.shipTag(this.id));
+                                s.addScoreboardTag(ShipTags.COLLIDER_TAG);
+                                s.addScoreboardTag(ShipTags.blockIndexTag(finalBlockIndex));
+
+                                // Add seat tag if this block is a seat and populate seatShulkers list
+                                // Tag format: shipseat:{index}
+                                // Parsed in: DisplayShip.handleShulkerInteraction
+                                for (int seatIdx = 0; seatIdx < model.seats.size(); seatIdx++) {
+                                    if (model.seats.get(seatIdx).blockIndex == finalBlockIndex) {
+                                        s.addScoreboardTag(ShipTags.seatTag(seatIdx));
+                                        // Store reference in seatShulkers list for fast lookup
+                                        seatShulkers.set(seatIdx, s);
+                                        break;
                                     }
                                 }
-                            } catch (Throwable scaleError) {
-                                // Scale attribute not available on this version - shulker uses default size
+
+                                // Add storage tag if this block has storage
+                                if (p.storage != null) {
+                                    s.addScoreboardTag(ShipTags.storageTag(finalBlockIndex));
+                                }
+
+                                // Add interaction tag if this block opens an interaction GUI
+                                if (p.rawYaml.containsKey("interaction") && Boolean.TRUE.equals(p.rawYaml.get("interaction"))) {
+                                    s.addScoreboardTag(ShipTags.interactTag(finalBlockIndex));
+                                }
+
+                                // Add leadable tag if this block can have leads attached (fences)
+                                if (p.rawYaml.containsKey("leadable") && Boolean.TRUE.equals(p.rawYaml.get("leadable"))) {
+                                    s.addScoreboardTag(ShipTags.leadableTag(finalBlockIndex));
+                                }
+
+                                // Add cannon tag if this obsidian block is part of a cannon
+                                for (ShipModel.CannonInfo cannon : model.cannons) {
+                                    if (cannon.obsidianBlockIndex == finalBlockIndex) {
+                                        s.addScoreboardTag(ShipTags.cannonTag(finalBlockIndex));
+                                        break;
+                                    }
+                                }
+
+                                // Apply scale attribute to change collision box size (added in 1.20.5)
+                                try {
+                                    org.bukkit.attribute.Attribute scaleAttribute = anon.def9a2a4.blockships.util.AttributeCompat.getScale();
+                                    if (scaleAttribute != null) {
+                                        org.bukkit.attribute.AttributeInstance scaleAttr = s.getAttribute(scaleAttribute);
+                                        if (scaleAttr != null) {
+                                            scaleAttr.setBaseValue(shulkerSize);
+                                        }
+                                    }
+                                } catch (Throwable scaleError) {
+                                    // Scale attribute not available on this version - shulker uses default size
+                                }
+                            } catch (Throwable e) {
+                                plugin.getLogger().severe("Shulker config failed for block " + finalBlockIndex + ": " + e.getMessage());
+                                e.printStackTrace();
                             }
-                        } catch (Throwable e) {
-                            plugin.getLogger().severe("Shulker config failed for block " + finalBlockIndex + ": " + e.getMessage());
-                            e.printStackTrace();
+                        });
+                    } catch (Throwable e) {
+                        // Shulker spawn failed - clean up the carrier to prevent resource leak
+                        if (finalCarrier != null && finalCarrier.isValid()) {
+                            finalCarrier.remove();
                         }
-                    });
+                        throw e;  // Re-throw to be caught by outer handler
+                    }
 
                     // Mount shulker on carrier
                     carrier.addPassenger(shulker);
