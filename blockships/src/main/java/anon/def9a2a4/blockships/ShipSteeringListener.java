@@ -105,10 +105,14 @@ public class ShipSteeringListener {
 
                 // Old format also has jump and unmount booleans
                 StructureModifier<Boolean> bools = packet.getBooleans();
-                if (bools.size() >= 2) {
+                if (bools.size() >= 1) {
                     boolean jump = bools.read(0);
-                    // boolean unmount = bools.read(1);  // shift key - not used for vertical input
-                    ship.setVerticalInputState(jump, false);  // no sprint in old format
+                    // Old packet format doesn't have sprint - use S + Space combo for descent
+                    // S + Space = descend (sprint=true, jump=false to prevent ascent)
+                    // Space only = ascend (sprint=false, jump=true)
+                    boolean descend = isBackward && jump;
+                    boolean ascend = jump && !isBackward;
+                    ship.setVerticalInputState(ascend, descend);
                 }
             }
 

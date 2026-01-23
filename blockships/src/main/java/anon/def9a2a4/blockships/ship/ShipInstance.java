@@ -1697,7 +1697,14 @@ public class ShipInstance {
         previousVehicleLocation = vehicle.getLocation().clone();
         previousYaw = vehicle.getYaw();
         previousPitch = vehicle.getPitch();
-        spawnYaw = vehicle.getYaw();  // Track spawn yaw for pre-1.21.9 display rotation fix
+        // Track spawn yaw for pre-1.21.9 display rotation fix
+        // Custom ships: use assemblyYaw (initialRotation.x) to match initial spawn state
+        // Prefab ships: use current vehicle yaw (initialRotation.x is 0 anyway)
+        if ("custom".equals(shipType)) {
+            spawnYaw = model.initialRotation.x;
+        } else {
+            spawnYaw = vehicle.getYaw();
+        }
         firstTick = true;
 
         // Initialize chunk tracking for persistence
