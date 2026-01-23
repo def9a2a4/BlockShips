@@ -91,19 +91,37 @@ async function runTests() {
 async function testPrefabSpawn() {
   say('=== TEST: Prefab ship spawning ===')
 
-  // First, ensure we have water nearby (40x40, 8 deep) with air clearance above (20 high)
-  say('Step 1: Filling area with water and air...')
-  // Water: 40x40, 8 deep
-  bot.chat('/fill ~-10 ~-8 ~-10 ~9 ~-1 ~9 minecraft:water')
-  await sleep(500)
-  // Air: 40x40, 20 high - split into two chunks (top to bottom)
-  bot.chat('/fill ~-20 ~10 ~-20 ~19 ~19 ~19 minecraft:air')
-  await sleep(500)
-  bot.chat('/fill ~-20 ~0 ~-20 ~19 ~9 ~19 minecraft:air')
+  // Teleport to known position
+  say('Step 1: Teleporting to spawn area...')
+  bot.chat('/tp @s 0 100 0')
   await sleep(1000)
 
+  // Clear area: water pool + long air channel north
+  say('Step 2: Clearing area...')
+  // Water pool at spawn (20x20, 8 deep)
+  bot.chat('/fill -10 92 -10 9 99 9 minecraft:water')
+  await sleep(300)
+  // Air above water (20x20, 15 high)
+  bot.chat('/fill -10 100 -10 9 114 9 minecraft:air')
+  await sleep(300)
+
+  // Clear path north (negative Z) - multiple chunks to avoid block limit
+  for (let z = -10; z >= -100; z -= 30) {
+    const zEnd = Math.max(z - 29, -100)
+    bot.chat(`/fill -10 92 ${z} 9 114 ${zEnd} minecraft:air`)
+    await sleep(200)
+    bot.chat(`/fill -10 92 ${z} 9 99 ${zEnd} minecraft:water`)
+    await sleep(200)
+  }
+  await sleep(500)
+
+  // Face north (negative Z direction)
+  say('Step 3: Facing north...')
+  await bot.look(Math.PI, 0) // yaw=PI = facing north (negative Z)
+  await sleep(300)
+
   // Request a ship kit
-  say('Step 2: Requesting ship kit...')
+  say('Step 4: Requesting ship kit...')
   bot.chat('/blockships give smallship')
   await sleep(1500)
 
@@ -122,12 +140,12 @@ async function testPrefabSpawn() {
     return
   }
 
-  say(`Step 3: Found ship item: ${shipItem.name}, equipping...`)
+  say(`Step 5: Found ship item: ${shipItem.name}, equipping...`)
   await bot.equip(shipItem, 'hand')
   await sleep(500)
 
   // Find a water block to place on
-  say('Step 4: Looking for water block...')
+  say('Step 6: Looking for water block...')
   const pos = bot.entity.position
   let targetBlock = null
 
@@ -147,7 +165,7 @@ async function testPrefabSpawn() {
     return
   }
 
-  say(`Step 5: Found water at ${targetBlock.position}, spawning ship...`)
+  say(`Step 7: Found water at ${targetBlock.position}, spawning ship...`)
   try {
     await bot.activateBlock(targetBlock)
     await sleep(3000)
@@ -174,8 +192,12 @@ async function testPrefabSpawn() {
 async function testShipMovement() {
   say('=== TEST: Ship movement ===')
 
+  // Record starting position BEFORE mounting
+  const startPos = bot.entity.position.clone()
+  say(`Step 1: Starting position: ${startPos.toString()}`)
+
   // Find a shulker (seat) to mount
-  say('Step 1: Looking for shulker seat...')
+  say('Step 2: Looking for shulker seat...')
   const shulkers = Object.values(bot.entities).filter(e =>
     e.name === 'shulker' &&
     e.position &&
@@ -194,7 +216,7 @@ async function testShipMovement() {
   )
 
   const seat = shulkers[0]
-  say(`Step 2: Found shulker at ${seat.position.toString()} (id: ${seat.id})`)
+  say(`Step 3: Found shulker at ${seat.position.toString()} (id: ${seat.id})`)
 
   // Set up mount event listener
   let mounted = false
@@ -205,18 +227,18 @@ async function testShipMovement() {
   bot.on('mount', mountHandler)
 
   // Try to mount the ship by right-clicking the shulker
-  say('Step 3: Looking at shulker...')
+  say('Step 4: Looking at shulker...')
   try {
     await bot.lookAt(seat.position.offset(0, 0.5, 0))
     await sleep(200)
-    say('Step 4: Right-clicking shulker to mount...')
+    say('Step 5: Right-clicking shulker to mount...')
     await bot.useOn(seat)
   } catch (err) {
     say(`Warning: useOn error: ${err.message}`)
   }
 
   // Wait for mount event
-  say('Step 5: Waiting for mount event...')
+  say('Step 6: Waiting for mount event...')
   for (let i = 0; i < 20 && !mounted; i++) {
     await sleep(100)
   }
@@ -224,7 +246,7 @@ async function testShipMovement() {
   bot.removeListener('mount', mountHandler)
 
   const vehicleInfo = bot.vehicle ? `${bot.vehicle.name} (id: ${bot.vehicle.id})` : 'null'
-  say(`Step 6: Mount result - bot.vehicle = ${vehicleInfo}`)
+  say(`Step 7: Mount result - bot.vehicle = ${vehicleInfo}`)
 
   if (!bot.vehicle) {
     say('FAIL: Mount failed - bot.vehicle is null!')
@@ -232,10 +254,6 @@ async function testShipMovement() {
     fail('Movement', 'Failed to mount ship - bot.vehicle is null')
     return
   }
-
-  // Record starting position
-  const startPos = bot.entity.position.clone()
-  say(`Step 7: Starting position: ${startPos.toString()}`)
 
   // Manually send STEER_VEHICLE packets (mineflayer doesn't send them continuously)
   say('Step 8: Sending STEER_VEHICLE packets for 5 seconds...')
@@ -255,11 +273,18 @@ async function testShipMovement() {
   }
   await sleep(500)
 
-  // Check final position
+  // Dismount FIRST - then position will update
+  say('Step 9: Dismounting...')
+  bot.dismount()
+  await sleep(500)
+
+  // NOW check position (player position updates after dismount)
   const endPos = bot.entity.position
   const distance = startPos.distanceTo(endPos)
-  say(`Step 9: Ending position: ${endPos.toString()}`)
-  say(`Step 10: Distance moved: ${distance.toFixed(2)} blocks`)
+  const zMoved = startPos.z - endPos.z  // positive = moved north
+
+  say(`Step 10: Ending position: ${endPos.toString()}`)
+  say(`Step 11: Distance moved: ${distance.toFixed(2)} blocks (Z: ${zMoved.toFixed(2)})`)
 
   if (distance > 0.5) {
     say(`PASS: Moved ${distance.toFixed(1)} blocks!`)
@@ -268,19 +293,16 @@ async function testShipMovement() {
     say(`FAIL: Only moved ${distance.toFixed(2)} blocks`)
     fail('Movement', `Only moved ${distance.toFixed(2)} blocks`)
   }
-
-  // Try to dismount
-  if (bot.vehicle) {
-    say('Step 11: Dismounting...')
-    bot.dismount()
-  }
 }
 
 // Create bot and start tests
+// Version must match server to avoid ViaVersion protocol translation bugs
+const MC_VERSION = process.env.MC_VERSION || '1.21.1'
 bot = mineflayer.createBot({
   host: HOST,
   port: PORT,
   username: USERNAME,
+  version: MC_VERSION,
   auth: 'offline',
   hideErrors: false
 })

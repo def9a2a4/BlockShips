@@ -163,7 +163,7 @@ test-bot-install:
 # 	rm -f $(TEST_SERVER_DIR)/world/playerdata/30fecbe1-2271-3418-8553-d3ded0e95f56.dat
 .PHONY: test-bot-run
 test-bot-run:
-	cd test-bot && npm test
+	cd test-bot && MC_VERSION=$(MINECRAFT_VERSION) npm test
 
 # Full integration test with bot
 # Starts server, waits for ready, OPs the bot, runs bot tests, then shuts down
@@ -214,7 +214,7 @@ test-server-with-bot:
 	sleep 2; \
 	echo ""; \
 	echo "========== Running bot tests =========="; \
-	cd .. && cd test-bot && npm test; \
+	cd .. && cd test-bot && MC_VERSION=$(MINECRAFT_VERSION) npm test; \
 	BOT_EXIT=$$?; \
 	cd ../$(TEST_SERVER_DIR); \
 	echo ""; \
