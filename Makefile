@@ -74,11 +74,24 @@ test-server-plugin-copy: test-server-download-to-cache
 	cp bin/*.jar $(TEST_SERVER_DIR)/plugins/
 	cp $(DOWNLOAD_CACHE)/plugins/*.jar $(TEST_SERVER_DIR)/plugins/
 
+# Bot usernames for parallel testing (must match test-bot/run-parallel.js TESTS array)
+TEST_BOT_NAMES := TestBotsmallship TestBotbigship TestBotsmallairship TestBotcustom_ship TestBotcustom_airship TestBot
+
 .PHONY: test-server-setup
 test-server-setup: test-server-plugin-copy
 	echo "eula=true" > $(TEST_SERVER_DIR)/eula.txt
 	printf "online-mode=false\nserver-port=25565\nspawn-protection=0\nmax-tick-time=-1\n" > $(TEST_SERVER_DIR)/server.properties
-	printf '[{"uuid":"30fecbe1-2271-3418-8553-d3ded0e95f56","name":"TestBot","level":4}]\n' > $(TEST_SERVER_DIR)/ops.json
+	@python3 -c "\
+import hashlib,json; \
+names = '$(TEST_BOT_NAMES)'.split(); \
+uuid = lambda n: (lambda h: f'{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}')((lambda b: (b.__setitem__(6,(b[6]&0x0f)|0x30), b.__setitem__(8,(b[8]&0x3f)|0x80), b.hex())[2])(bytearray(hashlib.md5(('OfflinePlayer:'+n).encode()).digest()))); \
+print(json.dumps([{'uuid':uuid(n),'name':n,'level':4,'bypassesPlayerLimit':False} for n in names], indent=2))" > $(TEST_SERVER_DIR)/ops.json
+	@echo "Generated ops.json with $$(echo $(TEST_BOT_NAMES) | wc -w) operators"
+	@if [ -f $(TEST_SERVER_DIR)/bukkit.yml ]; then \
+		sed -i 's/connection-throttle: -\?[0-9]*/connection-throttle: -1/g' $(TEST_SERVER_DIR)/bukkit.yml; \
+	else \
+		printf 'settings:\n  connection-throttle: -1\n' > $(TEST_SERVER_DIR)/bukkit.yml; \
+	fi
 
 $(DOWNLOAD_CACHE)/paper-%.jar:
 	@mkdir -p $(DOWNLOAD_CACHE)
@@ -161,9 +174,17 @@ test-bot-install:
 	cd test-bot && npm install
 
 # 	rm -f $(TEST_SERVER_DIR)/world/playerdata/30fecbe1-2271-3418-8553-d3ded0e95f56.dat
+.PHONY: test-bot-enable-debug-glow
+test-bot-enable-debug-glow:
+	sed -i 's/collision-debug-glow: false/collision-debug-glow: true/g' $(TEST_SERVER_DIR)/plugins/BlockShips/config.yml
+
 .PHONY: test-bot-run
-test-bot-run:
+test-bot-run: test-bot-enable-debug-glow
 	cd test-bot && MC_VERSION=$(MINECRAFT_VERSION) npm test
+
+.PHONY: test-bot-run-parallel
+test-bot-run-parallel: test-bot-enable-debug-glow
+	cd test-bot && MC_VERSION=$(MINECRAFT_VERSION) node run-parallel.js
 
 # Full integration test with bot
 # Starts server, waits for ready, OPs the bot, runs bot tests, then shuts down

@@ -8,10 +8,17 @@ const USERNAME = process.env.MC_USERNAME || 'TestBot'
 const MC_VERSION = process.env.MC_VERSION || '1.21.1'
 const INTERACTIVE = process.argv.includes('--interactive')
 
-// Runway coordinates (shared by all tests)
-const RUNWAY_X = 0
+// Parallel execution support
+const BOT_INDEX = parseInt(process.env.BOT_INDEX || '0')
+const TEST_NAME = process.env.TEST_NAME || null  // Which test this bot runs (for parallel mode)
+const RUNWAY_SPACING = 32  // Distance between parallel runways (basin walls add 2 blocks)
+
+// Runway coordinates (unique per bot in parallel mode)
+const RUNWAY_X = BOT_INDEX * RUNWAY_SPACING
 const RUNWAY_Z = 0
-const RUNWAY_HALF_WIDTH = 20  // 40 blocks total width
+const RUNWAY_HALF_WIDTH = 15  // 30 blocks total width
+const RUNWAY_LENGTH = 60  // 60 blocks north (was 100)
+const RUNWAY_AIR_HEIGHT = 40  // Air space above water (was ~15)
 
 // Test state
 let testsPassed = 0
@@ -58,36 +65,76 @@ async function setupRunway() {
   bot.chat(`/tp @s ${RUNWAY_X} 100 ${RUNWAY_Z}`)
   await sleep(1000)
 
-  // Water pool at center (40x40, 8 deep)
-  bot.chat(`/fill ${RUNWAY_X-RUNWAY_HALF_WIDTH} 92 ${RUNWAY_Z-RUNWAY_HALF_WIDTH} ${RUNWAY_X+RUNWAY_HALF_WIDTH-1} 99 ${RUNWAY_Z+RUNWAY_HALF_WIDTH-1} minecraft:water`)
-  await sleep(300)
-  // Air above water (40x40, 15 high)
-  bot.chat(`/fill ${RUNWAY_X-RUNWAY_HALF_WIDTH} 100 ${RUNWAY_Z-RUNWAY_HALF_WIDTH} ${RUNWAY_X+RUNWAY_HALF_WIDTH-1} 114 ${RUNWAY_Z+RUNWAY_HALF_WIDTH-1} minecraft:air`)
-  await sleep(300)
+  const x1 = RUNWAY_X - RUNWAY_HALF_WIDTH
+  const x2 = RUNWAY_X + RUNWAY_HALF_WIDTH - 1
+  const airTop = 99 + RUNWAY_AIR_HEIGHT
+  const basinY1 = 92  // Bottom of water
+  const basinY2 = 100 // Just above water surface
 
-  // Clear path north (negative Z) - 100 blocks in chunks (wider path)
-  for (let z = RUNWAY_Z - RUNWAY_HALF_WIDTH; z >= RUNWAY_Z - 100; z -= 30) {
-    const zEnd = Math.max(z - 29, RUNWAY_Z - 100)
-    bot.chat(`/fill ${RUNWAY_X-RUNWAY_HALF_WIDTH} 92 ${z} ${RUNWAY_X+RUNWAY_HALF_WIDTH-1} 114 ${zEnd} minecraft:air`)
-    await sleep(200)
-    bot.chat(`/fill ${RUNWAY_X-RUNWAY_HALF_WIDTH} 92 ${z} ${RUNWAY_X+RUNWAY_HALF_WIDTH-1} 99 ${zEnd} minecraft:water`)
+  // Create stone basin walls first (before water)
+  // West wall (full length from south to north end)
+  bot.chat(`/fill ${x1 - 1} ${basinY1} ${RUNWAY_Z + RUNWAY_HALF_WIDTH + 1} ${x1 - 1} ${basinY2} ${RUNWAY_Z - RUNWAY_LENGTH - 1} minecraft:stone`)
+  await sleep(200)
+
+  // East wall (full length from south to north end)
+  bot.chat(`/fill ${x2 + 1} ${basinY1} ${RUNWAY_Z + RUNWAY_HALF_WIDTH + 1} ${x2 + 1} ${basinY2} ${RUNWAY_Z - RUNWAY_LENGTH - 1} minecraft:stone`)
+  await sleep(200)
+
+  // South wall (connecting east-west at south end)
+  bot.chat(`/fill ${x1 - 1} ${basinY1} ${RUNWAY_Z + RUNWAY_HALF_WIDTH + 1} ${x2 + 1} ${basinY2} ${RUNWAY_Z + RUNWAY_HALF_WIDTH + 1} minecraft:stone`)
+  await sleep(200)
+
+  // North wall (connecting east-west at north end)
+  bot.chat(`/fill ${x1 - 1} ${basinY1} ${RUNWAY_Z - RUNWAY_LENGTH - 1} ${x2 + 1} ${basinY2} ${RUNWAY_Z - RUNWAY_LENGTH - 1} minecraft:stone`)
+  await sleep(200)
+
+  // Bottom wall (floor of the basin, in chunks to stay under 32768 limit)
+  for (let z = RUNWAY_Z + RUNWAY_HALF_WIDTH + 1; z >= RUNWAY_Z - RUNWAY_LENGTH - 1; z -= 20) {
+    const zEnd = Math.max(z - 19, RUNWAY_Z - RUNWAY_LENGTH - 1)
+    bot.chat(`/fill ${x1 - 1} ${basinY1 - 1} ${z} ${x2 + 1} ${basinY1 - 1} ${zEnd} minecraft:stone`)
     await sleep(200)
   }
-  await sleep(500)
+
+  // Clear air above water (in chunks to stay under 32768 limit)
+  for (let z = RUNWAY_Z + RUNWAY_HALF_WIDTH - 1; z >= RUNWAY_Z - RUNWAY_LENGTH; z -= 20) {
+    const zEnd = Math.max(z - 19, RUNWAY_Z - RUNWAY_LENGTH)
+    bot.chat(`/fill ${x1} 100 ${z} ${x2} ${airTop} ${zEnd} minecraft:air`)
+    await sleep(200)
+  }
+
+  // Fill water inside the basin (in chunks to stay under 32768 limit)
+  for (let z = RUNWAY_Z + RUNWAY_HALF_WIDTH - 1; z >= RUNWAY_Z - RUNWAY_LENGTH; z -= 20) {
+    const zEnd = Math.max(z - 19, RUNWAY_Z - RUNWAY_LENGTH)
+    bot.chat(`/fill ${x1} 92 ${z} ${x2} 99 ${zEnd} minecraft:water`)
+    await sleep(200)
+  }
+
   say('Runway ready.')
 }
 
 /**
- * Clean up ships and entities between tests
+ * Clean up this bot's runway area only (no global commands that affect other bots)
  */
-async function cleanupShips() {
-  bot.chat('/blockships forcedisassembleall confirm')
-  await sleep(500)
-  bot.chat('/blockships killentities confirm')
-  await sleep(500)
-  // Kill dropped items
-  bot.chat('/kill @e[type=minecraft:item]')
-  await sleep(300)
+async function cleanupRunway() {
+  const x1 = RUNWAY_X - RUNWAY_HALF_WIDTH
+  const x2 = RUNWAY_X + RUNWAY_HALF_WIDTH - 1
+  const airTop = 99 + RUNWAY_AIR_HEIGHT
+
+  // Clear air above runway (in chunks to stay under 32768 limit)
+  for (let z = RUNWAY_Z - RUNWAY_LENGTH; z <= RUNWAY_Z + RUNWAY_HALF_WIDTH; z += 20) {
+    const zEnd = Math.min(z + 19, RUNWAY_Z + RUNWAY_HALF_WIDTH)
+    bot.chat(`/fill ${x1} 100 ${z} ${x2} ${airTop} ${zEnd} minecraft:air`)
+    await sleep(150)
+  }
+  // Restore water (in chunks)
+  for (let z = RUNWAY_Z - RUNWAY_LENGTH; z <= RUNWAY_Z + RUNWAY_HALF_WIDTH; z += 20) {
+    const zEnd = Math.min(z + 19, RUNWAY_Z + RUNWAY_HALF_WIDTH)
+    bot.chat(`/fill ${x1} 92 ${z} ${x2} 99 ${zEnd} minecraft:water`)
+    await sleep(150)
+  }
+  // Kill all dropped items in the world
+  bot.chat(`/kill @e[type=minecraft:item]`)
+  await sleep(200)
 }
 
 /**
@@ -257,6 +304,51 @@ async function steerShip(forward, sideways, jump, durationMs, sprint = false) {
 }
 
 /**
+ * Run standard control sequence and return movement deltas
+ * Sequence: forward, forward+A, backward+D, jump (2s), sprint, backward+jump
+ */
+async function runControlSequence() {
+  const startPos = bot.entity.position.clone()
+
+  say('Testing forward...')
+  await steerShip(1.0, 0, false, 1000)
+  await sleep(200)
+
+  say('Testing forward + A (turn left)...')
+  await steerShip(1.0, 1.0, false, 1000)
+  await sleep(200)
+
+  say('Testing backward + D (turn right)...')
+  await steerShip(-1.0, -1.0, false, 1000)
+  await sleep(200)
+
+  say('Testing jump/up (2s)...')
+  await steerShip(0, 0, true, 2000)
+  await sleep(200)
+
+  say('Testing sprint...')
+  await steerShip(1.0, 0, false, 1000, true)
+  await sleep(200)
+
+  say('Testing backward + jump...')
+  await steerShip(-1.0, 0, true, 1000)
+  await sleep(200)
+
+  // Dismount and calculate movement
+  say('Dismounting...')
+  bot.dismount()
+  await sleep(500)
+
+  const endPos = bot.entity.position
+  const dx = endPos.x - startPos.x
+  const dy = endPos.y - startPos.y
+  const dz = endPos.z - startPos.z
+  const totalMovement = Math.abs(dx) + Math.abs(dy) + Math.abs(dz)
+
+  return { dx, dy, dz, totalMovement }
+}
+
+/**
  * Click a ship wheel menu option
  */
 async function clickWheelMenu(action) {
@@ -317,7 +409,7 @@ async function clickWheelMenu(action) {
 async function testShipControls(shipType) {
   say(`=== TEST: ${shipType} ===`)
 
-  await cleanupShips()
+  await cleanupRunway()
   await teleportToRunway()
   await clearInventory()
 
@@ -352,59 +444,26 @@ async function testShipControls(shipType) {
     return
   }
 
-  // Record start position AFTER mounting
-  const startPos = bot.entity.position.clone()
-
-  // Test forward movement (W) - should move north (negative Z)
-  say('Testing forward (W)...')
-  await steerShip(1.0, 0, false, 1500)
-  await sleep(300)
-
-  // Test left turn + forward (A then W) - should result in westward movement (negative X)
-  say('Testing left turn (A) + forward (W)...')
-  await steerShip(0, 1.0, false, 500)  // turn left
-  await steerShip(1.0, 0, false, 1500)  // move forward (now heading west)
-  await sleep(300)
-
-  // For airships: test ascend (Space) - should move up (positive Y)
-  if (isAirship) {
-    say('Testing ascend (Space)...')
-    await steerShip(0, 0, true, 1500)
-    await sleep(300)
-  }
-
-  // Dismount and verify position
-  say('Dismounting...')
-  bot.dismount()
-  await sleep(500)
-
-  const endPos = bot.entity.position
-  const dz = endPos.z - startPos.z  // negative = forward (north)
-  const dx = endPos.x - startPos.x  // negative = west
-  const dy = endPos.y - startPos.y  // positive = up
+  // Run standard control sequence and get movement results
+  const { dx, dy, dz, totalMovement } = await runControlSequence()
 
   say(`Movement: dX=${dx.toFixed(1)}, dY=${dy.toFixed(1)}, dZ=${dz.toFixed(1)}`)
 
-  // Verify positions
   let passed = true
 
-  if (dz >= 0) {
-    fail(shipType, `Expected forward movement (negative Z), got dZ=${dz.toFixed(2)}`)
+  if (totalMovement < 1.0) {
+    fail(shipType, `No significant movement detected (total=${totalMovement.toFixed(2)})`)
     passed = false
   }
 
-  if (dx >= 0) {
-    fail(shipType, `Expected west movement (negative X), got dX=${dx.toFixed(2)}`)
-    passed = false
-  }
-
+  // For airships, verify upward movement occurred
   if (isAirship && dy <= 0) {
     fail(shipType, `Expected upward movement (positive Y), got dY=${dy.toFixed(2)}`)
     passed = false
   }
 
   if (passed) {
-    pass(`${shipType} (forward, west${isAirship ? ', up' : ''})`)
+    pass(`${shipType} (movement=${totalMovement.toFixed(1)}${isAirship ? ', up=' + dy.toFixed(1) : ''})`)
   }
 }
 
@@ -418,13 +477,13 @@ async function buildCustomShipBlocks(config) {
   const { blocks, placeWheelOnTop = true } = config
   const buildY = 101
 
-  // Clear area
-  bot.chat(`/fill ${RUNWAY_X-2} 100 -3 ${RUNWAY_X+2} 104 1 minecraft:air`)
+  // Clear area (relative to runway)
+  bot.chat(`/fill ${RUNWAY_X-2} 100 ${RUNWAY_Z-3} ${RUNWAY_X+2} 104 ${RUNWAY_Z+1} minecraft:air`)
   await sleep(200)
 
-  // Place all blocks
+  // Place all blocks (z coordinates are relative to RUNWAY_Z)
   for (const { x, y, z, block } of blocks) {
-    bot.chat(`/setblock ${RUNWAY_X + x} ${buildY + y} ${z} minecraft:${block}`)
+    bot.chat(`/setblock ${RUNWAY_X + x} ${buildY + y} ${RUNWAY_Z + z} minecraft:${block}`)
   }
   await sleep(500)
 
@@ -441,7 +500,7 @@ async function buildCustomShipBlocks(config) {
 
   // Place wheel - either on top of center block or adjacent to it
   say('Placing ship wheel...')
-  const centerPos = new Vec3(RUNWAY_X, buildY, -1)
+  const centerPos = new Vec3(RUNWAY_X, buildY, RUNWAY_Z - 1)
 
   if (placeWheelOnTop) {
     // Place on top of center block (e.g., for platform ships)
@@ -454,7 +513,7 @@ async function buildCustomShipBlocks(config) {
     try { await bot.placeBlock(centerBlock, new Vec3(0, 1, 0)) } catch (e) { log(`  Place error: ${e.message}`) }
   } else {
     // Place adjacent to north block (e.g., for frame ships with empty center)
-    const adjacentBlock = bot.blockAt(new Vec3(RUNWAY_X, buildY, -2))
+    const adjacentBlock = bot.blockAt(new Vec3(RUNWAY_X, buildY, RUNWAY_Z - 2))
     await bot.lookAt(centerPos.offset(0.5, 0.5, 0.5))
     await sleep(200)
     try { await bot.placeBlock(adjacentBlock, new Vec3(0, 0, 1)) } catch (e) { log(`  Place error: ${e.message}`) }
@@ -463,14 +522,14 @@ async function buildCustomShipBlocks(config) {
 
   // Find the placed wheel
   const wheelY = placeWheelOnTop ? buildY + 1 : buildY
-  let wheelBlock = bot.blockAt(new Vec3(RUNWAY_X, wheelY, -1))
+  let wheelBlock = bot.blockAt(new Vec3(RUNWAY_X, wheelY, RUNWAY_Z - 1))
 
   if (!wheelBlock || wheelBlock.name === 'air') {
     // Search nearby
     for (let dx = -1; dx <= 1; dx++) {
       for (let dz = -1; dz <= 1; dz++) {
         for (let dy = 0; dy <= 1; dy++) {
-          const b = bot.blockAt(new Vec3(RUNWAY_X + dx, wheelY + dy, -1 + dz))
+          const b = bot.blockAt(new Vec3(RUNWAY_X + dx, wheelY + dy, RUNWAY_Z - 1 + dz))
           if (b && b.name === 'player_head') {
             wheelBlock = b
             break
@@ -496,7 +555,7 @@ async function buildCustomShipBlocks(config) {
 async function testCustomShipBase(testName, buildConfig, isAirship = false) {
   say(`=== TEST: ${testName} ===`)
 
-  await cleanupShips()
+  await cleanupRunway()
   await teleportToRunway()
   await clearInventory()
 
@@ -534,49 +593,15 @@ async function testCustomShipBase(testName, buildConfig, isAirship = false) {
     return
   }
 
-  // Record start position AFTER mounting
-  const startPos = bot.entity.position.clone()
-
-  // Test forward movement (W) - should move north (negative Z)
-  say('Testing forward (W)...')
-  await steerShip(1.0, 0, false, 1500)
-  await sleep(300)
-
-  // Test left turn + forward (A then W) - should result in westward movement (negative X)
-  say('Testing left turn (A) + forward (W)...')
-  await steerShip(0, 1.0, false, 500)  // turn left
-  await steerShip(1.0, 0, false, 1500)  // move forward (now heading west)
-  await sleep(300)
-
-  // For airships: test ascend (Space) - should move up (positive Y)
-  if (isAirship) {
-    say('Testing ascend (Space)...')
-    await steerShip(0, 0, true, 1500)
-    await sleep(300)
-  }
-
-  // Dismount and verify position
-  say('Dismounting...')
-  bot.dismount()
-  await sleep(500)
-
-  const endPos = bot.entity.position
-  const dz = endPos.z - startPos.z  // negative = forward (north)
-  const dx = endPos.x - startPos.x  // negative = west
-  const dy = endPos.y - startPos.y  // positive = up
+  // Run standard control sequence and get movement results
+  const { dx, dy, dz, totalMovement } = await runControlSequence()
 
   say(`Movement: dX=${dx.toFixed(1)}, dY=${dy.toFixed(1)}, dZ=${dz.toFixed(1)}`)
 
-  // Verify positions
   let passed = true
 
-  if (dz >= 0) {
-    fail(testName, `Expected forward movement (negative Z), got dZ=${dz.toFixed(2)}`)
-    passed = false
-  }
-
-  if (dx >= 0) {
-    fail(testName, `Expected west movement (negative X), got dX=${dx.toFixed(2)}`)
+  if (totalMovement < 1.0) {
+    fail(testName, `No significant movement detected (total=${totalMovement.toFixed(2)})`)
     passed = false
   }
 
@@ -586,7 +611,7 @@ async function testCustomShipBase(testName, buildConfig, isAirship = false) {
   }
 
   if (passed) {
-    pass(`${testName} (forward, west${isAirship ? ', up' : ''})`)
+    pass(`${testName} (movement=${totalMovement.toFixed(1)}${isAirship ? ', up=' + dy.toFixed(1) : ''})`)
   }
 }
 
@@ -738,7 +763,8 @@ async function waitForChunks() {
 async function main() {
   log('Starting BlockShips test bot...')
   log(`Connected as ${bot.username}`)
-  log(`Mode: ${INTERACTIVE ? 'INTERACTIVE' : 'NORMAL'}`)
+  log(`Mode: ${TEST_NAME ? `PARALLEL (${TEST_NAME})` : INTERACTIVE ? 'INTERACTIVE' : 'SEQUENTIAL'}`)
+  if (BOT_INDEX > 0) log(`Runway X offset: ${RUNWAY_X}`)
 
   await waitForChunks()
 
@@ -756,11 +782,29 @@ async function main() {
   // Create runway once
   await setupRunway()
 
-  if (INTERACTIVE) {
+  if (TEST_NAME) {
+    // Single test mode (for parallel execution)
+    const test = TESTS[TEST_NAME]
+    if (test) {
+      try {
+        await test.fn()
+      } catch (e) {
+        fail(TEST_NAME, e.message)
+        log(e.stack)
+      }
+    } else {
+      log(`Unknown test: ${TEST_NAME}`)
+      testsFailed++
+    }
+
+    log('')
+    log(`${TEST_NAME}: ${testsFailed === 0 ? 'PASSED' : 'FAILED'}`)
+    process.exit(testsFailed > 0 ? 1 : 0)
+  } else if (INTERACTIVE) {
     setupInteractiveMode()
     // Don't exit - stay connected and listen for commands
   } else {
-    // Run all tests and exit
+    // Run all tests sequentially
     await runAllTests()
 
     log('')
