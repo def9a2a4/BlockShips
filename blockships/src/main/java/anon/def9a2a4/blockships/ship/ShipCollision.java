@@ -24,6 +24,15 @@ import java.util.UUID;
 public class ShipCollision {
     private final ShipInstance ship;
 
+    // Reusable vectors for detect() and applyResponse() - reduces GC pressure
+    private final Vector3f workTotalForce = new Vector3f();
+    private final Vector3f workHorizontalForce = new Vector3f();
+    private final Vector3f workForwardDir = new Vector3f();
+    private final Vector3f workForwardForce = new Vector3f();
+    private final Vector3f workLateralForce = new Vector3f();
+    private final Vector3f workForceDir = new Vector3f();
+    private final Vector3f workSeparationNormal = new Vector3f();
+
     public ShipCollision(ShipInstance ship) {
         this.ship = ship;
     }
@@ -42,7 +51,8 @@ public class ShipCollision {
             return; // Skip collision detection for stationary ships
         }
 
-        Vector3f totalForce = new Vector3f(0, 0, 0);
+        // Reuse work vector instead of allocating new one
+        workTotalForce.set(0, 0, 0);
         int collisionCount = 0;
         // String ownShipTag = ShipTags.shipTag(ship.id);
 
@@ -64,7 +74,7 @@ public class ShipCollision {
             // 1. Check terrain collisions
             Vector3f terrainForce = calculateTerrainCollisionForce(cb);
             if (terrainForce.lengthSquared() > 0.001f) {
-                totalForce.add(terrainForce);
+                workTotalForce.add(terrainForce);
                 collisionCount++;
             }
 
@@ -123,7 +133,7 @@ public class ShipCollision {
         // Update collision force
         if (collisionCount > 0) {
             // Average the forces and set as new collision force
-            ship.physics.collisionForce = totalForce.div(collisionCount);
+            ship.physics.collisionForce.set(workTotalForce.div(collisionCount));
         } else {
             // No collisions - decay existing force
             ship.physics.collisionForce.mul(ship.config.collisionForceDecay);
@@ -148,22 +158,22 @@ public class ShipCollision {
 
         ShipConfig config = ship.config;
 
-        // Separate horizontal and vertical forces
-        Vector3f horizontalForce = new Vector3f(collisionForce.x, 0, collisionForce.z);
+        // Separate horizontal and vertical forces (reuse work vectors)
+        workHorizontalForce.set(collisionForce.x, 0, collisionForce.z);
         float verticalForce = collisionForce.y;
 
-        // Get forward direction vector
+        // Get forward direction vector (reuse work vector)
         float yawRad = (float) Math.toRadians(-ship.vehicle.getYaw());
-        Vector3f forwardDir = new Vector3f(
+        workForwardDir.set(
             (float) Math.sin(yawRad),
             0,
             (float) Math.cos(yawRad)
         );
 
-        // Decompose force into forward and lateral components
-        float forwardComponent = horizontalForce.dot(forwardDir);
-        Vector3f forwardForce = new Vector3f(forwardDir).mul(forwardComponent);
-        Vector3f lateralForce = new Vector3f(horizontalForce).sub(forwardForce);
+        // Decompose force into forward and lateral components (reuse work vectors)
+        float forwardComponent = workHorizontalForce.dot(workForwardDir);
+        workForwardForce.set(workForwardDir).mul(forwardComponent);
+        workLateralForce.set(workHorizontalForce).sub(workForwardForce);
 
         // Check if ship is stationary or slow-moving
         boolean isStationary = Math.abs(ship.physics.currentSpeed) < 0.05f;
@@ -171,16 +181,16 @@ public class ShipCollision {
         if (isStationary) {
             // Ship is stationary/slow - push it in the direction of the force
             // Convert horizontal force directly to velocity
-            float forceMagnitude = horizontalForce.length();
+            float forceMagnitude = workHorizontalForce.length();
             if (forceMagnitude > 0.001f) {
-                // Normalize force direction and convert to speed
-                Vector3f forceDir = new Vector3f(horizontalForce).normalize();
+                // Normalize force direction and convert to speed (reuse work vector)
+                workForceDir.set(workHorizontalForce).normalize();
 
                 // Calculate speed change in force direction
                 float speedChange = forceMagnitude * config.collisionResponseStrength * 0.5f; // Dampen conversion
 
                 // Update speed in forward direction based on how aligned force is with forward dir
-                float alignment = forceDir.dot(forwardDir);
+                float alignment = workForceDir.dot(workForwardDir);
                 ship.physics.currentSpeed += alignment * speedChange;
 
                 // Clamp speed to max
@@ -189,9 +199,9 @@ public class ShipCollision {
                 // Also apply direct positional push for immediate response
                 Location vehicleLoc = ship.vehicle.getLocation();
                 vehicleLoc.add(
-                    forceDir.x * config.collisionResponseStrength * 0.3f,
+                    workForceDir.x * config.collisionResponseStrength * 0.3f,
                     0,
-                    forceDir.z * config.collisionResponseStrength * 0.3f
+                    workForceDir.z * config.collisionResponseStrength * 0.3f
                 );
                 TeleportCompat.teleport(ship.vehicle, vehicleLoc);
             }
@@ -214,12 +224,12 @@ public class ShipCollision {
             }
 
             // Apply lateral force as position offset (sliding along obstacles)
-            if (lateralForce.lengthSquared() > 0.001f) {
+            if (workLateralForce.lengthSquared() > 0.001f) {
                 Location vehicleLoc = ship.vehicle.getLocation();
                 vehicleLoc.add(
-                    lateralForce.x * config.collisionResponseStrength,
+                    workLateralForce.x * config.collisionResponseStrength,
                     0, // No Y movement
-                    lateralForce.z * config.collisionResponseStrength
+                    workLateralForce.z * config.collisionResponseStrength
                 );
                 TeleportCompat.teleport(ship.vehicle, vehicleLoc);
             }
@@ -449,25 +459,25 @@ public class ShipCollision {
         double yPenetration = overlapMaxY - overlapMinY;
         double zPenetration = overlapMaxZ - overlapMinZ;
 
-        // Find minimum penetration axis (separation direction)
-        Vector3f separationNormal = new Vector3f(0, 0, 0);
+        // Find minimum penetration axis (separation direction) - reuse work vector
+        workSeparationNormal.set(0, 0, 0);
         float penetrationDepth;
 
         if (xPenetration < yPenetration && xPenetration < zPenetration) {
             // Separate along X axis
-            separationNormal.x = (thisBox.getCenterX() > otherBox.getCenterX()) ? 1 : -1;
+            workSeparationNormal.x = (thisBox.getCenterX() > otherBox.getCenterX()) ? 1 : -1;
             penetrationDepth = (float) xPenetration;
         } else if (yPenetration < zPenetration) {
             // Separate along Y axis
-            separationNormal.y = (thisBox.getCenterY() > otherBox.getCenterY()) ? 1 : -1;
+            workSeparationNormal.y = (thisBox.getCenterY() > otherBox.getCenterY()) ? 1 : -1;
             penetrationDepth = (float) yPenetration;
         } else {
             // Separate along Z axis
-            separationNormal.z = (thisBox.getCenterZ() > otherBox.getCenterZ()) ? 1 : -1;
+            workSeparationNormal.z = (thisBox.getCenterZ() > otherBox.getCenterZ()) ? 1 : -1;
             penetrationDepth = (float) zPenetration;
         }
 
         // Return push force (normal * depth)
-        return separationNormal.mul(penetrationDepth);
+        return workSeparationNormal.mul(penetrationDepth);
     }
 }

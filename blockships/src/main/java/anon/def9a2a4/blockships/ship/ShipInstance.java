@@ -130,6 +130,17 @@ public class ShipInstance {
     // Fast lookup for recovered display indices (O(1) vs O(n) iteration with tag parsing)
     private final Set<Integer> recoveredDisplayIndices = new HashSet<>();
 
+    // Reusable matrices for updateCollisionPositions() - object pooling to reduce GC pressure
+    private final Matrix4f workRotation = new Matrix4f();
+    private final Matrix4f workTranslation = new Matrix4f();
+    private final Matrix4f workWorld = new Matrix4f();
+    private final Vector3f workVehicleRot = new Vector3f();
+    private final Vector3f workTransformedRot = new Vector3f();
+    private final Vector3f workOffset = new Vector3f();
+    private final Vector3f workPerBlockOffset = new Vector3f();
+    private final Vector3f workCurrentWorldPos = new Vector3f();
+    private final Vector3f workVelocity = new Vector3f();
+
     /**
      * Private constructor for creating ShipInstance without spawning entities.
      * Used by fromState() factory method for chunk load recovery.
@@ -855,20 +866,22 @@ public class ShipInstance {
         float yaw = vehicle.getYaw();
         float pitch = vehicle.getPitch();
 
-        Vector3f vehicleRot = new Vector3f(
+        // Reuse work vectors instead of allocating new ones
+        workVehicleRot.set(
             (float) java.lang.Math.toRadians(-yaw),
             (float) java.lang.Math.toRadians(-pitch),
             0f
         );
-        Vector3f transformedRot = model.rotationTransform.transform(vehicleRot, new Vector3f());
-        transformedRot.x += (float) java.lang.Math.toRadians(model.initialRotation.x);
-        transformedRot.y += (float) java.lang.Math.toRadians(model.initialRotation.y);
-        transformedRot.z += (float) java.lang.Math.toRadians(model.initialRotation.z);
+        model.rotationTransform.transform(workVehicleRot, workTransformedRot);
+        workTransformedRot.x += (float) java.lang.Math.toRadians(model.initialRotation.x);
+        workTransformedRot.y += (float) java.lang.Math.toRadians(model.initialRotation.y);
+        workTransformedRot.z += (float) java.lang.Math.toRadians(model.initialRotation.z);
 
-        return new Matrix4f()
-            .rotateY(transformedRot.x)
-            .rotateX(transformedRot.y)
-            .rotateZ(transformedRot.z);
+        // Reuse workRotation matrix instead of allocating new one
+        return workRotation.identity()
+            .rotateY(workTransformedRot.x)
+            .rotateX(workTransformedRot.y)
+            .rotateZ(workTransformedRot.z);
     }
 
     /**
@@ -916,39 +929,38 @@ public class ShipInstance {
             }
         }
 
-        // Build rotation matrix including vehicle's current orientation
+        // Build rotation matrix including vehicle's current orientation (reuses workRotation)
         Matrix4f R_full = buildRotationMatrix();
 
-        // Build translation matrix for collision offset
-        Matrix4f T_collision = new Matrix4f().translation(model.collisionOffset);
+        // Build translation matrix for collision offset (reuse workTranslation)
+        workTranslation.identity().translation(model.collisionOffset);
 
         // Add custom ship collision offset from config
         if ("custom".equals(shipType)) {
-            T_collision.translate(config.customCollisionOffset);
+            workTranslation.translate(config.customCollisionOffset);
         }
 
         // Update collider (Interaction carrier + Shulker) positions
         for (CollisionBox cb : colliders) {
-            // Calculate world transformation for this collider using collision offset
-            Matrix4f world = new Matrix4f(R_full).mul(T_collision).mul(cb.base);
+            // Calculate world transformation for this collider using collision offset (reuse workWorld)
+            workWorld.set(R_full).mul(workTranslation).mul(cb.base);
 
-            // Extract position from transformation matrix
-            Vector3f offset = new Vector3f();
-            world.getTranslation(offset);
+            // Extract position from transformation matrix (reuse workOffset)
+            workWorld.getTranslation(workOffset);
 
             // Apply per-block collision offset (rotated by R_full to follow ship orientation)
-            Vector3f perBlockOffset = new Vector3f(cb.config.offset);
-            R_full.transformPosition(perBlockOffset);
+            workPerBlockOffset.set(cb.config.offset);
+            R_full.transformPosition(workPerBlockOffset);
 
             // Calculate current world position (base position + block offset + per-block offset)
-            Vector3f currentWorldPos = new Vector3f(
-                (float) currentVehicleLoc.getX() + offset.x + perBlockOffset.x,
-                (float) currentVehicleLoc.getY() + offset.y + perBlockOffset.y,
-                (float) currentVehicleLoc.getZ() + offset.z + perBlockOffset.z
+            workCurrentWorldPos.set(
+                (float) currentVehicleLoc.getX() + workOffset.x + workPerBlockOffset.x,
+                (float) currentVehicleLoc.getY() + workOffset.y + workPerBlockOffset.y,
+                (float) currentVehicleLoc.getZ() + workOffset.z + workPerBlockOffset.z
             );
 
             // Calculate velocity (change in position since last tick)
-            Vector3f velocity = new Vector3f(currentWorldPos).sub(cb.previousWorldPos);
+            workVelocity.set(workCurrentWorldPos).sub(cb.previousWorldPos);
 
             // Check if this is the first tick (previousWorldPos was initialized to 0,0,0)
             // If so, skip velocity application to avoid massive initial velocity spike
@@ -958,15 +970,15 @@ public class ShipInstance {
             // The shulker rides as passenger and follows smoothly (ArmorStand) or choppily (Interaction)
             // Note: Carriers never rotate - only position changes (AABBs don't rotate, shulkers inherit zero rotation)
             Location carrierLoc = currentVehicleLoc.clone().add(
-                offset.x + perBlockOffset.x,
-                offset.y + perBlockOffset.y,
-                offset.z + perBlockOffset.z
+                workOffset.x + workPerBlockOffset.x,
+                workOffset.y + workPerBlockOffset.y,
+                workOffset.z + workPerBlockOffset.z
             );
             carrierLoc.setYaw(0);
             carrierLoc.setPitch(0);
 
             // Only teleport if position actually changed (avoids collision jitter when idle)
-            float velocityMagnitude = velocity.length();
+            float velocityMagnitude = workVelocity.length();
 
             // BEFORE teleport: capture player if this is a seat shulker
             // (teleporting carriers can sometimes dismount nested passengers)
@@ -993,7 +1005,7 @@ public class ShipInstance {
 
                 // Set carrier velocity for better client/server sync (skip on first tick)
                 if (!isFirstTick) {
-                    cb.carrier.setVelocity(new org.bukkit.util.Vector(velocity.x, velocity.y, velocity.z));
+                    cb.carrier.setVelocity(new org.bukkit.util.Vector(workVelocity.x, workVelocity.y, workVelocity.z));
                 }
             }
 
@@ -1013,10 +1025,10 @@ public class ShipInstance {
             }
 
             // Apply velocity to players standing on this shulker
-            physics.applyDeckPhysics(cb, velocity, isFirstTick);
+            physics.applyDeckPhysics(cb, workVelocity, isFirstTick);
 
             // Store current position for next tick
-            cb.previousWorldPos.set(currentWorldPos);
+            cb.previousWorldPos.set(workCurrentWorldPos);
         }
 
         // Note: Seats are now the shulkers themselves (no separate seat ArmorStands to update)

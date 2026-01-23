@@ -34,8 +34,48 @@ public class ShipPhysics {
     // Sound cooldown (ticks until next sound can play)
     private int soundCooldown = 0;
 
+    // Reusable Locations for physics calculations - reduces GC pressure
+    private Location workLocation = null;
+    private Location workLocation2 = null;  // Second work location for buoyancy (hull check vs water scan)
+
     public ShipPhysics(ShipInstance ship) {
         this.ship = ship;
+    }
+
+    /**
+     * Sets the work location to match the given location (lazy init).
+     * Reuses the same Location object to avoid allocations.
+     */
+    private Location reuseLocation(Location source) {
+        if (workLocation == null) {
+            workLocation = source.clone();
+        } else {
+            workLocation.setWorld(source.getWorld());
+            workLocation.setX(source.getX());
+            workLocation.setY(source.getY());
+            workLocation.setZ(source.getZ());
+            workLocation.setYaw(source.getYaw());
+            workLocation.setPitch(source.getPitch());
+        }
+        return workLocation;
+    }
+
+    /**
+     * Sets the second work location to match the given location (lazy init).
+     * Used when two separate locations are needed simultaneously (e.g., buoyancy).
+     */
+    private Location reuseLocation2(Location source) {
+        if (workLocation2 == null) {
+            workLocation2 = source.clone();
+        } else {
+            workLocation2.setWorld(source.getWorld());
+            workLocation2.setX(source.getX());
+            workLocation2.setY(source.getY());
+            workLocation2.setZ(source.getZ());
+            workLocation2.setYaw(source.getYaw());
+            workLocation2.setPitch(source.getPitch());
+        }
+        return workLocation2;
     }
 
     /**
@@ -70,8 +110,8 @@ public class ShipPhysics {
                 dragMultiplier = config.idleDrag;
             }
 
-            // Apply extra drag in water
-            if (isWaterOrWaterlogged(vehicleLoc.clone().subtract(0, 0.5, 0).getBlock())) {
+            // Apply extra drag in water (reuse work location)
+            if (isWaterOrWaterlogged(reuseLocation(vehicleLoc).subtract(0, 0.5, 0).getBlock())) {
                 dragMultiplier *= 0.98f;
             }
 
@@ -100,7 +140,7 @@ public class ShipPhysics {
         boolean hasVerticalMovement = Math.abs(currentYVelocity) > 0.001f;
 
         if (hasHorizontalMovement || hasVerticalMovement) {
-            Location newLoc = vehicleLoc.clone();
+            Location newLoc = reuseLocation(vehicleLoc);
             if (hasHorizontalMovement) {
                 newLoc.add(forwardX * currentSpeed, 0, forwardZ * currentSpeed);
             }
@@ -172,15 +212,21 @@ public class ShipPhysics {
         ShipConfig config = ship.config;
 
         // For custom ships, check water at the ship's lowest point (hull), not at the wheel
+        // Use workLocation for hull check position
         double hullCheckY = vehicleLoc.getY() + ship.model.minY;
-        Location hullCheckLoc = vehicleLoc.clone();
+        Location hullCheckLoc = reuseLocation(vehicleLoc);
         hullCheckLoc.setY(hullCheckY);
+
+        // Check water at hull and one block below (use workLocation2 for the below check)
+        Location belowHullLoc = reuseLocation2(hullCheckLoc);
+        belowHullLoc.subtract(0, 1, 0);
         boolean inWater = isWaterOrWaterlogged(hullCheckLoc.getBlock())
-            || isWaterOrWaterlogged(hullCheckLoc.clone().subtract(0, 1, 0).getBlock());
+            || isWaterOrWaterlogged(belowHullLoc.getBlock());
 
         if (inWater) {
             // Find water surface Y level by scanning a fixed column
-            Location waterCheckLoc = vehicleLoc.clone();
+            // Reuse workLocation2 for water surface scan (hullCheckLoc/workLocation still has hull position)
+            Location waterCheckLoc = reuseLocation2(vehicleLoc);
             int startY = (int) Math.floor(vehicleLoc.getY()) + config.waterScanAbove;
             int endY = (int) Math.floor(hullCheckY) - config.waterScanBelow;
             waterCheckLoc.setY(startY);
@@ -226,7 +272,10 @@ public class ShipPhysics {
         } else {
             // Check ground at ship's lowest point (hull), not at the wheel
             // Use small offset (0.1) so hull settles just into the ground block
-            Material belowHullBlock = hullCheckLoc.clone().subtract(0, 0.1, 0).getBlock().getType();
+            // hullCheckLoc (workLocation) still has hull Y, use workLocation2 for below check
+            Location belowCheck = reuseLocation2(hullCheckLoc);
+            belowCheck.subtract(0, 0.1, 0);
+            Material belowHullBlock = belowCheck.getBlock().getType();
             if (belowHullBlock == Material.AIR || !belowHullBlock.isSolid()) {
                 // Fall if hull not on ground
                 currentYVelocity -= 0.08f;  // Gravity
