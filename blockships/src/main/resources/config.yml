@@ -174,7 +174,7 @@ ships:
       result-texture-set: CRATES
 
     # Set to true to make collision boxes glow (useful for debugging)
-    collision-debug-glow: true
+    collision-debug-glow: false
 
     controls:
       # Maximum forward speed in blocks per tick
@@ -254,7 +254,7 @@ ships:
       # Reference to texture set defined in items.yml (e.g., CRATES, BALLOONS)
       result-texture-set: CRATES
 
-    collision-debug-glow: true
+    collision-debug-glow: false
 
     controls:
       max-speed: 0.55
@@ -301,7 +301,7 @@ ships:
       result-item: PLAYER_HEAD
       result-texture-set: CRATES
 
-    collision-debug-glow: true
+    collision-debug-glow: false
 
     controls:
       max-speed: 0.4
@@ -335,5 +335,5 @@ ships:
       force-decay: 0.7
 
   custom:
-    collision-debug-glow: true
+    collision-debug-glow: false
 
