@@ -3,6 +3,7 @@ blockships/build/
 blockships/bin/
 bin/
 server/
+test-server/
 docs/assets/dev/
 
 # Compiled class file
