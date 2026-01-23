@@ -4,7 +4,9 @@ blockships/bin/
 bin/
 server/
 test-server/
+test-bot/node_modules/
 docs/assets/dev/
+.download-cache/
 
 # Compiled class file
 *.class

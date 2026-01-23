@@ -25,17 +25,25 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install bot dependencies
+        run: make test-bot-install
+
       - name: Download plugin JAR
         uses: actions/download-artifact@v4
         with:
           name: BlockShips
           path: test-server/plugins/
 
-      - name: Setup and run test server
+      - name: Setup and run test server with bot
         run: |
           make test-server-setup
           make test-server-download SERVER_VARIANT=${{ matrix.server }} MINECRAFT_VERSION=${{ matrix.minecraft }}
-          make test-server-run
+          make test-server-with-bot
 
       - name: Upload logs on failure
         if: failure()
