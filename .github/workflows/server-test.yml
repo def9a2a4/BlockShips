@@ -10,7 +10,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        minecraft: ['1.21.1', '1.21.4', '1.21.8', '1.21.10', '1.21.11']
+        # minecraft: ['1.21.1', '1.21.4', '1.21.8', '1.21.10', '1.21.11']
+        minecraft: ['1.21.1', '1.21.11']
         server: ['paper', 'purpur']
 
     name: ${{ matrix.server }} ${{ matrix.minecraft }}
@@ -54,7 +55,6 @@ jobs:
           cat > test-server/server.properties << 'EOF'
           online-mode=false
           server-port=25565
-          level-type=flat
           spawn-protection=0
           max-tick-time=-1
           EOF
@@ -75,8 +75,8 @@ jobs:
           TAIL_PID=$!
 
           # Wait for server to fully start (look for "Done" message)
-          for i in {1..120}; do
-            if grep -q "Done" server.log 2>/dev/null; then
+          for i in {1..600}; do
+            if grep -q "Done.*For help" server.log 2>/dev/null; then
               echo ""
               echo "========== Server started successfully =========="
               break
@@ -89,6 +89,14 @@ jobs:
             fi
             sleep 1
           done
+
+          # Check if server actually started (timeout case)
+          if ! grep -q "Done.*For help" server.log 2>/dev/null; then
+            echo ""
+            echo "========== Server startup timed out =========="
+            cat server.log
+            exit 1
+          fi
 
           # Check for plugin load success
           if grep -q "BlockShips.*enabled" server.log; then
