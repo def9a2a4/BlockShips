@@ -1,15 +1,12 @@
 name: Server Integration Test
 
 on:
-  workflow_run:
-    workflows: ["Build"]
-    types: [completed]
+  workflow_call:
   workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -32,8 +29,6 @@ jobs:
         with:
           name: BlockShips
           path: test-server/plugins/
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download server JAR
         run: |
