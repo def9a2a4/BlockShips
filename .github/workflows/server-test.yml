@@ -1,15 +1,15 @@
 name: Server Integration Test
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_run:
+    workflows: ["Build"]
+    types: [completed]
   workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -27,11 +27,13 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Build plugin
-        run: cd blockships && gradle build
+      - name: Download plugin JAR
+        uses: actions/download-artifact@v4
+        with:
+          name: BlockShips
+          path: test-server/plugins/
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download server JAR
         run: |
@@ -53,7 +55,6 @@ jobs:
 
       - name: Setup test server
         run: |
-          cp blockships/build/libs/BlockShips-*.jar test-server/plugins/
           echo "eula=true" > test-server/eula.txt
           cat > test-server/server.properties << 'EOF'
           online-mode=false
