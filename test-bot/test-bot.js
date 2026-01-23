@@ -283,21 +283,19 @@ async function mountShip(shipType = null) {
 
 /**
  * Send steering packets for a duration
- * sprint parameter is for 1.21.2+ descend control (not supported in old packet format)
+ * Protocol: sideways (f32), forward (f32), jump (u8)
+ * sideways: positive = left (A), negative = right (D)
+ * forward: positive = forward (W), negative = backward (S)
  */
-async function steerShip(forward, sideways, jump, durationMs, sprint = false) {
-  const TICK_MS = 100
+async function steerShip(forward, sideways, jump, durationMs) {
+  const TICK_MS = 50  // Send more frequently for smoother control
   const numTicks = Math.floor(durationMs / TICK_MS)
 
   for (let i = 0; i < numTicks; i++) {
-    // Old steer_vehicle packet format (pre-1.21.2) doesn't have sprint field
-    // Sprint/sneak for descent is only available in 1.21.2+ Input record format
-    // For pre-1.21.2, use S+Space combo for descent instead
     bot._client.write('steer_vehicle', {
       sideways: sideways,
       forward: forward,
-      jump: jump ? 1 : 0,
-      unmount: sprint ? 1 : 0  // Reuse unmount field for sprint signal (won't actually unmount)
+      jump: jump ? 1 : 0
     })
     await sleep(TICK_MS)
   }
@@ -326,8 +324,8 @@ async function runControlSequence() {
   await steerShip(0, 0, true, 2000)
   await sleep(200)
 
-  say('Testing sprint...')
-  await steerShip(1.0, 0, false, 1000, true)
+  say('Testing forward (extended)...')
+  await steerShip(1.0, 0, false, 1000)
   await sleep(200)
 
   say('Testing backward + jump...')

@@ -6,7 +6,7 @@ const TESTS = ['smallship', 'bigship', 'smallairship', 'custom_ship', 'custom_ai
 
 // Stagger delay between bot connections to avoid throttling
 // ViaVersion needs extra time between connections to avoid protocol errors
-const CONNECTION_DELAY_MS = 12000
+const CONNECTION_DELAY_MS = 24000
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
