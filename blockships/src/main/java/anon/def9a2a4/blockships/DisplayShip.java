@@ -1350,7 +1350,7 @@ public class DisplayShip implements Listener {
         double currentHealth = inst.vehicle.getHealth();
         double newHealth = currentHealth - damage;
 
-        double maxHealth = inst.vehicle.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getBaseValue();
+        double maxHealth = inst.vehicle.getAttribute(anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth()).getBaseValue();
 
         // Show health feedback to attacker via action bar
         if (e instanceof EntityDamageByEntityEvent damageByEntity) {
@@ -1421,7 +1421,7 @@ public class DisplayShip implements Listener {
         // Apply damage to ship health
         double currentHealth = inst.vehicle.getHealth();
         double newHealth = currentHealth - damage;
-        double maxHealth = inst.vehicle.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getBaseValue();
+        double maxHealth = inst.vehicle.getAttribute(anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth()).getBaseValue();
 
         // Show feedback if shooter is a player
         if (projectile.getShooter() instanceof Player player) {
@@ -1574,7 +1574,7 @@ public class DisplayShip implements Listener {
         player.sendMessage("§eShip Type: §f" + inst.shipType);
         player.sendMessage("§eWood Type: §f" + inst.customization.getWoodType());
         player.sendMessage("§eHealth: §f" + String.format("%.1f", inst.vehicle.getHealth()) + "/" +
-                          String.format("%.1f", inst.vehicle.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getValue()));
+                          String.format("%.1f", inst.vehicle.getAttribute(anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth()).getValue()));
         player.sendMessage("§eSpeed: §f" + String.format("%.3f", inst.physics.currentSpeed));
 
         // Find the CollisionBox for this shulker

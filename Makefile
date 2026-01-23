@@ -26,5 +26,10 @@ server-plugin-copy:
 server-start:
 	cd server && java -Xmx2G -Xms2G -jar paper-1.21.11-55.jar nogui
 
+
+.PHONY: server-start-alt
+server-start-alt:
+	cd server && java -Xmx2G -Xms2G -jar purpur-1.21.1-2329.jar nogui
+
 .PHONY: server
 server: server-plugin-copy server-start

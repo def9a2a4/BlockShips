@@ -53,34 +53,63 @@ public class ShipSteeringListener {
                 return;
             }
 
-            // Read the Input object (field 0)
+            // Try new format first (1.21.2+): Input record with boolean methods
             StructureModifier<Object> modifier = packet.getModifier();
-            if (modifier.size() < 1) {
-                return;
+            if (modifier.size() >= 1) {
+                Object inputObj = modifier.read(0);
+                if (inputObj != null) {
+                    Class<?> inputClass = inputObj.getClass();
+
+                    // Check if this is the new Input record (has forward() method returning boolean)
+                    try {
+                        java.lang.reflect.Method forwardMethod = inputClass.getMethod("forward");
+                        if (forwardMethod.getReturnType() == boolean.class) {
+                            // New format (1.21.2+)
+                            boolean forward = (boolean) forwardMethod.invoke(inputObj);
+                            boolean backward = (boolean) inputClass.getMethod("backward").invoke(inputObj);
+                            boolean left = (boolean) inputClass.getMethod("left").invoke(inputObj);
+                            boolean right = (boolean) inputClass.getMethod("right").invoke(inputObj);
+                            boolean jump = (boolean) inputClass.getMethod("jump").invoke(inputObj);
+                            boolean sprint = (boolean) inputClass.getMethod("sprint").invoke(inputObj);
+
+                            ship.setInputState(forward, backward, left, right);
+                            ship.setVerticalInputState(jump, sprint);
+                            return;
+                        }
+                    } catch (NoSuchMethodException e) {
+                        // Not the new format, fall through to old format
+                    }
+                }
             }
 
-            Object inputObj = modifier.read(0);
-            if (inputObj == null) {
-                return;
-            }
+            // Old format (1.21.1 and earlier): float sideways, float forward, boolean jump, boolean unmount
+            StructureModifier<Float> floats = packet.getFloat();
+            if (floats.size() >= 2) {
+                float sideways = floats.read(0);  // positive = left (A key), negative = right (D key)
+                float forward = floats.read(1);   // positive = forward (W key), negative = backward (S key)
 
-            // Use reflection to read the boolean fields from the Input record
-            try {
-                Class<?> inputClass = inputObj.getClass();
-                boolean forward = (boolean) inputClass.getMethod("forward").invoke(inputObj);
-                boolean backward = (boolean) inputClass.getMethod("backward").invoke(inputObj);
-                boolean left = (boolean) inputClass.getMethod("left").invoke(inputObj);
-                boolean right = (boolean) inputClass.getMethod("right").invoke(inputObj);
-                boolean jump = (boolean) inputClass.getMethod("jump").invoke(inputObj);
-                boolean sprint = (boolean) inputClass.getMethod("sprint").invoke(inputObj);
+                // Convert floats to booleans (threshold at 0)
+                boolean isForward = forward > 0;
+                boolean isBackward = forward < 0;
+                boolean isLeft = sideways > 0;   // A key = positive sideways
+                boolean isRight = sideways < 0;  // D key = negative sideways
 
-                // Update ship input state (physics will apply every tick)
-                ship.setInputState(forward, backward, left, right);
+                // Debug: log steering input on old format
+                if (isForward || isBackward || isLeft || isRight) {
+                    plugin.getLogger().info("[DEBUG] Old format steering from " + player.getName() +
+                        ": fwd=" + isForward + " back=" + isBackward + " left=" + isLeft + " right=" + isRight +
+                        " (raw: sideways=" + sideways + " forward=" + forward + ")");
+                }
 
-                // Update vertical input for all ships (custom airships use base class method)
-                ship.setVerticalInputState(jump, sprint);
-            } catch (Exception e) {
-                plugin.getLogger().warning("Failed to read Input fields: " + e.getMessage());
+                ship.setInputState(isForward, isBackward, isLeft, isRight);
+
+                // Old format also has jump and unmount booleans
+                StructureModifier<Boolean> bools = packet.getBooleans();
+                if (bools.size() >= 2) {
+                    boolean jump = bools.read(0);
+                    // boolean unmount = bools.read(1);  // shift key - not used for vertical input
+                    ship.setVerticalInputState(jump, false);  // no sprint in old format
+                }
             }
 
         } catch (Exception ex) {
@@ -104,9 +133,15 @@ public class ShipSteeringListener {
             UUID shipId = ShipTags.extractShipId(tags);
             int seatIndex = ShipTags.extractSeatIndex(tags);
 
+            // Debug: log what we found
+            plugin.getLogger().fine("[DEBUG] findShipByPlayer: " + player.getName() +
+                " riding shulker with tags=" + tags + " shipId=" + shipId + " seatIndex=" + seatIndex);
+
             // Only return ship if player is in driver seat (index 0)
             if (shipId != null && seatIndex == 0) {
-                return ShipRegistry.byId(shipId);
+                ShipInstance ship = ShipRegistry.byId(shipId);
+                plugin.getLogger().fine("[DEBUG] Found ship " + shipId + " for player " + player.getName() + ", ship=" + ship);
+                return ship;
             }
         }
         return null;

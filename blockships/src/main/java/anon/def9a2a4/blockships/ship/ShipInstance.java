@@ -3,6 +3,7 @@ package anon.def9a2a4.blockships.ship;
 import anon.def9a2a4.blockships.*;
 import anon.def9a2a4.blockships.customships.ShipWheelData;
 import anon.def9a2a4.blockships.customships.ShipWheelManager;
+import anon.def9a2a4.blockships.util.TeleportCompat;
 import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
@@ -258,7 +259,7 @@ public class ShipInstance {
             as.addScoreboardTag(ShipTags.shipRootTag(id));
 
             // Root vehicle has health system for ship damage
-            org.bukkit.attribute.AttributeInstance maxHealthAttr = as.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH);
+            org.bukkit.attribute.AttributeInstance maxHealthAttr = as.getAttribute(anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth());
             if (maxHealthAttr != null) {
                 maxHealthAttr.setBaseValue(model.maxHealth);
             }
@@ -617,92 +618,124 @@ public class ShipInstance {
 
             // Spawn collision shulker if this block has collision enabled
             if (p.collision.enable) {
-                // Create spawn location with zero rotation (carriers never rotate)
-                Location carrierSpawnLoc = base.clone();
-                carrierSpawnLoc.setYaw(0);
-                carrierSpawnLoc.setPitch(0);
+                plugin.getLogger().info("[DEBUG] Spawning collider for block " + currentBlockIndex);
+                Shulker spawnedShulker = null;
 
-                // Use ArmorStand as carrier (smooth interpolation)
-                ArmorStand carrier = w.spawn(carrierSpawnLoc, ArmorStand.class, as -> {
-                    as.setInvisible(true);
-                    as.setInvulnerable(true);
-                    as.setGravity(false);
-                    as.setSilent(true);
-                    as.setPersistent(true);
-                    as.setMarker(true);  // Marker mode: no hitbox, can't be pushed
-                    as.addScoreboardTag(ShipTags.shipTag(this.id));
-                    as.addScoreboardTag(ShipTags.CARRIER_TAG);
-                    as.addScoreboardTag(ShipTags.blockIndexTag(currentBlockIndex));
-                });
+                try {
+                    // Create spawn location with zero rotation (carriers never rotate)
+                    Location carrierSpawnLoc = base.clone();
+                    carrierSpawnLoc.setYaw(0);
+                    carrierSpawnLoc.setPitch(0);
 
-                // Spawn shulker as passenger for physical collision
-                // Apply size scaling via generic.scale attribute
-                float shulkerSize = p.collision.size;
-                final int finalBlockIndex = currentBlockIndex;
-                Shulker shulker = w.spawn(carrierSpawnLoc, Shulker.class, s -> {
-                    s.setAI(false);
-                    s.setGravity(false);
-                    s.setSilent(true);
-                    s.setPersistent(true);
-                    s.setCollidable(true);
-                    s.setInvisible(true);
-                    s.setGlowing(config.collisionDebugGlow);  // Glow if debug mode enabled
-                    s.setPeek(0);  // Prevent shulker from peeking/moving up
-                    s.addScoreboardTag(ShipTags.shipTag(this.id));
-                    s.addScoreboardTag(ShipTags.COLLIDER_TAG);
-                    s.addScoreboardTag(ShipTags.blockIndexTag(finalBlockIndex));
-
-                    // Add seat tag if this block is a seat and populate seatShulkers list
-                    // Tag format: shipseat:{index}
-                    // Parsed in: DisplayShip.handleShulkerInteraction
-                    for (int seatIdx = 0; seatIdx < model.seats.size(); seatIdx++) {
-                        if (model.seats.get(seatIdx).blockIndex == finalBlockIndex) {
-                            s.addScoreboardTag(ShipTags.seatTag(seatIdx));
-                            // Store reference in seatShulkers list for fast lookup
-                            seatShulkers.set(seatIdx, s);
-                            break;
+                    // Use ArmorStand as carrier (smooth interpolation)
+                    plugin.getLogger().info("[DEBUG] Spawning carrier ArmorStand...");
+                    ArmorStand carrier = w.spawn(carrierSpawnLoc, ArmorStand.class, as -> {
+                        try {
+                            as.setInvisible(true);
+                            as.setInvulnerable(true);
+                            as.setGravity(false);
+                            as.setSilent(true);
+                            as.setPersistent(true);
+                            as.setMarker(true);
+                            as.addScoreboardTag(ShipTags.shipTag(this.id));
+                            as.addScoreboardTag(ShipTags.CARRIER_TAG);
+                            as.addScoreboardTag(ShipTags.blockIndexTag(currentBlockIndex));
+                        } catch (Throwable t) {
+                            plugin.getLogger().severe("[DEBUG] ArmorStand config failed for block " + currentBlockIndex + ": " + t.getMessage());
+                            t.printStackTrace();
                         }
-                    }
+                    });
+                    plugin.getLogger().info("[DEBUG] Carrier spawned for block " + currentBlockIndex);
 
-                    // Add storage tag if this block has storage
-                    if (p.storage != null) {
-                        s.addScoreboardTag(ShipTags.storageTag(finalBlockIndex));
-                    }
+                    // Spawn shulker as passenger for physical collision
+                    // Apply size scaling via generic.scale attribute
+                    float shulkerSize = p.collision.size;
+                    final int finalBlockIndex = currentBlockIndex;
+                    plugin.getLogger().info("[DEBUG] Spawning Shulker...");
+                    Shulker shulker = w.spawn(carrierSpawnLoc, Shulker.class, s -> {
+                        try {
+                            s.setAI(false);
+                            s.setGravity(false);
+                            s.setSilent(true);
+                            s.setPersistent(true);
+                            s.setCollidable(true);
+                            s.setInvisible(true);
+                            s.setGlowing(config.collisionDebugGlow);  // Glow if debug mode enabled
+                            s.setPeek(0);  // Prevent shulker from peeking/moving up
+                            s.addScoreboardTag(ShipTags.shipTag(this.id));
+                            s.addScoreboardTag(ShipTags.COLLIDER_TAG);
+                            s.addScoreboardTag(ShipTags.blockIndexTag(finalBlockIndex));
 
-                    // Add interaction tag if this block opens an interaction GUI
-                    if (p.rawYaml.containsKey("interaction") && Boolean.TRUE.equals(p.rawYaml.get("interaction"))) {
-                        s.addScoreboardTag(ShipTags.interactTag(finalBlockIndex));
-                    }
+                            // Add seat tag if this block is a seat and populate seatShulkers list
+                            // Tag format: shipseat:{index}
+                            // Parsed in: DisplayShip.handleShulkerInteraction
+                            for (int seatIdx = 0; seatIdx < model.seats.size(); seatIdx++) {
+                                if (model.seats.get(seatIdx).blockIndex == finalBlockIndex) {
+                                    s.addScoreboardTag(ShipTags.seatTag(seatIdx));
+                                    // Store reference in seatShulkers list for fast lookup
+                                    seatShulkers.set(seatIdx, s);
+                                    break;
+                                }
+                            }
 
-                    // Add leadable tag if this block can have leads attached (fences)
-                    if (p.rawYaml.containsKey("leadable") && Boolean.TRUE.equals(p.rawYaml.get("leadable"))) {
-                        s.addScoreboardTag(ShipTags.leadableTag(finalBlockIndex));
-                    }
+                            // Add storage tag if this block has storage
+                            if (p.storage != null) {
+                                s.addScoreboardTag(ShipTags.storageTag(finalBlockIndex));
+                            }
 
-                    // Add cannon tag if this obsidian block is part of a cannon
-                    for (ShipModel.CannonInfo cannon : model.cannons) {
-                        if (cannon.obsidianBlockIndex == finalBlockIndex) {
-                            s.addScoreboardTag(ShipTags.cannonTag(finalBlockIndex));
-                            break;
+                            // Add interaction tag if this block opens an interaction GUI
+                            if (p.rawYaml.containsKey("interaction") && Boolean.TRUE.equals(p.rawYaml.get("interaction"))) {
+                                s.addScoreboardTag(ShipTags.interactTag(finalBlockIndex));
+                            }
+
+                            // Add leadable tag if this block can have leads attached (fences)
+                            if (p.rawYaml.containsKey("leadable") && Boolean.TRUE.equals(p.rawYaml.get("leadable"))) {
+                                s.addScoreboardTag(ShipTags.leadableTag(finalBlockIndex));
+                            }
+
+                            // Add cannon tag if this obsidian block is part of a cannon
+                            for (ShipModel.CannonInfo cannon : model.cannons) {
+                                if (cannon.obsidianBlockIndex == finalBlockIndex) {
+                                    s.addScoreboardTag(ShipTags.cannonTag(finalBlockIndex));
+                                    break;
+                                }
+                            }
+
+                            // Apply scale attribute to change collision box size (added in 1.20.5)
+                            try {
+                                org.bukkit.attribute.Attribute scaleAttribute = anon.def9a2a4.blockships.util.AttributeCompat.getScale();
+                                if (scaleAttribute != null) {
+                                    org.bukkit.attribute.AttributeInstance scaleAttr = s.getAttribute(scaleAttribute);
+                                    if (scaleAttr != null) {
+                                        scaleAttr.setBaseValue(shulkerSize);
+                                    }
+                                }
+                            } catch (Throwable scaleError) {
+                                // Scale attribute not available on this version - shulker uses default size
+                                plugin.getLogger().warning("[DEBUG] Could not apply scale to shulker: " + scaleError.getMessage());
+                            }
+                        } catch (Throwable e) {
+                            plugin.getLogger().severe("[DEBUG] Shulker config failed for block " + finalBlockIndex + ": " + e.getMessage());
+                            e.printStackTrace();
                         }
-                    }
+                    });
+                    plugin.getLogger().info("[DEBUG] Shulker spawned for block " + currentBlockIndex);
 
-                    // Apply scale attribute to change collision box size
-                    org.bukkit.attribute.AttributeInstance scaleAttr = s.getAttribute(org.bukkit.attribute.Attribute.SCALE);
-                    if (scaleAttr != null) {
-                        scaleAttr.setBaseValue(shulkerSize);
-                    }
-                });
+                    // Mount shulker on carrier
+                    carrier.addPassenger(shulker);
+                    spawnedShulker = shulker;
 
-                // Mount shulker on carrier
-                carrier.addPassenger(shulker);
-
-                colliders.add(new CollisionBox(carrier, shulker, new Matrix4f(p.local), p.collision, currentBlockIndex));
+                    colliders.add(new CollisionBox(carrier, shulker, new Matrix4f(p.local), p.collision, currentBlockIndex));
+                    plugin.getLogger().info("[DEBUG] Collider complete for block " + currentBlockIndex + ", total colliders: " + colliders.size());
+                } catch (Throwable e) {
+                    plugin.getLogger().severe("[DEBUG] Collider spawn FAILED for block " + currentBlockIndex + ": " + e.getMessage());
+                    e.printStackTrace();
+                }
 
                 // Store leadable shulker reference for prefab ship lead attachment (single lead point)
                 // Custom ships use per-fence attachment via leadable tags instead
-                if (!"custom".equals(shipType) && p.rawYaml.containsKey("leadable") && Boolean.TRUE.equals(p.rawYaml.get("leadable"))) {
-                    this.leadableShulker = shulker;
+                if (spawnedShulker != null && !"custom".equals(shipType) && p.rawYaml.containsKey("leadable") && Boolean.TRUE.equals(p.rawYaml.get("leadable"))) {
+                    this.leadableShulker = spawnedShulker;
                 }
             }
         }
@@ -862,6 +895,12 @@ public class ShipInstance {
     public void updateCollisionPositions() {
         Location currentVehicleLoc = vehicle.getLocation();
 
+        // Debug: log once on first tick
+        if (firstTick) {
+            plugin.getLogger().info("[DEBUG] updateCollisionPositions called, " + colliders.size() + " colliders, vehicle at " +
+                String.format("%.2f, %.2f, %.2f", currentVehicleLoc.getX(), currentVehicleLoc.getY(), currentVehicleLoc.getZ()));
+        }
+
         // Calculate collision detection radius once (on first call after colliders are spawned)
         if (collisionRadius < 0) {
             calculateCollisionRadius();
@@ -942,7 +981,24 @@ public class ShipInstance {
             }
 
             if (isFirstTick || velocityMagnitude > 0.001) {
-                cb.carrier.teleport(carrierLoc);
+                TeleportCompat.teleport(cb.carrier, carrierLoc);
+                // DO NOT teleport shulker directly - it causes block snapping
+                // Shulker should follow carrier as passenger
+
+                // Verify passenger relationship is intact (can break on chunk reload)
+                if (!cb.carrier.getPassengers().contains(cb.entity)) {
+                    cb.carrier.addPassenger(cb.entity);
+                }
+
+                // Debug: log carrier and shulker positions on first tick
+                if (isFirstTick) {
+                    Location actualCarrier = cb.carrier.getLocation();
+                    Location actualShulker = cb.entity.getLocation();
+                    plugin.getLogger().info("[DEBUG] Collider " + cb.blockIndex + " teleported:" +
+                        " target=" + String.format("%.2f,%.2f,%.2f", carrierLoc.getX(), carrierLoc.getY(), carrierLoc.getZ()) +
+                        " carrier=" + String.format("%.2f,%.2f,%.2f", actualCarrier.getX(), actualCarrier.getY(), actualCarrier.getZ()) +
+                        " shulker=" + String.format("%.2f,%.2f,%.2f", actualShulker.getX(), actualShulker.getY(), actualShulker.getZ()));
+                }
 
                 // Set carrier velocity for better client/server sync (skip on first tick)
                 if (!isFirstTick) {
@@ -978,19 +1034,33 @@ public class ShipInstance {
 
     void tick() {
         // Health regeneration (20 ticks per second)
-        if (vehicle.isValid() && !vehicle.isDead()) {
-            double currentHealth = vehicle.getHealth();
-            double maxHealth = vehicle.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getBaseValue();
+        // Wrapped in try-catch to prevent tick crash if attribute lookup fails
+        try {
+            if (vehicle.isValid() && !vehicle.isDead()) {
+                org.bukkit.attribute.Attribute maxHealthAttr = anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth();
+                if (maxHealthAttr != null) {
+                    org.bukkit.attribute.AttributeInstance attrInstance = vehicle.getAttribute(maxHealthAttr);
+                    if (attrInstance != null) {
+                        double currentHealth = vehicle.getHealth();
+                        double maxHealth = attrInstance.getBaseValue();
 
-            // Regenerate health per tick (divide by 20 since this runs 20 times per second)
-            double regenPerTick = model.healthRegenPerSecond / 20.0;
-            double newHealth = java.lang.Math.min(currentHealth + regenPerTick, maxHealth);
-            vehicle.setHealth(newHealth);
+                        // Regenerate health per tick (divide by 20 since this runs 20 times per second)
+                        double regenPerTick = model.healthRegenPerSecond / 20.0;
+                        double newHealth = java.lang.Math.min(currentHealth + regenPerTick, maxHealth);
+                        vehicle.setHealth(newHealth);
 
-            // Check for ship destruction
-            if (currentHealth <= 0) {
-                destroyAndDropItem();
-                return;  // Stop processing this tick
+                        // Check for ship destruction
+                        if (currentHealth <= 0) {
+                            destroyAndDropItem();
+                            return;  // Stop processing this tick
+                        }
+                    }
+                }
+            }
+        } catch (Throwable e) {
+            // Log once and continue - don't crash the entire tick loop
+            if (firstTick) {
+                plugin.getLogger().warning("[DEBUG] Health regeneration failed (will continue without it): " + e.getMessage());
             }
         }
 
