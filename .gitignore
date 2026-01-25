@@ -5,6 +5,7 @@ bin/
 server/
 test-server/
 test-bot/node_modules/
+test-bot/.mc-version
 docs/assets/dev/
 .download-cache/
 

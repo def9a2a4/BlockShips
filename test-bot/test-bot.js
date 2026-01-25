@@ -1,11 +1,24 @@
 const mineflayer = require('mineflayer')
 const { Vec3 } = require('vec3')
+const fs = require('fs')
+const path = require('path')
+
+// Read MC version from .mc-version file (created by Makefile)
+function getVersion() {
+  const versionFile = path.join(__dirname, '.mc-version')
+  try {
+    return fs.readFileSync(versionFile, 'utf8').trim()
+  } catch (e) {
+    console.error(`Warning: Could not read ${versionFile}, using default 1.21.3`)
+    return '1.21.3'
+  }
+}
 
 // Configuration
 const HOST = process.env.MC_HOST || 'localhost'
 const PORT = parseInt(process.env.MC_PORT || '25565')
 const USERNAME = process.env.MC_USERNAME || 'TestBot'
-const MC_VERSION = process.env.MC_VERSION || '1.21.1'
+const MC_VERSION = getVersion()
 const INTERACTIVE = process.argv.includes('--interactive')
 
 // Runway coordinates
@@ -83,26 +96,20 @@ async function setupRunway() {
   bot.chat(`/fill ${x1 - 1} ${basinY1} ${RUNWAY_Z - RUNWAY_LENGTH - 1} ${x2 + 1} ${basinY2} ${RUNWAY_Z - RUNWAY_LENGTH - 1} minecraft:stone`)
   await sleep(200)
 
-  // Bottom wall (floor of the basin, 2-thick for particle lag, in chunks to stay under 32768 limit)
-  for (let z = RUNWAY_Z + RUNWAY_HALF_WIDTH + 1; z >= RUNWAY_Z - RUNWAY_LENGTH - 1; z -= 20) {
-    const zEnd = Math.max(z - 19, RUNWAY_Z - RUNWAY_LENGTH - 1)
-    bot.chat(`/fill ${x1 - 1} ${basinY1 - 2} ${z} ${x2 + 1} ${basinY1 - 1} ${zEnd} minecraft:stone`)
-    await sleep(200)
-  }
+  // Bottom wall (floor of the basin, 2-thick for particle lag) - ~5k blocks, single command
+  bot.chat(`/fill ${x1 - 1} ${basinY1 - 2} ${RUNWAY_Z + RUNWAY_HALF_WIDTH + 1} ${x2 + 1} ${basinY1 - 1} ${RUNWAY_Z - RUNWAY_LENGTH - 1} minecraft:stone`)
+  await sleep(200)
 
-  // Clear air above water (1 wider in each direction, in chunks to stay under 32768 limit)
+  // Clear air above water (1 wider in each direction) - ~98k blocks, needs chunking
   for (let z = RUNWAY_Z + RUNWAY_HALF_WIDTH; z >= RUNWAY_Z - RUNWAY_LENGTH - 1; z -= 20) {
     const zEnd = Math.max(z - 19, RUNWAY_Z - RUNWAY_LENGTH - 1)
     bot.chat(`/fill ${x1 - 1} 100 ${z} ${x2 + 1} ${airTop} ${zEnd} minecraft:air`)
     await sleep(200)
   }
 
-  // Fill water inside the basin (in chunks to stay under 32768 limit)
-  for (let z = RUNWAY_Z + RUNWAY_HALF_WIDTH - 1; z >= RUNWAY_Z - RUNWAY_LENGTH; z -= 20) {
-    const zEnd = Math.max(z - 19, RUNWAY_Z - RUNWAY_LENGTH)
-    bot.chat(`/fill ${x1} 92 ${z} ${x2} 99 ${zEnd} minecraft:water`)
-    await sleep(200)
-  }
+  // Fill water inside the basin - ~18k blocks, single command
+  bot.chat(`/fill ${x1} 92 ${RUNWAY_Z + RUNWAY_HALF_WIDTH - 1} ${x2} 99 ${RUNWAY_Z - RUNWAY_LENGTH} minecraft:water`)
+  await sleep(200)
 
   say('Runway ready.')
 }
@@ -214,74 +221,72 @@ async function mountShip(shipType = null) {
   }
   log(`  Found ${shulkers.length} shulkers nearby`)
 
-  // Try to mount each shulker until we successfully mount the driver seat
-  // Driver seat is detected by checking if steering input causes movement
-  for (let i = 0; i < Math.min(shulkers.length, 5); i++) {
-    const seat = shulkers[i]
-    log(`  Trying shulker ${i + 1} at ${seat.position.toString()}`)
+  // Mount the first (nearest) shulker
+  const seat = shulkers[0]
+  log(`  Mounting shulker at ${seat.position.toString()}`)
 
-    let mounted = false
-    const handler = () => { mounted = true }
-    bot.on('mount', handler)
+  let mounted = false
+  const handler = () => { mounted = true }
+  bot.on('mount', handler)
 
-    try {
-      await bot.lookAt(seat.position.offset(0, 0.5, 0))
-      await sleep(200)
-      await bot.useOn(seat)
-    } catch (e) {
-      log(`  Mount attempt error: ${e.message}`)
-    }
-
-    // Wait for mount event
-    for (let j = 0; j < 20 && !mounted; j++) {
-      await sleep(100)
-    }
-    bot.removeListener('mount', handler)
-
-    if (bot.vehicle) {
-      // Successfully mounted something - check if it's the driver seat
-      // by sending a steering input and seeing if we move
-      const startPos = bot.vehicle.position.clone()
-      await steerShip(1.0, 0, false, 500)  // Brief forward input
-      await sleep(200)
-      const moved = bot.vehicle.position.distanceTo(startPos) > 0.1
-
-      if (moved) {
-        log(`  Mounted driver seat (shulker ${i + 1})`)
-        return true
-      } else {
-        // Not the driver seat - dismount and try next shulker
-        log(`  Shulker ${i + 1} is not driver seat (no movement), trying next...`)
-        bot.dismount()
-        await sleep(300)
-      }
-    }
+  try {
+    await bot.lookAt(seat.position.offset(0, 0.5, 0))
+    await sleep(200)
+    await bot.useOn(seat)
+  } catch (e) {
+    log(`  Mount attempt error: ${e.message}`)
   }
 
-  // Fallback: if we're mounted to anything, return success
-  // (for ships with only one seat)
+  // Wait for mount event
+  for (let j = 0; j < 20 && !mounted; j++) {
+    await sleep(100)
+  }
+  bot.removeListener('mount', handler)
+
   return bot.vehicle !== null
 }
 
 /**
- * Send steering packets for a duration
- * Protocol: sideways (f32), forward (f32), jump (u8)
+ * Steer ship using mineflayer's built-in vehicle control API
  * sideways: positive = left (A), negative = right (D)
  * forward: positive = forward (W), negative = backward (S)
  */
-async function steerShip(forward, sideways, jump, durationMs) {
-  const TICK_MS = 50  // Send more frequently for smoother control
-  const numTicks = Math.floor(durationMs / TICK_MS)
+function steerShip(forward, sideways, jump, durationMs) {
+  return new Promise((resolve) => {
+    const TICK_MS = 50
+    let elapsed = 0
 
-  for (let i = 0; i < numTicks; i++) {
-    bot._client.write('steer_vehicle', {
-      sideways: sideways,
-      forward: forward,
-      jump: jump ? 1 : 0,
-      unmount: 0
-    })
-    await sleep(TICK_MS)
-  }
+    const sendInput = () => {
+      // Use mineflayer's built-in vehicle control API
+      bot.moveVehicle(sideways, forward)
+
+      // Handle jump separately if needed (for airships)
+      if (jump) {
+        bot.setControlState('jump', true)
+      }
+    }
+
+    // Send first input immediately
+    sendInput()
+    elapsed += TICK_MS
+
+    if (durationMs <= TICK_MS) {
+      if (jump) bot.setControlState('jump', false)
+      resolve()
+      return
+    }
+
+    const interval = setInterval(() => {
+      sendInput()
+      elapsed += TICK_MS
+
+      if (elapsed >= durationMs) {
+        clearInterval(interval)
+        if (jump) bot.setControlState('jump', false)
+        resolve()
+      }
+    }, TICK_MS)
+  })
 }
 
 /**

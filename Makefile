@@ -178,9 +178,13 @@ test-bot-install:
 test-bot-enable-debug-glow:
 	sed -i 's/collision-debug-glow: false/collision-debug-glow: true/g' $(TEST_SERVER_DIR)/plugins/BlockShips/config.yml
 
+.PHONY: test-bot-write-version
+test-bot-write-version:
+	echo '$(MINECRAFT_VERSION)' > test-bot/.mc-version
+
 .PHONY: test-bot-run
-test-bot-run: test-bot-enable-debug-glow
-	cd test-bot && MC_VERSION=$(MINECRAFT_VERSION) npm test
+test-bot-run: test-bot-enable-debug-glow test-bot-write-version
+	cd test-bot && npm test
 
 # Full integration test with bot
 # Starts server, waits for ready, OPs the bot, runs bot tests, then shuts down
