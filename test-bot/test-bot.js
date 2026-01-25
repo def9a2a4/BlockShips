@@ -8,13 +8,8 @@ const USERNAME = process.env.MC_USERNAME || 'TestBot'
 const MC_VERSION = process.env.MC_VERSION || '1.21.1'
 const INTERACTIVE = process.argv.includes('--interactive')
 
-// Parallel execution support
-const BOT_INDEX = parseInt(process.env.BOT_INDEX || '0')
-const TEST_NAME = process.env.TEST_NAME || null  // Which test this bot runs (for parallel mode)
-const RUNWAY_SPACING = 32  // Distance between parallel runways (basin walls add 2 blocks)
-
-// Runway coordinates (unique per bot in parallel mode)
-const RUNWAY_X = BOT_INDEX * RUNWAY_SPACING
+// Runway coordinates
+const RUNWAY_X = 0
 const RUNWAY_Z = 0
 const RUNWAY_HALF_WIDTH = 15  // 30 blocks total width
 const RUNWAY_LENGTH = 60  // 60 blocks north (was 100)
@@ -69,36 +64,36 @@ async function setupRunway() {
   const x2 = RUNWAY_X + RUNWAY_HALF_WIDTH - 1
   const airTop = 99 + RUNWAY_AIR_HEIGHT
   const basinY1 = 92  // Bottom of water
-  const basinY2 = 100 // Just above water surface
+  const basinY2 = 99  // Top of walls (below air clearing at Y=100)
 
   // Create stone basin walls first (before water)
-  // West wall (full length from south to north end)
-  bot.chat(`/fill ${x1 - 1} ${basinY1} ${RUNWAY_Z + RUNWAY_HALF_WIDTH + 1} ${x1 - 1} ${basinY2} ${RUNWAY_Z - RUNWAY_LENGTH - 1} minecraft:stone`)
+  // West wall (exclude corners - N/S walls fill them)
+  bot.chat(`/fill ${x1 - 1} ${basinY1} ${RUNWAY_Z + RUNWAY_HALF_WIDTH} ${x1 - 1} ${basinY2} ${RUNWAY_Z - RUNWAY_LENGTH} minecraft:stone`)
   await sleep(200)
 
-  // East wall (full length from south to north end)
-  bot.chat(`/fill ${x2 + 1} ${basinY1} ${RUNWAY_Z + RUNWAY_HALF_WIDTH + 1} ${x2 + 1} ${basinY2} ${RUNWAY_Z - RUNWAY_LENGTH - 1} minecraft:stone`)
+  // East wall (exclude corners)
+  bot.chat(`/fill ${x2 + 1} ${basinY1} ${RUNWAY_Z + RUNWAY_HALF_WIDTH} ${x2 + 1} ${basinY2} ${RUNWAY_Z - RUNWAY_LENGTH} minecraft:stone`)
   await sleep(200)
 
-  // South wall (connecting east-west at south end)
+  // South wall (full width including corners)
   bot.chat(`/fill ${x1 - 1} ${basinY1} ${RUNWAY_Z + RUNWAY_HALF_WIDTH + 1} ${x2 + 1} ${basinY2} ${RUNWAY_Z + RUNWAY_HALF_WIDTH + 1} minecraft:stone`)
   await sleep(200)
 
-  // North wall (connecting east-west at north end)
+  // North wall (full width including corners)
   bot.chat(`/fill ${x1 - 1} ${basinY1} ${RUNWAY_Z - RUNWAY_LENGTH - 1} ${x2 + 1} ${basinY2} ${RUNWAY_Z - RUNWAY_LENGTH - 1} minecraft:stone`)
   await sleep(200)
 
-  // Bottom wall (floor of the basin, in chunks to stay under 32768 limit)
+  // Bottom wall (floor of the basin, 2-thick for particle lag, in chunks to stay under 32768 limit)
   for (let z = RUNWAY_Z + RUNWAY_HALF_WIDTH + 1; z >= RUNWAY_Z - RUNWAY_LENGTH - 1; z -= 20) {
     const zEnd = Math.max(z - 19, RUNWAY_Z - RUNWAY_LENGTH - 1)
-    bot.chat(`/fill ${x1 - 1} ${basinY1 - 1} ${z} ${x2 + 1} ${basinY1 - 1} ${zEnd} minecraft:stone`)
+    bot.chat(`/fill ${x1 - 1} ${basinY1 - 2} ${z} ${x2 + 1} ${basinY1 - 1} ${zEnd} minecraft:stone`)
     await sleep(200)
   }
 
-  // Clear air above water (in chunks to stay under 32768 limit)
-  for (let z = RUNWAY_Z + RUNWAY_HALF_WIDTH - 1; z >= RUNWAY_Z - RUNWAY_LENGTH; z -= 20) {
-    const zEnd = Math.max(z - 19, RUNWAY_Z - RUNWAY_LENGTH)
-    bot.chat(`/fill ${x1} 100 ${z} ${x2} ${airTop} ${zEnd} minecraft:air`)
+  // Clear air above water (1 wider in each direction, in chunks to stay under 32768 limit)
+  for (let z = RUNWAY_Z + RUNWAY_HALF_WIDTH; z >= RUNWAY_Z - RUNWAY_LENGTH - 1; z -= 20) {
+    const zEnd = Math.max(z - 19, RUNWAY_Z - RUNWAY_LENGTH - 1)
+    bot.chat(`/fill ${x1 - 1} 100 ${z} ${x2 + 1} ${airTop} ${zEnd} minecraft:air`)
     await sleep(200)
   }
 
@@ -113,27 +108,14 @@ async function setupRunway() {
 }
 
 /**
- * Clean up this bot's runway area only (no global commands that affect other bots)
+ * Clean up between tests (runway is set up once at startup)
  */
 async function cleanupRunway() {
-  const x1 = RUNWAY_X - RUNWAY_HALF_WIDTH
-  const x2 = RUNWAY_X + RUNWAY_HALF_WIDTH - 1
-  const airTop = 99 + RUNWAY_AIR_HEIGHT
-
-  // Clear air above runway (in chunks to stay under 32768 limit)
-  for (let z = RUNWAY_Z - RUNWAY_LENGTH; z <= RUNWAY_Z + RUNWAY_HALF_WIDTH; z += 20) {
-    const zEnd = Math.min(z + 19, RUNWAY_Z + RUNWAY_HALF_WIDTH)
-    bot.chat(`/fill ${x1} 100 ${z} ${x2} ${airTop} ${zEnd} minecraft:air`)
-    await sleep(150)
-  }
-  // Restore water (in chunks)
-  for (let z = RUNWAY_Z - RUNWAY_LENGTH; z <= RUNWAY_Z + RUNWAY_HALF_WIDTH; z += 20) {
-    const zEnd = Math.min(z + 19, RUNWAY_Z + RUNWAY_HALF_WIDTH)
-    bot.chat(`/fill ${x1} 92 ${z} ${x2} 99 ${zEnd} minecraft:water`)
-    await sleep(150)
-  }
   // Kill all dropped items in the world
   bot.chat(`/kill @e[type=minecraft:item]`)
+  await sleep(200)
+  // Kill all ship entities
+  bot.chat('/blockships killentities confirm')
   await sleep(200)
 }
 
@@ -259,10 +241,10 @@ async function mountShip(shipType = null) {
     if (bot.vehicle) {
       // Successfully mounted something - check if it's the driver seat
       // by sending a steering input and seeing if we move
-      const startPos = bot.entity.position.clone()
+      const startPos = bot.vehicle.position.clone()
       await steerShip(1.0, 0, false, 500)  // Brief forward input
       await sleep(200)
-      const moved = bot.entity.position.distanceTo(startPos) > 0.1
+      const moved = bot.vehicle.position.distanceTo(startPos) > 0.1
 
       if (moved) {
         log(`  Mounted driver seat (shulker ${i + 1})`)
@@ -295,7 +277,8 @@ async function steerShip(forward, sideways, jump, durationMs) {
     bot._client.write('steer_vehicle', {
       sideways: sideways,
       forward: forward,
-      jump: jump ? 1 : 0
+      jump: jump ? 1 : 0,
+      unmount: 0
     })
     await sleep(TICK_MS)
   }
@@ -308,32 +291,32 @@ async function steerShip(forward, sideways, jump, durationMs) {
 async function runControlSequence() {
   const startPos = bot.entity.position.clone()
 
-  say('Testing forward...')
+  log('Testing forward...')
   await steerShip(1.0, 0, false, 1000)
   await sleep(200)
 
-  say('Testing forward + A (turn left)...')
+  log('Testing forward + A (turn left)...')
   await steerShip(1.0, 1.0, false, 1000)
   await sleep(200)
 
-  say('Testing backward + D (turn right)...')
+  log('Testing backward + D (turn right)...')
   await steerShip(-1.0, -1.0, false, 1000)
   await sleep(200)
 
-  say('Testing jump/up (2s)...')
+  log('Testing jump/up (2s)...')
   await steerShip(0, 0, true, 2000)
   await sleep(200)
 
-  say('Testing forward (extended)...')
+  log('Testing forward (extended)...')
   await steerShip(1.0, 0, false, 1000)
   await sleep(200)
 
-  say('Testing backward + jump...')
+  log('Testing backward + jump...')
   await steerShip(-1.0, 0, true, 1000)
   await sleep(200)
 
   // Dismount and calculate movement
-  say('Dismounting...')
+  log('Dismounting...')
   bot.dismount()
   await sleep(500)
 
@@ -761,14 +744,25 @@ async function waitForChunks() {
 async function main() {
   log('Starting BlockShips test bot...')
   log(`Connected as ${bot.username}`)
-  log(`Mode: ${TEST_NAME ? `PARALLEL (${TEST_NAME})` : INTERACTIVE ? 'INTERACTIVE' : 'SEQUENTIAL'}`)
-  if (BOT_INDEX > 0) log(`Runway X offset: ${RUNWAY_X}`)
+  log(`Mode: ${INTERACTIVE ? 'INTERACTIVE' : 'SEQUENTIAL'}`)
 
   await waitForChunks()
 
   // Wait for server to be ready
   log('Waiting for operator permissions...')
   await sleep(3000)
+
+  // Verify BlockShips plugin is loaded and reload config
+  bot.chat('/blockships')
+  await sleep(500)
+  bot.chat('/blockships help')
+  await sleep(500)
+  bot.chat('/blockships reload')
+  await sleep(500)
+  bot.chat('/blockships info')
+  await sleep(500)
+  bot.chat('/blockships recipes')
+  await sleep(500)
 
   // Setup: creative mode and flying
   say('Setting up creative mode...')
@@ -777,28 +771,10 @@ async function main() {
   bot.creative.startFlying()
   await sleep(500)
 
-  // Create runway once
+  // Create runway once at startup
   await setupRunway()
 
-  if (TEST_NAME) {
-    // Single test mode (for parallel execution)
-    const test = TESTS[TEST_NAME]
-    if (test) {
-      try {
-        await test.fn()
-      } catch (e) {
-        fail(TEST_NAME, e.message)
-        log(e.stack)
-      }
-    } else {
-      log(`Unknown test: ${TEST_NAME}`)
-      testsFailed++
-    }
-
-    log('')
-    log(`${TEST_NAME}: ${testsFailed === 0 ? 'PASSED' : 'FAILED'}`)
-    process.exit(testsFailed > 0 ? 1 : 0)
-  } else if (INTERACTIVE) {
+  if (INTERACTIVE) {
     setupInteractiveMode()
     // Don't exit - stay connected and listen for commands
   } else {

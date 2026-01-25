@@ -74,8 +74,8 @@ test-server-plugin-copy: test-server-download-to-cache
 	cp bin/*.jar $(TEST_SERVER_DIR)/plugins/
 	cp $(DOWNLOAD_CACHE)/plugins/*.jar $(TEST_SERVER_DIR)/plugins/
 
-# Bot usernames for parallel testing (must match test-bot/run-parallel.js TESTS array)
-TEST_BOT_NAMES := TestBotsmallship TestBotbigship TestBotsmallairship TestBotcustom_ship TestBotcustom_airship TestBot
+# Bot username for testing
+TEST_BOT_NAMES := TestBot
 
 .PHONY: test-server-setup
 test-server-setup: test-server-plugin-copy
@@ -182,10 +182,6 @@ test-bot-enable-debug-glow:
 test-bot-run: test-bot-enable-debug-glow
 	cd test-bot && MC_VERSION=$(MINECRAFT_VERSION) npm test
 
-.PHONY: test-bot-run-parallel
-test-bot-run-parallel: test-bot-enable-debug-glow
-	cd test-bot && MC_VERSION=$(MINECRAFT_VERSION) node run-parallel.js
-
 # Full integration test with bot
 # Starts server, waits for ready, OPs the bot, runs bot tests, then shuts down
 .PHONY: test-server-with-bot
@@ -250,9 +246,22 @@ test-server-with-bot:
 	kill $$TAIL_PID 2>/dev/null || true; \
 	kill $$SERVER_PID 2>/dev/null || true; \
 	rm -f server_input; \
-	if [ $$BOT_EXIT -eq 0 ]; then \
-		echo "✓ All tests completed successfully"; \
-	else \
-		echo "✗ Bot tests failed"; \
+	rm -f errors.log; \
+	FAILED=0; \
+	if [ $$BOT_EXIT -ne 0 ]; then \
+		echo "=== BOT TEST FAILURES ===" | tee -a errors.log; \
+		echo "Bot tests failed (exit code $$BOT_EXIT)" | tee -a errors.log; \
+		FAILED=1; \
+	fi; \
+	if grep -qE "ERROR.*BlockShips|BlockShips.*Exception" server.log 2>/dev/null; then \
+		echo "" | tee -a errors.log; \
+		echo "=== SERVER ERRORS ===" | tee -a errors.log; \
+		grep -E "ERROR.*BlockShips|BlockShips.*Exception" server.log | tee -a errors.log; \
+		FAILED=1; \
+	fi; \
+	if [ $$FAILED -eq 1 ]; then \
+		echo "✗ Tests failed"; \
 		exit 1; \
+	else \
+		echo "✓ All tests passed"; \
 	fi

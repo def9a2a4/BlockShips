@@ -43,11 +43,22 @@ jobs:
         run: |
           make test-server-setup
           make test-server-download SERVER_VARIANT=${{ matrix.server }} MINECRAFT_VERSION=${{ matrix.minecraft }}
-          make test-server-with-bot
+          make test-server-with-bot MINECRAFT_VERSION=${{ matrix.minecraft }}
+
+      - name: Check for errors
+        if: always()
+        run: |
+          if [ -f test-server/errors.log ]; then
+            echo "========== ERRORS =========="
+            cat test-server/errors.log
+            exit 1
+          fi
 
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: server-logs-${{ matrix.server }}-${{ matrix.minecraft }}
-          path: test-server/server.log
+          name: logs-${{ matrix.server }}-${{ matrix.minecraft }}
+          path: |
+            test-server/server.log
+            test-server/errors.log
