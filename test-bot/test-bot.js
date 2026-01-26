@@ -137,9 +137,30 @@ async function setupRunway() {
 
   // Fill water inside the basin - ~18k blocks, single command
   bot.chat(`/fill ${x1} 92 ${RUNWAY_Z + RUNWAY_HALF_WIDTH - 1} ${x2} 99 ${RUNWAY_Z - RUNWAY_LENGTH} minecraft:water`)
-  await sleep(200)
+  await sleep(2000)  // Increased from 200ms to allow chunk updates in CI
 
   say('Runway ready.')
+}
+
+/**
+ * Verify runway water is visible to the bot (handles slow chunk loading in CI)
+ * @returns {boolean} true if water is detected, false otherwise
+ */
+async function verifyRunway() {
+  const checkPos = new Vec3(RUNWAY_X, 99, RUNWAY_Z - 2)
+
+  for (let attempt = 1; attempt <= 20; attempt++) {
+    const block = bot.blockAt(checkPos)
+    if (block && block.name === 'water') {
+      log(`Runway verified: water found at ${checkPos.toString()}`)
+      return true
+    }
+    log(`Runway verification attempt ${attempt}/20: ${block ? block.name : 'no block'} at ${checkPos.toString()}`)
+    await sleep(500)
+  }
+
+  log('ERROR: Runway water not detected after 20 verification attempts')
+  return false
 }
 
 /**
@@ -191,14 +212,41 @@ function getMenuTitle(window) {
 // =============================================================================
 
 /**
- * Find a water block north of the given position
+ * Find a water block north of the given position (with diagnostic logging)
  */
-function findWaterBlockNorth(pos) {
+function findWaterBlockNorth(pos, verbose = false) {
   for (let zOffset = -1; zOffset >= -5; zOffset--) {
     const checkPos = pos.offset(0, -1, zOffset)
     const block = bot.blockAt(checkPos)
+    if (verbose) {
+      log(`  Checking ${checkPos.toString()}: ${block ? block.name : 'null'}`)
+    }
     if (block && block.name === 'water') {
       return block
+    }
+  }
+  return null
+}
+
+/**
+ * Wait for water to be detected with retries (handles slow chunk loading in CI)
+ * @param {Vec3} pos - Position to check from
+ * @param {number} maxRetries - Maximum number of attempts
+ * @param {number} delayMs - Delay between attempts in ms
+ * @returns {Block|null} Water block if found, null otherwise
+ */
+async function waitForWater(pos, maxRetries = 20, delayMs = 500) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const water = findWaterBlockNorth(pos, attempt === maxRetries) // verbose on last attempt
+    if (water) {
+      if (attempt > 1) {
+        log(`  Water found on attempt ${attempt}`)
+      }
+      return water
+    }
+    if (attempt < maxRetries) {
+      log(`  Water not found, attempt ${attempt}/${maxRetries}, waiting ${delayMs}ms...`)
+      await sleep(delayMs)
     }
   }
   return null
@@ -462,9 +510,9 @@ async function testShipControls(shipType) {
   await bot.equip(shipItem, 'hand')
   await sleep(500)
 
-  const water = findWaterBlockNorth(bot.entity.position)
+  const water = await waitForWater(bot.entity.position)
   if (!water) {
-    fail(shipType, 'No water found')
+    fail(shipType, 'No water found (after 20 retry attempts)')
     return
   }
   try { await bot.activateBlock(water) } catch (e) {}
@@ -857,6 +905,12 @@ async function main() {
 
   // Create runway once at startup
   await setupRunway()
+
+  // Verify runway is visible to bot (handles slow chunk loading in CI)
+  const runwayOk = await verifyRunway()
+  if (!runwayOk) {
+    log('WARNING: Runway verification failed - chunks may not be loaded. Tests may fail.')
+  }
 
   if (INTERACTIVE) {
     setupInteractiveMode()
