@@ -39,11 +39,8 @@ server: server-plugin-copy server-start
 # =============================================================================
 #
 # LOCAL TESTING (two terminals):
-# Terminal 1:
-# make build && make test-server-setup && make test-server-download && cd test-server && java -Xmx1G -Xms1G -jar server.jar nogui
-# 
-# Terminal 2:
-# make test-bot-install && make test-bot-run
+#   Terminal 1: make build test-server-download-all test-server-setup test-server-local
+#   Terminal 2: make test-bot-install && make test-bot-run
 #
 # =============================================================================
 
@@ -81,11 +78,7 @@ TEST_BOT_NAMES := TestBot
 test-server-setup: test-server-plugin-copy
 	echo "eula=true" > $(TEST_SERVER_DIR)/eula.txt
 	printf "online-mode=false\nserver-port=25565\nspawn-protection=0\nmax-tick-time=-1\n" > $(TEST_SERVER_DIR)/server.properties
-	@python3 -c "\
-import hashlib,json; \
-names = '$(TEST_BOT_NAMES)'.split(); \
-uuid = lambda n: (lambda h: f'{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}')((lambda b: (b.__setitem__(6,(b[6]&0x0f)|0x30), b.__setitem__(8,(b[8]&0x3f)|0x80), b.hex())[2])(bytearray(hashlib.md5(('OfflinePlayer:'+n).encode()).digest()))); \
-print(json.dumps([{'uuid':uuid(n),'name':n,'level':4,'bypassesPlayerLimit':False} for n in names], indent=2))" > $(TEST_SERVER_DIR)/ops.json
+	@python3 test-bot/generate_ops_json.py $(TEST_BOT_NAMES) -o $(TEST_SERVER_DIR)/ops.json
 	@echo "Generated ops.json with $$(echo $(TEST_BOT_NAMES) | wc -w) operators"
 	@if [ -f $(TEST_SERVER_DIR)/bukkit.yml ]; then \
 		sed -i 's/connection-throttle: -\?[0-9]*/connection-throttle: -1/g' $(TEST_SERVER_DIR)/bukkit.yml; \
@@ -111,57 +104,9 @@ test-server-download: $(DOWNLOAD_CACHE)/$(SERVER_VARIANT)-$(MINECRAFT_VERSION).j
 .PHONY: test-server-download-all
 test-server-download-all: test-server-download-to-cache test-server-download
 
-.PHONY: test-server-run
-test-server-run:
-	@cd $(TEST_SERVER_DIR) && \
-	mkfifo server_input && \
-	tail -f server_input | java -Xmx1G -Xms1G -jar server.jar nogui > server.log 2>&1 & \
-	SERVER_PID=$$!; \
-	tail -f server.log & \
-	TAIL_PID=$$!; \
-	for i in $$(seq 1 600); do \
-		if grep -q "Done.*For help" server.log 2>/dev/null; then \
-			echo ""; \
-			echo "========== Server started successfully =========="; \
-			break; \
-		fi; \
-		if ! kill -0 $$SERVER_PID 2>/dev/null; then \
-			echo ""; \
-			echo "========== Server process died unexpectedly =========="; \
-			cat server.log; \
-			exit 1; \
-		fi; \
-		sleep 1; \
-	done; \
-	if ! grep -q "Done.*For help" server.log 2>/dev/null; then \
-		echo ""; \
-		echo "========== Server startup timed out =========="; \
-		cat server.log; \
-		exit 1; \
-	fi; \
-	if grep -q "BlockShips.*enabled" server.log; then \
-		echo "✓ BlockShips plugin loaded successfully"; \
-	else \
-		echo "✗ BlockShips plugin failed to load"; \
-		cat server.log; \
-		exit 1; \
-	fi; \
-	if grep -qE "ERROR.*BlockShips|BlockShips.*Exception" server.log; then \
-		echo "✗ Errors detected in BlockShips plugin"; \
-		grep -E "ERROR.*BlockShips|BlockShips.*Exception" server.log; \
-		exit 1; \
-	fi; \
-	echo "stop" > server_input; \
-	for i in $$(seq 1 30); do \
-		if ! kill -0 $$SERVER_PID 2>/dev/null; then \
-			break; \
-		fi; \
-		sleep 1; \
-	done; \
-	kill $$TAIL_PID 2>/dev/null || true; \
-	kill $$SERVER_PID 2>/dev/null || true; \
-	rm -f server_input; \
-	echo "✓ Server test completed"
+.PHONY: test-server-local
+test-server-local:
+	cd $(TEST_SERVER_DIR) && java -Xmx1G -Xms1G -jar server.jar nogui
 
 .PHONY: clean-test-server
 clean-test-server:
@@ -189,10 +134,10 @@ test-bot-write-version:
 test-bot-run: test-bot-enable-debug-glow test-bot-write-version
 	cd test-bot && npm test
 
-# Full integration test with bot
+# Full integration test with bot (used by CI)
 # Starts server, waits for ready, OPs the bot, runs bot tests, then shuts down
-.PHONY: test-server-with-bot
-test-server-with-bot:
+.PHONY: test-server-ci
+test-server-ci:
 	@cd $(TEST_SERVER_DIR) && \
 	mkfifo server_input 2>/dev/null || true; \
 	tail -f server_input | java -Xmx1G -Xms1G -jar server.jar nogui > server.log 2>&1 & \

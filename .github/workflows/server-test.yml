@@ -46,7 +46,7 @@ jobs:
         run: make test-server-setup
 
       - name: Run test server with bot
-        run: make test-server-with-bot MINECRAFT_VERSION=${{ matrix.minecraft }}
+        run: make test-server-ci MINECRAFT_VERSION=${{ matrix.minecraft }}
 
       - name: Check for errors
         if: always()
