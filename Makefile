@@ -235,7 +235,8 @@ test-server-with-bot:
 	sleep 2; \
 	echo ""; \
 	echo "========== Running bot tests =========="; \
-	cd .. && cd test-bot && MC_VERSION=$(MINECRAFT_VERSION) npm test; \
+	echo '$(MINECRAFT_VERSION)' > ../test-bot/.mc-version; \
+	cd .. && cd test-bot && npm test; \
 	BOT_EXIT=$$?; \
 	cd ../$(TEST_SERVER_DIR); \
 	echo ""; \
