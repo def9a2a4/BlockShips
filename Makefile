@@ -258,6 +258,9 @@ test-server-with-bot:
 	FAILED=0; \
 	if [ $$BOT_EXIT -ne 0 ]; then \
 		echo "=== BOT TEST FAILURES ===" | tee -a errors.log; \
+		if [ -f ../test-bot/test-results.txt ]; then \
+			cat ../test-bot/test-results.txt | tee -a errors.log; \
+		fi; \
 		echo "Bot tests failed (exit code $$BOT_EXIT)" | tee -a errors.log; \
 		FAILED=1; \
 	fi; \

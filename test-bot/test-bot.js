@@ -28,6 +28,9 @@ const RUNWAY_HALF_WIDTH = 15  // 30 blocks total width
 const RUNWAY_LENGTH = 60  // 60 blocks north (was 100)
 const RUNWAY_AIR_HEIGHT = 40  // Air space above water (was ~15)
 
+// Test results file (written incrementally for CI visibility)
+const RESULTS_FILE = path.join(__dirname, 'test-results.txt')
+
 // Test state
 let testsPassed = 0
 let testsFailed = 0
@@ -47,12 +50,16 @@ function pass(testName) {
   log(`PASS: ${testName}`)
   testsPassed++
   testResults.push({ name: testName, passed: true })
+  // Write incrementally to file for CI visibility (in case bot crashes)
+  fs.appendFileSync(RESULTS_FILE, `✓ PASS: ${testName}\n`)
 }
 
 function fail(testName, reason) {
   log(`FAIL: ${testName}: ${reason}`)
   testsFailed++
   testResults.push({ name: testName, passed: false, reason })
+  // Write incrementally to file for CI visibility (in case bot crashes)
+  fs.appendFileSync(RESULTS_FILE, `✗ FAIL: ${testName} - ${reason}\n`)
 }
 
 function printTestSummary() {
@@ -68,6 +75,9 @@ function printTestSummary() {
   log('='.repeat(60))
   log(`Total: ${testsPassed} passed, ${testsFailed} failed`)
   log('='.repeat(60))
+
+  // Also write final summary to file
+  fs.appendFileSync(RESULTS_FILE, `\nTotal: ${testsPassed} passed, ${testsFailed} failed\n`)
 }
 
 function sleep(ms) {
@@ -355,7 +365,13 @@ async function runControlSequence() {
 
   // Dismount and calculate movement
   log('Dismounting...')
-  bot.dismount()
+  let dismountError = null
+  try {
+    bot.dismount()
+  } catch (e) {
+    dismountError = e.message
+    log(`Dismount error: ${e.message}`)
+  }
   await sleep(500)
 
   const endPos = bot.entity.position
@@ -364,7 +380,7 @@ async function runControlSequence() {
   const dz = endPos.z - startPos.z
   const totalMovement = Math.abs(dx) + Math.abs(dy) + Math.abs(dz)
 
-  return { dx, dy, dz, totalMovement }
+  return { dx, dy, dz, totalMovement, dismountError }
 }
 
 /**
@@ -464,25 +480,38 @@ async function testShipControls(shipType) {
   }
 
   // Run standard control sequence and get movement results
-  const { dx, dy, dz, totalMovement } = await runControlSequence()
+  const { dx, dy, dz, totalMovement, dismountError } = await runControlSequence()
 
   say(`Movement: dX=${dx.toFixed(1)}, dY=${dy.toFixed(1)}, dZ=${dz.toFixed(1)}`)
 
+  // Check if dismount failed (means we were never mounted)
+  if (dismountError) {
+    fail(shipType, `Dismount failed: ${dismountError}`)
+    return
+  }
+
   let passed = true
 
-  if (totalMovement < 1.0) {
-    fail(shipType, `No significant movement detected (total=${totalMovement.toFixed(2)})`)
+  // Require at least 2 blocks total movement
+  if (totalMovement < 2.0) {
+    fail(shipType, `Insufficient movement (total=${totalMovement.toFixed(2)}, need >=2, dX=${dx.toFixed(2)}, dY=${dy.toFixed(2)}, dZ=${dz.toFixed(2)})`)
     passed = false
   }
 
-  // For airships, verify upward movement occurred
-  if (isAirship && dy <= 0) {
-    fail(shipType, `Expected upward movement (positive Y), got dY=${dy.toFixed(2)}`)
+  // Verify at least 2 blocks west (negative X) movement from turning
+  if (dx > -2.0) {
+    fail(shipType, `Expected >=2 blocks westward (negative X), got dX=${dx.toFixed(2)} (moved ${dx > 0 ? 'east' : dx < 0 ? 'west but <2' : 'nowhere'})`)
+    passed = false
+  }
+
+  // For airships, verify at least 2 blocks upward movement
+  if (isAirship && dy < 2.0) {
+    fail(shipType, `Expected >=2 blocks upward (positive Y), got dY=${dy.toFixed(2)} (moved ${dy < 0 ? 'down' : dy > 0 ? 'up but <2' : 'nowhere'})`)
     passed = false
   }
 
   if (passed) {
-    pass(`${shipType} (movement=${totalMovement.toFixed(1)}${isAirship ? ', up=' + dy.toFixed(1) : ''})`)
+    pass(`${shipType} (movement=${totalMovement.toFixed(1)}, west=${Math.abs(dx).toFixed(1)}${isAirship ? ', up=' + dy.toFixed(1) : ''})`)
   }
 }
 
@@ -613,24 +642,38 @@ async function testCustomShipBase(testName, buildConfig, isAirship = false) {
   }
 
   // Run standard control sequence and get movement results
-  const { dx, dy, dz, totalMovement } = await runControlSequence()
+  const { dx, dy, dz, totalMovement, dismountError } = await runControlSequence()
 
   say(`Movement: dX=${dx.toFixed(1)}, dY=${dy.toFixed(1)}, dZ=${dz.toFixed(1)}`)
 
+  // Check if dismount failed (means we were never mounted)
+  if (dismountError) {
+    fail(testName, `Dismount failed: ${dismountError}`)
+    return
+  }
+
   let passed = true
 
-  if (totalMovement < 1.0) {
-    fail(testName, `No significant movement detected (total=${totalMovement.toFixed(2)})`)
+  // Require at least 2 blocks total movement
+  if (totalMovement < 2.0) {
+    fail(testName, `Insufficient movement (total=${totalMovement.toFixed(2)}, need >=2, dX=${dx.toFixed(2)}, dY=${dy.toFixed(2)}, dZ=${dz.toFixed(2)})`)
     passed = false
   }
 
-  if (isAirship && dy <= 0) {
-    fail(testName, `Expected upward movement (positive Y), got dY=${dy.toFixed(2)}`)
+  // Verify at least 2 blocks west (negative X) movement from turning
+  if (dx > -2.0) {
+    fail(testName, `Expected >=2 blocks westward (negative X), got dX=${dx.toFixed(2)} (moved ${dx > 0 ? 'east' : dx < 0 ? 'west but <2' : 'nowhere'})`)
+    passed = false
+  }
+
+  // For airships, verify at least 2 blocks upward movement
+  if (isAirship && dy < 2.0) {
+    fail(testName, `Expected >=2 blocks upward (positive Y), got dY=${dy.toFixed(2)} (moved ${dy < 0 ? 'down' : dy > 0 ? 'up but <2' : 'nowhere'})`)
     passed = false
   }
 
   if (passed) {
-    pass(`${testName} (movement=${totalMovement.toFixed(1)}${isAirship ? ', up=' + dy.toFixed(1) : ''})`)
+    pass(`${testName} (movement=${totalMovement.toFixed(1)}, west=${Math.abs(dx).toFixed(1)}${isAirship ? ', up=' + dy.toFixed(1) : ''})`)
   }
 }
 
@@ -780,6 +823,9 @@ async function waitForChunks() {
 }
 
 async function main() {
+  // Clear results file at startup for fresh run
+  fs.writeFileSync(RESULTS_FILE, '')
+
   log('Starting BlockShips test bot...')
   log(`Connected as ${bot.username}`)
   log(`Mode: ${INTERACTIVE ? 'INTERACTIVE' : 'SEQUENTIAL'}`)
