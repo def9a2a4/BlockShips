@@ -107,6 +107,11 @@ async function setupRunway() {
   const basinY1 = 92  // Bottom of water
   const basinY2 = 99  // Top of walls (below air clearing at Y=100)
 
+  // Force load chunks before filling (CI has no human player to preload chunks)
+  // Runway spans from Z+16 to Z-61, X from -16 to 15
+  bot.chat(`/forceload add ${x1 - 1} ${RUNWAY_Z + RUNWAY_HALF_WIDTH + 1} ${x2 + 1} ${RUNWAY_Z - RUNWAY_LENGTH - 1}`)
+  await sleep(1000)  // Wait for chunks to load
+
   // Create stone basin walls first (before water)
   // West wall (exclude corners - N/S walls fill them)
   bot.chat(`/fill ${x1 - 1} ${basinY1} ${RUNWAY_Z + RUNWAY_HALF_WIDTH} ${x1 - 1} ${basinY2} ${RUNWAY_Z - RUNWAY_LENGTH} minecraft:stone`)
