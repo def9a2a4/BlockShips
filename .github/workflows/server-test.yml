@@ -37,7 +37,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: BlockShips
-          path: test-server/plugins/
+          path: bin/
 
       - name: Setup and run test server with bot
         run: |
