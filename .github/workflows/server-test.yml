@@ -10,8 +10,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # minecraft: ['1.21.1', '1.21.4', '1.21.8', '1.21.10', '1.21.11']
-        minecraft: ['1.21.1', '1.21.11']
+        minecraft: ['1.21.1', '1.21.4', '1.21.8', '1.21.10', '1.21.11']
+        # minecraft: ['1.21.1', '1.21.11']
         server: ['paper', 'purpur']
 
     name: ${{ matrix.server }} ${{ matrix.minecraft }}
