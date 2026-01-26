@@ -9,8 +9,8 @@ function getVersion() {
   try {
     return fs.readFileSync(versionFile, 'utf8').trim()
   } catch (e) {
-    console.error(`Warning: Could not read ${versionFile}, using default 1.21.3`)
-    return '1.21.3'
+    console.error(`Warning: Could not read ${versionFile}, using default 1.21.1`)
+    return '1.21.1'
   }
 }
 
@@ -31,6 +31,7 @@ const RUNWAY_AIR_HEIGHT = 40  // Air space above water (was ~15)
 // Test state
 let testsPassed = 0
 let testsFailed = 0
+let testResults = []  // Track individual test results
 let bot = null
 let runningTest = false
 
@@ -45,11 +46,28 @@ function log(msg) {
 function pass(testName) {
   log(`PASS: ${testName}`)
   testsPassed++
+  testResults.push({ name: testName, passed: true })
 }
 
 function fail(testName, reason) {
   log(`FAIL: ${testName}: ${reason}`)
   testsFailed++
+  testResults.push({ name: testName, passed: false, reason })
+}
+
+function printTestSummary() {
+  log('')
+  log('='.repeat(60))
+  log('TEST RESULTS SUMMARY')
+  log('='.repeat(60))
+  for (const result of testResults) {
+    const status = result.passed ? '✓ PASS' : '✗ FAIL'
+    const reason = result.reason ? ` - ${result.reason}` : ''
+    log(`  ${status}: ${result.name}${reason}`)
+  }
+  log('='.repeat(60))
+  log(`Total: ${testsPassed} passed, ${testsFailed} failed`)
+  log('='.repeat(60))
 }
 
 function sleep(ms) {
@@ -199,20 +217,6 @@ function findShulkers(maxDist = 30) {
  * Tries multiple shulkers if the first doesn't work (to handle storage shulkers).
  */
 async function mountShip(shipType = null) {
-  // For bigship, the driver seat is at the stern (back) of the ship
-  // The ship places facing north (-Z), so stern is at higher Z
-  // First teleport to approximately where the driver seat should be
-  if (shipType === 'bigship') {
-    // Bigship driver seat is at local position (-0.375, 0.75, -2.875) relative to ship center
-    // Ship is placed at (0, 99, -1) on water, facing north
-    // After accounting for initial-rotation and position-offset, driver seat is roughly at stern
-    // Teleport to a position where we can reach the driver seat (towards +Z from ship center)
-    const sternPos = `${RUNWAY_X} 101 ${RUNWAY_Z - 1}`  // Approximate stern position
-    log(`  Teleporting to bigship stern area: ${sternPos}`)
-    bot.chat(`/tp @s ${sternPos}`)
-    await sleep(500)
-  }
-
   // Find all nearby shulkers
   const shulkers = findShulkers()
   if (shulkers.length === 0) {
@@ -786,9 +790,8 @@ async function main() {
     // Run all tests sequentially
     await runAllTests()
 
-    log('')
-    log('='.repeat(50))
-    log(`Final Results: ${testsPassed} passed, ${testsFailed} failed`)
+    // Print detailed summary
+    printTestSummary()
 
     if (testsFailed === 0) {
       log('BlockShips test suite PASSED')
