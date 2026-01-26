@@ -213,6 +213,7 @@ function findShulkers(maxDist = 30) {
 
 /**
  * Mount a ship by finding and right-clicking a seat shulker.
+ * Tries multiple shulkers if the first one is a storage container.
  */
 async function mountShip(shipType = null) {
   const shulkers = findShulkers()
@@ -222,52 +223,60 @@ async function mountShip(shipType = null) {
   }
   log(`  Found ${shulkers.length} shulkers nearby`)
 
-  const seat = shulkers[0]
-  log(`  Mounting shulker at ${seat.position.toString()}`)
-  log(`  Shulker entity id: ${seat.id}, name: ${seat.name}`)
+  // Try up to 10 shulkers to find one that mounts (skip storage containers)
+  for (let i = 0; i < Math.min(shulkers.length, 10); i++) {
+    const seat = shulkers[i]
+    log(`  Trying shulker ${i + 1} at ${seat.position.toString()}`)
 
-  let mounted = false
-  let windowOpened = false
+    let mounted = false
+    let windowOpened = false
 
-  const mountHandler = () => {
-    mounted = true
-    log(`  [EVENT] mount event fired`)
+    const mountHandler = () => { mounted = true }
+    const windowHandler = (window) => {
+      windowOpened = true
+      log(`  Storage opened (${JSON.stringify(window.title)}), trying next shulker...`)
+      bot.closeWindow(window)
+    }
+
+    bot.on('mount', mountHandler)
+    bot.on('windowOpen', windowHandler)
+
+    try {
+      await bot.lookAt(seat.position.offset(0, 0.5, 0))
+      await sleep(200)
+      await bot.useOn(seat)
+    } catch (e) {
+      log(`  Mount attempt error: ${e.message}`)
+    }
+
+    // Wait for mount event or window open
+    for (let j = 0; j < 20 && !mounted && !windowOpened; j++) {
+      await sleep(100)
+    }
+
+    bot.removeListener('mount', mountHandler)
+    bot.removeListener('windowOpen', windowHandler)
+
+    if (mounted && bot.vehicle !== null) {
+      log(`  Successfully mounted shulker ${i + 1}`)
+      return true
+    }
+
+    // If window opened, continue to next shulker
+    if (windowOpened) {
+      await sleep(200)
+      continue
+    }
+
+    // Neither mount nor window - check if vehicle is set anyway
+    if (bot.vehicle !== null) {
+      log(`  Mounted (no event) to shulker ${i + 1}`)
+      return true
+    }
   }
-  const windowHandler = (window) => {
-    windowOpened = true
-    log(`  [EVENT] windowOpen event - title: ${JSON.stringify(window.title)}`)
-    bot.closeWindow(window)
-  }
 
-  bot.on('mount', mountHandler)
-  bot.on('windowOpen', windowHandler)
-
-  try {
-    await bot.lookAt(seat.position.offset(0, 0.5, 0))
-    await sleep(200)
-    log(`  Calling bot.useOn...`)
-    await bot.useOn(seat)
-    log(`  bot.useOn completed`)
-  } catch (e) {
-    log(`  Mount attempt error: ${e.message}`)
-  }
-
-  // Wait for mount event
-  for (let j = 0; j < 20 && !mounted && !windowOpened; j++) {
-    await sleep(100)
-  }
-
-  bot.removeListener('mount', mountHandler)
-  bot.removeListener('windowOpen', windowHandler)
-
-  log(`  After mount attempt: mounted=${mounted}, windowOpened=${windowOpened}, bot.vehicle=${bot.vehicle ? 'entity#' + bot.vehicle.id : 'null'}`)
-
-  if (windowOpened) {
-    log(`  Storage/inventory opened - clicked wrong shulker type`)
-    return false
-  }
-
-  return bot.vehicle !== null
+  log('  Could not mount any shulker')
+  return false
 }
 
 /**
