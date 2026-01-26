@@ -213,11 +213,8 @@ function findShulkers(maxDist = 30) {
 
 /**
  * Mount a ship by finding and right-clicking a seat shulker.
- * For bigship, teleports to the stern area (where driver seat is) first.
- * Tries multiple shulkers if the first doesn't work (to handle storage shulkers).
  */
 async function mountShip(shipType = null) {
-  // Find all nearby shulkers
   const shulkers = findShulkers()
   if (shulkers.length === 0) {
     log('  No shulker seats found nearby')
@@ -225,27 +222,50 @@ async function mountShip(shipType = null) {
   }
   log(`  Found ${shulkers.length} shulkers nearby`)
 
-  // Mount the first (nearest) shulker
   const seat = shulkers[0]
   log(`  Mounting shulker at ${seat.position.toString()}`)
+  log(`  Shulker entity id: ${seat.id}, name: ${seat.name}`)
 
   let mounted = false
-  const handler = () => { mounted = true }
-  bot.on('mount', handler)
+  let windowOpened = false
+
+  const mountHandler = () => {
+    mounted = true
+    log(`  [EVENT] mount event fired`)
+  }
+  const windowHandler = (window) => {
+    windowOpened = true
+    log(`  [EVENT] windowOpen event - title: ${JSON.stringify(window.title)}`)
+    bot.closeWindow(window)
+  }
+
+  bot.on('mount', mountHandler)
+  bot.on('windowOpen', windowHandler)
 
   try {
     await bot.lookAt(seat.position.offset(0, 0.5, 0))
     await sleep(200)
+    log(`  Calling bot.useOn...`)
     await bot.useOn(seat)
+    log(`  bot.useOn completed`)
   } catch (e) {
     log(`  Mount attempt error: ${e.message}`)
   }
 
   // Wait for mount event
-  for (let j = 0; j < 20 && !mounted; j++) {
+  for (let j = 0; j < 20 && !mounted && !windowOpened; j++) {
     await sleep(100)
   }
-  bot.removeListener('mount', handler)
+
+  bot.removeListener('mount', mountHandler)
+  bot.removeListener('windowOpen', windowHandler)
+
+  log(`  After mount attempt: mounted=${mounted}, windowOpened=${windowOpened}, bot.vehicle=${bot.vehicle ? 'entity#' + bot.vehicle.id : 'null'}`)
+
+  if (windowOpened) {
+    log(`  Storage/inventory opened - clicked wrong shulker type`)
+    return false
+  }
 
   return bot.vehicle !== null
 }

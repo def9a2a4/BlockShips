@@ -39,11 +39,14 @@ jobs:
           name: BlockShips
           path: bin/
 
-      - name: Setup and run test server with bot
-        run: |
-          make test-server-setup
-          make test-server-download SERVER_VARIANT=${{ matrix.server }} MINECRAFT_VERSION=${{ matrix.minecraft }}
-          make test-server-with-bot MINECRAFT_VERSION=${{ matrix.minecraft }}
+      - name: Download server and plugins
+        run: make test-server-download-all SERVER_VARIANT=${{ matrix.server }} MINECRAFT_VERSION=${{ matrix.minecraft }}
+
+      - name: Setup test server
+        run: make test-server-setup
+
+      - name: Run test server with bot
+        run: make test-server-with-bot MINECRAFT_VERSION=${{ matrix.minecraft }}
 
       - name: Check for errors
         if: always()

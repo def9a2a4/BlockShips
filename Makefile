@@ -68,7 +68,7 @@ $(DOWNLOAD_CACHE)/plugins/ViaBackwards.jar:
 test-server-download-to-cache: $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar $(DOWNLOAD_CACHE)/plugins/ViaVersion.jar $(DOWNLOAD_CACHE)/plugins/ViaBackwards.jar
 
 .PHONY: test-server-plugin-copy
-test-server-plugin-copy: test-server-download-to-cache
+test-server-plugin-copy:
 	rm -rf $(TEST_SERVER_DIR)/plugins/
 	mkdir -p $(TEST_SERVER_DIR)/plugins
 	cp bin/*.jar $(TEST_SERVER_DIR)/plugins/
@@ -107,6 +107,9 @@ $(DOWNLOAD_CACHE)/purpur-%.jar:
 test-server-download: $(DOWNLOAD_CACHE)/$(SERVER_VARIANT)-$(MINECRAFT_VERSION).jar
 	mkdir -p $(TEST_SERVER_DIR)
 	cp $< $(TEST_SERVER_DIR)/server.jar
+
+.PHONY: test-server-download-all
+test-server-download-all: test-server-download-to-cache test-server-download
 
 .PHONY: test-server-run
 test-server-run:
