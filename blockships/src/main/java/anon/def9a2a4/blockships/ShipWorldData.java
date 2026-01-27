@@ -36,6 +36,7 @@ public class ShipWorldData {
     private static final long CACHE_CLEAR_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
     // Async I/O executor for non-blocking file operations
+    private final java.util.concurrent.atomic.AtomicInteger pendingIOOperations = new java.util.concurrent.atomic.AtomicInteger(0);
     private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor(
         r -> {
             Thread t = new Thread(r, "BlockShips-IO");
@@ -188,7 +189,14 @@ public class ShipWorldData {
      */
     public CompletableFuture<ShipPersistence.ShipState> loadShipMetadataAsync(World world, UUID shipId) {
         String worldName = world.getName();
-        return CompletableFuture.supplyAsync(() -> loadShipMetadataSync(worldName, shipId), ioExecutor);
+        pendingIOOperations.incrementAndGet();
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return loadShipMetadataSync(worldName, shipId);
+            } finally {
+                pendingIOOperations.decrementAndGet();
+            }
+        }, ioExecutor);
     }
 
     /**
@@ -477,7 +485,15 @@ public class ShipWorldData {
     public void shutdown() {
         ioExecutor.shutdown();
         try {
-            if (!ioExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+            // Wait for pending I/O operations to complete (max 5 seconds)
+            long start = System.currentTimeMillis();
+            while (pendingIOOperations.get() > 0 && System.currentTimeMillis() - start < 5000) {
+                Thread.sleep(50);
+            }
+            if (pendingIOOperations.get() > 0) {
+                plugin.getLogger().warning("Forcing shutdown with " + pendingIOOperations.get() + " pending I/O operations");
+            }
+            if (!ioExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
                 ioExecutor.shutdownNow();
             }
         } catch (InterruptedException e) {
