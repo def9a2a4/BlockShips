@@ -474,14 +474,10 @@ async function clickWheelMenu(action) {
   }
 
   return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      bot.removeListener('windowOpen', handler)
-      log('  Menu did not open within timeout')
-      resolve(false)
-    }, 5000)
+    let timeoutId = null
 
     const handler = async (window) => {
-      clearTimeout(timeout)
+      clearTimeout(timeoutId)
 
       const title = getMenuTitle(window)
       if (!title.includes('ship wheel')) {
@@ -505,6 +501,12 @@ async function clickWheelMenu(action) {
         resolve(false)
       }
     }
+
+    timeoutId = setTimeout(() => {
+      bot.removeListener('windowOpen', handler)
+      log('  Menu did not open within timeout')
+      resolve(false)
+    }, 5000)
 
     bot.once('windowOpen', handler)
   })
@@ -628,6 +630,7 @@ async function buildCustomShipBlocks(config) {
   say('Placing ship wheel...')
   const centerPos = new Vec3(RUNWAY_X, buildY, RUNWAY_Z - 1)
 
+  let placementError = null
   if (placeWheelOnTop) {
     // Place on top of center block (e.g., for platform ships)
     const centerBlock = bot.blockAt(centerPos)
@@ -636,15 +639,30 @@ async function buildCustomShipBlocks(config) {
     }
     await bot.lookAt(centerPos.offset(0.5, 1, 0.5))
     await sleep(200)
-    try { await bot.placeBlock(centerBlock, new Vec3(0, 1, 0)) } catch (e) { log(`  Place error: ${e.message}`) }
+    try {
+      await bot.placeBlock(centerBlock, new Vec3(0, 1, 0))
+    } catch (e) {
+      placementError = e.message
+      log(`  Place error: ${e.message}`)
+    }
   } else {
     // Place adjacent to north block (e.g., for frame ships with empty center)
     const adjacentBlock = bot.blockAt(new Vec3(RUNWAY_X, buildY, RUNWAY_Z - 2))
     await bot.lookAt(centerPos.offset(0.5, 0.5, 0.5))
     await sleep(200)
-    try { await bot.placeBlock(adjacentBlock, new Vec3(0, 0, 1)) } catch (e) { log(`  Place error: ${e.message}`) }
+    try {
+      await bot.placeBlock(adjacentBlock, new Vec3(0, 0, 1))
+    } catch (e) {
+      placementError = e.message
+      log(`  Place error: ${e.message}`)
+    }
   }
   await sleep(500)
+
+  // If placement threw an error, fail immediately rather than searching for stale blocks
+  if (placementError) {
+    return { success: false, error: `Wheel placement failed: ${placementError}` }
+  }
 
   // Find the placed wheel
   const wheelY = placeWheelOnTop ? buildY + 1 : buildY
