@@ -287,6 +287,62 @@ public class ShipPhysics {
     }
 
     /**
+     * Gets the neutral buoyancy Y position for water ships.
+     * @return The target Y position if in water, null if not in water
+     */
+    public Double getNeutralBuoyancyY() {
+        Location vehicleLoc = ship.vehicle.getLocation();
+        ShipConfig config = ship.config;
+
+        // Check water at hull
+        double hullCheckY = vehicleLoc.getY() + ship.model.minY;
+        Location hullCheckLoc = reuseLocation(vehicleLoc);
+        hullCheckLoc.setY(hullCheckY);
+
+        Location belowHullLoc = hullCheckLoc.clone();
+        belowHullLoc.subtract(0, 1, 0);
+        boolean inWater = isWaterOrWaterlogged(hullCheckLoc.getBlock())
+            || isWaterOrWaterlogged(belowHullLoc.getBlock());
+
+        if (!inWater) {
+            return null;
+        }
+
+        // Find water surface Y level
+        Location waterCheckLoc = reuseLocation2(vehicleLoc);
+        int startY = (int) Math.floor(vehicleLoc.getY()) + config.waterScanAbove;
+        int endY = (int) Math.floor(hullCheckY) - config.waterScanBelow;
+        waterCheckLoc.setY(startY);
+
+        double waterSurfaceY = waterCheckLoc.getY();
+
+        for (int y = startY; y >= endY; y--) {
+            waterCheckLoc.setY(y);
+            if (isWaterOrWaterlogged(waterCheckLoc.getBlock())) {
+                waterSurfaceY = y + 1;
+                break;
+            }
+        }
+
+        // Calculate float offset
+        double floatOffset;
+        if ("custom".equals(ship.shipType) && ship.model.blockCount > 0) {
+            float meanDensity = ship.model.getDensity();
+            float airDensity = config.airDensity;
+            float waterDensity = config.waterDensity;
+
+            float t = (meanDensity - airDensity) / (waterDensity - airDensity);
+            float referenceY = ship.model.minY;
+            float waterlineY = referenceY + t * (ship.model.centerOfVolume.y - referenceY);
+            floatOffset = -waterlineY;
+        } else {
+            floatOffset = ship.model.waterFloatOffset;
+        }
+
+        return waterSurfaceY + floatOffset;
+    }
+
+    /**
      * Check if a block is water or a waterlogged block (kelp, sea grass, etc.).
      */
     private boolean isWaterOrWaterlogged(org.bukkit.block.Block block) {

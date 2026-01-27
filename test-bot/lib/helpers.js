@@ -1,6 +1,7 @@
 const mineflayer = require('mineflayer')
 const fs = require('fs')
 const path = require('path')
+const { Vec3 } = require('vec3')
 
 // =============================================================================
 // Configuration
@@ -33,6 +34,14 @@ function createLogger(prefix) {
   const log = (msg) => console.log(`[${prefix}] ${msg}`)
   const say = (bot, msg) => { log(msg); bot.chat(msg) }
   return { log, say }
+}
+
+function createSay(log, botGetter) {
+  return (msg) => {
+    log(msg)
+    const bot = botGetter()
+    if (bot) bot.chat(msg)
+  }
 }
 
 // =============================================================================
@@ -323,6 +332,25 @@ async function cleanup(bot) {
   await sleep(500)
 }
 
+function findWheelBlock(bot, centerX, centerY, centerZ) {
+  let wheelBlock = bot.blockAt(new Vec3(centerX, centerY, centerZ))
+  if (wheelBlock && wheelBlock.name === 'player_head') {
+    return wheelBlock
+  }
+  // Fallback: search nearby positions
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dy = 0; dy <= 1; dy++) {
+        const b = bot.blockAt(new Vec3(centerX + dx, centerY + dy, centerZ + dz))
+        if (b && b.name === 'player_head') {
+          return b
+        }
+      }
+    }
+  }
+  return null
+}
+
 // =============================================================================
 // Bot Factory
 // =============================================================================
@@ -447,6 +475,7 @@ module.exports = {
 
   // Logging
   createLogger,
+  createSay,
   createTestTracker,
 
   // Utilities
@@ -454,6 +483,7 @@ module.exports = {
 
   // Ship helpers
   findShulkers,
+  findWheelBlock,
   mountShip,
   customDismount,
   waitForDismount,

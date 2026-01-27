@@ -26,6 +26,9 @@ public class ShipSteeringListener {
     // Cached version check - true if server is 1.21.2+ (new Input record format)
     private static final boolean USE_NEW_INPUT_FORMAT = anon.def9a2a4.blockships.util.ServerVersion.isAtLeast(1, 21, 2);
 
+    // Cached version check - true if server is 1.21.3+ (new PLAYER_INPUT packet replaces STEER_VEHICLE)
+    private static final boolean USE_PLAYER_INPUT_PACKET = anon.def9a2a4.blockships.util.ServerVersion.isAtLeast(1, 21, 3);
+
     // Cached reflection methods for new format (only initialized if needed)
     // All fields must be volatile to ensure visibility across threads - a reader
     // must see consistent values after observing methodsCached=true
@@ -35,6 +38,7 @@ public class ShipSteeringListener {
     private static volatile java.lang.reflect.Method rightMethod;
     private static volatile java.lang.reflect.Method jumpMethod;
     private static volatile java.lang.reflect.Method sprintMethod;
+    private static volatile java.lang.reflect.Method shiftMethod;  // For dismount detection
     private static volatile boolean methodsCached = false;
     private static volatile boolean methodsValid = false;
 
@@ -54,7 +58,22 @@ public class ShipSteeringListener {
                 }
             }
         );
-        plugin.getLogger().info("Ship steering listener registered (ProtocolLib WASD detection)");
+
+        // For 1.21.3+, also listen for PLAYER_INPUT packets (replaces STEER_VEHICLE for dismount)
+        if (USE_PLAYER_INPUT_PACKET) {
+            protocolManager.addPacketListener(
+                new PacketAdapter(plugin, ListenerPriority.NORMAL,
+                                 PacketType.Play.Client.PLAYER_INPUT) {
+                    @Override
+                    public void onPacketReceiving(PacketEvent event) {
+                        handlePlayerInputPacket(event);
+                    }
+                }
+            );
+            plugin.getLogger().info("Ship steering listener registered (ProtocolLib WASD + PLAYER_INPUT for 1.21.3+)");
+        } else {
+            plugin.getLogger().info("Ship steering listener registered (ProtocolLib WASD detection)");
+        }
     }
 
     private void handleSteeringPacket(PacketEvent event) {
@@ -134,6 +153,7 @@ public class ShipSteeringListener {
             rightMethod = inputClass.getMethod("right");
             jumpMethod = inputClass.getMethod("jump");
             sprintMethod = inputClass.getMethod("sprint");
+            shiftMethod = inputClass.getMethod("shift");  // For dismount detection
 
             // Verify ALL return types are boolean
             if (forwardMethod.getReturnType() == boolean.class &&
@@ -141,7 +161,8 @@ public class ShipSteeringListener {
                 leftMethod.getReturnType() == boolean.class &&
                 rightMethod.getReturnType() == boolean.class &&
                 jumpMethod.getReturnType() == boolean.class &&
-                sprintMethod.getReturnType() == boolean.class) {
+                sprintMethod.getReturnType() == boolean.class &&
+                shiftMethod.getReturnType() == boolean.class) {
                 methodsValid = true;
             }
             methodsCached = true;  // Set AFTER all fields assigned

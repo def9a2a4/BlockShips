@@ -1423,9 +1423,19 @@ public class ShipInstance {
             isRightPressed = false;
             isSpacePressed = false;
             isSprintPressed = false;
-            // Immediately kill vertical velocity for airships when driver exits
-            if (isAirship) {
-                physics.currentYVelocity = 0.0f;
+            // Kill vertical velocity and stabilize position on driver exit
+            physics.currentYVelocity = 0.0f;
+            if (!isAirship) {
+                // For water ships, snap to neutral buoyancy if close
+                Double neutralY = physics.getNeutralBuoyancyY();
+                if (neutralY != null) {
+                    double currentY = vehicle.getLocation().getY();
+                    if (java.lang.Math.abs(currentY - neutralY) <= 0.5) {
+                        Location loc = vehicle.getLocation();
+                        loc.setY(neutralY);
+                        vehicle.teleport(loc);
+                    }
+                }
             }
             // Snap position and rotation to reduce floating-point jitter
             physics.snapToFineGrid();
