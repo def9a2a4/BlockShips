@@ -5,7 +5,8 @@
   "main": "test-bot.js",
   "scripts": {
     "test": "node test-bot.js",
-    "test:chunk": "node chunk-test.js"
+    "test:chunk": "node chunk-test.js",
+    "test:all": "node test-bot.js && node chunk-test.js"
   },
   "dependencies": {
     "mineflayer": "^4.33.0",
