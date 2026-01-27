@@ -33,6 +33,7 @@ public class ShipCollision {
     private final Vector3f workForceDir = new Vector3f();
     private final Vector3f workSeparationNormal = new Vector3f();
     private final Vector3f workTerrainForce = new Vector3f();  // For calculateTerrainCollisionForce
+    private final Vector3f workPenetrationForce = new Vector3f();  // For calculatePenetrationForce return value
 
     public ShipCollision(ShipInstance ship) {
         this.ship = ship;
@@ -478,7 +479,7 @@ public class ShipCollision {
             penetrationDepth = (float) zPenetration;
         }
 
-        // Return push force (normal * depth) - create new vector to avoid mutation issues
-        return new Vector3f(workSeparationNormal).mul(penetrationDepth);
+        // Return push force (normal * depth) - reuse work vector (caller copies via .mul())
+        return workPenetrationForce.set(workSeparationNormal).mul(penetrationDepth);
     }
 }

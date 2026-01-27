@@ -64,6 +64,7 @@ public class DisplayShip implements Listener {
     private final Map<UUID, Long> lastShulkerInteraction = new HashMap<>();  // Cooldown for preventing double-entry
     private final Set<UUID> shipsBeingRecovered = Collections.synchronizedSet(new HashSet<>());  // Prevent concurrent recovery
     private final Set<Long> chunksBeingRecovered = ConcurrentHashMap.newKeySet();  // Track chunks with pending async recovery
+    private final org.joml.Vector3f workWheelTranslation = new org.joml.Vector3f();  // Reusable for findWheelCollider
 
     public DisplayShip(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -1626,9 +1627,8 @@ public class DisplayShip implements Listener {
      */
     private CollisionBox findWheelCollider(ShipInstance ship) {
         for (CollisionBox collider : ship.colliders) {
-            org.joml.Vector3f translation = new org.joml.Vector3f();
-            collider.base.getTranslation(translation);
-            if (Math.abs(translation.x) < 0.01f && Math.abs(translation.y) < 0.01f && Math.abs(translation.z) < 0.01f) {
+            collider.base.getTranslation(workWheelTranslation);
+            if (Math.abs(workWheelTranslation.x) < 0.01f && Math.abs(workWheelTranslation.y) < 0.01f && Math.abs(workWheelTranslation.z) < 0.01f) {
                 return collider;
             }
         }

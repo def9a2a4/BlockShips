@@ -145,6 +145,11 @@ public class ShipInstance {
     private final Vector3f workDisplayRot = new Vector3f();
     private final Vector3f workDisplayTransformedRot = new Vector3f();
     private final Matrix4f workDisplayDelta = new Matrix4f();
+    private final Matrix4f workR_initial = new Matrix4f();  // For initial rotation matrix
+    private final Matrix4f workR = new Matrix4f();          // For combined rotation matrix
+    private final Matrix4f workT = new Matrix4f();          // For translation matrix
+    private final Matrix4f workT_display = new Matrix4f();  // For display translation matrix
+    private final Matrix4f workWorldMatrix = new Matrix4f(); // For per-display world transform
 
     // Reusable Bukkit objects for updateCollisionPositions() - reduces GC pressure
     private Location workCarrierLoc;  // Lazily initialized (needs World reference from vehicle)
@@ -1142,16 +1147,15 @@ public class ShipInstance {
         previousYaw = yaw;
         previousPitch = pitch;
 
-        // Build rotation matrix for display entities
+        // Build rotation matrix for display entities (reusing work matrices to avoid allocations)
         // On 1.21.9+: Vehicle rotation is inherited since displays are passengers of the vehicle
         // On pre-1.21.9: Display's local coordinate system is "frozen" at spawn yaw, so we only
         //                apply the DELTA rotation from spawn (not absolute yaw, which causes doubling)
-        Matrix4f R_initial = new Matrix4f()
+        workR_initial.identity()
             .rotateY((float) java.lang.Math.toRadians(model.initialRotation.x))
             .rotateX((float) java.lang.Math.toRadians(model.initialRotation.y))
             .rotateZ((float) java.lang.Math.toRadians(model.initialRotation.z));
 
-        Matrix4f R;
         if (TeleportCompat.needsPassengerEject()) {
             // Pre-1.21.9: Apply only the DELTA rotation from spawn
             // The display's frozen local coordinate system already has spawn_yaw
@@ -1168,25 +1172,25 @@ public class ShipInstance {
                 .rotateY(workDisplayTransformedRot.x)
                 .rotateX(workDisplayTransformedRot.y)
                 .rotateZ(workDisplayTransformedRot.z);
-            R = new Matrix4f(workDisplayDelta).mul(R_initial);
+            workR.set(workDisplayDelta).mul(workR_initial);
         } else {
             // 1.21.9+: Only initial rotation, vehicle rotation is inherited from passenger
-            R = R_initial;
+            workR.set(workR_initial);
         }
 
         // Build translation matrix for position offset (in local space)
-        Matrix4f T = new Matrix4f().translation(model.positionOffset);
+        workT.identity().translation(model.positionOffset);
 
         // Add custom ship display offset from config
-        Matrix4f T_display = new Matrix4f(T);
+        workT_display.set(workT);
         if ("custom".equals(shipType)) {
-            T_display.translate(config.customDisplayOffset);
+            workT_display.translate(config.customDisplayOffset);
         }
 
         // Update each child's transformation: R * T_display * display.base
         for (DisplayInstance di : displays) {
-            Matrix4f world = new Matrix4f(R).mul(T_display).mul(di.base);
-            di.entity.setTransformationMatrix(world);
+            workWorldMatrix.set(workR).mul(workT_display).mul(di.base);
+            di.entity.setTransformationMatrix(workWorldMatrix);
         }
     }
 
