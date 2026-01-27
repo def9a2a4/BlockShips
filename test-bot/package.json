@@ -6,7 +6,7 @@
   "scripts": {
     "test": "node test-bot.js",
     "test:chunk": "node chunk-test.js",
-    "test:all": "node test-bot.js && node chunk-test.js"
+    "test:all": "node test-bot.js; r1=$?; node chunk-test.js; r2=$?; exit $((r1 || r2))"
   },
   "dependencies": {
     "mineflayer": "^4.33.0",
