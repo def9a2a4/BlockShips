@@ -1,10 +1,10 @@
 # BUGS
 
+- wall banner rendering broken
 - ShipRegistry uses non-thread-safe HashMap but is accessed from multiple threads (chunk events, periodic saves). Use ConcurrentHashMap to prevent ConcurrentModificationException.
 - (pre-1.21.9) Rotation logic bug - delta rotation math in ShipInstance.java:1110-1130 has inconsistencies, displays may rotate incorrectly
 - (pre-1.21.9) Custom ship spawnYaw mismatch - initial spawn uses vehicle.getYaw() but recovery uses model.initialRotation.x, causing rotation snap after restart
 - (pre-1.21.9) spawnYaw not persisted to save data - ships rotated before restart may snap when loaded
-- Orphaned carrier on spawn failure - if shulker spawn fails after carrier created, ArmorStand is leaked
 - prefab ship (medium) needs more seats
 - still buggy momentum on recently parked ship, but grid align fixes it? our fine grid align didnt work
 - player does not get moved along with a ship, does not inherit velocity properly
@@ -19,14 +19,15 @@
 - [x] collisions on prefab ships too forceful
 - [x] recognize waterlogged blocks (in particular kelp) as water when doing flotation calculations
 - [x] hay bales should be allowed blocks
+- [x] Orphaned carrier on spawn failure - if shulker spawn fails after carrier created, ArmorStand is leaked
 
 # FEATURES
 
-- info/help in ship wheel GUI
 - implement furnaces (normal furnaces) on ships
 - add TileEntity serialization for campfires, chiseled bookshelves, decorated pots
 - custom ship stats:
   - base acceleration/rotation speed depends on total mass.
+  - "sails" (banners, wool blocks) increase acceleration/rotation speed
   - any blast furnaces connected via "copper network" to ships wheel will use fuel to increase acceleration/max speed/etc
   - stats (fuel, number of "engines") displayed in ship info
 
@@ -46,6 +47,7 @@
 - make sure all right click checks handled by the same function
 - despawn shulkers if no players nearby??
   - shulkers only need to be present when there is a player nearby. max ship size + configurable buffer?
+  - [!] this doesn't work with the new method of chunk loading/unloading though
 - smarter conversion to minimize shulkers:
   - look for solid 2x2x2 or 3x3x3 blocks to convert to single shulker with adjusted size
   - dont spawn shulkers for "interior" blocks (those not touching the outisde)
@@ -66,3 +68,4 @@
 - [x] Reflection per packet in ShipSteeringListener - added version check + cached methods
 - [x] TeleportCompat called 50+ times/tick with unnecessary passenger operations - optimized
 - [x] Missing validity checks in ShipInstance.java passenger verification - added isValid() checks
+- [x] info/help in ship wheel GUI
