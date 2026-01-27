@@ -31,7 +31,17 @@ const CHUNK_LOAD_WAIT_MS = 2000
 // Logging
 const { log } = createLogger('CHUNK-TEST')
 const tracker = createTestTracker('CHUNK-TEST')
-const { pass, fail } = tracker
+
+// Wrap pass/fail to also report in chat
+function pass(testName) {
+  tracker.pass(testName)
+  bot.chat(`PASS: ${testName}`)
+}
+
+function fail(testName, reason) {
+  tracker.fail(testName, reason)
+  bot.chat(`FAIL: ${testName}: ${reason}`)
+}
 
 // Test state
 let bot = null
@@ -187,6 +197,23 @@ async function spawnCustomAirshipAtFar() {
 
   // Find the wheel block at center
   let wheelBlock = bot.blockAt(new Vec3(FAR_X, buildY, FAR_Z - 1))
+  if (!wheelBlock || wheelBlock.name !== 'player_head') {
+    // Fallback: search nearby positions (matches test-bot.js pattern)
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dy = 0; dy <= 1; dy++) {
+          const b = bot.blockAt(new Vec3(FAR_X + dx, buildY + dy, FAR_Z - 1 + dz))
+          if (b && b.name === 'player_head') {
+            wheelBlock = b
+            break
+          }
+        }
+        if (wheelBlock && wheelBlock.name === 'player_head') break
+      }
+      if (wheelBlock && wheelBlock.name === 'player_head') break
+    }
+  }
+
   if (!wheelBlock || wheelBlock.name !== 'player_head') {
     log('Wheel block not found after placement')
     return false

@@ -8,7 +8,6 @@ const {
   sleep,
   mountShip,
   customDismount,
-  waitForDismount,
   steerShip,
   cleanup,
   clickWheelMenu,
@@ -183,19 +182,16 @@ async function runControlSequence(startPos) {
   log('Dismounting...')
   let dismountError = null
   try {
-    customDismount(bot, log)
+    const dismounted = await customDismount(bot, log)
+    if (!dismounted) {
+      log('All dismount methods failed, trying killentities fallback...')
+      bot.chat('/blockships killentities confirm')
+      await sleep(1000)
+      dismountError = 'Failed to dismount (used killentities fallback)'
+    }
   } catch (e) {
     dismountError = e.message
     log(`Dismount error: ${e.message}`)
-  }
-
-  // Wait for dismount to complete (verify bot.vehicle === null)
-  const dismounted = await waitForDismount(bot, 3000)
-  if (!dismounted) {
-    log('Dismount timed out, trying killentities fallback...')
-    bot.chat('/blockships killentities confirm')
-    await sleep(1000)
-    dismountError = 'Failed to dismount (timed out, used killentities)'
   }
 
   // Use player position after dismount (more reliable than vehicle position)

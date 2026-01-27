@@ -182,37 +182,84 @@ async function mountShip(bot, log) {
   return false
 }
 
-function customDismount(bot, log) {
+async function customDismount(bot, log) {
   if (!bot.vehicle) {
     if (log) log('Warning: customDismount called but not mounted')
     return false
   }
 
-  // Check if using new player_input packet (1.21.3+)
-  if (bot.supportFeature('newPlayerInputPacket')) {
-    // Send shift=true to dismount (not jump=true as mineflayer does)
-    bot._client.write('player_input', {
-      inputs: { shift: true }
-    })
-  } else if (bot.supportFeature('inputsInSteerVehicle')) {
-    // 1.21.2: New Input record format in steer_vehicle packet
-    // Mineflayer's dismount() may send jump=true instead of sneak=true
-    bot._client.write('steer_vehicle', {
-      inputs: {
-        forward: false,
-        backward: false,
-        left: false,
-        right: false,
-        jump: false,
-        sneak: true,
-        sprint: false
-      }
-    })
-  } else {
-    // Pre-1.21.2: Old format with unmount flag
-    bot.dismount()
+  const quickWait = async (ms) => {
+    const start = Date.now()
+    while (bot.vehicle && Date.now() - start < ms) {
+      await sleep(50)
+    }
+    return !bot.vehicle
   }
-  return true
+
+  // Method 1: Use mineflayer's built-in dismount
+  if (log) log('  Trying bot.dismount()...')
+  try {
+    bot.dismount()
+  } catch (e) {
+    if (log) log(`  bot.dismount() error: ${e.message}`)
+  }
+
+  if (await quickWait(500)) {
+    if (log) log('  Dismount succeeded via bot.dismount()')
+    return true
+  }
+
+  // Method 2: Try sneak control state
+  if (log) log('  Trying sneak control state...')
+  bot.setControlState('sneak', true)
+  await sleep(200)
+  bot.setControlState('sneak', false)
+
+  if (await quickWait(500)) {
+    if (log) log('  Dismount succeeded via sneak')
+    return true
+  }
+
+  // Method 3: Version-specific packets
+  if (log) log('  Trying version-specific packet...')
+  try {
+    if (bot.supportFeature('newPlayerInputPacket')) {
+      // 1.21.3+: player_input packet
+      bot._client.write('player_input', {
+        inputs: { shift: true }
+      })
+    } else if (bot.supportFeature('inputsInSteerVehicle')) {
+      // 1.21.2: Input record in steer_vehicle
+      bot._client.write('steer_vehicle', {
+        inputs: {
+          forward: false,
+          backward: false,
+          left: false,
+          right: false,
+          jump: false,
+          sneak: true,
+          sprint: false
+        }
+      })
+    } else {
+      // Pre-1.21.2: Raw steer_vehicle with unmount flag
+      bot._client.write('steer_vehicle', {
+        sideways: 0.0,
+        forward: 0.0,
+        jump: 0x02
+      })
+    }
+  } catch (e) {
+    if (log) log(`  Packet error: ${e.message}`)
+  }
+
+  if (await quickWait(500)) {
+    if (log) log('  Dismount succeeded via version-specific packet')
+    return true
+  }
+
+  if (log) log('  All dismount methods failed')
+  return false
 }
 
 async function waitForDismount(bot, timeoutMs = 3000) {
