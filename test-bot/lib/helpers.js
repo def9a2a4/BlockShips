@@ -429,7 +429,7 @@ async function customDismount(bot, log) {
 
   if (!bot.vehicle || posChanged(startPos, postDismountPos)) {
     if (log) log('  Success via /blockships dismount (position changed)')
-    return { success: true, method: '/blockships dismount', usedFallback: true, startPos, endPos: postDismountPos }
+    return { success: true, method: '/blockships dismount', usedFallback: false, startPos, endPos: postDismountPos }
   }
 
   // Fallback 2: kill entities
