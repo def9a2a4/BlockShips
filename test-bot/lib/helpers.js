@@ -256,7 +256,13 @@ async function buildCustomShipWithWheel(bot, config, centerX, buildY, centerZ) {
   }
   await sleep(500)
 
-  const wheelBlock = findWheelBlock(bot, wheelPos.x, wheelPos.y, wheelPos.z)
+  // Retry finding wheel block - client may not have received block update yet
+  let wheelBlock = null
+  for (let attempt = 0; attempt < 10; attempt++) {
+    wheelBlock = findWheelBlock(bot, wheelPos.x, wheelPos.y, wheelPos.z)
+    if (wheelBlock) break
+    await sleep(200)
+  }
   if (!wheelBlock) {
     return { success: false, error: 'Ship wheel not found after placement' }
   }
