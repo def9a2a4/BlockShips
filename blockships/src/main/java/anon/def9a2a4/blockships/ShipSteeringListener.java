@@ -9,7 +9,6 @@ import com.comphenix.protocol.events.PacketAdapter;
 import com.comphenix.protocol.events.PacketContainer;
 import com.comphenix.protocol.events.PacketEvent;
 import com.comphenix.protocol.reflect.StructureModifier;
-import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -81,17 +80,36 @@ public class ShipSteeringListener {
         PacketContainer packet = event.getPacket();
 
         try {
-            // Find ship instance for this player (only returns if player is in driver seat)
-            ShipInstance ship = findShipByPlayer(player);
-            if (ship == null) {
-                return;
+            // Check if player is riding a ship shulker
+            if (!(player.getVehicle() instanceof org.bukkit.entity.Shulker shulker)) return;
+
+            java.util.Set<String> tags = shulker.getScoreboardTags();
+            UUID shipId = ShipTags.extractShipId(tags);
+            if (shipId == null) return;
+
+            // Check for dismount first (applies to ALL passengers, not just driver)
+            // Pre-1.21.2 format: bools[0] = jump, bools[1] = unmount
+            StructureModifier<Boolean> bools = packet.getBooleans();
+            if (bools.size() >= 2) {
+                boolean unmount = bools.read(1);
+                if (unmount) {
+                    shulker.removePassenger(player);
+                    return;  // Don't process steering if dismounting
+                }
             }
 
-            // Use version check to determine packet format (avoids reflection per packet)
-            if (USE_NEW_INPUT_FORMAT) {
-                handleNewInputFormat(packet, ship);
-            } else {
-                handleOldInputFormat(packet, ship);
+            // Handle steering for driver seat only
+            int seatIndex = ShipTags.extractSeatIndex(tags);
+            if (seatIndex == 0) {
+                ShipInstance ship = ShipRegistry.byId(shipId);
+                if (ship != null) {
+                    // Use version check to determine packet format (avoids reflection per packet)
+                    if (USE_NEW_INPUT_FORMAT) {
+                        handleNewInputFormat(packet, ship);
+                    } else {
+                        handleOldInputFormat(packet, ship);
+                    }
+                }
             }
 
         } catch (Exception ex) {
@@ -260,28 +278,6 @@ public class ShipSteeringListener {
         }
     }
 
-    /**
-     * Find the ship instance the player is currently riding.
-     * Only returns the ship if the player is in the DRIVER seat.
-     * @param player The player
-     * @return ShipInstance if player is riding a ship as driver, null otherwise
-     */
-    private ShipInstance findShipByPlayer(Player player) {
-        // Check if player is riding a ship seat shulker (Shulker with displayship:{uuid} and shipseat:{index} tags)
-        if (player.getVehicle() instanceof org.bukkit.entity.Shulker shulker) {
-            // Parse tags: displayship:{uuid} and shipseat:{index}
-            // Tag creation: ShipInstance constructor (lines 290-300)
-            java.util.Set<String> tags = shulker.getScoreboardTags();
-            UUID shipId = ShipTags.extractShipId(tags);
-            int seatIndex = ShipTags.extractSeatIndex(tags);
-
-            // Only return ship if player is in driver seat (index 0)
-            if (shipId != null && seatIndex == 0) {
-                return ShipRegistry.byId(shipId);
-            }
-        }
-        return null;
-    }
 }
 
 
