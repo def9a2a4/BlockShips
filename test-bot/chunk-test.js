@@ -409,5 +409,6 @@ setupBotEvents(bot, log, main)
 // Timeout after 6 minutes (6 tests with chunk cycling)
 setTimeout(() => {
   log('Chunk test timeout (6 minutes)')
+  log('Chunk tests FAILED (timeout)')
   process.exit(1)
 }, 360000)
