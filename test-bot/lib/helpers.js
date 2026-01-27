@@ -402,17 +402,29 @@ async function customDismount(bot, log) {
     return { success: true, method: 'delayed', usedFallback: false, startPos, endPos }
   }
 
-  // Check position before fallback
-  const preKillPos = bot.entity.position.clone()
-  if (log) log(`  Position before fallback: ${preKillPos.x.toFixed(2)}, ${preKillPos.y.toFixed(2)}, ${preKillPos.z.toFixed(2)}`)
+  // Check if we're actually still mounted (bot.vehicle might be stale)
+  const checkPos = bot.entity.position.clone()
+  if (log) log(`  Position after methods: ${checkPos.x.toFixed(2)}, ${checkPos.y.toFixed(2)}, ${checkPos.z.toFixed(2)}`)
+  if (log) log(`  bot.vehicle: ${bot.vehicle ? 'set' : 'null'}`)
+
+  // If bot.vehicle is null, we're done
+  if (!bot.vehicle) {
+    if (log) log('  Success: bot.vehicle is null')
+    return { success: true, method: 'delayed', usedFallback: false, startPos, endPos: checkPos }
+  }
 
   // Fallback 1: /blockships dismount command
   if (log) log('  Trying /blockships dismount...')
   bot.chat('/blockships dismount')
-  if (await quickWait(1000)) {
-    const endPos = bot.entity.position.clone()
-    if (log) log(`  Success via /blockships dismount`)
-    return { success: true, method: '/blockships dismount', usedFallback: true, startPos, preKillPos, endPos }
+  await sleep(1000)
+
+  const postDismountPos = bot.entity.position.clone()
+  if (log) log(`  Position after /blockships dismount: ${postDismountPos.x.toFixed(2)}, ${postDismountPos.y.toFixed(2)}, ${postDismountPos.z.toFixed(2)}`)
+  if (log) log(`  bot.vehicle: ${bot.vehicle ? 'set' : 'null'}`)
+
+  if (!bot.vehicle) {
+    if (log) log('  Success via /blockships dismount')
+    return { success: true, method: '/blockships dismount', usedFallback: true, startPos, endPos: postDismountPos }
   }
 
   // Fallback 2: kill entities
@@ -420,16 +432,15 @@ async function customDismount(bot, log) {
   bot.chat('/blockships killentities confirm')
   await sleep(1000)
 
-  // Check position after fallback
   const endPos = bot.entity.position.clone()
-  if (log) log(`  Position after fallback: ${endPos.x.toFixed(2)}, ${endPos.y.toFixed(2)}, ${endPos.z.toFixed(2)}`)
+  if (log) log(`  Position after killentities: ${endPos.x.toFixed(2)}, ${endPos.y.toFixed(2)}, ${endPos.z.toFixed(2)}`)
+  if (log) log(`  bot.vehicle: ${bot.vehicle ? 'set' : 'null'}`)
 
   return {
     success: !bot.vehicle,
     method: 'killentities',
     usedFallback: true,
     startPos,
-    preKillPos,
     endPos
   }
 }
