@@ -50,28 +50,47 @@ public class ShipSteeringListener {
     private void registerListener() {
         if (USE_PLAYER_INPUT_PACKET) {
             // 1.21.3+: Use PLAYER_INPUT packet for both steering and dismount
-            protocolManager.addPacketListener(
-                new PacketAdapter(plugin, ListenerPriority.NORMAL,
-                                 PacketType.Play.Client.PLAYER_INPUT) {
-                    @Override
-                    public void onPacketReceiving(PacketEvent event) {
-                        handlePlayerInputPacket(event);
+            // Use reflection to get packet type (not available in older ProtocolLib)
+            PacketType playerInputType = getPacketTypeByName("PLAYER_INPUT");
+            if (playerInputType != null) {
+                protocolManager.addPacketListener(
+                    new PacketAdapter(plugin, ListenerPriority.NORMAL, playerInputType) {
+                        @Override
+                        public void onPacketReceiving(PacketEvent event) {
+                            handlePlayerInputPacket(event);
+                        }
                     }
+                );
+                plugin.getLogger().info("Ship steering listener registered (PLAYER_INPUT for 1.21.3+)");
+                return;
+            }
+            // Fall through to STEER_VEHICLE if PLAYER_INPUT not found
+            plugin.getLogger().warning("PLAYER_INPUT packet type not found, falling back to STEER_VEHICLE");
+        }
+
+        // Pre-1.21.3 or fallback: Use STEER_VEHICLE packet
+        protocolManager.addPacketListener(
+            new PacketAdapter(plugin, ListenerPriority.NORMAL,
+                             PacketType.Play.Client.STEER_VEHICLE) {
+                @Override
+                public void onPacketReceiving(PacketEvent event) {
+                    handleSteeringPacket(event);
                 }
-            );
-            plugin.getLogger().info("Ship steering listener registered (PLAYER_INPUT for 1.21.3+)");
-        } else {
-            // Pre-1.21.3: Use STEER_VEHICLE packet
-            protocolManager.addPacketListener(
-                new PacketAdapter(plugin, ListenerPriority.NORMAL,
-                                 PacketType.Play.Client.STEER_VEHICLE) {
-                    @Override
-                    public void onPacketReceiving(PacketEvent event) {
-                        handleSteeringPacket(event);
-                    }
-                }
-            );
-            plugin.getLogger().info("Ship steering listener registered (STEER_VEHICLE)");
+            }
+        );
+        plugin.getLogger().info("Ship steering listener registered (STEER_VEHICLE)");
+    }
+
+    /**
+     * Get a PacketType by field name using reflection.
+     * Used to access packet types that may not exist in older ProtocolLib versions.
+     */
+    private PacketType getPacketTypeByName(String name) {
+        try {
+            java.lang.reflect.Field field = PacketType.Play.Client.class.getField(name);
+            return (PacketType) field.get(null);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            return null;
         }
     }
 
