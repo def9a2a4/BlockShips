@@ -36,7 +36,7 @@ const RUNWAY_LENGTH = 60
 
 // Timing
 const CHUNK_UNLOAD_WAIT_MS = 5000
-const CHUNK_LOAD_WAIT_MS = 2000
+const CHUNK_LOAD_WAIT_MS = 5000
 
 // Logging
 const { log } = createLogger('CHUNK-TEST')
@@ -66,6 +66,10 @@ async function forceChunkCycle(shipPos) {
 }
 
 async function setupFarRunway() {
+  // Kill any existing ship entities first
+  bot.chat('/blockships killentities confirm')
+  await sleep(500)
+
   const x1 = FAR_X - RUNWAY_HALF_WIDTH
   const x2 = FAR_X + RUNWAY_HALF_WIDTH - 1
   const z1 = FAR_Z + 5
@@ -217,13 +221,15 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   // 1) Move ship
   say('Moving ship...')
   await steerShip(bot, 1.0, 0, isAirship, 1000)
+  await steerShip(bot, -1.0, 0, isAirship, 200)
+  await steerShip(bot, 0.0, 0, isAirship, 1000)
 
-  // Wait longer for ship to settle before dismounting
+  // Wait for ship to settle before dismounting
   await sleep(2000)
 
   // 2) Exit ship FIRST, then measure position (same approach as test-bot.js)
   await customDismount(bot, log)
-  await sleep(2000)  // Wait longer for entities to load after teleport
+  await sleep(3000)  // Wait for entities to load after dismount
 
   // Record position after dismounting - use this for teleport back
   const movedPos = bot.entity.position.clone()
@@ -231,9 +237,10 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   say(`Moved ${moveDistance.toFixed(1)} blocks`)
 
   // 3) Check shulker positions AFTER dismount
-  const beforeShulkers = findShulkers(bot, 100)  // Larger radius since dismount may teleport away
+  const beforeShulkers = findShulkers(bot, 50)
   const beforePositions = beforeShulkers.map(s => s.position.clone())
   say(`Recording ${beforePositions.length} shulker positions after dismount`)
+  say(`Before positions: ${beforePositions.map(p => `(${p.x.toFixed(1)},${p.z.toFixed(1)})`).join(', ')}`)
 
   if (beforePositions.length === 0) {
     fail(testName, 'No shulkers found after dismount')
@@ -244,7 +251,7 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   await forceChunkCycle(movedPos)
 
   // 5) Check positions of all shulkers
-  const afterShulkers = findShulkers(bot, 100)
+  const afterShulkers = findShulkers(bot, 50)
   if (afterShulkers.length === 0) {
     fail(testName, 'Ship not found after cycle')
     return
@@ -252,6 +259,7 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
 
   // Compare: check if ANY shulker is near expected position (1 block tolerance)
   const afterPositions = afterShulkers.map(s => s.position)
+  say(`After positions: ${afterPositions.map(p => `(${p.x.toFixed(1)},${p.z.toFixed(1)})`).join(', ')}`)
   const { foundNearby, minError } = findNearestPosition(afterPositions, beforePositions)
 
   say(`Position error: ${minError.toFixed(2)} blocks`)
@@ -300,7 +308,7 @@ async function testPostRecoverySteeringBase(testName, spawnFn, isAirship = false
   // Test steering
   say('Testing steering on recovered ship...')
   await steerShip(bot, 1.0, 0, isAirship, 1000)
-  await sleep(2000)
+  await sleep(5000)
 
   // Dismount FIRST, then measure position (same approach as test-bot.js)
   await customDismount(bot, log)
