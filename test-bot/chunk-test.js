@@ -5,7 +5,10 @@ const {
   findShulkers,
   mountShip,
   customDismount,
+  waitForDismount,
   steerShip,
+  cleanup,
+  clickWheelMenu,
   createBot,
   setupBotEvents
 } = require('./lib/helpers')
@@ -18,7 +21,7 @@ const ORIGIN_Z = 0
 
 // Runway dimensions (smaller than main test)
 const RUNWAY_HALF_WIDTH = 10
-const RUNWAY_LENGTH = 30
+const RUNWAY_LENGTH = 60
 
 // Timing
 const CHUNK_UNLOAD_WAIT_MS = 5000
@@ -57,13 +60,6 @@ async function forceChunkCycle(shipPos) {
   log(`Teleporting back to ship at (${shipPos.x.toFixed(0)}, ${shipPos.y.toFixed(0)}, ${shipPos.z.toFixed(0)})...`)
   bot.chat(`/tp @s ${shipPos.x.toFixed(0)} ${shipPos.y.toFixed(0)} ${shipPos.z.toFixed(0)}`)
   await sleep(CHUNK_LOAD_WAIT_MS)
-}
-
-async function cleanup() {
-  bot.chat('/kill @e[type=minecraft:item]')
-  await sleep(200)
-  bot.chat('/blockships killentities confirm')
-  await sleep(500)
 }
 
 async function setupFarRunway() {
@@ -126,6 +122,84 @@ async function spawnShipAtFar(shipType = 'smallship') {
   return false
 }
 
+async function spawnCustomAirshipAtFar() {
+  bot.chat(`/tp @s ${FAR_X} 105 ${FAR_Z}`)
+  await sleep(500)
+  bot.chat('/clear @s')
+  await sleep(300)
+
+  // Build simple airship (glowstone corners + planks center)
+  const buildY = 101
+  const blocks = [
+    { x: -1, z: -2, block: 'glowstone' },
+    { x:  1, z: -2, block: 'glowstone' },
+    { x: -1, z:  0, block: 'glowstone' },
+    { x:  1, z:  0, block: 'glowstone' },
+    { x:  0, z: -1, block: 'oak_planks' },
+  ]
+
+  // Clear build area first
+  bot.chat(`/fill ${FAR_X - 2} ${buildY - 1} ${FAR_Z - 3} ${FAR_X + 2} ${buildY + 3} ${FAR_Z + 1} minecraft:air`)
+  await sleep(200)
+
+  for (const { x, z, block } of blocks) {
+    bot.chat(`/setblock ${FAR_X + x} ${buildY} ${FAR_Z + z} minecraft:${block}`)
+  }
+  await sleep(500)
+
+  // Get ship wheel
+  bot.chat('/blockships give ship_wheel')
+  await sleep(1000)
+
+  const wheel = bot.inventory.items().find(i => i.name === 'player_head')
+  if (!wheel) {
+    log('Could not get ship wheel')
+    return false
+  }
+
+  await bot.equip(wheel, 'hand')
+  await sleep(300)
+
+  // Place wheel on top of center plank
+  const centerBlock = bot.blockAt({ x: FAR_X, y: buildY, z: FAR_Z - 1 })
+  if (!centerBlock || centerBlock.name === 'air') {
+    log('Center block not found for wheel placement')
+    return false
+  }
+
+  try {
+    await bot.lookAt({ x: FAR_X + 0.5, y: buildY + 1, z: FAR_Z - 0.5 })
+    await sleep(200)
+    await bot.placeBlock(centerBlock, { x: 0, y: 1, z: 0 })
+  } catch (e) {
+    log(`Wheel placement error: ${e.message}`)
+    return false
+  }
+  await sleep(500)
+
+  // Find the wheel block
+  let wheelBlock = bot.blockAt({ x: FAR_X, y: buildY + 1, z: FAR_Z - 1 })
+  if (!wheelBlock || wheelBlock.name !== 'player_head') {
+    log('Wheel block not found after placement')
+    return false
+  }
+
+  // Activate wheel and assemble
+  try {
+    await bot.activateBlock(wheelBlock)
+    if (!await clickWheelMenu(bot, log, 'assemble')) {
+      log('Assembly menu interaction failed')
+      return false
+    }
+  } catch (e) {
+    log(`Assembly failed: ${e.message}`)
+    return false
+  }
+
+  await sleep(3000)
+  return true
+}
+
 // =============================================================================
 // Test Functions
 // =============================================================================
@@ -133,7 +207,7 @@ async function spawnShipAtFar(shipType = 'smallship') {
 async function testBasicChunkCycle() {
   say('=== TEST: Basic Chunk Cycle ===')
 
-  await cleanup()
+  await cleanup(bot)
   await setupFarRunway()
 
   if (!await spawnShipAtFar()) {
@@ -169,7 +243,7 @@ async function testBasicChunkCycle() {
 async function testPositionPersistence() {
   say('=== TEST: Position Persistence ===')
 
-  await cleanup()
+  await cleanup(bot)
   await setupFarRunway()
 
   if (!await spawnShipAtFar()) {
@@ -195,34 +269,56 @@ async function testPositionPersistence() {
   const moveDistance = movedPos.distanceTo(startPos)
   say(`Moved ${moveDistance.toFixed(1)} blocks`)
 
+  // Record shulker positions BEFORE dismount (while still mounted)
+  const beforeShulkers = findShulkers(bot, 50)
+  const beforePositions = beforeShulkers.map(s => s.position.clone())
+  say(`Recording ${beforePositions.length} shulker positions before cycle`)
+
   customDismount(bot, log)
+  await waitForDismount(bot)
   await sleep(500)
 
-  // Force chunk cycle
-  await forceChunkCycle(movedPos)
+  // Use first shulker position for teleport reference
+  const shipPos = beforePositions.length > 0 ? beforePositions[0].clone() : movedPos
 
-  // Find ship and check position
-  const shulkers = findShulkers(bot, 50)
-  if (shulkers.length === 0) {
+  // Force chunk cycle
+  await forceChunkCycle(shipPos)
+
+  // Find shulkers after and compare positions
+  const afterShulkers = findShulkers(bot, 50)
+  if (afterShulkers.length === 0) {
     fail('chunk_persistence', 'Ship not found after cycle')
     return
   }
 
-  const shipPos = shulkers[0].position
-  const posError = shipPos.distanceTo(movedPos)
-  say(`Ship position error: ${posError.toFixed(1)} blocks`)
+  // Check if ANY shulker is near expected position (1 block tolerance)
+  let foundNearby = false
+  let minError = Infinity
+  for (const after of afterShulkers) {
+    for (const beforePos of beforePositions) {
+      const error = after.position.distanceTo(beforePos)
+      minError = Math.min(minError, error)
+      if (error < 1) {
+        foundNearby = true
+        break
+      }
+    }
+    if (foundNearby) break
+  }
 
-  if (posError < 15) {
+  say(`Ship position error: ${minError.toFixed(2)} blocks`)
+
+  if (foundNearby) {
     pass('chunk_persistence')
   } else {
-    fail('chunk_persistence', `Ship position shifted by ${posError.toFixed(1)} blocks`)
+    fail('chunk_persistence', `Ship position shifted by ${minError.toFixed(2)} blocks (need <1)`)
   }
 }
 
 async function testPostRecoverySteering() {
   say('=== TEST: Post-Recovery Steering ===')
 
-  await cleanup()
+  await cleanup(bot)
   await setupFarRunway()
 
   if (!await spawnShipAtFar()) {
@@ -267,13 +363,178 @@ async function testPostRecoverySteering() {
 }
 
 // =============================================================================
+// Airship Test Variants
+// =============================================================================
+
+async function testBasicChunkCycleAirship() {
+  say('=== TEST: Basic Chunk Cycle (Airship) ===')
+
+  await cleanup(bot)
+  await setupFarRunway()
+
+  if (!await spawnCustomAirshipAtFar()) {
+    fail('chunk_basic_airship', 'Could not spawn airship')
+    return
+  }
+
+  // Verify ship exists
+  const beforeShulkers = findShulkers(bot)
+  if (beforeShulkers.length === 0) {
+    fail('chunk_basic_airship', 'No airship found after spawn')
+    return
+  }
+  say(`Found ${beforeShulkers.length} shulkers before cycle`)
+
+  // Record ship position for teleporting back
+  const shipPos = bot.entity.position.clone()
+
+  // Force chunk cycle - teleport to origin, wait, return
+  await forceChunkCycle(shipPos)
+
+  // Verify ship still exists
+  const afterShulkers = findShulkers(bot)
+  say(`Found ${afterShulkers.length} shulkers after cycle`)
+
+  if (afterShulkers.length > 0) {
+    pass('chunk_basic_airship')
+  } else {
+    fail('chunk_basic_airship', 'Airship not found after chunk cycle')
+  }
+}
+
+async function testPositionPersistenceAirship() {
+  say('=== TEST: Position Persistence (Airship) ===')
+
+  await cleanup(bot)
+  await setupFarRunway()
+
+  if (!await spawnCustomAirshipAtFar()) {
+    fail('chunk_persistence_airship', 'Could not spawn airship')
+    return
+  }
+
+  bot.chat('/clear @s')
+  await sleep(300)
+
+  if (!await mountShip(bot, log)) {
+    fail('chunk_persistence_airship', 'Could not mount airship')
+    return
+  }
+
+  // Move airship (forward + up)
+  say('Moving airship...')
+  const startPos = bot.entity.position.clone()
+  await steerShip(bot, 1.0, 0, true, 3000) // jump=true for airship ascent
+  await sleep(500)
+
+  const movedPos = bot.entity.position.clone()
+  const moveDistance = movedPos.distanceTo(startPos)
+  say(`Moved ${moveDistance.toFixed(1)} blocks`)
+
+  // Record shulker positions BEFORE dismount
+  const beforeShulkers = findShulkers(bot, 50)
+  const beforePositions = beforeShulkers.map(s => s.position.clone())
+  say(`Recording ${beforePositions.length} shulker positions before cycle`)
+
+  customDismount(bot, log)
+  await waitForDismount(bot)
+  await sleep(500)
+
+  // Use first shulker position for teleport reference
+  const shipPos = beforePositions.length > 0 ? beforePositions[0].clone() : movedPos
+
+  // Force chunk cycle
+  await forceChunkCycle(shipPos)
+
+  // Find shulkers after and compare positions
+  const afterShulkers = findShulkers(bot, 50)
+  if (afterShulkers.length === 0) {
+    fail('chunk_persistence_airship', 'Airship not found after cycle')
+    return
+  }
+
+  // Check if ANY shulker is near expected position (1 block tolerance)
+  let foundNearby = false
+  let minError = Infinity
+  for (const after of afterShulkers) {
+    for (const beforePos of beforePositions) {
+      const error = after.position.distanceTo(beforePos)
+      minError = Math.min(minError, error)
+      if (error < 1) {
+        foundNearby = true
+        break
+      }
+    }
+    if (foundNearby) break
+  }
+
+  say(`Airship position error: ${minError.toFixed(2)} blocks`)
+
+  if (foundNearby) {
+    pass('chunk_persistence_airship')
+  } else {
+    fail('chunk_persistence_airship', `Airship position shifted by ${minError.toFixed(2)} blocks (need <1)`)
+  }
+}
+
+async function testPostRecoverySteeringAirship() {
+  say('=== TEST: Post-Recovery Steering (Airship) ===')
+
+  await cleanup(bot)
+  await setupFarRunway()
+
+  if (!await spawnCustomAirshipAtFar()) {
+    fail('chunk_steering_airship', 'Could not spawn airship')
+    return
+  }
+
+  // Record ship position before cycle
+  const shipPos = bot.entity.position.clone()
+
+  // Force chunk cycle BEFORE mounting
+  say('Forcing chunk cycle before mounting...')
+  await forceChunkCycle(shipPos)
+
+  bot.chat('/clear @s')
+  await sleep(300)
+
+  // Try to mount recovered airship
+  if (!await mountShip(bot, log)) {
+    fail('chunk_steering_airship', 'Could not mount recovered airship')
+    return
+  }
+
+  // Test steering (with jump for airship)
+  const startPos = bot.entity.position.clone()
+  say('Testing steering on recovered airship...')
+  await steerShip(bot, 1.0, 0, true, 2000)
+  await sleep(500)
+
+  const endPos = bot.entity.position
+  const moved = endPos.distanceTo(startPos)
+  say(`Moved ${moved.toFixed(1)} blocks`)
+
+  customDismount(bot, log)
+  await sleep(300)
+
+  if (moved > 1.0) {
+    pass('chunk_steering_airship')
+  } else {
+    fail('chunk_steering_airship', 'Recovered airship did not respond to steering')
+  }
+}
+
+// =============================================================================
 // Test Registry and Main
 // =============================================================================
 
 const TESTS = {
   chunk_basic: { name: 'Basic Chunk Cycle', fn: testBasicChunkCycle },
+  chunk_basic_airship: { name: 'Basic Chunk Cycle (Airship)', fn: testBasicChunkCycleAirship },
   chunk_persistence: { name: 'Position Persistence', fn: testPositionPersistence },
+  chunk_persistence_airship: { name: 'Position Persistence (Airship)', fn: testPositionPersistenceAirship },
   chunk_steering: { name: 'Post-Recovery Steering', fn: testPostRecoverySteering },
+  chunk_steering_airship: { name: 'Post-Recovery Steering (Airship)', fn: testPostRecoverySteeringAirship },
 }
 
 async function runAllTests() {
@@ -323,8 +584,8 @@ async function main() {
 bot = createBot()
 setupBotEvents(bot, log, main)
 
-// Timeout after 3 minutes
+// Timeout after 6 minutes (6 tests with chunk cycling)
 setTimeout(() => {
-  log('Chunk test timeout (3 minutes)')
+  log('Chunk test timeout (6 minutes)')
   process.exit(1)
-}, 180000)
+}, 360000)

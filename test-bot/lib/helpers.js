@@ -261,6 +261,13 @@ function steerShip(bot, forward, sideways, jump, durationMs) {
   })
 }
 
+async function cleanup(bot) {
+  bot.chat('/kill @e[type=minecraft:item]')
+  await sleep(200)
+  bot.chat('/blockships killentities confirm')
+  await sleep(500)
+}
+
 // =============================================================================
 // Bot Factory
 // =============================================================================
@@ -396,6 +403,7 @@ module.exports = {
   customDismount,
   waitForDismount,
   steerShip,
+  cleanup,
 
   // Menu helpers
   getMenuTitle,

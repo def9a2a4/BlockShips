@@ -10,6 +10,7 @@ const {
   customDismount,
   waitForDismount,
   steerShip,
+  cleanup,
   clickWheelMenu,
   createBot,
   setupBotEvents
@@ -104,13 +105,6 @@ async function verifyRunway() {
 
   log('ERROR: Runway water not detected after 20 verification attempts')
   return false
-}
-
-async function cleanupRunway() {
-  bot.chat(`/kill @e[type=minecraft:item]`)
-  await sleep(200)
-  bot.chat('/blockships killentities confirm')
-  await sleep(200)
 }
 
 async function teleportToRunway() {
@@ -221,7 +215,7 @@ async function runControlSequence(startPos) {
 async function testShipControls(shipType) {
   say(`=== TEST: ${shipType} ===`)
 
-  await cleanupRunway()
+  await cleanup(bot)
   await teleportToRunway()
   await clearInventory()
 
@@ -371,7 +365,7 @@ async function buildCustomShipBlocks(config) {
 async function testCustomShipBase(testName, buildConfig, isAirship = false) {
   say(`=== TEST: ${testName} ===`)
 
-  await cleanupRunway()
+  await cleanup(bot)
   await teleportToRunway()
   await clearInventory()
 
