@@ -1035,19 +1035,23 @@ public class ShipInstance {
                 }
             }
 
-            // AFTER teleport: re-mount player if they were dismounted
+            // AFTER teleport: re-mount player if they were dismounted by teleport (not intentionally)
             if (seatedPlayer != null && !cb.entity.getPassengers().contains(seatedPlayer)) {
-                final Player playerToRemount = seatedPlayer;
-                final Shulker seat = cb.entity;
-                // Delay by 1 tick to ensure teleport fully completes
-                new BukkitRunnable() {
-                    @Override
-                    public void run() {
-                        if (playerToRemount.isValid() && seat.isValid()) {
-                            seat.addPassenger(playerToRemount);
+                // Check if seat is still occupied (intentional dismount via freeSeat() clears this)
+                int seatIdx = ShipTags.extractSeatIndex(cb.entity.getScoreboardTags());
+                if (seatIdx >= 0 && occupiedSeatIndices.contains(seatIdx)) {
+                    final Player playerToRemount = seatedPlayer;
+                    final Shulker seat = cb.entity;
+                    // Delay by 1 tick to ensure teleport fully completes
+                    new BukkitRunnable() {
+                        @Override
+                        public void run() {
+                            if (playerToRemount.isValid() && seat.isValid()) {
+                                seat.addPassenger(playerToRemount);
+                            }
                         }
-                    }
-                }.runTaskLater(plugin, 1L);
+                    }.runTaskLater(plugin, 1L);
+                }
             }
 
             // Store current position for next tick
@@ -1412,6 +1416,13 @@ public class ShipInstance {
         occupiedSeatIndices.remove(seatIndex);
         if (seatIndex == driverSeatIndex) {
             hasDriver = false;
+            // Clear all input state when driver exits
+            isForwardPressed = false;
+            isBackwardPressed = false;
+            isLeftPressed = false;
+            isRightPressed = false;
+            isSpacePressed = false;
+            isSprintPressed = false;
             // Immediately kill vertical velocity for airships when driver exits
             if (isAirship) {
                 physics.currentYVelocity = 0.0f;
