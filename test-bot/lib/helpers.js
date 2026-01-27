@@ -170,27 +170,52 @@ const CUSTOM_SHIP = {
   layers: [
     ["P P P",
      "P P P",
+     "P P P",
+     "P P P",
+     "P P P",
+     "P P P",
      "P P P"],
     ["- - -",
+     "- - -",
+     "- - -",
      "- W -",
-     "- - -"]
+     "- - -",
+     "- - -",
+     "C B T"]
   ],
   blocks: {
     'P': 'oak_planks',
-    'W': 'wheel'
+    'W': 'wheel',
+    'C': 'chest',
+    'B': 'white_banner',
+    'T': 'crafting_table'
   }
 }
 
 const CUSTOM_AIRSHIP = {
   layers: [
     ["G P G",
+     "G P G",
+     "G P G",
      "P W P",
-     "G P G"]
+     "G P G",
+     "G P G",
+     "G P G"],
+    ["- - -",
+     "- - -",
+     "- - -",
+     "- - -",
+     "- - -",
+     "- - -",
+     "C B T"]
   ],
   blocks: {
     'G': 'glowstone',
     'P': 'oak_planks',
-    'W': 'wheel'
+    'W': 'wheel',
+    'C': 'chest',
+    'B': 'white_banner',
+    'T': 'crafting_table'
   }
 }
 
@@ -229,7 +254,7 @@ async function buildShipFromLayers(bot, config, centerX, centerY, centerZ) {
 
 async function buildCustomShipWithWheel(bot, config, centerX, buildY, centerZ) {
   // Clear build area
-  bot.chat(`/fill ${centerX-2} ${buildY-1} ${centerZ-2} ${centerX+2} ${buildY+3} ${centerZ+2} minecraft:air`)
+  bot.chat(`/fill ${centerX-2} ${buildY-1} ${centerZ-4} ${centerX+2} ${buildY+3} ${centerZ+4} minecraft:air`)
   await sleep(200)
 
   // Build ship structure
