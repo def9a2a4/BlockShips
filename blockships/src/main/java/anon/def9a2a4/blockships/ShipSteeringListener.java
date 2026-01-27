@@ -49,18 +49,8 @@ public class ShipSteeringListener {
     }
 
     private void registerListener() {
-        protocolManager.addPacketListener(
-            new PacketAdapter(plugin, ListenerPriority.NORMAL,
-                             PacketType.Play.Client.STEER_VEHICLE) {
-                @Override
-                public void onPacketReceiving(PacketEvent event) {
-                    handleSteeringPacket(event);
-                }
-            }
-        );
-
-        // For 1.21.3+, also listen for PLAYER_INPUT packets (replaces STEER_VEHICLE for dismount)
         if (USE_PLAYER_INPUT_PACKET) {
+            // 1.21.3+: Use PLAYER_INPUT packet for both steering and dismount
             protocolManager.addPacketListener(
                 new PacketAdapter(plugin, ListenerPriority.NORMAL,
                                  PacketType.Play.Client.PLAYER_INPUT) {
@@ -70,9 +60,19 @@ public class ShipSteeringListener {
                     }
                 }
             );
-            plugin.getLogger().info("Ship steering listener registered (ProtocolLib WASD + PLAYER_INPUT for 1.21.3+)");
+            plugin.getLogger().info("Ship steering listener registered (PLAYER_INPUT for 1.21.3+)");
         } else {
-            plugin.getLogger().info("Ship steering listener registered (ProtocolLib WASD detection)");
+            // Pre-1.21.3: Use STEER_VEHICLE packet
+            protocolManager.addPacketListener(
+                new PacketAdapter(plugin, ListenerPriority.NORMAL,
+                                 PacketType.Play.Client.STEER_VEHICLE) {
+                    @Override
+                    public void onPacketReceiving(PacketEvent event) {
+                        handleSteeringPacket(event);
+                    }
+                }
+            );
+            plugin.getLogger().info("Ship steering listener registered (STEER_VEHICLE)");
         }
     }
 
@@ -96,6 +96,62 @@ public class ShipSteeringListener {
 
         } catch (Exception ex) {
             plugin.getLogger().warning("Error handling steering packet: " + ex.getMessage());
+            ex.printStackTrace();
+        }
+    }
+
+    /**
+     * Handle PLAYER_INPUT packets (1.21.3+) for both steering and dismount.
+     */
+    private void handlePlayerInputPacket(PacketEvent event) {
+        Player player = event.getPlayer();
+        PacketContainer packet = event.getPacket();
+
+        try {
+            // Check if player is riding a ship shulker
+            if (!(player.getVehicle() instanceof org.bukkit.entity.Shulker shulker)) return;
+
+            java.util.Set<String> tags = shulker.getScoreboardTags();
+            UUID shipId = ShipTags.extractShipId(tags);
+            if (shipId == null) return;
+
+            // Read input record using cached methods
+            StructureModifier<Object> modifier = packet.getModifier();
+            if (modifier.size() < 1) return;
+
+            Object inputObj = modifier.read(0);
+            if (inputObj == null) return;
+
+            if (!methodsCached) {
+                cacheInputMethods(inputObj.getClass());
+            }
+            if (!methodsValid) return;
+
+            // Check for shift (dismount request)
+            boolean shift = (boolean) shiftMethod.invoke(inputObj);
+            if (shift) {
+                shulker.removePassenger(player);
+                return;  // Don't process steering if dismounting
+            }
+
+            // Handle steering for driver seat only
+            int seatIndex = ShipTags.extractSeatIndex(tags);
+            if (seatIndex == 0) {
+                ShipInstance ship = ShipRegistry.byId(shipId);
+                if (ship != null) {
+                    boolean forward = (boolean) forwardMethod.invoke(inputObj);
+                    boolean backward = (boolean) backwardMethod.invoke(inputObj);
+                    boolean left = (boolean) leftMethod.invoke(inputObj);
+                    boolean right = (boolean) rightMethod.invoke(inputObj);
+                    boolean jump = (boolean) jumpMethod.invoke(inputObj);
+                    boolean sprint = (boolean) sprintMethod.invoke(inputObj);
+
+                    ship.setInputState(forward, backward, left, right);
+                    ship.setVerticalInputState(jump, sprint);
+                }
+            }
+        } catch (Exception ex) {
+            plugin.getLogger().warning("Error handling player_input packet: " + ex.getMessage());
             ex.printStackTrace();
         }
     }

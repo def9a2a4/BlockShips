@@ -1075,14 +1075,31 @@ public class DisplayShip implements Listener {
     @EventHandler
     public void onSneak(PlayerToggleSneakEvent e) {
         if (!e.isSneaking()) return;
-        Entity vehicle = e.getPlayer().getVehicle();
+        Player player = e.getPlayer();
+        Entity vehicle = player.getVehicle();
+
+        // Handle player riding a ship seat shulker (sneak to dismount)
+        if (vehicle instanceof Shulker shulker) {
+            Set<String> tags = shulker.getScoreboardTags();
+            UUID shipId = ShipTags.extractShipId(tags);
+            int seatIndex = ShipTags.extractSeatIndex(tags);
+
+            if (shipId != null && seatIndex >= 0) {
+                ShipInstance inst = ShipRegistry.byId(shipId);
+                if (inst != null) {
+                    // Remove player from shulker and free the seat
+                    shulker.removePassenger(player);
+                    inst.freeSeat(seatIndex);
+                }
+            }
+        }
+
+        // Legacy: handle ArmorStand seats (if any remain from old versions)
         if (vehicle instanceof ArmorStand armorStand) {
-            // Check if this is a ship seat
             if (armorStand.getScoreboardTags().stream().anyMatch(tag -> tag.contains(":seat"))) {
                 ShipInstance inst = ShipRegistry.byVehicle(armorStand);
                 if (inst != null) {
-                    // Keep ship running; uncomment to despawn when driver sneaks:
-                    // inst.destroy();
+                    // Keep ship running
                 }
             }
         }
