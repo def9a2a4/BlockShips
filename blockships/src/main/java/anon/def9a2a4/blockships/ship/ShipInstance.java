@@ -1050,9 +1050,6 @@ public class ShipInstance {
                 }.runTaskLater(plugin, 1L);
             }
 
-            // Apply velocity to players standing on this shulker
-            physics.applyDeckPhysics(cb, workVelocity, isFirstTick);
-
             // Store current position for next tick
             cb.previousWorldPos.set(workCurrentWorldPos);
         }
@@ -2173,64 +2170,12 @@ public class ShipInstance {
         // Snap pitch to 0 (horizontal)
         float snappedPitch = 0.0f;
 
-        // Find players standing on this ship's shulkers BEFORE moving
-        // Map: player -> the shulker they're standing on
-        Map<Player, Shulker> playersOnDeck = new HashMap<>();
-        String shipTag = ShipTags.shipTag(this.id);
-
-        for (Player player : loc.getWorld().getPlayers()) {
-            if (player.getLocation().distance(loc) > 32) continue;
-
-            // Check nearby entities for shulkers belonging to this ship
-            for (Entity nearby : player.getNearbyEntities(2, 2, 2)) {
-                if (!(nearby instanceof Shulker shulker)) continue;
-                if (!shulker.getScoreboardTags().contains(shipTag)) continue;
-
-                // Check if player is standing on this shulker
-                org.bukkit.util.BoundingBox playerBox = player.getBoundingBox();
-                org.bukkit.util.BoundingBox shulkerBox = shulker.getBoundingBox();
-
-                double playerFeetY = playerBox.getMinY();
-                double shulkerTopY = shulkerBox.getMaxY();
-
-                boolean withinHorizontalBounds =
-                    playerBox.getMinX() < shulkerBox.getMaxX() &&
-                    playerBox.getMaxX() > shulkerBox.getMinX() &&
-                    playerBox.getMinZ() < shulkerBox.getMaxZ() &&
-                    playerBox.getMaxZ() > shulkerBox.getMinZ();
-
-                boolean onTop = playerFeetY >= shulkerTopY - 0.1 && playerFeetY <= shulkerTopY + 0.3;
-
-                if (withinHorizontalBounds && onTop) {
-                    playersOnDeck.put(player, shulker);
-                    break; // Player can only stand on one shulker
-                }
-            }
-        }
-
         // Set the new aligned location
         Location aligned = new Location(loc.getWorld(), x, y, z, snappedYaw, snappedPitch);
         TeleportCompat.teleport(vehicle, aligned);
 
         // Update collision positions immediately so shulkers move with the ship
         updateCollisionPositions();
-
-        // Teleport players to their shulker's new position + 0.1 Y offset
-        for (Map.Entry<Player, Shulker> entry : playersOnDeck.entrySet()) {
-            Player player = entry.getKey();
-            Shulker shulker = entry.getValue();
-            Location shulkerLoc = shulker.getLocation();
-            Location playerLoc = player.getLocation();
-            // Place player at shulker's X/Z, on top of shulker's bounding box + 0.1
-            player.teleport(new Location(
-                shulkerLoc.getWorld(),
-                shulkerLoc.getX(),
-                shulker.getBoundingBox().getMaxY() + 0.1,
-                shulkerLoc.getZ(),
-                playerLoc.getYaw(),
-                playerLoc.getPitch()
-            ));
-        }
 
         // Reset velocity and rotation
         vehicle.setVelocity(new org.bukkit.util.Vector(0, 0, 0));

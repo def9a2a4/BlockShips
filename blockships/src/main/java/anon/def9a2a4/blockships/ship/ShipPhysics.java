@@ -336,61 +336,6 @@ public class ShipPhysics {
     }
 
     /**
-     * Apply ship velocity to players standing on deck.
-     * Called per-collider from updateCollisionPositions().
-     */
-    public void applyDeckPhysics(CollisionBox cb, Vector3f velocity, boolean isFirstTick) {
-        if (!ship.hasPlayersNearby || isFirstTick) return;
-
-        for (Entity nearby : cb.entity.getNearbyEntities(1.5, 1.5, 1.5)) {
-            if (nearby instanceof Player player) {
-                if (isPlayerSeatedOnShip(player)) {
-                    continue;
-                }
-                pushPlayerOutOfShulker(player, cb.entity);
-            }
-        }
-    }
-
-    /**
-     * Check if a player is seated on any shulker belonging to this ship.
-     */
-    private boolean isPlayerSeatedOnShip(Player player) {
-        Entity vehicle = player.getVehicle();
-        if (vehicle instanceof Shulker shulker) {
-            return ShipTags.extractShipId(shulker.getScoreboardTags()) != null
-                && ShipTags.extractShipId(shulker.getScoreboardTags()).equals(ship.id);
-        }
-        return false;
-    }
-
-    /**
-     * If player is clipping into shulker and above its center, push them up.
-     */
-    private void pushPlayerOutOfShulker(Player player, Shulker shulker) {
-        org.bukkit.util.BoundingBox playerBox = player.getBoundingBox();
-        org.bukkit.util.BoundingBox shulkerBox = shulker.getBoundingBox();
-
-        if (!playerBox.overlaps(shulkerBox)) {
-            return;
-        }
-
-        double playerFeetY = playerBox.getMinY();
-        double shulkerCenterY = shulkerBox.getCenterY();
-
-        if (playerFeetY < shulkerCenterY) {
-            return;
-        }
-
-        double shulkerTopY = shulkerBox.getMaxY();
-        double targetY = shulkerTopY + 0.05;
-
-        Location playerLoc = player.getLocation();
-        playerLoc.setY(targetY);
-        player.teleport(playerLoc);
-    }
-
-    /**
      * Snaps ship position to nearest 0.25 blocks and rotation to nearest 5 degrees.
      * Called when driver exits to eliminate floating-point jitter.
      */
