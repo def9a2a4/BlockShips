@@ -39,7 +39,7 @@ function createLogger(prefix) {
 // Test Tracking
 // =============================================================================
 
-function createTestTracker(prefix, resultsFile = null) {
+function createTestTracker(prefix, resultsFile = null, botGetter = null) {
   const state = {
     passed: 0,
     failed: 0,
@@ -55,6 +55,10 @@ function createTestTracker(prefix, resultsFile = null) {
     if (resultsFile) {
       fs.appendFileSync(resultsFile, `✓ PASS: ${testName}\n`)
     }
+    if (botGetter) {
+      const bot = botGetter()
+      if (bot) bot.chat(`PASS: ${testName}`)
+    }
   }
 
   const fail = (testName, reason) => {
@@ -63,6 +67,10 @@ function createTestTracker(prefix, resultsFile = null) {
     state.results.push({ name: testName, passed: false, reason })
     if (resultsFile) {
       fs.appendFileSync(resultsFile, `✗ FAIL: ${testName} - ${reason}\n`)
+    }
+    if (botGetter) {
+      const bot = botGetter()
+      if (bot) bot.chat(`FAIL: ${testName}: ${reason}`)
     }
   }
 

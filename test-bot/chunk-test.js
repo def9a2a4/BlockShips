@@ -30,18 +30,8 @@ const CHUNK_LOAD_WAIT_MS = 2000
 
 // Logging
 const { log } = createLogger('CHUNK-TEST')
-const tracker = createTestTracker('CHUNK-TEST')
-
-// Wrap pass/fail to also report in chat
-function pass(testName) {
-  tracker.pass(testName)
-  bot.chat(`PASS: ${testName}`)
-}
-
-function fail(testName, reason) {
-  tracker.fail(testName, reason)
-  bot.chat(`FAIL: ${testName}: ${reason}`)
-}
+const tracker = createTestTracker('CHUNK-TEST', null, () => bot)
+const { pass, fail } = tracker
 
 // Test state
 let bot = null
