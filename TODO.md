@@ -1,12 +1,14 @@
 # BUGS
 
 - wall banner rendering broken
+- prefab ship (medium) needs more seats
+  - two on the sides
+  - add an extra mast collider at the top of the mast, set that as a seat
+
 - ShipRegistry uses non-thread-safe HashMap but is accessed from multiple threads (chunk events, periodic saves). Use ConcurrentHashMap to prevent ConcurrentModificationException.
 - (pre-1.21.9) Rotation logic bug - delta rotation math in ShipInstance.java:1110-1130 has inconsistencies, displays may rotate incorrectly
 - (pre-1.21.9) Custom ship spawnYaw mismatch - initial spawn uses vehicle.getYaw() but recovery uses model.initialRotation.x, causing rotation snap after restart
 - (pre-1.21.9) spawnYaw not persisted to save data - ships rotated before restart may snap when loaded
-- prefab ship (medium) needs more seats
-- still buggy momentum on recently parked ship, but grid align fixes it? our fine grid align didnt work
 - player does not get moved along with a ship, does not inherit velocity properly
 - ship to ship collisions not working, temporarily disabled
 - fix heads on walls display and colliders
