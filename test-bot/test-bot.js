@@ -11,6 +11,7 @@ const {
   CUSTOM_AIRSHIP,
   buildShipFromLayers,
   findWheelBlock,
+  placeWheelAtPosition,
   mountShip,
   customDismount,
   steerShip,
@@ -303,36 +304,11 @@ async function buildCustomShipBlocks(config) {
   await sleep(300)
 
   say('Placing ship wheel...')
-  // Find an adjacent block to place wheel against
-  const adjacentPositions = [
-    { x: 0, y: -1, z: 0, face: new Vec3(0, 1, 0) },   // below
-    { x: 0, y: 0, z: -1, face: new Vec3(0, 0, 1) },   // north
-    { x: 0, y: 0, z: 1, face: new Vec3(0, 0, -1) },   // south
-    { x: -1, y: 0, z: 0, face: new Vec3(1, 0, 0) },   // west
-    { x: 1, y: 0, z: 0, face: new Vec3(-1, 0, 0) },   // east
-  ]
-
-  let placementError = null
-  for (const adj of adjacentPositions) {
-    const adjBlock = bot.blockAt(new Vec3(wheelPos.x + adj.x, wheelPos.y + adj.y, wheelPos.z + adj.z))
-    if (adjBlock && adjBlock.name !== 'air') {
-      await bot.lookAt(new Vec3(wheelPos.x + 0.5, wheelPos.y + 0.5, wheelPos.z + 0.5))
-      await sleep(200)
-      try {
-        await bot.placeBlock(adjBlock, adj.face)
-        placementError = null
-        break
-      } catch (e) {
-        placementError = e.message
-        log(`  Place error: ${e.message}`)
-      }
-    }
+  const placeResult = await placeWheelAtPosition(bot, wheelPos)
+  if (!placeResult.success) {
+    return { success: false, error: placeResult.error }
   }
   await sleep(500)
-
-  if (placementError) {
-    return { success: false, error: `Wheel placement failed: ${placementError}` }
-  }
 
   const wheelBlock = findWheelBlock(bot, wheelPos.x, wheelPos.y, wheelPos.z)
   if (!wheelBlock) {

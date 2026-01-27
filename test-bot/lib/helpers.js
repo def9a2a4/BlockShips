@@ -372,6 +372,31 @@ function findWheelBlock(bot, centerX, centerY, centerZ) {
   return null
 }
 
+async function placeWheelAtPosition(bot, wheelPos) {
+  const adjacentPositions = [
+    { x: 0, y: -1, z: 0, face: new Vec3(0, 1, 0) },   // below
+    { x: 0, y: 0, z: -1, face: new Vec3(0, 0, 1) },   // north
+    { x: 0, y: 0, z: 1, face: new Vec3(0, 0, -1) },   // south
+    { x: -1, y: 0, z: 0, face: new Vec3(1, 0, 0) },   // west
+    { x: 1, y: 0, z: 0, face: new Vec3(-1, 0, 0) },   // east
+  ]
+
+  for (const adj of adjacentPositions) {
+    const adjBlock = bot.blockAt(new Vec3(wheelPos.x + adj.x, wheelPos.y + adj.y, wheelPos.z + adj.z))
+    if (adjBlock && adjBlock.name !== 'air') {
+      await bot.lookAt(new Vec3(wheelPos.x + 0.5, wheelPos.y + 0.5, wheelPos.z + 0.5))
+      await sleep(200)
+      try {
+        await bot.placeBlock(adjBlock, adj.face)
+        return { success: true }
+      } catch (e) {
+        // Try next position
+      }
+    }
+  }
+  return { success: false, error: 'No adjacent blocks found for wheel placement' }
+}
+
 // =============================================================================
 // Bot Factory
 // =============================================================================
@@ -511,6 +536,7 @@ module.exports = {
   // Ship helpers
   findShulkers,
   findWheelBlock,
+  placeWheelAtPosition,
   mountShip,
   customDismount,
   waitForDismount,

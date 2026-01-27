@@ -1,4 +1,3 @@
-const Vec3 = require('vec3').Vec3
 const {
   createLogger,
   createSay,
@@ -9,6 +8,7 @@ const {
   buildShipFromLayers,
   findShulkers,
   findWheelBlock,
+  placeWheelAtPosition,
   mountShip,
   customDismount,
   waitForDismount,
@@ -151,36 +151,12 @@ async function spawnCustomAirshipAtFar() {
   await bot.equip(wheel, 'hand')
   await sleep(300)
 
-  // Find an adjacent block to place wheel against
-  const adjacentPositions = [
-    { x: 0, y: -1, z: 0, face: new Vec3(0, 1, 0) },
-    { x: 0, y: 0, z: -1, face: new Vec3(0, 0, 1) },
-    { x: 0, y: 0, z: 1, face: new Vec3(0, 0, -1) },
-    { x: -1, y: 0, z: 0, face: new Vec3(1, 0, 0) },
-    { x: 1, y: 0, z: 0, face: new Vec3(-1, 0, 0) },
-  ]
-
-  let placed = false
-  for (const adj of adjacentPositions) {
-    const adjBlock = bot.blockAt(new Vec3(wheelPos.x + adj.x, wheelPos.y + adj.y, wheelPos.z + adj.z))
-    if (adjBlock && adjBlock.name !== 'air') {
-      await bot.lookAt(new Vec3(wheelPos.x + 0.5, wheelPos.y + 0.5, wheelPos.z + 0.5))
-      await sleep(200)
-      try {
-        await bot.placeBlock(adjBlock, adj.face)
-        placed = true
-        break
-      } catch (e) {
-        log(`Wheel placement error: ${e.message}`)
-      }
-    }
-  }
-  await sleep(500)
-
-  if (!placed) {
-    log('Could not place wheel - no adjacent blocks found')
+  const placeResult = await placeWheelAtPosition(bot, wheelPos)
+  if (!placeResult.success) {
+    log(placeResult.error)
     return false
   }
+  await sleep(500)
 
   const wheelBlock = findWheelBlock(bot, wheelPos.x, wheelPos.y, wheelPos.z)
   if (!wheelBlock) {
