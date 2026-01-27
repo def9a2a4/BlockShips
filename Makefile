@@ -211,6 +211,11 @@ test-server-ci:
 		if [ -f ../test-bot/test-results.txt ]; then \
 			cat ../test-bot/test-results.txt | tee -a errors.log; \
 		fi; \
+		if [ -f ../test-bot/chunk-test-results.txt ]; then \
+			echo "" | tee -a errors.log; \
+			echo "=== CHUNK TEST FAILURES ===" | tee -a errors.log; \
+			cat ../test-bot/chunk-test-results.txt | tee -a errors.log; \
+		fi; \
 		echo "Bot tests failed (exit code $$BOT_EXIT)" | tee -a errors.log; \
 		FAILED=1; \
 	fi; \
