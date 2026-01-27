@@ -548,13 +548,27 @@ function steerShip(bot, forward, sideways, jump, durationMs) {
     const TICK_MS = 50
     let elapsed = 0
 
-    const sendInput = () => {
-      // Use mineflayer's built-in vehicle control API
-      bot.moveVehicle(sideways, forward)
+    // 1.21.8 has issues with mineflayer's player_input packet for jump
+    const useRawPlayerInput = bot.version === '1.21.8'
 
-      // Handle jump separately if needed (for airships)
-      if (jump) {
-        bot.setControlState('jump', true)
+    const sendInput = () => {
+      if (useRawPlayerInput) {
+        // 1.21.8: Send player_input directly with jump field included
+        bot._client.write('player_input', {
+          inputs: {
+            forward: forward > 0,
+            backward: forward < 0,
+            left: sideways > 0,
+            right: sideways < 0,
+            jump: jump
+          }
+        })
+      } else {
+        // All other versions: Use mineflayer's built-in API
+        bot.moveVehicle(sideways, forward)
+        if (jump) {
+          bot.setControlState('jump', true)
+        }
       }
     }
 
@@ -563,7 +577,7 @@ function steerShip(bot, forward, sideways, jump, durationMs) {
     elapsed += TICK_MS
 
     if (durationMs <= TICK_MS) {
-      if (jump) bot.setControlState('jump', false)
+      if (jump && !useRawPlayerInput) bot.setControlState('jump', false)
       resolve()
       return
     }
@@ -574,7 +588,7 @@ function steerShip(bot, forward, sideways, jump, durationMs) {
 
       if (elapsed >= durationMs) {
         clearInterval(interval)
-        if (jump) bot.setControlState('jump', false)
+        if (jump && !useRawPlayerInput) bot.setControlState('jump', false)
         resolve()
       }
     }, TICK_MS)

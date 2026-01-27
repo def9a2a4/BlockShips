@@ -25,8 +25,9 @@ public class ShipSteeringListener {
     // Cached version check - true if server is 1.21.2+ (new Input record format)
     private static final boolean USE_NEW_INPUT_FORMAT = anon.def9a2a4.blockships.util.ServerVersion.isAtLeast(1, 21, 2);
 
-    // Cached version check - true if server is 1.21.3+ (new PLAYER_INPUT packet replaces STEER_VEHICLE)
-    private static final boolean USE_PLAYER_INPUT_PACKET = anon.def9a2a4.blockships.util.ServerVersion.isAtLeast(1, 21, 3);
+    // Cached version check - true if server is 1.21.9+ (new PLAYER_INPUT packet replaces STEER_VEHICLE)
+    // Note: 1.21.3-1.21.8 have PLAYER_INPUT but Input record reflection fails, so use STEER_VEHICLE for those
+    private static final boolean USE_PLAYER_INPUT_PACKET = anon.def9a2a4.blockships.util.ServerVersion.isAtLeast(1, 21, 9);
 
     // Cached reflection methods for new format (only initialized if needed)
     // All fields must be volatile to ensure visibility across threads - a reader
