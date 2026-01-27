@@ -1410,6 +1410,37 @@ public class ShipInstance {
     }
 
     /**
+     * Dismounts a player from a ship if they are riding a ship shulker.
+     * @param player The player to dismount
+     * @return true if the player was dismounted from a ship, false otherwise
+     */
+    public static boolean dismountPlayer(Player player) {
+        Entity vehicle = player.getVehicle();
+        if (!(vehicle instanceof Shulker shulker)) {
+            return false;
+        }
+
+        Set<String> tags = shulker.getScoreboardTags();
+        if (!ShipTags.isShipEntity(tags)) {
+            return false;
+        }
+
+        UUID shipId = ShipTags.extractShipId(tags);
+        int seatIndex = ShipTags.extractSeatIndex(tags);
+
+        shulker.removePassenger(player);
+
+        if (shipId != null && seatIndex >= 0) {
+            ShipInstance inst = ShipRegistry.byId(shipId);
+            if (inst != null) {
+                inst.freeSeat(seatIndex);
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Marks a seat as free.
      */
     public void freeSeat(int seatIndex) {

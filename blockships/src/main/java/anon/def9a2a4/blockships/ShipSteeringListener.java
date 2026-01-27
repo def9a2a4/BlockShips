@@ -112,7 +112,7 @@ public class ShipSteeringListener {
             if (bools.size() >= 2) {
                 boolean unmount = bools.read(1);
                 if (unmount) {
-                    shulker.removePassenger(player);
+                    ShipInstance.dismountPlayer(player);
                     return;  // Don't process steering if dismounting
                 }
             }
@@ -167,7 +167,7 @@ public class ShipSteeringListener {
             // Check for shift (dismount request)
             boolean shift = (boolean) shiftMethod.invoke(inputObj);
             if (shift) {
-                shulker.removePassenger(player);
+                ShipInstance.dismountPlayer(player);
                 return;  // Don't process steering if dismounting
             }
 

@@ -278,32 +278,11 @@ public class BlockShipsPlugin extends JavaPlugin {
                     return true;
                 }
 
-                Entity vehicle = player.getVehicle();
-                if (!(vehicle instanceof org.bukkit.entity.Shulker shulker)) {
+                if (ShipInstance.dismountPlayer(player)) {
+                    sender.sendMessage("Dismounted from ship.");
+                } else {
                     sender.sendMessage("You are not riding a ship.");
-                    return true;
                 }
-
-                java.util.Set<String> tags = shulker.getScoreboardTags();
-                if (!ShipTags.isShipEntity(tags)) {
-                    sender.sendMessage("You are not riding a ship.");
-                    return true;
-                }
-
-                // Dismount player
-                shulker.removePassenger(player);
-
-                // Free the seat in the ship instance
-                java.util.UUID shipId = ShipTags.extractShipId(tags);
-                int seatIndex = ShipTags.extractSeatIndex(tags);
-                if (shipId != null && seatIndex >= 0) {
-                    var inst = ShipRegistry.byId(shipId);
-                    if (inst != null) {
-                        inst.freeSeat(seatIndex);
-                    }
-                }
-
-                sender.sendMessage("Dismounted from ship.");
                 return true;
             }
 

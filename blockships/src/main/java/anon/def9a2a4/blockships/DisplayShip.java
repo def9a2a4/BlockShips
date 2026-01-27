@@ -1079,19 +1079,8 @@ public class DisplayShip implements Listener {
         Entity vehicle = player.getVehicle();
 
         // Handle player riding a ship seat shulker (sneak to dismount)
-        if (vehicle instanceof Shulker shulker) {
-            Set<String> tags = shulker.getScoreboardTags();
-            UUID shipId = ShipTags.extractShipId(tags);
-            int seatIndex = ShipTags.extractSeatIndex(tags);
-
-            if (shipId != null && seatIndex >= 0) {
-                ShipInstance inst = ShipRegistry.byId(shipId);
-                if (inst != null) {
-                    // Remove player from shulker and free the seat
-                    shulker.removePassenger(player);
-                    inst.freeSeat(seatIndex);
-                }
-            }
+        if (vehicle instanceof Shulker) {
+            ShipInstance.dismountPlayer(player);
         }
 
         // Legacy: handle ArmorStand seats (if any remain from old versions)
@@ -1412,26 +1401,7 @@ public class DisplayShip implements Listener {
      */
     private void handlePlayerDisconnectOnShip(Player player) {
         try {
-            Entity vehicle = player.getVehicle();
-            if (vehicle == null) return;
-            if (!(vehicle instanceof Shulker shulker)) return;
-
-            Set<String> tags = shulker.getScoreboardTags();
-            if (!ShipTags.isShipEntity(tags)) return;
-
-            UUID shipId = ShipTags.extractShipId(tags);
-            int seatIndex = ShipTags.extractSeatIndex(tags);
-
-            try {
-                shulker.removePassenger(player);
-            } finally {
-                if (shipId != null && seatIndex >= 0) {
-                    ShipInstance inst = ShipRegistry.byId(shipId);
-                    if (inst != null) {
-                        inst.freeSeat(seatIndex);
-                    }
-                }
-            }
+            ShipInstance.dismountPlayer(player);
         } catch (Exception e) {
             plugin.getLogger().warning("Error handling player disconnect from ship: " + e.getMessage());
         }
