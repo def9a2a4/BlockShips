@@ -217,6 +217,43 @@ async function buildShipFromLayers(bot, config, centerX, centerY, centerZ) {
   return wheelPos
 }
 
+async function buildCustomShipWithWheel(bot, config, centerX, buildY, centerZ) {
+  // Clear build area
+  bot.chat(`/fill ${centerX-2} ${buildY-1} ${centerZ-2} ${centerX+2} ${buildY+3} ${centerZ+2} minecraft:air`)
+  await sleep(200)
+
+  // Build ship structure
+  const wheelPos = await buildShipFromLayers(bot, config, centerX, buildY, centerZ)
+  if (!wheelPos) {
+    return { success: false, error: 'No wheel position defined in ship config' }
+  }
+
+  // Get and place ship wheel
+  bot.chat('/blockships give ship_wheel')
+  await sleep(1000)
+
+  const wheel = bot.inventory.items().find(i => i.name === 'player_head')
+  if (!wheel) {
+    return { success: false, error: 'No ship wheel received' }
+  }
+
+  await bot.equip(wheel, 'hand')
+  await sleep(300)
+
+  const placeResult = await placeWheelAtPosition(bot, wheelPos)
+  if (!placeResult.success) {
+    return { success: false, error: placeResult.error }
+  }
+  await sleep(500)
+
+  const wheelBlock = findWheelBlock(bot, wheelPos.x, wheelPos.y, wheelPos.z)
+  if (!wheelBlock) {
+    return { success: false, error: 'Ship wheel not found after placement' }
+  }
+
+  return { success: true, wheelBlock }
+}
+
 // =============================================================================
 // Ship Helpers
 // =============================================================================
@@ -320,10 +357,13 @@ async function customDismount(bot, log) {
       bot.setControlState('sneak', true)
       setTimeout(() => bot.setControlState('sneak', false), 100)
     }},
-    // Raw packet: player_input with shift (1.21.3+)
+    // Raw packet: player_input with shift (1.21.3+) - must wrap in 'inputs' object
     { name: 'raw player_input (shift)', fn: () => bot._client.write('player_input', {
-      forward: false, backward: false, left: false, right: false,
-      jump: false, shift: true, sprint: false
+      inputs: { shift: true }
+    })},
+    // Raw packet: player_input with jump (how mineflayer does dismount)
+    { name: 'raw player_input (jump)', fn: () => bot._client.write('player_input', {
+      inputs: { jump: true }
     })},
     // Raw packet: steer_vehicle with unmount (pre-1.21.2)
     { name: 'raw steer_vehicle (unmount)', fn: () => bot._client.write('steer_vehicle', {
@@ -620,6 +660,7 @@ module.exports = {
   CUSTOM_SHIP,
   CUSTOM_AIRSHIP,
   buildShipFromLayers,
+  buildCustomShipWithWheel,
 
   // Ship helpers
   findShulkers,

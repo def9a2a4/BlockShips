@@ -10,9 +10,7 @@ const {
   findWaterNearby,
   CUSTOM_SHIP,
   CUSTOM_AIRSHIP,
-  buildShipFromLayers,
-  findWheelBlock,
-  placeWheelAtPosition,
+  buildCustomShipWithWheel,
   mountShip,
   customDismount,
   steerShip,
@@ -264,42 +262,7 @@ async function testShipControls(shipType) {
 }
 
 async function buildCustomShipBlocks(config) {
-  const buildY = 101
-
-  // Clear build area
-  bot.chat(`/fill ${RUNWAY_X-2} 100 ${RUNWAY_Z-3} ${RUNWAY_X+2} 104 ${RUNWAY_Z+1} minecraft:air`)
-  await sleep(200)
-
-  // Build ship structure and get wheel position
-  const wheelPos = await buildShipFromLayers(bot, config, RUNWAY_X, buildY, RUNWAY_Z - 1)
-  if (!wheelPos) {
-    return { success: false, error: 'No wheel position defined in ship config' }
-  }
-
-  // Get and place ship wheel
-  say('Getting ship wheel...')
-  bot.chat('/blockships give ship_wheel')
-  await sleep(1000)
-
-  const wheel = bot.inventory.items().find(i => i.name === 'player_head')
-  if (!wheel) return { success: false, error: 'No ship wheel received' }
-
-  await bot.equip(wheel, 'hand')
-  await sleep(300)
-
-  say('Placing ship wheel...')
-  const placeResult = await placeWheelAtPosition(bot, wheelPos)
-  if (!placeResult.success) {
-    return { success: false, error: placeResult.error }
-  }
-  await sleep(500)
-
-  const wheelBlock = findWheelBlock(bot, wheelPos.x, wheelPos.y, wheelPos.z)
-  if (!wheelBlock) {
-    return { success: false, error: 'Ship wheel not found after placement' }
-  }
-
-  return { success: true, wheelBlock }
+  return await buildCustomShipWithWheel(bot, config, RUNWAY_X, 101, RUNWAY_Z - 1)
 }
 
 async function testCustomShipBase(testName, buildConfig, isAirship = false) {
