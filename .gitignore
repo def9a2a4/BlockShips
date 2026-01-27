@@ -9,6 +9,7 @@ test-bot/.mc-version
 docs/assets/dev/
 .download-cache/
 test-bot/test-results.txt
+test-bot/chunk-test-results.txt
 
 # Compiled class file
 *.class

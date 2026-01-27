@@ -1,3 +1,6 @@
+const fs = require('fs')
+const path = require('path')
+
 const {
   createLogger,
   createSay,
@@ -18,6 +21,9 @@ const {
   setupBotEvents
 } = require('./lib/helpers')
 
+// Test results file (written incrementally for CI visibility)
+const RESULTS_FILE = path.join(__dirname, 'chunk-test-results.txt')
+
 // Positions - ships spawn far away, origin is the safe zone
 const FAR_X = 1000
 const FAR_Z = 0
@@ -34,7 +40,7 @@ const CHUNK_LOAD_WAIT_MS = 2000
 
 // Logging
 const { log } = createLogger('CHUNK-TEST')
-const tracker = createTestTracker('CHUNK-TEST', null, () => bot)
+const tracker = createTestTracker('CHUNK-TEST', RESULTS_FILE, () => bot)
 const { pass, fail, printSummary } = tracker
 
 // Test state
@@ -361,6 +367,9 @@ async function runAllTests() {
 }
 
 async function main() {
+  // Clear results file at startup for fresh run
+  fs.writeFileSync(RESULTS_FILE, '')
+
   log('Starting BlockShips chunk tests...')
   log(`Connected as ${bot.username}`)
 
