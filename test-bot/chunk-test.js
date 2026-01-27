@@ -121,48 +121,15 @@ async function spawnCustomAirshipAtFar() {
   await sleep(500)
   await clearInventory(bot)
 
-  const buildY = 101
-
-  // Clear build area
-  bot.chat(`/fill ${FAR_X - 2} ${buildY - 1} ${FAR_Z - 3} ${FAR_X + 2} ${buildY + 3} ${FAR_Z + 1} minecraft:air`)
-  await sleep(200)
-
-  // Build ship structure and get wheel position
-  const wheelPos = await buildShipFromLayers(bot, CUSTOM_AIRSHIP, FAR_X, buildY, FAR_Z - 1)
-  if (!wheelPos) {
-    log('No wheel position defined in ship config')
-    return false
-  }
-
-  // Get and place ship wheel
-  bot.chat('/blockships give ship_wheel')
-  await sleep(1000)
-
-  const wheel = bot.inventory.items().find(i => i.name === 'player_head')
-  if (!wheel) {
-    log('Could not get ship wheel')
-    return false
-  }
-
-  await bot.equip(wheel, 'hand')
-  await sleep(300)
-
-  const placeResult = await placeWheelAtPosition(bot, wheelPos)
-  if (!placeResult.success) {
-    log(placeResult.error)
-    return false
-  }
-  await sleep(500)
-
-  const wheelBlock = findWheelBlock(bot, wheelPos.x, wheelPos.y, wheelPos.z)
-  if (!wheelBlock) {
-    log('Wheel block not found after placement')
+  const result = await buildCustomShipWithWheel(bot, CUSTOM_AIRSHIP, FAR_X, 101, FAR_Z - 1)
+  if (!result.success) {
+    log(result.error)
     return false
   }
 
   // Activate wheel and assemble
   try {
-    await bot.activateBlock(wheelBlock)
+    await bot.activateBlock(result.wheelBlock)
     if (!await clickWheelMenu(bot, log, 'assemble')) {
       log('Assembly menu interaction failed')
       return false

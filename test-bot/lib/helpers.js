@@ -350,26 +350,34 @@ async function customDismount(bot, log) {
     return !bot.vehicle
   }
 
-  // Try ALL dismount methods on ALL versions (200ms between each)
+  // Try dismount methods (200ms between each)
   const methods = [
     { name: 'bot.dismount()', fn: () => bot.dismount() },
     { name: 'sneak control', fn: () => {
       bot.setControlState('sneak', true)
       setTimeout(() => bot.setControlState('sneak', false), 100)
     }},
-    // Raw packet: player_input with shift (1.21.3+) - must wrap in 'inputs' object
-    { name: 'raw player_input (shift)', fn: () => bot._client.write('player_input', {
-      inputs: { shift: true }
-    })},
-    // Raw packet: player_input with jump (how mineflayer does dismount)
-    { name: 'raw player_input (jump)', fn: () => bot._client.write('player_input', {
-      inputs: { jump: true }
-    })},
-    // Raw packet: steer_vehicle with unmount (pre-1.21.2)
-    { name: 'raw steer_vehicle (unmount)', fn: () => bot._client.write('steer_vehicle', {
-      sideways: 0, forward: 0, jump: 0, unmount: 1
-    })},
   ]
+
+  // Add version-specific raw packet methods
+  if (bot.supportFeature('newPlayerInputPacket')) {
+    // 1.21.3+ uses player_input packet
+    methods.push(
+      { name: 'raw player_input (shift)', fn: () => bot._client.write('player_input', {
+        inputs: { shift: true }
+      })},
+      { name: 'raw player_input (jump)', fn: () => bot._client.write('player_input', {
+        inputs: { jump: true }
+      })}
+    )
+  } else {
+    // Pre-1.21.3 uses steer_vehicle packet
+    methods.push(
+      { name: 'raw steer_vehicle (unmount)', fn: () => bot._client.write('steer_vehicle', {
+        sideways: 0, forward: 0, jump: 0, unmount: 1
+      })}
+    )
+  }
 
   // Try each method with 200ms wait
   for (const method of methods) {
