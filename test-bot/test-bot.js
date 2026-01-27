@@ -415,7 +415,10 @@ function steerShip(forward, sideways, jump, durationMs) {
  * Sequence: forward, forward+A, backward+D, jump (2s), sprint, backward+jump
  */
 async function runControlSequence() {
-  const startPos = bot.entity.position.clone()
+  // Get initial position from vehicle (more reliable while mounted)
+  const startPos = bot.vehicle
+    ? bot.vehicle.position.clone()
+    : bot.entity.position.clone()
 
   log('Testing forward...')
   await steerShip(1.0, 0, false, 1000)
@@ -441,7 +444,10 @@ async function runControlSequence() {
   await steerShip(-1.0, 0, true, 1000)
   await sleep(200)
 
-  // Dismount and calculate movement
+  // Get end position from vehicle BEFORE dismounting
+  const vehicleEndPos = bot.vehicle ? bot.vehicle.position.clone() : null
+
+  // Dismount using custom function
   log('Dismounting...')
   let dismountError = null
   try {
@@ -452,11 +458,32 @@ async function runControlSequence() {
   }
   await sleep(500)
 
-  const endPos = bot.entity.position
-  const dx = endPos.x - startPos.x
-  const dy = endPos.y - startPos.y
-  const dz = endPos.z - startPos.z
-  const totalMovement = Math.abs(dx) + Math.abs(dy) + Math.abs(dz)
+  // Calculate movement using vehicle position
+  let endPos = vehicleEndPos || bot.entity.position
+  let dx = endPos.x - startPos.x
+  let dy = endPos.y - startPos.y
+  let dz = endPos.z - startPos.z
+  let totalMovement = Math.abs(dx) + Math.abs(dy) + Math.abs(dz)
+
+  // If position looks invalid (no movement detected), try fallback
+  if (totalMovement < 0.1) {
+    log('Position invalid after dismount, trying killentities fallback...')
+    bot.chat('/blockships killentities confirm')
+    await sleep(1000)
+
+    // Check position again after forced cleanup
+    const fallbackPos = bot.entity.position
+    dx = fallbackPos.x - startPos.x
+    dy = fallbackPos.y - startPos.y
+    dz = fallbackPos.z - startPos.z
+    totalMovement = Math.abs(dx) + Math.abs(dy) + Math.abs(dz)
+
+    if (totalMovement >= 0.1) {
+      // Position is now valid - the ship DID move, dismount just failed
+      dismountError = 'Failed to dismount (position recovered after killentities)'
+      log(`Fallback worked: movement=${totalMovement.toFixed(2)}`)
+    }
+  }
 
   return { dx, dy, dz, totalMovement, dismountError }
 }
