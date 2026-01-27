@@ -42,6 +42,14 @@ function say(msg) {
 }
 
 async function forceChunkCycle(shipPos) {
+  // Remove forceload so chunks can actually unload
+  const x1 = FAR_X - RUNWAY_HALF_WIDTH
+  const x2 = FAR_X + RUNWAY_HALF_WIDTH - 1
+  const z1 = FAR_Z + 5
+  const z2 = FAR_Z - RUNWAY_LENGTH
+  bot.chat(`/forceload remove ${x1 - 1} ${z1 + 1} ${x2 + 1} ${z2 - 1}`)
+  await sleep(200)
+
   log(`Teleporting to origin (${ORIGIN_X}, 100, ${ORIGIN_Z}) to trigger chunk unload...`)
   bot.chat(`/tp @s ${ORIGIN_X} 100 ${ORIGIN_Z}`)
   await sleep(CHUNK_UNLOAD_WAIT_MS)
