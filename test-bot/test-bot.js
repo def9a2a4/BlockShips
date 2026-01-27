@@ -7,6 +7,7 @@ const {
   createTestTracker,
   sleep,
   clearInventory,
+  findWaterNearby,
   CUSTOM_SHIP,
   CUSTOM_AIRSHIP,
   buildShipFromLayers,
@@ -121,23 +122,9 @@ async function teleportToRunway() {
 // Helper Functions
 // =============================================================================
 
-function findWaterBlockNorth(pos, verbose = false) {
-  for (let zOffset = -1; zOffset >= -5; zOffset--) {
-    const checkPos = pos.offset(0, -1, zOffset)
-    const block = bot.blockAt(checkPos)
-    if (verbose) {
-      log(`  Checking ${checkPos.toString()}: ${block ? block.name : 'null'}`)
-    }
-    if (block && block.name === 'water') {
-      return block
-    }
-  }
-  return null
-}
-
 async function waitForWater(pos, maxRetries = 20, delayMs = 500) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    const water = findWaterBlockNorth(pos, attempt === maxRetries)
+    const water = findWaterNearby(bot, pos)
     if (water) {
       if (attempt > 1) {
         log(`  Water found on attempt ${attempt}`)

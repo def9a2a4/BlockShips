@@ -4,6 +4,8 @@ const {
   createTestTracker,
   sleep,
   clearInventory,
+  findWaterNearby,
+  findNearestPosition,
   CUSTOM_AIRSHIP,
   buildShipFromLayers,
   findShulkers,
@@ -108,16 +110,12 @@ async function spawnShipAtFar(shipType = 'smallship') {
   await sleep(500)
 
   // Find water and place ship
-  for (let zOffset = -1; zOffset >= -5; zOffset--) {
-    const checkPos = bot.entity.position.offset(0, -1, zOffset)
-    const block = bot.blockAt(checkPos)
-    if (block && block.name === 'water') {
-      try { await bot.activateBlock(block) } catch (e) {}
-      await sleep(3000)
-      return true
-    }
-  }
-  return false
+  const water = findWaterNearby(bot, bot.entity.position)
+  if (!water) return false
+
+  try { await bot.activateBlock(water) } catch (e) {}
+  await sleep(3000)
+  return true
 }
 
 async function spawnCustomAirshipAtFar() {
@@ -280,19 +278,8 @@ async function testPositionPersistence() {
   }
 
   // Compare: check if ANY shulker is near expected position (1 block tolerance)
-  let foundNearby = false
-  let minError = Infinity
-  for (const after of afterShulkers) {
-    for (const beforePos of beforePositions) {
-      const error = after.position.distanceTo(beforePos)
-      minError = Math.min(minError, error)
-      if (error < 1) {
-        foundNearby = true
-        break
-      }
-    }
-    if (foundNearby) break
-  }
+  const afterPositions = afterShulkers.map(s => s.position)
+  const { foundNearby, minError } = findNearestPosition(afterPositions, beforePositions)
 
   say(`Ship position error: ${minError.toFixed(2)} blocks`)
 
@@ -450,19 +437,8 @@ async function testPositionPersistenceAirship() {
   }
 
   // Compare: check if ANY shulker is near expected position (1 block tolerance)
-  let foundNearby = false
-  let minError = Infinity
-  for (const after of afterShulkers) {
-    for (const beforePos of beforePositions) {
-      const error = after.position.distanceTo(beforePos)
-      minError = Math.min(minError, error)
-      if (error < 1) {
-        foundNearby = true
-        break
-      }
-    }
-    if (foundNearby) break
-  }
+  const afterPositions = afterShulkers.map(s => s.position)
+  const { foundNearby, minError } = findNearestPosition(afterPositions, beforePositions)
 
   say(`Airship position error: ${minError.toFixed(2)} blocks`)
 

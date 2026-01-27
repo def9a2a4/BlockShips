@@ -124,6 +124,34 @@ async function clearInventory(bot) {
   await sleep(300)
 }
 
+function findWaterNearby(bot, pos, maxZOffset = -5) {
+  for (let zOffset = -1; zOffset >= maxZOffset; zOffset--) {
+    const checkPos = pos.offset(0, -1, zOffset)
+    const block = bot.blockAt(checkPos)
+    if (block && block.name === 'water') {
+      return block
+    }
+  }
+  return null
+}
+
+function findNearestPosition(positions, targets, tolerance = 1) {
+  let foundNearby = false
+  let minError = Infinity
+  for (const pos of positions) {
+    for (const target of targets) {
+      const error = pos.distanceTo(target)
+      minError = Math.min(minError, error)
+      if (error < tolerance) {
+        foundNearby = true
+        break
+      }
+    }
+    if (foundNearby) break
+  }
+  return { foundNearby, minError }
+}
+
 // =============================================================================
 // Ship Configurations (layer-based)
 // =============================================================================
@@ -527,6 +555,8 @@ module.exports = {
   // Utilities
   sleep,
   clearInventory,
+  findWaterNearby,
+  findNearestPosition,
 
   // Ship configs
   CUSTOM_SHIP,
