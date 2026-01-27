@@ -134,6 +134,10 @@ test-bot-write-version:
 test-bot-run: test-bot-enable-debug-glow test-bot-write-version
 	cd test-bot && npm test
 
+.PHONY: test-chunk-bot-run
+test-chunk-bot-run: test-bot-write-version
+	cd test-bot && npm run test:chunk
+
 # Full integration test with bot (used by CI)
 # Starts server, waits for ready, OPs the bot, runs bot tests, then shuts down
 .PHONY: test-server-ci
@@ -142,6 +146,7 @@ test-server-ci:
 	mkfifo server_input 2>/dev/null || true; \
 	tail -f server_input | java -Xmx1G -Xms1G -jar server.jar nogui > server.log 2>&1 & \
 	SERVER_PID=$$!; \
+	sleep 0.5; \
 	tail -f server.log & \
 	TAIL_PID=$$!; \
 	echo "Waiting for server to start..."; \
