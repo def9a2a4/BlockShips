@@ -15,12 +15,6 @@
 - loading colliders for really large ships sometimes goes wrong
 
 
-- [x] investigate ships not being breakable sometimes?
-- [x] collisions on prefab ships too forceful
-- [x] recognize waterlogged blocks (in particular kelp) as water when doing flotation calculations
-- [x] hay bales should be allowed blocks
-- [x] Orphaned carrier on spawn failure - if shulker spawn fails after carrier created, ArmorStand is leaked
-
 # FEATURES
 
 - implement furnaces (normal furnaces) on ships
@@ -45,11 +39,7 @@
 
 - make sure all "is ship moving" related checks happen in the same function
 - make sure all right click checks handled by the same function
-- despawn shulkers if no players nearby??
-  - shulkers only need to be present when there is a player nearby. max ship size + configurable buffer?
-  - [!] this doesn't work with the new method of chunk loading/unloading though
 - smarter conversion to minimize shulkers:
-  - look for solid 2x2x2 or 3x3x3 blocks to convert to single shulker with adjusted size
   - dont spawn shulkers for "interior" blocks (those not touching the outisde)
 
 ## CODE QUALITY
@@ -69,3 +59,8 @@
 - [x] TeleportCompat called 50+ times/tick with unnecessary passenger operations - optimized
 - [x] Missing validity checks in ShipInstance.java passenger verification - added isValid() checks
 - [x] info/help in ship wheel GUI
+- [x] investigate ships not being breakable sometimes?
+- [x] collisions on prefab ships too forceful
+- [x] recognize waterlogged blocks (in particular kelp) as water when doing flotation calculations
+- [x] hay bales should be allowed blocks
+- [x] Orphaned carrier on spawn failure - if shulker spawn fails after carrier created, ArmorStand is leaked
