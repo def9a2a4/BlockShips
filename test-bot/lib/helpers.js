@@ -519,8 +519,10 @@ async function cleanup(bot) {
 }
 
 function findWheelBlock(bot, centerX, centerY, centerZ) {
+  const isWheelBlock = (b) => b && (b.name === 'player_head' || b.name === 'player_wall_head')
+
   let wheelBlock = bot.blockAt(new Vec3(centerX, centerY, centerZ))
-  if (wheelBlock && wheelBlock.name === 'player_head') {
+  if (isWheelBlock(wheelBlock)) {
     return wheelBlock
   }
   // Fallback: search nearby positions
@@ -528,7 +530,7 @@ function findWheelBlock(bot, centerX, centerY, centerZ) {
     for (let dz = -1; dz <= 1; dz++) {
       for (let dy = 0; dy <= 1; dy++) {
         const b = bot.blockAt(new Vec3(centerX + dx, centerY + dy, centerZ + dz))
-        if (b && b.name === 'player_head') {
+        if (isWheelBlock(b)) {
           return b
         }
       }
