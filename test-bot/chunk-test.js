@@ -224,38 +224,55 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   await steerShip(bot, 0.0, 0, isAirship, 1000)
 
   // Wait for ship to settle before dismounting
-  await sleep(2000)
+  await sleep(3000)
 
   // 2) Exit ship FIRST, then measure position (same approach as test-bot.js)
   await customDismount(bot, log)
-  await sleep(3000)  // Wait for entities to load after dismount
+  await sleep(1000)  // Wait for entities to load after dismount
 
   // Record position after dismounting - use this for teleport back
   const movedPos = bot.entity.position.clone()
   const moveDistance = movedPos.distanceTo(startPos)
   say(`Moved ${moveDistance.toFixed(1)} blocks`)
 
-  // 3) Teleport away, wait, teleport back to recorded position
+  // 3) Count shulkers before chunk cycle (positions are stale, but count is reliable)
+  const beforeCount = findShulkers(bot, 50).length
+  say(`Found ${beforeCount} shulkers before chunk cycle`)
+
+  if (beforeCount === 0) {
+    fail(testName, 'No shulkers found before chunk cycle')
+    return
+  }
+
+  // 4) Teleport away, wait, teleport back to recorded position
   await forceChunkCycle(movedPos)
 
-  // 4) Check if ship is still near where player dismounted
+  // 5) Check ship after chunk cycle
   const afterShulkers = findShulkers(bot, 50)
+  say(`Found ${afterShulkers.length} shulkers after chunk cycle`)
+
   if (afterShulkers.length === 0) {
     fail(testName, 'Ship not found after cycle')
     return
   }
 
+  // Verify shulker count stayed constant
+  if (afterShulkers.length !== beforeCount) {
+    fail(testName, `Shulker count changed: ${beforeCount} -> ${afterShulkers.length}`)
+    return
+  }
+
+  // Verify ALL shulkers are within 10 blocks of player dismount position
   const afterPositions = afterShulkers.map(s => s.position)
   say(`After positions: ${afterPositions.map(p => `(${p.x.toFixed(1)},${p.z.toFixed(1)})`).join(', ')}`)
 
-  // Check if any shulker is within 10 blocks of where player dismounted
-  const nearestDist = Math.min(...afterPositions.map(p => p.distanceTo(movedPos)))
-  say(`Nearest shulker to dismount point: ${nearestDist.toFixed(2)} blocks`)
+  const farthestDist = Math.max(...afterPositions.map(p => p.distanceTo(movedPos)))
+  say(`Farthest shulker from dismount point: ${farthestDist.toFixed(2)} blocks`)
 
-  if (nearestDist < 10) {
+  if (farthestDist < 10) {
     pass(testName)
   } else {
-    fail(testName, `Ship moved ${nearestDist.toFixed(2)} blocks from dismount point (need <10)`)
+    fail(testName, `Shulker ${farthestDist.toFixed(2)} blocks from dismount point (need <10)`)
   }
 }
 
