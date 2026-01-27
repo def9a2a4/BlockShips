@@ -112,7 +112,8 @@ public class ShipSteeringListener {
             if (bools.size() >= 2) {
                 boolean unmount = bools.read(1);
                 if (unmount) {
-                    ShipInstance.dismountPlayer(player);
+                    // Must run on main thread - Paper enforces EntityDismountEvent sync requirement
+                    org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> ShipInstance.dismountPlayer(player));
                     return;  // Don't process steering if dismounting
                 }
             }
@@ -167,7 +168,8 @@ public class ShipSteeringListener {
             // Check for shift (dismount request)
             boolean shift = (boolean) shiftMethod.invoke(inputObj);
             if (shift) {
-                ShipInstance.dismountPlayer(player);
+                // Must run on main thread - Paper enforces EntityDismountEvent sync requirement
+                org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> ShipInstance.dismountPlayer(player));
                 return;  // Don't process steering if dismounting
             }
 
