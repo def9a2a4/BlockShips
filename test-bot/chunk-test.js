@@ -98,7 +98,7 @@ async function setupFarRunway() {
 
   // Fill water
   bot.chat(`/fill ${x1} 92 ${z1} ${x2} 99 ${z2} minecraft:water`)
-  await sleep(1000)
+  await sleep(5000)
 }
 
 async function spawnShipAtFar(shipType = 'smallship') {
@@ -107,7 +107,7 @@ async function spawnShipAtFar(shipType = 'smallship') {
   bot.chat('/clear @s')
   await sleep(300)
   bot.chat(`/blockships give ${shipType}`)
-  await sleep(1500)
+  await sleep(3000)
 
   const shipItem = bot.inventory.items().find(i => i.name === 'player_head')
   if (!shipItem) return false
