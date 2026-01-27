@@ -145,6 +145,17 @@ function findWaterNearby(bot, pos, maxZOffset = -5) {
   return null
 }
 
+async function waitForWater(bot, pos, maxRetries = 20, delayMs = 500) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const water = findWaterNearby(bot, pos)
+    if (water) return water
+    if (attempt < maxRetries) {
+      await sleep(delayMs)
+    }
+  }
+  return null
+}
+
 function findNearestPosition(positions, targets, tolerance = 1) {
   let foundNearby = false
   let minError = Infinity
@@ -743,6 +754,7 @@ module.exports = {
   sleep,
   clearInventory,
   findWaterNearby,
+  waitForWater,
   findNearestPosition,
 
   // Ship configs

@@ -7,7 +7,7 @@ const {
   createTestTracker,
   sleep,
   clearInventory,
-  findWaterNearby,
+  waitForWater,
   CUSTOM_AIRSHIP,
   buildCustomShipWithWheel,
   findShulkers,
@@ -115,8 +115,8 @@ async function spawnShipAtFar(shipType = 'smallship') {
   await bot.equip(shipItem, 'hand')
   await sleep(500)
 
-  // Find water and place ship
-  const water = findWaterNearby(bot, bot.entity.position)
+  // Find water with retries (chunks may not be loaded immediately after teleport)
+  const water = await waitForWater(bot, bot.entity.position)
   if (!water) return false
 
   try { await bot.activateBlock(water) } catch (e) {}

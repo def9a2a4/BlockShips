@@ -7,7 +7,7 @@ const {
   createTestTracker,
   sleep,
   clearInventory,
-  findWaterNearby,
+  waitForWater,
   CUSTOM_SHIP,
   CUSTOM_AIRSHIP,
   buildCustomShipWithWheel,
@@ -120,23 +120,6 @@ async function teleportToRunway() {
 // Helper Functions
 // =============================================================================
 
-async function waitForWater(pos, maxRetries = 20, delayMs = 500) {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    const water = findWaterNearby(bot, pos)
-    if (water) {
-      if (attempt > 1) {
-        log(`  Water found on attempt ${attempt}`)
-      }
-      return water
-    }
-    if (attempt < maxRetries) {
-      log(`  Water not found, attempt ${attempt}/${maxRetries}, waiting ${delayMs}ms...`)
-      await sleep(delayMs)
-    }
-  }
-  return null
-}
-
 async function runControlSequence(startPos) {
   // startPos should be captured BEFORE mounting (passed from caller)
   // This avoids relying on bot.vehicle.position which doesn't update reliably
@@ -212,7 +195,7 @@ async function testShipControls(shipType) {
   await bot.equip(shipItem, 'hand')
   await sleep(500)
 
-  const water = await waitForWater(bot.entity.position)
+  const water = await waitForWater(bot, bot.entity.position)
   if (!water) {
     fail(shipType, 'No water found (after 20 retry attempts)')
     return
