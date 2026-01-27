@@ -168,7 +168,8 @@ async function runControlSequence(startPos) {
   log('Dismounting...')
   let dismountError = null
   try {
-    const result = await customDismount(bot, log)
+    // Pass startPos (before mounting) so position change is measured from original location
+    const result = await customDismount(bot, log, startPos)
     if (result.usedFallback) {
       dismountError = 'Failed to dismount (used killentities fallback)'
     }

@@ -350,13 +350,15 @@ async function mountShip(bot, log) {
   return false
 }
 
-async function customDismount(bot, log) {
+async function customDismount(bot, log, originalStartPos = null) {
   if (!bot.vehicle) {
     if (log) log('Warning: customDismount called but not mounted')
     return { success: false, method: null, usedFallback: false }
   }
 
-  const startPos = bot.entity.position.clone()
+  const dismountStartPos = bot.entity.position.clone()
+  // Use originalStartPos (before mounting) for position checks if provided
+  const posCheckRef = originalStartPos || dismountStartPos
 
   const quickWait = async (ms) => {
     const start = Date.now()
@@ -364,6 +366,14 @@ async function customDismount(bot, log) {
       await sleep(50)
     }
     return !bot.vehicle
+  }
+
+  // Helper to check if position changed significantly from original position
+  // (bot.vehicle is buggy and never clears in some MC versions)
+  const posChanged = (currentPos, threshold = 2.0) => {
+    return Math.abs(posCheckRef.x - currentPos.x) > threshold ||
+           Math.abs(posCheckRef.y - currentPos.y) > threshold ||
+           Math.abs(posCheckRef.z - currentPos.z) > threshold
   }
 
   // Try dismount methods (200ms between each)
@@ -407,7 +417,7 @@ async function customDismount(bot, log) {
     if (await quickWait(200)) {
       const endPos = bot.entity.position.clone()
       if (log) log(`  Success via ${method.name}`)
-      return { success: true, method: method.name, usedFallback: false, startPos, endPos }
+      return { success: true, method: method.name, usedFallback: false, startPos: dismountStartPos, endPos }
     }
   }
 
@@ -415,37 +425,50 @@ async function customDismount(bot, log) {
   if (log) log('  Waiting 1s for delayed dismount...')
   if (await quickWait(1000)) {
     const endPos = bot.entity.position.clone()
-    return { success: true, method: 'delayed', usedFallback: false, startPos, endPos }
+    return { success: true, method: 'delayed', usedFallback: false, startPos: dismountStartPos, endPos }
   }
 
-  // Helper to check if position changed significantly (bot.vehicle is buggy and never clears)
-  const posChanged = (p1, p2, threshold = 1.0) => {
-    return Math.abs(p1.x - p2.x) > threshold ||
-           Math.abs(p1.y - p2.y) > threshold ||
-           Math.abs(p1.z - p2.z) > threshold
-  }
-
-  // Check position after methods
+  // Check position after methods - compare to original position before mounting
   const checkPos = bot.entity.position.clone()
   if (log) log(`  Position after methods: ${checkPos.x.toFixed(2)}, ${checkPos.y.toFixed(2)}, ${checkPos.z.toFixed(2)}`)
 
-  // If position changed or bot.vehicle is null, we're done
-  if (!bot.vehicle || posChanged(startPos, checkPos)) {
-    if (log) log('  Success: position changed or vehicle cleared')
-    return { success: true, method: 'delayed', usedFallback: false, startPos, endPos: checkPos }
+  // If position changed significantly from original or bot.vehicle is null, we're done
+  if (!bot.vehicle || posChanged(checkPos)) {
+    if (log) log('  Success: position changed from original or vehicle cleared')
+    return { success: true, method: 'delayed', usedFallback: false, startPos: dismountStartPos, endPos: checkPos }
   }
 
-  // Fallback 1: /blockships dismount command
+  // Fallback 1: /blockships dismount command with chat response detection
   if (log) log('  Trying /blockships dismount...')
+
+  // Listen for chat response to detect dismount status
+  let dismountResponse = null
+  const chatHandler = (message) => {
+    const text = message.toString()
+    if (text === 'You are not riding a ship.' || text === 'Dismounted from ship.') {
+      dismountResponse = text
+    }
+  }
+  bot.on('message', chatHandler)
+
   bot.chat('/blockships dismount')
   await sleep(1000)
+
+  bot.removeListener('message', chatHandler)
 
   const postDismountPos = bot.entity.position.clone()
   if (log) log(`  Position after /blockships dismount: ${postDismountPos.x.toFixed(2)}, ${postDismountPos.y.toFixed(2)}, ${postDismountPos.z.toFixed(2)}`)
 
-  if (!bot.vehicle || posChanged(startPos, postDismountPos)) {
-    if (log) log('  Success via /blockships dismount (position changed)')
-    return { success: true, method: '/blockships dismount', usedFallback: false, startPos, endPos: postDismountPos }
+  // Check chat response - "You are not riding a ship" means already dismounted (success!)
+  if (dismountResponse) {
+    if (log) log(`  Server response: "${dismountResponse}" - dismount confirmed`)
+    return { success: true, method: '/blockships dismount', usedFallback: false, startPos: dismountStartPos, endPos: postDismountPos }
+  }
+
+  // Also check position change from original
+  if (!bot.vehicle || posChanged(postDismountPos)) {
+    if (log) log('  Success via /blockships dismount (position changed from original)')
+    return { success: true, method: '/blockships dismount', usedFallback: false, startPos: dismountStartPos, endPos: postDismountPos }
   }
 
   // Fallback 2: kill entities
@@ -457,10 +480,10 @@ async function customDismount(bot, log) {
   if (log) log(`  Position after killentities: ${endPos.x.toFixed(2)}, ${endPos.y.toFixed(2)}, ${endPos.z.toFixed(2)}`)
 
   return {
-    success: !bot.vehicle || posChanged(startPos, endPos),
+    success: !bot.vehicle || posChanged(endPos),
     method: 'killentities',
     usedFallback: true,
-    startPos,
+    startPos: dismountStartPos,
     endPos
   }
 }
