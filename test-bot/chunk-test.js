@@ -8,6 +8,7 @@ const {
   sleep,
   clearInventory,
   waitForWater,
+  waitForShulkers,
   CUSTOM_AIRSHIP,
   buildCustomShipWithWheel,
   findShulkers,
@@ -217,11 +218,19 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
     return
   }
 
+  // Count shulkers before moving (positions are accurate here, stale after movement)
+  const beforeCount = findShulkers(bot, 50).length
+  if (beforeCount === 0) {
+    fail(testName, 'No shulkers found after mounting')
+    return
+  }
+  log(`Counted ${beforeCount} shulkers before movement`)
+
   // 1) Move ship
   say('Moving ship...')
   await steerShip(bot, 1.0, 0, isAirship, 2000)
-  await steerShip(bot, -1.0, 0, isAirship, 100)
-  await steerShip(bot, 0.0, 0, isAirship, 1000)
+  await steerShip(bot, -1.0, 0, false, 100)
+  await steerShip(bot, 0.0, 0, false, 1000)
 
   // Wait for ship to settle before dismounting
   await sleep(3000)
@@ -235,20 +244,11 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   const moveDistance = movedPos.distanceTo(startPos)
   say(`Moved ${moveDistance.toFixed(1)} blocks`)
 
-  // 3) Count shulkers before chunk cycle (positions are stale, but count is reliable)
-  const beforeCount = findShulkers(bot, 50).length
-  say(`Found ${beforeCount} shulkers before chunk cycle`)
-
-  if (beforeCount === 0) {
-    fail(testName, 'No shulkers found before chunk cycle')
-    return
-  }
-
-  // 4) Teleport away, wait, teleport back to recorded position
+  // 3) Teleport away, wait, teleport back to recorded position
   await forceChunkCycle(movedPos)
 
   // 5) Check ship after chunk cycle
-  const afterShulkers = findShulkers(bot, 50)
+  const afterShulkers = findShulkers(bot, 100)
   say(`Found ${afterShulkers.length} shulkers after chunk cycle`)
 
   if (afterShulkers.length === 0) {
@@ -313,7 +313,11 @@ async function testPostRecoverySteeringBase(testName, spawnFn, isAirship = false
   // Test steering
   say('Testing steering on recovered ship...')
   await steerShip(bot, 1.0, 0, isAirship, 1000)
-  await sleep(5000)
+  await steerShip(bot, -1.0, 0, false, 100)
+  await steerShip(bot, 0.0, 0, false, 1000)
+
+  // Wait for ship to settle before dismounting
+  await sleep(3000)
 
   // Dismount FIRST, then measure position (same approach as test-bot.js)
   await customDismount(bot, log)

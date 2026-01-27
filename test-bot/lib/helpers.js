@@ -156,6 +156,17 @@ async function waitForWater(bot, pos, maxRetries = 20, delayMs = 500) {
   return null
 }
 
+async function waitForShulkers(bot, maxDist = 50, maxRetries = 20, delayMs = 500) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const shulkers = findShulkers(bot, maxDist)
+    if (shulkers.length > 0) return shulkers
+    if (attempt < maxRetries) {
+      await sleep(delayMs)
+    }
+  }
+  return []
+}
+
 function findNearestPosition(positions, targets, tolerance = 1) {
   let foundNearby = false
   let minError = Infinity
@@ -755,6 +766,7 @@ module.exports = {
   clearInventory,
   findWaterNearby,
   waitForWater,
+  waitForShulkers,
   findNearestPosition,
 
   // Ship configs
