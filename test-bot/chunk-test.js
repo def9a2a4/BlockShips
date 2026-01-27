@@ -1,3 +1,4 @@
+const Vec3 = require('vec3').Vec3
 const {
   createLogger,
   createTestTracker,
@@ -128,14 +129,20 @@ async function spawnCustomAirshipAtFar() {
   bot.chat('/clear @s')
   await sleep(300)
 
-  // Build simple airship (glowstone corners + planks center)
+  // Build airship - glowstone corners + oak planks forming + shape
+  // Must match test-bot.js testCustomAirship() pattern
   const buildY = 101
   const blocks = [
+    // Glowstone corners
     { x: -1, z: -2, block: 'glowstone' },
     { x:  1, z: -2, block: 'glowstone' },
     { x: -1, z:  0, block: 'glowstone' },
     { x:  1, z:  0, block: 'glowstone' },
-    { x:  0, z: -1, block: 'oak_planks' },
+    // Oak planks forming + shape (center cross)
+    { x:  0, z: -2, block: 'oak_planks' },  // top of +
+    { x:  0, z:  0, block: 'oak_planks' },  // bottom of +
+    { x: -1, z: -1, block: 'oak_planks' },  // left of +
+    { x:  1, z: -1, block: 'oak_planks' },  // right of +
   ]
 
   // Clear build area first
@@ -160,25 +167,26 @@ async function spawnCustomAirshipAtFar() {
   await bot.equip(wheel, 'hand')
   await sleep(300)
 
-  // Place wheel on top of center plank
-  const centerBlock = bot.blockAt({ x: FAR_X, y: buildY, z: FAR_Z - 1 })
-  if (!centerBlock || centerBlock.name === 'air') {
-    log('Center block not found for wheel placement')
+  // Place wheel ADJACENT to center block (placeWheelOnTop: false pattern)
+  // Wheel goes at z=-1 (center of +), placed against the z=-2 block
+  const adjacentBlock = bot.blockAt(new Vec3(FAR_X, buildY, FAR_Z - 2))
+  if (!adjacentBlock || adjacentBlock.name === 'air') {
+    log('Adjacent block not found for wheel placement')
     return false
   }
 
   try {
-    await bot.lookAt({ x: FAR_X + 0.5, y: buildY + 1, z: FAR_Z - 0.5 })
+    await bot.lookAt(new Vec3(FAR_X + 0.5, buildY + 0.5, FAR_Z - 0.5))
     await sleep(200)
-    await bot.placeBlock(centerBlock, { x: 0, y: 1, z: 0 })
+    await bot.placeBlock(adjacentBlock, new Vec3(0, 0, 1))  // Place on +Z face
   } catch (e) {
     log(`Wheel placement error: ${e.message}`)
     return false
   }
   await sleep(500)
 
-  // Find the wheel block
-  let wheelBlock = bot.blockAt({ x: FAR_X, y: buildY + 1, z: FAR_Z - 1 })
+  // Find the wheel block at center
+  let wheelBlock = bot.blockAt(new Vec3(FAR_X, buildY, FAR_Z - 1))
   if (!wheelBlock || wheelBlock.name !== 'player_head') {
     log('Wheel block not found after placement')
     return false
@@ -259,39 +267,47 @@ async function testPositionPersistence() {
     return
   }
 
-  // Move ship north
+  // 1) Move ship north
   say('Moving ship north...')
   const startPos = bot.entity.position.clone()
   await steerShip(bot, 1.0, 0, false, 3000)
-  await sleep(500)
+
+  // Stay in ship for 1s after finishing movement
+  await sleep(1000)
 
   const movedPos = bot.entity.position.clone()
   const moveDistance = movedPos.distanceTo(startPos)
   say(`Moved ${moveDistance.toFixed(1)} blocks`)
 
-  // Record shulker positions BEFORE dismount (while still mounted)
-  const beforeShulkers = findShulkers(bot, 50)
-  const beforePositions = beforeShulkers.map(s => s.position.clone())
-  say(`Recording ${beforePositions.length} shulker positions before cycle`)
-
+  // 2) Exit ship
   customDismount(bot, log)
   await waitForDismount(bot)
   await sleep(500)
 
-  // Use first shulker position for teleport reference
-  const shipPos = beforePositions.length > 0 ? beforePositions[0].clone() : movedPos
+  // 3) Check shulker positions AFTER dismount
+  const beforeShulkers = findShulkers(bot, 50)
+  const beforePositions = beforeShulkers.map(s => s.position.clone())
+  say(`Recording ${beforePositions.length} shulker positions after dismount`)
 
-  // Force chunk cycle
+  if (beforePositions.length === 0) {
+    fail('chunk_persistence', 'No shulkers found after dismount')
+    return
+  }
+
+  // Use first shulker position for teleport reference
+  const shipPos = beforePositions[0].clone()
+
+  // 4) Teleport away, wait 5s, teleport back
   await forceChunkCycle(shipPos)
 
-  // Find shulkers after and compare positions
+  // 5) Check positions of all shulkers
   const afterShulkers = findShulkers(bot, 50)
   if (afterShulkers.length === 0) {
     fail('chunk_persistence', 'Ship not found after cycle')
     return
   }
 
-  // Check if ANY shulker is near expected position (1 block tolerance)
+  // Compare: check if ANY shulker is near expected position (1 block tolerance)
   let foundNearby = false
   let minError = Infinity
   for (const after of afterShulkers) {
@@ -421,39 +437,47 @@ async function testPositionPersistenceAirship() {
     return
   }
 
-  // Move airship (forward + up)
+  // 1) Move airship (forward + up)
   say('Moving airship...')
   const startPos = bot.entity.position.clone()
   await steerShip(bot, 1.0, 0, true, 3000) // jump=true for airship ascent
-  await sleep(500)
+
+  // Stay in ship for 1s after finishing movement
+  await sleep(1000)
 
   const movedPos = bot.entity.position.clone()
   const moveDistance = movedPos.distanceTo(startPos)
   say(`Moved ${moveDistance.toFixed(1)} blocks`)
 
-  // Record shulker positions BEFORE dismount
-  const beforeShulkers = findShulkers(bot, 50)
-  const beforePositions = beforeShulkers.map(s => s.position.clone())
-  say(`Recording ${beforePositions.length} shulker positions before cycle`)
-
+  // 2) Exit ship
   customDismount(bot, log)
   await waitForDismount(bot)
   await sleep(500)
 
-  // Use first shulker position for teleport reference
-  const shipPos = beforePositions.length > 0 ? beforePositions[0].clone() : movedPos
+  // 3) Check shulker positions AFTER dismount
+  const beforeShulkers = findShulkers(bot, 50)
+  const beforePositions = beforeShulkers.map(s => s.position.clone())
+  say(`Recording ${beforePositions.length} shulker positions after dismount`)
 
-  // Force chunk cycle
+  if (beforePositions.length === 0) {
+    fail('chunk_persistence_airship', 'No shulkers found after dismount')
+    return
+  }
+
+  // Use first shulker position for teleport reference
+  const shipPos = beforePositions[0].clone()
+
+  // 4) Teleport away, wait 5s, teleport back
   await forceChunkCycle(shipPos)
 
-  // Find shulkers after and compare positions
+  // 5) Check positions of all shulkers
   const afterShulkers = findShulkers(bot, 50)
   if (afterShulkers.length === 0) {
     fail('chunk_persistence_airship', 'Airship not found after cycle')
     return
   }
 
-  // Check if ANY shulker is near expected position (1 block tolerance)
+  // Compare: check if ANY shulker is near expected position (1 block tolerance)
   let foundNearby = false
   let minError = Infinity
   for (const after of afterShulkers) {
