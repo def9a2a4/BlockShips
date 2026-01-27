@@ -283,69 +283,20 @@ async function customDismount(bot, log) {
     return !bot.vehicle
   }
 
-  // Method 1: Use mineflayer's built-in dismount
-  if (log) log('  Trying bot.dismount()...')
+  // Use mineflayer's built-in dismount - it correctly sends jump flag for vehicle exit
+  // Mineflayer sends: player_input { inputs: { jump: true } } for 1.21.6+
+  //                   steer_vehicle { sideways: 0, forward: 0, jump: 0x02 } for older versions
   try {
     bot.dismount()
   } catch (e) {
     if (log) log(`  bot.dismount() error: ${e.message}`)
   }
 
-  if (await quickWait(500)) {
-    if (log) log('  Dismount succeeded via bot.dismount()')
+  if (await quickWait(1000)) {
     return true
   }
 
-  // Method 2: Try sneak control state
-  if (log) log('  Trying sneak control state...')
-  bot.setControlState('sneak', true)
-  await sleep(200)
-  bot.setControlState('sneak', false)
-
-  if (await quickWait(500)) {
-    if (log) log('  Dismount succeeded via sneak')
-    return true
-  }
-
-  // Method 3: Version-specific packets
-  if (log) log('  Trying version-specific packet...')
-  try {
-    if (bot.supportFeature('newPlayerInputPacket')) {
-      // 1.21.3+: player_input packet
-      bot._client.write('player_input', {
-        inputs: { shift: true }
-      })
-    } else if (bot.supportFeature('inputsInSteerVehicle')) {
-      // 1.21.2: Input record in steer_vehicle
-      bot._client.write('steer_vehicle', {
-        inputs: {
-          forward: false,
-          backward: false,
-          left: false,
-          right: false,
-          jump: false,
-          sneak: true,
-          sprint: false
-        }
-      })
-    } else {
-      // Pre-1.21.2: Raw steer_vehicle with unmount flag
-      bot._client.write('steer_vehicle', {
-        sideways: 0.0,
-        forward: 0.0,
-        jump: 0x02
-      })
-    }
-  } catch (e) {
-    if (log) log(`  Packet error: ${e.message}`)
-  }
-
-  if (await quickWait(500)) {
-    if (log) log('  Dismount succeeded via version-specific packet')
-    return true
-  }
-
-  if (log) log('  All dismount methods failed')
+  if (log) log('  Dismount did not complete within timeout')
   return false
 }
 

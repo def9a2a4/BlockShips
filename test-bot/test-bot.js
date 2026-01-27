@@ -116,11 +116,6 @@ async function teleportToRunway() {
   await sleep(500)
 }
 
-async function clearInventory() {
-  bot.chat('/clear @s')
-  await sleep(300)
-}
-
 // =============================================================================
 // Helper Functions
 // =============================================================================
@@ -218,7 +213,7 @@ async function testShipControls(shipType) {
 
   await cleanup(bot)
   await teleportToRunway()
-  await clearInventory()
+  await clearInventory(bot)
 
   const isAirship = shipType.includes('airship')
 
@@ -241,7 +236,7 @@ async function testShipControls(shipType) {
   try { await bot.activateBlock(water) } catch (e) {}
   await sleep(3000)
 
-  await clearInventory()
+  await clearInventory(bot)
 
   // Capture position BEFORE mounting (vehicle position doesn't update reliably in mineflayer)
   const startPos = bot.entity.position.clone()
@@ -284,17 +279,19 @@ async function testShipControls(shipType) {
 }
 
 async function buildCustomShipBlocks(config) {
-  const { blocks, placeWheelOnTop = true } = config
   const buildY = 101
 
+  // Clear build area
   bot.chat(`/fill ${RUNWAY_X-2} 100 ${RUNWAY_Z-3} ${RUNWAY_X+2} 104 ${RUNWAY_Z+1} minecraft:air`)
   await sleep(200)
 
-  for (const { x, y, z, block } of blocks) {
-    bot.chat(`/setblock ${RUNWAY_X + x} ${buildY + y} ${RUNWAY_Z + z} minecraft:${block}`)
+  // Build ship structure and get wheel position
+  const wheelPos = await buildShipFromLayers(bot, config, RUNWAY_X, buildY, RUNWAY_Z - 1)
+  if (!wheelPos) {
+    return { success: false, error: 'No wheel position defined in ship config' }
   }
-  await sleep(500)
 
+  // Get and place ship wheel
   say('Getting ship wheel...')
   bot.chat('/blockships give ship_wheel')
   await sleep(1000)
@@ -306,31 +303,29 @@ async function buildCustomShipBlocks(config) {
   await sleep(300)
 
   say('Placing ship wheel...')
-  const centerPos = new Vec3(RUNWAY_X, buildY, RUNWAY_Z - 1)
+  // Find an adjacent block to place wheel against
+  const adjacentPositions = [
+    { x: 0, y: -1, z: 0, face: new Vec3(0, 1, 0) },   // below
+    { x: 0, y: 0, z: -1, face: new Vec3(0, 0, 1) },   // north
+    { x: 0, y: 0, z: 1, face: new Vec3(0, 0, -1) },   // south
+    { x: -1, y: 0, z: 0, face: new Vec3(1, 0, 0) },   // west
+    { x: 1, y: 0, z: 0, face: new Vec3(-1, 0, 0) },   // east
+  ]
 
   let placementError = null
-  if (placeWheelOnTop) {
-    const centerBlock = bot.blockAt(centerPos)
-    if (!centerBlock || centerBlock.name === 'air') {
-      return { success: false, error: `Center block not found at ${centerPos}` }
-    }
-    await bot.lookAt(centerPos.offset(0.5, 1, 0.5))
-    await sleep(200)
-    try {
-      await bot.placeBlock(centerBlock, new Vec3(0, 1, 0))
-    } catch (e) {
-      placementError = e.message
-      log(`  Place error: ${e.message}`)
-    }
-  } else {
-    const adjacentBlock = bot.blockAt(new Vec3(RUNWAY_X, buildY, RUNWAY_Z - 2))
-    await bot.lookAt(centerPos.offset(0.5, 0.5, 0.5))
-    await sleep(200)
-    try {
-      await bot.placeBlock(adjacentBlock, new Vec3(0, 0, 1))
-    } catch (e) {
-      placementError = e.message
-      log(`  Place error: ${e.message}`)
+  for (const adj of adjacentPositions) {
+    const adjBlock = bot.blockAt(new Vec3(wheelPos.x + adj.x, wheelPos.y + adj.y, wheelPos.z + adj.z))
+    if (adjBlock && adjBlock.name !== 'air') {
+      await bot.lookAt(new Vec3(wheelPos.x + 0.5, wheelPos.y + 0.5, wheelPos.z + 0.5))
+      await sleep(200)
+      try {
+        await bot.placeBlock(adjBlock, adj.face)
+        placementError = null
+        break
+      } catch (e) {
+        placementError = e.message
+        log(`  Place error: ${e.message}`)
+      }
     }
   }
   await sleep(500)
@@ -339,9 +334,7 @@ async function buildCustomShipBlocks(config) {
     return { success: false, error: `Wheel placement failed: ${placementError}` }
   }
 
-  const wheelY = placeWheelOnTop ? buildY + 1 : buildY
-  const wheelBlock = findWheelBlock(bot, RUNWAY_X, wheelY, RUNWAY_Z - 1)
-
+  const wheelBlock = findWheelBlock(bot, wheelPos.x, wheelPos.y, wheelPos.z)
   if (!wheelBlock) {
     return { success: false, error: 'Ship wheel not found after placement' }
   }
@@ -354,7 +347,7 @@ async function testCustomShipBase(testName, buildConfig, isAirship = false) {
 
   await cleanup(bot)
   await teleportToRunway()
-  await clearInventory()
+  await clearInventory(bot)
 
   say(`Building ${testName.toLowerCase()}...`)
   const buildResult = await buildCustomShipBlocks(buildConfig)
@@ -363,7 +356,7 @@ async function testCustomShipBase(testName, buildConfig, isAirship = false) {
     return
   }
 
-  await clearInventory()
+  await clearInventory(bot)
 
   say('Assembling ship...')
   try {
@@ -421,34 +414,11 @@ async function testCustomShipBase(testName, buildConfig, isAirship = false) {
 }
 
 async function testCustomShip() {
-  const blocks = [
-    { x: -1, y: 0, z: -2, block: 'oak_planks' },
-    { x:  0, y: 0, z: -2, block: 'oak_planks' },
-    { x:  1, y: 0, z: -2, block: 'oak_planks' },
-    { x: -1, y: 0, z: -1, block: 'oak_planks' },
-    { x:  0, y: 0, z: -1, block: 'oak_planks' },
-    { x:  1, y: 0, z: -1, block: 'oak_planks' },
-    { x: -1, y: 0, z:  0, block: 'oak_planks' },
-    { x:  0, y: 0, z:  0, block: 'oak_planks' },
-    { x:  1, y: 0, z:  0, block: 'oak_planks' },
-  ]
-
-  await testCustomShipBase('custom_ship', { blocks, placeWheelOnTop: true }, false)
+  await testCustomShipBase('custom_ship', CUSTOM_SHIP, false)
 }
 
 async function testCustomAirship() {
-  const blocks = [
-    { x: -1, y: 0, z: -2, block: 'glowstone' },
-    { x:  1, y: 0, z: -2, block: 'glowstone' },
-    { x: -1, y: 0, z:  0, block: 'glowstone' },
-    { x:  1, y: 0, z:  0, block: 'glowstone' },
-    { x:  0, y: 0, z: -2, block: 'oak_planks' },
-    { x:  0, y: 0, z:  0, block: 'oak_planks' },
-    { x: -1, y: 0, z: -1, block: 'oak_planks' },
-    { x:  1, y: 0, z: -1, block: 'oak_planks' },
-  ]
-
-  await testCustomShipBase('custom_airship', { blocks, placeWheelOnTop: false }, true)
+  await testCustomShipBase('custom_airship', CUSTOM_AIRSHIP, true)
 }
 
 // =============================================================================

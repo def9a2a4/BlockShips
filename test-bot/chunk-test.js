@@ -5,7 +5,8 @@ const {
   createTestTracker,
   sleep,
   clearInventory,
-  AIRSHIP_BLOCKS,
+  CUSTOM_AIRSHIP,
+  buildShipFromLayers,
   findShulkers,
   findWheelBlock,
   mountShip,
@@ -122,35 +123,22 @@ async function spawnShipAtFar(shipType = 'smallship') {
 async function spawnCustomAirshipAtFar() {
   bot.chat(`/tp @s ${FAR_X} 105 ${FAR_Z}`)
   await sleep(500)
-  bot.chat('/clear @s')
-  await sleep(300)
+  await clearInventory(bot)
 
-  // Build airship - glowstone corners + oak planks forming + shape
-  // Must match test-bot.js testCustomAirship() pattern
   const buildY = 101
-  const blocks = [
-    // Glowstone corners
-    { x: -1, z: -2, block: 'glowstone' },
-    { x:  1, z: -2, block: 'glowstone' },
-    { x: -1, z:  0, block: 'glowstone' },
-    { x:  1, z:  0, block: 'glowstone' },
-    // Oak planks forming + shape (center cross)
-    { x:  0, z: -2, block: 'oak_planks' },  // top of +
-    { x:  0, z:  0, block: 'oak_planks' },  // bottom of +
-    { x: -1, z: -1, block: 'oak_planks' },  // left of +
-    { x:  1, z: -1, block: 'oak_planks' },  // right of +
-  ]
 
-  // Clear build area first
+  // Clear build area
   bot.chat(`/fill ${FAR_X - 2} ${buildY - 1} ${FAR_Z - 3} ${FAR_X + 2} ${buildY + 3} ${FAR_Z + 1} minecraft:air`)
   await sleep(200)
 
-  for (const { x, z, block } of blocks) {
-    bot.chat(`/setblock ${FAR_X + x} ${buildY} ${FAR_Z + z} minecraft:${block}`)
+  // Build ship structure and get wheel position
+  const wheelPos = await buildShipFromLayers(bot, CUSTOM_AIRSHIP, FAR_X, buildY, FAR_Z - 1)
+  if (!wheelPos) {
+    log('No wheel position defined in ship config')
+    return false
   }
-  await sleep(500)
 
-  // Get ship wheel
+  // Get and place ship wheel
   bot.chat('/blockships give ship_wheel')
   await sleep(1000)
 
@@ -163,26 +151,38 @@ async function spawnCustomAirshipAtFar() {
   await bot.equip(wheel, 'hand')
   await sleep(300)
 
-  // Place wheel ADJACENT to center block (placeWheelOnTop: false pattern)
-  // Wheel goes at z=-1 (center of +), placed against the z=-2 block
-  const adjacentBlock = bot.blockAt(new Vec3(FAR_X, buildY, FAR_Z - 2))
-  if (!adjacentBlock || adjacentBlock.name === 'air') {
-    log('Adjacent block not found for wheel placement')
-    return false
-  }
+  // Find an adjacent block to place wheel against
+  const adjacentPositions = [
+    { x: 0, y: -1, z: 0, face: new Vec3(0, 1, 0) },
+    { x: 0, y: 0, z: -1, face: new Vec3(0, 0, 1) },
+    { x: 0, y: 0, z: 1, face: new Vec3(0, 0, -1) },
+    { x: -1, y: 0, z: 0, face: new Vec3(1, 0, 0) },
+    { x: 1, y: 0, z: 0, face: new Vec3(-1, 0, 0) },
+  ]
 
-  try {
-    await bot.lookAt(new Vec3(FAR_X + 0.5, buildY + 0.5, FAR_Z - 0.5))
-    await sleep(200)
-    await bot.placeBlock(adjacentBlock, new Vec3(0, 0, 1))  // Place on +Z face
-  } catch (e) {
-    log(`Wheel placement error: ${e.message}`)
-    return false
+  let placed = false
+  for (const adj of adjacentPositions) {
+    const adjBlock = bot.blockAt(new Vec3(wheelPos.x + adj.x, wheelPos.y + adj.y, wheelPos.z + adj.z))
+    if (adjBlock && adjBlock.name !== 'air') {
+      await bot.lookAt(new Vec3(wheelPos.x + 0.5, wheelPos.y + 0.5, wheelPos.z + 0.5))
+      await sleep(200)
+      try {
+        await bot.placeBlock(adjBlock, adj.face)
+        placed = true
+        break
+      } catch (e) {
+        log(`Wheel placement error: ${e.message}`)
+      }
+    }
   }
   await sleep(500)
 
-  // Find the wheel block at center
-  const wheelBlock = findWheelBlock(bot, FAR_X, buildY, FAR_Z - 1)
+  if (!placed) {
+    log('Could not place wheel - no adjacent blocks found')
+    return false
+  }
+
+  const wheelBlock = findWheelBlock(bot, wheelPos.x, wheelPos.y, wheelPos.z)
   if (!wheelBlock) {
     log('Wheel block not found after placement')
     return false
