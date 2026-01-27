@@ -91,8 +91,13 @@ public class TeleportCompat {
         entity.eject();
         entity.teleport(location);
 
+        // Re-add passengers, checking validity of both vehicle and passenger
+        // (entity could have been removed between eject and addPassenger)
+        if (!entity.isValid()) {
+            return;
+        }
         for (Entity passenger : passengers) {
-            if (passenger.isValid()) {
+            if (passenger != null && passenger.isValid()) {
                 entity.addPassenger(passenger);
             }
         }

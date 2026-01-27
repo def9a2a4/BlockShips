@@ -441,6 +441,16 @@ public class DisplayShip implements Listener {
                         for (int i = 0; i < shipsToRecover.size(); i++) {
                             UUID shipId = shipsToRecover.get(i);
                             try {
+                                // Re-check chunk state before each ship recovery (chunk could unload mid-loop)
+                                if (!chunk.isLoaded()) {
+                                    plugin.getLogger().fine("Chunk unloaded during recovery loop - aborting remaining ships");
+                                    // Clean up remaining ships (current ship's finally block will handle itself)
+                                    for (int j = i + 1; j < shipsToRecover.size(); j++) {
+                                        shipsBeingRecovered.remove(shipsToRecover.get(j));
+                                    }
+                                    return;
+                                }
+
                                 // Skip if already registered (another chunk may have recovered it)
                                 if (ShipRegistry.byId(shipId) != null) {
                                     continue;
@@ -478,7 +488,12 @@ public class DisplayShip implements Listener {
 
                                 ship.setExpectedEntityCount(state.entityCount);
 
-                                // Try to recover entities
+                                // Try to recover entities (re-check chunk state first)
+                                if (!chunk.isLoaded()) {
+                                    plugin.getLogger().fine("Chunk unloaded before entity recovery for " + shipId);
+                                    failedRecovery.add(shipId);
+                                    continue;
+                                }
                                 boolean recovered = ship.recoverEntities(chunk);
                                 if (!recovered) {
                                     plugin.getLogger().info("Ship " + shipId + " vehicle not in this chunk - will recover when vehicle chunk loads");
@@ -499,8 +514,10 @@ public class DisplayShip implements Listener {
                             }
                         }
 
-                        // Run orphan cleanup after async recovery completes
-                        processOrphanCleanup(chunk, world, failedRecovery);
+                        // Run orphan cleanup after async recovery completes (only if chunk still loaded)
+                        if (chunk.isLoaded()) {
+                            processOrphanCleanup(chunk, world, failedRecovery);
+                        }
                     });
                 });
         }
@@ -513,7 +530,8 @@ public class DisplayShip implements Listener {
             if (entityShipId == null) continue;
 
             ShipInstance ship = ShipRegistry.byId(entityShipId);
-            if (ship != null && !ship.isRecoveryComplete() && processedIncompleteShips.add(entityShipId)) {
+            // Skip ships being recovered asynchronously to avoid concurrent modification
+            if (ship != null && !ship.isRecoveryComplete() && !shipsBeingRecovered.contains(entityShipId) && processedIncompleteShips.add(entityShipId)) {
                 ship.collectEntitiesFromChunk(chunk);
             }
         }

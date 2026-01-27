@@ -27,14 +27,16 @@ public class ShipSteeringListener {
     private static final boolean USE_NEW_INPUT_FORMAT = anon.def9a2a4.blockships.util.ServerVersion.isAtLeast(1, 21, 2);
 
     // Cached reflection methods for new format (only initialized if needed)
-    private static java.lang.reflect.Method forwardMethod;
-    private static java.lang.reflect.Method backwardMethod;
-    private static java.lang.reflect.Method leftMethod;
-    private static java.lang.reflect.Method rightMethod;
-    private static java.lang.reflect.Method jumpMethod;
-    private static java.lang.reflect.Method sprintMethod;
-    private static boolean methodsCached = false;
-    private static boolean methodsValid = false;
+    // All fields must be volatile to ensure visibility across threads - a reader
+    // must see consistent values after observing methodsCached=true
+    private static volatile java.lang.reflect.Method forwardMethod;
+    private static volatile java.lang.reflect.Method backwardMethod;
+    private static volatile java.lang.reflect.Method leftMethod;
+    private static volatile java.lang.reflect.Method rightMethod;
+    private static volatile java.lang.reflect.Method jumpMethod;
+    private static volatile java.lang.reflect.Method sprintMethod;
+    private static volatile boolean methodsCached = false;
+    private static volatile boolean methodsValid = false;
 
     public ShipSteeringListener(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -100,16 +102,21 @@ public class ShipSteeringListener {
             return;
         }
 
-        // Use cached methods
-        boolean forward = (boolean) forwardMethod.invoke(inputObj);
-        boolean backward = (boolean) backwardMethod.invoke(inputObj);
-        boolean left = (boolean) leftMethod.invoke(inputObj);
-        boolean right = (boolean) rightMethod.invoke(inputObj);
-        boolean jump = (boolean) jumpMethod.invoke(inputObj);
-        boolean sprint = (boolean) sprintMethod.invoke(inputObj);
+        // Use cached methods with exception handling
+        try {
+            boolean forward = (boolean) forwardMethod.invoke(inputObj);
+            boolean backward = (boolean) backwardMethod.invoke(inputObj);
+            boolean left = (boolean) leftMethod.invoke(inputObj);
+            boolean right = (boolean) rightMethod.invoke(inputObj);
+            boolean jump = (boolean) jumpMethod.invoke(inputObj);
+            boolean sprint = (boolean) sprintMethod.invoke(inputObj);
 
-        ship.setInputState(forward, backward, left, right);
-        ship.setVerticalInputState(jump, sprint);
+            ship.setInputState(forward, backward, left, right);
+            ship.setVerticalInputState(jump, sprint);
+        } catch (Exception e) {
+            // Fall back to old format on reflection error
+            handleOldInputFormat(packet, ship);
+        }
     }
 
     /**
@@ -128,8 +135,13 @@ public class ShipSteeringListener {
             jumpMethod = inputClass.getMethod("jump");
             sprintMethod = inputClass.getMethod("sprint");
 
-            // Verify return types are boolean
-            if (forwardMethod.getReturnType() == boolean.class) {
+            // Verify ALL return types are boolean
+            if (forwardMethod.getReturnType() == boolean.class &&
+                backwardMethod.getReturnType() == boolean.class &&
+                leftMethod.getReturnType() == boolean.class &&
+                rightMethod.getReturnType() == boolean.class &&
+                jumpMethod.getReturnType() == boolean.class &&
+                sprintMethod.getReturnType() == boolean.class) {
                 methodsValid = true;
             }
             methodsCached = true;  // Set AFTER all fields assigned

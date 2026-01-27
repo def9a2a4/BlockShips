@@ -739,12 +739,21 @@ public class ShipInstance {
                         throw e;  // Re-throw to be caught by outer handler
                     }
 
+                    // Track shulker immediately so we can clean it up if subsequent operations fail
+                    spawnedShulker = shulker;
+
                     // Mount shulker on carrier
                     carrier.addPassenger(shulker);
-                    spawnedShulker = shulker;
 
                     colliders.add(new CollisionBox(carrier, shulker, new Matrix4f(p.local), p.collision, currentBlockIndex));
                 } catch (Throwable e) {
+                    // Clean up any spawned entities to prevent resource leak
+                    if (carrier != null && carrier.isValid()) {
+                        carrier.remove();
+                    }
+                    if (spawnedShulker != null && spawnedShulker.isValid()) {
+                        spawnedShulker.remove();
+                    }
                     plugin.getLogger().severe("Collider spawn failed for block " + currentBlockIndex + ": " + e.getMessage());
                     e.printStackTrace();
                 }
@@ -992,16 +1001,16 @@ public class ShipInstance {
                 }
             }
 
+            // Verify passenger relationship is intact (can break on chunk reload)
+            // Must check EVERY tick, not just when moving, to fix broken relationships on stationary ships
+            if (cb.carrier.isValid() && cb.entity.isValid() && !cb.carrier.getPassengers().contains(cb.entity)) {
+                cb.carrier.addPassenger(cb.entity);
+            }
+
             if (isFirstTick || velocityMagnitude > 0.001) {
                 TeleportCompat.teleport(cb.carrier, carrierLoc);
                 // DO NOT teleport shulker directly - it causes block snapping
                 // Shulker should follow carrier as passenger
-
-                // Verify passenger relationship is intact (can break on chunk reload)
-                // Only re-add if both carrier and shulker are still valid
-                if (cb.carrier.isValid() && cb.entity.isValid() && !cb.carrier.getPassengers().contains(cb.entity)) {
-                    cb.carrier.addPassenger(cb.entity);
-                }
 
                 // Set carrier velocity for better client/server sync (skip on first tick)
                 if (!isFirstTick) {

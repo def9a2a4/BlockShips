@@ -477,7 +477,7 @@ public class ShipCollision {
             penetrationDepth = (float) zPenetration;
         }
 
-        // Return push force (normal * depth)
-        return workSeparationNormal.mul(penetrationDepth);
+        // Return push force (normal * depth) - create new vector to avoid mutation issues
+        return new Vector3f(workSeparationNormal).mul(penetrationDepth);
     }
 }
