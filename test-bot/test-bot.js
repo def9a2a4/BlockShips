@@ -343,6 +343,31 @@ async function mountShip(shipType = null) {
 }
 
 /**
+ * Custom dismount function that works correctly in 1.21.3+
+ * Mineflayer's built-in dismount() sends jump=true instead of shift=true
+ */
+function customDismount() {
+  if (!bot.vehicle) {
+    log('Warning: customDismount called but not mounted')
+    return false
+  }
+
+  // Check if using new player_input packet (1.21.3+)
+  if (bot.supportFeature('newPlayerInputPacket')) {
+    // Send shift=true to dismount (not jump=true as mineflayer does)
+    bot._client.write('player_input', {
+      inputs: {
+        shift: true
+      }
+    })
+  } else {
+    // Old format - use mineflayer's dismount
+    bot.dismount()
+  }
+  return true
+}
+
+/**
  * Steer ship using mineflayer's built-in vehicle control API
  * sideways: positive = left (A), negative = right (D)
  * forward: positive = forward (W), negative = backward (S)
@@ -420,7 +445,7 @@ async function runControlSequence() {
   log('Dismounting...')
   let dismountError = null
   try {
-    bot.dismount()
+    customDismount()
   } catch (e) {
     dismountError = e.message
     log(`Dismount error: ${e.message}`)

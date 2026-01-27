@@ -47,7 +47,7 @@ server: server-plugin-copy server-start
 TEST_SERVER_DIR := test-server
 DOWNLOAD_CACHE := .download-cache
 SERVER_VARIANT ?= paper
-MINECRAFT_VERSION ?= 1.21.11
+MINECRAFT_VERSION ?= 1.21.4
 
 $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar:
 	@mkdir -p $(DOWNLOAD_CACHE)/plugins
