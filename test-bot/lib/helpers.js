@@ -402,14 +402,20 @@ async function customDismount(bot, log) {
     return { success: true, method: 'delayed', usedFallback: false, startPos, endPos }
   }
 
-  // Check if we're actually still mounted (bot.vehicle might be stale)
+  // Helper to check if position changed significantly (bot.vehicle is buggy and never clears)
+  const posChanged = (p1, p2, threshold = 1.0) => {
+    return Math.abs(p1.x - p2.x) > threshold ||
+           Math.abs(p1.y - p2.y) > threshold ||
+           Math.abs(p1.z - p2.z) > threshold
+  }
+
+  // Check position after methods
   const checkPos = bot.entity.position.clone()
   if (log) log(`  Position after methods: ${checkPos.x.toFixed(2)}, ${checkPos.y.toFixed(2)}, ${checkPos.z.toFixed(2)}`)
-  if (log) log(`  bot.vehicle: ${bot.vehicle ? 'set' : 'null'}`)
 
-  // If bot.vehicle is null, we're done
-  if (!bot.vehicle) {
-    if (log) log('  Success: bot.vehicle is null')
+  // If position changed or bot.vehicle is null, we're done
+  if (!bot.vehicle || posChanged(startPos, checkPos)) {
+    if (log) log('  Success: position changed or vehicle cleared')
     return { success: true, method: 'delayed', usedFallback: false, startPos, endPos: checkPos }
   }
 
@@ -420,10 +426,9 @@ async function customDismount(bot, log) {
 
   const postDismountPos = bot.entity.position.clone()
   if (log) log(`  Position after /blockships dismount: ${postDismountPos.x.toFixed(2)}, ${postDismountPos.y.toFixed(2)}, ${postDismountPos.z.toFixed(2)}`)
-  if (log) log(`  bot.vehicle: ${bot.vehicle ? 'set' : 'null'}`)
 
-  if (!bot.vehicle) {
-    if (log) log('  Success via /blockships dismount')
+  if (!bot.vehicle || posChanged(startPos, postDismountPos)) {
+    if (log) log('  Success via /blockships dismount (position changed)')
     return { success: true, method: '/blockships dismount', usedFallback: true, startPos, endPos: postDismountPos }
   }
 
@@ -434,10 +439,9 @@ async function customDismount(bot, log) {
 
   const endPos = bot.entity.position.clone()
   if (log) log(`  Position after killentities: ${endPos.x.toFixed(2)}, ${endPos.y.toFixed(2)}, ${endPos.z.toFixed(2)}`)
-  if (log) log(`  bot.vehicle: ${bot.vehicle ? 'set' : 'null'}`)
 
   return {
-    success: !bot.vehicle,
+    success: !bot.vehicle || posChanged(startPos, endPos),
     method: 'killentities',
     usedFallback: true,
     startPos,
