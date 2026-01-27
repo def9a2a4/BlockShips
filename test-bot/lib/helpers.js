@@ -609,7 +609,7 @@ function findWheelBlock(bot, centerX, centerY, centerZ) {
   return null
 }
 
-async function placeWheelAtPosition(bot, wheelPos) {
+async function placeWheelAtPosition(bot, wheelPos, maxRetries = 10, retryDelay = 200) {
   const adjacentPositions = [
     { x: 0, y: -1, z: 0, face: new Vec3(0, 1, 0) },   // below
     { x: 0, y: 0, z: -1, face: new Vec3(0, 0, 1) },   // north
@@ -618,17 +618,23 @@ async function placeWheelAtPosition(bot, wheelPos) {
     { x: 1, y: 0, z: 0, face: new Vec3(-1, 0, 0) },   // east
   ]
 
-  for (const adj of adjacentPositions) {
-    const adjBlock = bot.blockAt(new Vec3(wheelPos.x + adj.x, wheelPos.y + adj.y, wheelPos.z + adj.z))
-    if (adjBlock && adjBlock.name !== 'air') {
-      await bot.lookAt(new Vec3(wheelPos.x + 0.5, wheelPos.y + 0.5, wheelPos.z + 0.5))
-      await sleep(200)
-      try {
-        await bot.placeBlock(adjBlock, adj.face)
-        return { success: true }
-      } catch (e) {
-        // Try next position
+  // Retry loop to wait for block sync (Purpur may be slower than Paper)
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    for (const adj of adjacentPositions) {
+      const adjBlock = bot.blockAt(new Vec3(wheelPos.x + adj.x, wheelPos.y + adj.y, wheelPos.z + adj.z))
+      if (adjBlock && adjBlock.name !== 'air') {
+        await bot.lookAt(new Vec3(wheelPos.x + 0.5, wheelPos.y + 0.5, wheelPos.z + 0.5))
+        await sleep(200)
+        try {
+          await bot.placeBlock(adjBlock, adj.face)
+          return { success: true }
+        } catch (e) {
+          // Try next position
+        }
       }
+    }
+    if (attempt < maxRetries - 1) {
+      await sleep(retryDelay)
     }
   }
   return { success: false, error: 'No adjacent blocks found for wheel placement' }
