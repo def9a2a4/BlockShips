@@ -6,6 +6,7 @@ const {
   createLogger,
   createTestTracker,
   sleep,
+  findWheelBlock,
   mountShip,
   customDismount,
   steerShip,
@@ -335,23 +336,9 @@ async function buildCustomShipBlocks(config) {
   }
 
   const wheelY = placeWheelOnTop ? buildY + 1 : buildY
-  let wheelBlock = bot.blockAt(new Vec3(RUNWAY_X, wheelY, RUNWAY_Z - 1))
+  const wheelBlock = findWheelBlock(bot, RUNWAY_X, wheelY, RUNWAY_Z - 1)
 
-  if (!wheelBlock || wheelBlock.name === 'air') {
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dz = -1; dz <= 1; dz++) {
-        for (let dy = 0; dy <= 1; dy++) {
-          const b = bot.blockAt(new Vec3(RUNWAY_X + dx, wheelY + dy, RUNWAY_Z - 1 + dz))
-          if (b && b.name === 'player_head') {
-            wheelBlock = b
-            break
-          }
-        }
-      }
-    }
-  }
-
-  if (!wheelBlock || wheelBlock.name === 'air') {
+  if (!wheelBlock) {
     return { success: false, error: 'Ship wheel not found after placement' }
   }
 
