@@ -38,7 +38,11 @@ public class ServerVersion {
             versionNumber = major * 10000 + minor * 100 + patch;
             LOGGER.info("[ServerVersion] Detected version: " + major + "." + minor + "." + patch);
         } catch (Exception e) {
-            LOGGER.warning("[ServerVersion] Could not parse version '" + bukkitVersion + "': " + e.getMessage());
+            LOGGER.severe("[ServerVersion] Could not parse version '" + bukkitVersion + "': " + e.getMessage() + " - defaulting to 1.21.11");
+            major = 1;
+            minor = 21;
+            patch = 11;
+            versionNumber = 12111;
         }
     }
 

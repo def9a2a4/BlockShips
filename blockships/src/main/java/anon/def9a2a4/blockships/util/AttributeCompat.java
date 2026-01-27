@@ -36,13 +36,9 @@ public class AttributeCompat {
 
         LOGGER.info("[AttributeCompat] Initializing attribute compatibility layer...");
 
-        // Resolve MAX_HEALTH - required for health regen, but don't throw if not found
-        MAX_HEALTH = resolveAttribute("max_health", "GENERIC_MAX_HEALTH", "MAX_HEALTH", false);
-        if (MAX_HEALTH != null) {
-            LOGGER.info("[AttributeCompat] MAX_HEALTH resolved successfully");
-        } else {
-            LOGGER.warning("[AttributeCompat] MAX_HEALTH could not be resolved - health regeneration will be disabled");
-        }
+        // Resolve MAX_HEALTH - required for health regen
+        MAX_HEALTH = resolveAttribute("max_health", "GENERIC_MAX_HEALTH", "MAX_HEALTH", true);
+        LOGGER.info("[AttributeCompat] MAX_HEALTH resolved successfully");
 
         // Resolve SCALE - optional (added in 1.20.5)
         SCALE = resolveAttribute("scale", "GENERIC_SCALE", "SCALE", false);

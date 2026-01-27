@@ -141,6 +141,15 @@ public class ShipInstance {
     private final Vector3f workCurrentWorldPos = new Vector3f();
     private final Vector3f workVelocity = new Vector3f();
 
+    // Reusable objects for getDisplayTransform() - reduces GC pressure in per-tick display updates
+    private final Vector3f workDisplayRot = new Vector3f();
+    private final Vector3f workDisplayTransformedRot = new Vector3f();
+    private final Matrix4f workDisplayDelta = new Matrix4f();
+
+    // Reusable Bukkit objects for updateCollisionPositions() - reduces GC pressure
+    private Location workCarrierLoc;  // Lazily initialized (needs World reference from vehicle)
+    private final org.bukkit.util.Vector workBukkitVelocity = new org.bukkit.util.Vector();
+
     /**
      * Private constructor for creating ShipInstance without spawning entities.
      * Used by fromState() factory method for chunk load recovery.
@@ -978,13 +987,15 @@ public class ShipInstance {
             // Teleport carrier to world position (including per-block offset)
             // The shulker rides as passenger and follows smoothly (ArmorStand) or choppily (Interaction)
             // Note: Carriers never rotate - only position changes (AABBs don't rotate, shulkers inherit zero rotation)
-            Location carrierLoc = currentVehicleLoc.clone().add(
-                workOffset.x + workPerBlockOffset.x,
-                workOffset.y + workPerBlockOffset.y,
-                workOffset.z + workPerBlockOffset.z
-            );
-            carrierLoc.setYaw(0);
-            carrierLoc.setPitch(0);
+            // Reuse carrier location to avoid allocation (lazily init if world changed)
+            if (workCarrierLoc == null || workCarrierLoc.getWorld() != currentVehicleLoc.getWorld()) {
+                workCarrierLoc = currentVehicleLoc.clone();
+            }
+            workCarrierLoc.setX(currentVehicleLoc.getX() + workOffset.x + workPerBlockOffset.x);
+            workCarrierLoc.setY(currentVehicleLoc.getY() + workOffset.y + workPerBlockOffset.y);
+            workCarrierLoc.setZ(currentVehicleLoc.getZ() + workOffset.z + workPerBlockOffset.z);
+            workCarrierLoc.setYaw(0);
+            workCarrierLoc.setPitch(0);
 
             // Only teleport if position actually changed (avoids collision jitter when idle)
             float velocityMagnitude = workVelocity.length();
@@ -1008,13 +1019,14 @@ public class ShipInstance {
             }
 
             if (isFirstTick || velocityMagnitude > 0.001) {
-                TeleportCompat.teleport(cb.carrier, carrierLoc);
+                TeleportCompat.teleport(cb.carrier, workCarrierLoc);
                 // DO NOT teleport shulker directly - it causes block snapping
                 // Shulker should follow carrier as passenger
 
                 // Set carrier velocity for better client/server sync (skip on first tick)
                 if (!isFirstTick) {
-                    cb.carrier.setVelocity(new org.bukkit.util.Vector(workVelocity.x, workVelocity.y, workVelocity.z));
+                    workBukkitVelocity.setX(workVelocity.x).setY(workVelocity.y).setZ(workVelocity.z);
+                    cb.carrier.setVelocity(workBukkitVelocity);
                 }
             }
 
@@ -1146,17 +1158,17 @@ public class ShipInstance {
             float deltaYaw = vehicle.getYaw() - spawnYaw;
             float deltaPitch = vehicle.getPitch();  // Pitch starts at 0, so no spawn offset needed
 
-            Vector3f vehicleRot = new Vector3f(
+            workDisplayRot.set(
                 (float) java.lang.Math.toRadians(-deltaYaw),
                 (float) java.lang.Math.toRadians(-deltaPitch),
                 0f
             );
-            Vector3f transformedRot = model.rotationTransform.transform(vehicleRot, new Vector3f());
-            Matrix4f R_delta = new Matrix4f()
-                .rotateY(transformedRot.x)
-                .rotateX(transformedRot.y)
-                .rotateZ(transformedRot.z);
-            R = new Matrix4f(R_delta).mul(R_initial);
+            model.rotationTransform.transform(workDisplayRot, workDisplayTransformedRot);
+            workDisplayDelta.identity()
+                .rotateY(workDisplayTransformedRot.x)
+                .rotateX(workDisplayTransformedRot.y)
+                .rotateZ(workDisplayTransformedRot.z);
+            R = new Matrix4f(workDisplayDelta).mul(R_initial);
         } else {
             // 1.21.9+: Only initial rotation, vehicle rotation is inherited from passenger
             R = R_initial;

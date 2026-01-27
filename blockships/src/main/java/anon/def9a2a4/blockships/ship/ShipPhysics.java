@@ -217,8 +217,8 @@ public class ShipPhysics {
         Location hullCheckLoc = reuseLocation(vehicleLoc);
         hullCheckLoc.setY(hullCheckY);
 
-        // Check water at hull and one block below (use workLocation2 for the below check)
-        Location belowHullLoc = reuseLocation2(hullCheckLoc);
+        // Check water at hull and one block below
+        Location belowHullLoc = hullCheckLoc.clone();
         belowHullLoc.subtract(0, 1, 0);
         boolean inWater = isWaterOrWaterlogged(hullCheckLoc.getBlock())
             || isWaterOrWaterlogged(belowHullLoc.getBlock());

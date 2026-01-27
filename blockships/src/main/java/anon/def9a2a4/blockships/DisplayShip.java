@@ -456,7 +456,14 @@ public class DisplayShip implements Listener {
                                     continue;
                                 }
 
-                                ShipPersistence.ShipState state = futures.get(i).join();
+                                ShipPersistence.ShipState state;
+                                try {
+                                    state = futures.get(i).join();
+                                } catch (Exception e) {
+                                    plugin.getLogger().warning("Failed to load metadata for ship " + shipId + ": " + e.getMessage());
+                                    failedRecovery.add(shipId);
+                                    continue;
+                                }
                                 if (state == null) {
                                     shipWorldData.removeFromChunkIndex(world, shipId, chunkX, chunkZ);
                                     continue;
@@ -1386,24 +1393,29 @@ public class DisplayShip implements Listener {
      * Must eject player BEFORE disconnect completes.
      */
     private void handlePlayerDisconnectOnShip(Player player) {
-        Entity vehicle = player.getVehicle();
-        if (vehicle == null) return;
-        if (!(vehicle instanceof Shulker shulker)) return;
+        try {
+            Entity vehicle = player.getVehicle();
+            if (vehicle == null) return;
+            if (!(vehicle instanceof Shulker shulker)) return;
 
-        Set<String> tags = shulker.getScoreboardTags();
-        if (!ShipTags.isShipEntity(tags)) return;
+            Set<String> tags = shulker.getScoreboardTags();
+            if (!ShipTags.isShipEntity(tags)) return;
 
-        // Eject player to prevent entity removal
-        shulker.removePassenger(player);
+            UUID shipId = ShipTags.extractShipId(tags);
+            int seatIndex = ShipTags.extractSeatIndex(tags);
 
-        // Free the seat (same logic as VehicleExitEvent)
-        UUID shipId = ShipTags.extractShipId(tags);
-        int seatIndex = ShipTags.extractSeatIndex(tags);
-        if (shipId != null && seatIndex >= 0) {
-            ShipInstance inst = ShipRegistry.byId(shipId);
-            if (inst != null) {
-                inst.freeSeat(seatIndex);
+            try {
+                shulker.removePassenger(player);
+            } finally {
+                if (shipId != null && seatIndex >= 0) {
+                    ShipInstance inst = ShipRegistry.byId(shipId);
+                    if (inst != null) {
+                        inst.freeSeat(seatIndex);
+                    }
+                }
             }
+        } catch (Exception e) {
+            plugin.getLogger().warning("Error handling player disconnect from ship: " + e.getMessage());
         }
     }
 

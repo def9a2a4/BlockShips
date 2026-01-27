@@ -32,6 +32,7 @@ public class ShipCollision {
     private final Vector3f workLateralForce = new Vector3f();
     private final Vector3f workForceDir = new Vector3f();
     private final Vector3f workSeparationNormal = new Vector3f();
+    private final Vector3f workTerrainForce = new Vector3f();  // For calculateTerrainCollisionForce
 
     public ShipCollision(ShipInstance ship) {
         this.ship = ship;
@@ -303,7 +304,7 @@ public class ShipCollision {
     private Vector3f calculateTerrainCollisionForce(CollisionBox cb) {
         org.bukkit.util.BoundingBox shulkerBox = cb.entity.getBoundingBox();
         World world = cb.entity.getWorld();
-        Vector3f totalForce = new Vector3f(0, 0, 0);
+        workTerrainForce.set(0, 0, 0);  // Reuse work vector instead of allocating
         int collisionCount = 0;
         ShipConfig config = ship.config;
 
@@ -339,7 +340,7 @@ public class ShipCollision {
                         if (force.lengthSquared() > config.minPenetrationDepth * config.minPenetrationDepth) {
                             // Scale force with ship speed (minimum 1.0 to preserve slow-ship behavior)
                             float speedFactor = Math.max(1.0f, Math.abs(ship.physics.currentSpeed) * config.terrainSpeedMultiplier);
-                            totalForce.add(force.mul(config.terrainCollisionStrength * speedFactor));
+                            workTerrainForce.add(force.mul(config.terrainCollisionStrength * speedFactor));
                             collisionCount++;
 
                             // Early termination: enough collision data gathered
@@ -354,10 +355,10 @@ public class ShipCollision {
 
         // Average the force if multiple collisions
         if (collisionCount > 0) {
-            totalForce.div(collisionCount);
+            workTerrainForce.div(collisionCount);
         }
 
-        return totalForce;
+        return workTerrainForce;
     }
 
     /**
