@@ -194,11 +194,33 @@ function customDismount(bot, log) {
     bot._client.write('player_input', {
       inputs: { shift: true }
     })
+  } else if (bot.supportFeature('inputsInSteerVehicle')) {
+    // 1.21.2: New Input record format in steer_vehicle packet
+    // Mineflayer's dismount() may send jump=true instead of sneak=true
+    bot._client.write('steer_vehicle', {
+      inputs: {
+        forward: false,
+        backward: false,
+        left: false,
+        right: false,
+        jump: false,
+        sneak: true,
+        sprint: false
+      }
+    })
   } else {
-    // Old format - use mineflayer's dismount
+    // Pre-1.21.2: Old format with unmount flag
     bot.dismount()
   }
   return true
+}
+
+async function waitForDismount(bot, timeoutMs = 3000) {
+  const startTime = Date.now()
+  while (bot.vehicle && Date.now() - startTime < timeoutMs) {
+    await sleep(100)
+  }
+  return bot.vehicle === null
 }
 
 function steerShip(bot, forward, sideways, jump, durationMs) {
@@ -372,6 +394,7 @@ module.exports = {
   findShulkers,
   mountShip,
   customDismount,
+  waitForDismount,
   steerShip,
 
   // Menu helpers

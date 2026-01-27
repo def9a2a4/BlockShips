@@ -8,6 +8,7 @@ const {
   sleep,
   mountShip,
   customDismount,
+  waitForDismount,
   steerShip,
   clickWheelMenu,
   createBot,
@@ -157,10 +158,9 @@ async function waitForWater(pos, maxRetries = 20, delayMs = 500) {
   return null
 }
 
-async function runControlSequence() {
-  const startPos = bot.vehicle
-    ? bot.vehicle.position.clone()
-    : bot.entity.position.clone()
+async function runControlSequence(startPos) {
+  // startPos should be captured BEFORE mounting (passed from caller)
+  // This avoids relying on bot.vehicle.position which doesn't update reliably
 
   log('Testing forward...')
   await steerShip(bot, 1.0, 0, false, 1000)
@@ -186,8 +186,6 @@ async function runControlSequence() {
   await steerShip(bot, -1.0, 0, true, 1000)
   await sleep(200)
 
-  const vehicleEndPos = bot.vehicle ? bot.vehicle.position.clone() : null
-
   log('Dismounting...')
   let dismountError = null
   try {
@@ -196,30 +194,22 @@ async function runControlSequence() {
     dismountError = e.message
     log(`Dismount error: ${e.message}`)
   }
-  await sleep(500)
 
-  let endPos = vehicleEndPos || bot.entity.position
-  let dx = endPos.x - startPos.x
-  let dy = endPos.y - startPos.y
-  let dz = endPos.z - startPos.z
-  let totalMovement = Math.abs(dx) + Math.abs(dy) + Math.abs(dz)
-
-  if (totalMovement < 0.1) {
-    log('Position invalid after dismount, trying killentities fallback...')
+  // Wait for dismount to complete (verify bot.vehicle === null)
+  const dismounted = await waitForDismount(bot, 3000)
+  if (!dismounted) {
+    log('Dismount timed out, trying killentities fallback...')
     bot.chat('/blockships killentities confirm')
     await sleep(1000)
-
-    const fallbackPos = bot.entity.position
-    dx = fallbackPos.x - startPos.x
-    dy = fallbackPos.y - startPos.y
-    dz = fallbackPos.z - startPos.z
-    totalMovement = Math.abs(dx) + Math.abs(dy) + Math.abs(dz)
-
-    if (totalMovement >= 0.1) {
-      dismountError = 'Failed to dismount (position recovered after killentities)'
-      log(`Fallback worked: movement=${totalMovement.toFixed(2)}`)
-    }
+    dismountError = 'Failed to dismount (timed out, used killentities)'
   }
+
+  // Use player position after dismount (more reliable than vehicle position)
+  const endPos = bot.entity.position.clone()
+  const dx = endPos.x - startPos.x
+  const dy = endPos.y - startPos.y
+  const dz = endPos.z - startPos.z
+  const totalMovement = Math.abs(dx) + Math.abs(dy) + Math.abs(dz)
 
   return { dx, dy, dz, totalMovement, dismountError }
 }
@@ -258,13 +248,16 @@ async function testShipControls(shipType) {
 
   await clearInventory()
 
+  // Capture position BEFORE mounting (vehicle position doesn't update reliably in mineflayer)
+  const startPos = bot.entity.position.clone()
+
   say('Mounting ship...')
   if (!await mountShip(bot, log)) {
     fail(shipType, 'Could not mount ship')
     return
   }
 
-  const { dx, dy, dz, totalMovement, dismountError } = await runControlSequence()
+  const { dx, dy, dz, totalMovement, dismountError } = await runControlSequence(startPos)
 
   say(`Movement: dX=${dx.toFixed(1)}, dY=${dy.toFixed(1)}, dZ=${dz.toFixed(1)}`)
 
@@ -406,13 +399,16 @@ async function testCustomShipBase(testName, buildConfig, isAirship = false) {
   say('Waiting for ship to spawn...')
   await sleep(3000)
 
+  // Capture position BEFORE mounting (vehicle position doesn't update reliably in mineflayer)
+  const startPos = bot.entity.position.clone()
+
   say(`Mounting ${testName.toLowerCase()}...`)
   if (!await mountShip(bot, log)) {
     fail(testName, 'Could not mount ship')
     return
   }
 
-  const { dx, dy, dz, totalMovement, dismountError } = await runControlSequence()
+  const { dx, dy, dz, totalMovement, dismountError } = await runControlSequence(startPos)
 
   say(`Movement: dX=${dx.toFixed(1)}, dY=${dy.toFixed(1)}, dZ=${dz.toFixed(1)}`)
 
