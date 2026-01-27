@@ -83,19 +83,29 @@ function createTestTracker(prefix, resultsFile = null, botGetter = null) {
     }
   }
 
-  const printSummary = () => {
+  const printSummary = async () => {
+    const bot = botGetter ? botGetter() : null
+    const chat = (msg) => { if (bot) bot.chat(msg) }
+
     log('')
     log('='.repeat(60))
     log('TEST RESULTS SUMMARY')
     log('='.repeat(60))
+    chat('=== TEST RESULTS ===')
+
     for (const result of state.results) {
       const status = result.passed ? '✓ PASS' : '✗ FAIL'
+      const shortStatus = result.passed ? 'PASS' : 'FAIL'
       const reason = result.reason ? ` - ${result.reason}` : ''
       log(`  ${status}: ${result.name}${reason}`)
+      chat(`${shortStatus}: ${result.name}${reason}`)
+      if (bot) await new Promise(r => setTimeout(r, 100)) // Small delay to avoid chat spam
     }
+
     log('='.repeat(60))
     log(`Total: ${state.passed} passed, ${state.failed} failed`)
     log('='.repeat(60))
+    chat(`Total: ${state.passed} passed, ${state.failed} failed`)
 
     if (resultsFile) {
       fs.appendFileSync(resultsFile, `\nTotal: ${state.passed} passed, ${state.failed} failed\n`)

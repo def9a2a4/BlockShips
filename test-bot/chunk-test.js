@@ -11,7 +11,6 @@ const {
   findShulkers,
   mountShip,
   customDismount,
-  waitForDismount,
   steerShip,
   cleanup,
   clickWheelMenu,
@@ -36,7 +35,7 @@ const CHUNK_LOAD_WAIT_MS = 2000
 // Logging
 const { log } = createLogger('CHUNK-TEST')
 const tracker = createTestTracker('CHUNK-TEST', null, () => bot)
-const { pass, fail } = tracker
+const { pass, fail, printSummary } = tracker
 
 // Test state
 let bot = null
@@ -219,8 +218,7 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   say(`Moved ${moveDistance.toFixed(1)} blocks`)
 
   // 2) Exit ship
-  customDismount(bot, log)
-  await waitForDismount(bot)
+  await customDismount(bot, log)
   await sleep(500)
 
   // 3) Check shulker positions AFTER dismount
@@ -300,7 +298,7 @@ async function testPostRecoverySteeringBase(testName, spawnFn, isAirship = false
   const moved = endPos.distanceTo(startPos)
   say(`Moved ${moved.toFixed(1)} blocks`)
 
-  customDismount(bot, log)
+  await customDismount(bot, log)
   await sleep(300)
 
   if (moved > 1.0) {
@@ -373,9 +371,7 @@ async function main() {
 
   await runAllTests()
 
-  log('')
-  log('='.repeat(50))
-  log(`Final Results: ${tracker.state.passed} passed, ${tracker.state.failed} failed`)
+  await printSummary()
 
   if (tracker.state.failed === 0) {
     log('Chunk tests PASSED')

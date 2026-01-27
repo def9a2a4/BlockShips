@@ -37,12 +37,12 @@ const RESULTS_FILE = path.join(__dirname, 'test-results.txt')
 const { log } = createLogger('TEST')
 const say = (msg) => { log(msg); bot.chat(msg) }
 
-// Test tracking
-const tracker = createTestTracker('TEST', RESULTS_FILE)
-const { pass, fail, printSummary } = tracker
-
 // Test state
 let bot = null
+
+// Test tracking (botGetter so pass/fail can chat)
+const tracker = createTestTracker('TEST', RESULTS_FILE, () => bot)
+const { pass, fail, printSummary } = tracker
 let runningTest = false
 
 // =============================================================================
@@ -487,7 +487,7 @@ async function main() {
   } else {
     await runAllTests()
 
-    printSummary()
+    await printSummary()
 
     if (tracker.state.failed === 0) {
       log('BlockShips test suite PASSED')
