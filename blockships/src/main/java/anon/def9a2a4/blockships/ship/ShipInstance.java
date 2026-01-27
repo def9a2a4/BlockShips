@@ -2152,37 +2152,7 @@ public class ShipInstance {
      * Rotation is snapped to the nearest 90-degree increment.
      */
     public void alignToGrid() {
-        Location loc = vehicle.getLocation();
-
-        // Snap position to nearest block corner (integer coordinates)
-        // Ships spawn at block corner positions (e.g., 5.0, 10.0, 8.0), not block centers
-        double x = java.lang.Math.round(loc.getX());
-        double y = java.lang.Math.round(loc.getY());
-        double z = java.lang.Math.round(loc.getZ());
-
-        // Snap yaw to nearest 90 degrees (0, 90, 180, 270)
-        float yaw = loc.getYaw();
-        yaw = yaw % 360;
-        if (yaw < 0) yaw += 360;
-        int cardinal = java.lang.Math.round(yaw / 90.0f) * 90;
-        float snappedYaw = cardinal % 360;
-
-        // Snap pitch to 0 (horizontal)
-        float snappedPitch = 0.0f;
-
-        // Set the new aligned location
-        Location aligned = new Location(loc.getWorld(), x, y, z, snappedYaw, snappedPitch);
-        TeleportCompat.teleport(vehicle, aligned);
-
-        // Update collision positions immediately so shulkers move with the ship
-        updateCollisionPositions();
-
-        // Reset velocity and rotation
-        vehicle.setVelocity(new org.bukkit.util.Vector(0, 0, 0));
-        physics.currentSpeed = 0.0f;
-        physics.currentRotationVelocity = 0.0f;
-        physics.currentYVelocity = 0.0f;
-        physics.collisionForce.set(0, 0, 0);
+        physics.alignToGrid();
     }
 
     // ========== Cannon System ==========

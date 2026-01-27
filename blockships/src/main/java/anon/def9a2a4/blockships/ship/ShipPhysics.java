@@ -363,26 +363,12 @@ public class ShipPhysics {
     }
 
     /**
-     * Snaps ship to block grid (integer coordinates, 90-degree rotation).
-     * Handles players standing on deck by teleporting them with the ship.
+     * Finds players standing on this ship's shulkers.
+     * @return Map of player to the shulker they're standing on
      */
-    public void alignToGrid() {
-        Location loc = ship.vehicle.getLocation();
-
-        // Snap position to nearest block corner
-        double x = Math.round(loc.getX());
-        double y = Math.round(loc.getY());
-        double z = Math.round(loc.getZ());
-
-        // Snap yaw to nearest 90 degrees
-        float yaw = loc.getYaw() % 360;
-        if (yaw < 0) yaw += 360;
-        int cardinal = Math.round(yaw / 90.0f) * 90;
-        float snappedYaw = cardinal % 360;
-        float snappedPitch = 0.0f;
-
-        // Find players standing on this ship's shulkers BEFORE moving
+    public Map<Player, Shulker> findPlayersOnDeck() {
         Map<Player, Shulker> playersOnDeck = new HashMap<>();
+        Location loc = ship.vehicle.getLocation();
         String shipTag = ShipTags.shipTag(ship.id);
 
         for (Player player : loc.getWorld().getPlayers()) {
@@ -412,6 +398,31 @@ public class ShipPhysics {
                 }
             }
         }
+
+        return playersOnDeck;
+    }
+
+    /**
+     * Snaps ship to block grid (integer coordinates, 90-degree rotation).
+     * Handles players standing on deck by teleporting them with the ship.
+     */
+    public void alignToGrid() {
+        Location loc = ship.vehicle.getLocation();
+
+        // Snap position to nearest block corner
+        double x = Math.round(loc.getX());
+        double y = Math.round(loc.getY());
+        double z = Math.round(loc.getZ());
+
+        // Snap yaw to nearest 90 degrees
+        float yaw = loc.getYaw() % 360;
+        if (yaw < 0) yaw += 360;
+        int cardinal = Math.round(yaw / 90.0f) * 90;
+        float snappedYaw = cardinal % 360;
+        float snappedPitch = 0.0f;
+
+        // Find players standing on deck BEFORE moving
+        Map<Player, Shulker> playersOnDeck = findPlayersOnDeck();
 
         // Set the new aligned location
         Location aligned = new Location(loc.getWorld(), x, y, z, snappedYaw, snappedPitch);
