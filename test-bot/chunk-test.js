@@ -182,21 +182,21 @@ async function spawnCustomAirshipAtFar() {
 // Test Functions
 // =============================================================================
 
-async function testBasicChunkCycle() {
-  say('=== TEST: Basic Chunk Cycle ===')
+async function testBasicChunkCycleBase(testName, spawnFn) {
+  say(`=== TEST: ${testName} ===`)
 
   await cleanup(bot)
   await setupFarRunway()
 
-  if (!await spawnShipAtFar()) {
-    fail('chunk_basic', 'Could not spawn ship')
+  if (!await spawnFn()) {
+    fail(testName, 'Could not spawn ship')
     return
   }
 
   // Verify ship exists
   const beforeShulkers = findShulkers(bot)
   if (beforeShulkers.length === 0) {
-    fail('chunk_basic', 'No ship found after spawn')
+    fail(testName, 'No ship found after spawn')
     return
   }
   say(`Found ${beforeShulkers.length} shulkers before cycle`)
@@ -212,20 +212,24 @@ async function testBasicChunkCycle() {
   say(`Found ${afterShulkers.length} shulkers after cycle`)
 
   if (afterShulkers.length > 0) {
-    pass('chunk_basic')
+    pass(testName)
   } else {
-    fail('chunk_basic', 'Ship not found after chunk cycle')
+    fail(testName, 'Ship not found after chunk cycle')
   }
 }
 
-async function testPositionPersistence() {
-  say('=== TEST: Position Persistence ===')
+async function testBasicChunkCycle() {
+  await testBasicChunkCycleBase('chunk_basic', spawnShipAtFar)
+}
+
+async function testPositionPersistenceBase(testName, spawnFn, isAirship = false) {
+  say(`=== TEST: ${testName} ===`)
 
   await cleanup(bot)
   await setupFarRunway()
 
-  if (!await spawnShipAtFar()) {
-    fail('chunk_persistence', 'Could not spawn ship')
+  if (!await spawnFn()) {
+    fail(testName, 'Could not spawn ship')
     return
   }
 
@@ -233,14 +237,14 @@ async function testPositionPersistence() {
   await sleep(300)
 
   if (!await mountShip(bot, log)) {
-    fail('chunk_persistence', 'Could not mount ship')
+    fail(testName, 'Could not mount ship')
     return
   }
 
-  // 1) Move ship north
-  say('Moving ship north...')
+  // 1) Move ship
+  say('Moving ship...')
   const startPos = bot.entity.position.clone()
-  await steerShip(bot, 1.0, 0, false, 3000)
+  await steerShip(bot, 1.0, 0, isAirship, 3000)
 
   // Stay in ship for 1s after finishing movement
   await sleep(1000)
@@ -260,7 +264,7 @@ async function testPositionPersistence() {
   say(`Recording ${beforePositions.length} shulker positions after dismount`)
 
   if (beforePositions.length === 0) {
-    fail('chunk_persistence', 'No shulkers found after dismount')
+    fail(testName, 'No shulkers found after dismount')
     return
   }
 
@@ -273,7 +277,7 @@ async function testPositionPersistence() {
   // 5) Check positions of all shulkers
   const afterShulkers = findShulkers(bot, 50)
   if (afterShulkers.length === 0) {
-    fail('chunk_persistence', 'Ship not found after cycle')
+    fail(testName, 'Ship not found after cycle')
     return
   }
 
@@ -281,23 +285,27 @@ async function testPositionPersistence() {
   const afterPositions = afterShulkers.map(s => s.position)
   const { foundNearby, minError } = findNearestPosition(afterPositions, beforePositions)
 
-  say(`Ship position error: ${minError.toFixed(2)} blocks`)
+  say(`Position error: ${minError.toFixed(2)} blocks`)
 
   if (foundNearby) {
-    pass('chunk_persistence')
+    pass(testName)
   } else {
-    fail('chunk_persistence', `Ship position shifted by ${minError.toFixed(2)} blocks (need <1)`)
+    fail(testName, `Position shifted by ${minError.toFixed(2)} blocks (need <1)`)
   }
 }
 
-async function testPostRecoverySteering() {
-  say('=== TEST: Post-Recovery Steering ===')
+async function testPositionPersistence() {
+  await testPositionPersistenceBase('chunk_persistence', spawnShipAtFar, false)
+}
+
+async function testPostRecoverySteeringBase(testName, spawnFn, isAirship = false) {
+  say(`=== TEST: ${testName} ===`)
 
   await cleanup(bot)
   await setupFarRunway()
 
-  if (!await spawnShipAtFar()) {
-    fail('chunk_steering', 'Could not spawn ship')
+  if (!await spawnFn()) {
+    fail(testName, 'Could not spawn ship')
     return
   }
 
@@ -313,14 +321,14 @@ async function testPostRecoverySteering() {
 
   // Try to mount recovered ship
   if (!await mountShip(bot, log)) {
-    fail('chunk_steering', 'Could not mount recovered ship')
+    fail(testName, 'Could not mount recovered ship')
     return
   }
 
   // Test steering
   const startPos = bot.entity.position.clone()
   say('Testing steering on recovered ship...')
-  await steerShip(bot, 1.0, 0, false, 2000)
+  await steerShip(bot, 1.0, 0, isAirship, 2000)
   await sleep(500)
 
   const endPos = bot.entity.position
@@ -331,10 +339,14 @@ async function testPostRecoverySteering() {
   await sleep(300)
 
   if (moved > 1.0) {
-    pass('chunk_steering')
+    pass(testName)
   } else {
-    fail('chunk_steering', 'Recovered ship did not respond to steering')
+    fail(testName, 'Recovered ship did not respond to steering')
   }
+}
+
+async function testPostRecoverySteering() {
+  await testPostRecoverySteeringBase('chunk_steering', spawnShipAtFar, false)
 }
 
 // =============================================================================
@@ -342,158 +354,15 @@ async function testPostRecoverySteering() {
 // =============================================================================
 
 async function testBasicChunkCycleAirship() {
-  say('=== TEST: Basic Chunk Cycle (Airship) ===')
-
-  await cleanup(bot)
-  await setupFarRunway()
-
-  if (!await spawnCustomAirshipAtFar()) {
-    fail('chunk_basic_airship', 'Could not spawn airship')
-    return
-  }
-
-  // Verify ship exists
-  const beforeShulkers = findShulkers(bot)
-  if (beforeShulkers.length === 0) {
-    fail('chunk_basic_airship', 'No airship found after spawn')
-    return
-  }
-  say(`Found ${beforeShulkers.length} shulkers before cycle`)
-
-  // Record ship position for teleporting back
-  const shipPos = bot.entity.position.clone()
-
-  // Force chunk cycle - teleport to origin, wait, return
-  await forceChunkCycle(shipPos)
-
-  // Verify ship still exists
-  const afterShulkers = findShulkers(bot)
-  say(`Found ${afterShulkers.length} shulkers after cycle`)
-
-  if (afterShulkers.length > 0) {
-    pass('chunk_basic_airship')
-  } else {
-    fail('chunk_basic_airship', 'Airship not found after chunk cycle')
-  }
+  await testBasicChunkCycleBase('chunk_basic_airship', spawnCustomAirshipAtFar)
 }
 
 async function testPositionPersistenceAirship() {
-  say('=== TEST: Position Persistence (Airship) ===')
-
-  await cleanup(bot)
-  await setupFarRunway()
-
-  if (!await spawnCustomAirshipAtFar()) {
-    fail('chunk_persistence_airship', 'Could not spawn airship')
-    return
-  }
-
-  bot.chat('/clear @s')
-  await sleep(300)
-
-  if (!await mountShip(bot, log)) {
-    fail('chunk_persistence_airship', 'Could not mount airship')
-    return
-  }
-
-  // 1) Move airship (forward + up)
-  say('Moving airship...')
-  const startPos = bot.entity.position.clone()
-  await steerShip(bot, 1.0, 0, true, 3000) // jump=true for airship ascent
-
-  // Stay in ship for 1s after finishing movement
-  await sleep(1000)
-
-  const movedPos = bot.entity.position.clone()
-  const moveDistance = movedPos.distanceTo(startPos)
-  say(`Moved ${moveDistance.toFixed(1)} blocks`)
-
-  // 2) Exit ship
-  customDismount(bot, log)
-  await waitForDismount(bot)
-  await sleep(500)
-
-  // 3) Check shulker positions AFTER dismount
-  const beforeShulkers = findShulkers(bot, 50)
-  const beforePositions = beforeShulkers.map(s => s.position.clone())
-  say(`Recording ${beforePositions.length} shulker positions after dismount`)
-
-  if (beforePositions.length === 0) {
-    fail('chunk_persistence_airship', 'No shulkers found after dismount')
-    return
-  }
-
-  // Use first shulker position for teleport reference
-  const shipPos = beforePositions[0].clone()
-
-  // 4) Teleport away, wait 5s, teleport back
-  await forceChunkCycle(shipPos)
-
-  // 5) Check positions of all shulkers
-  const afterShulkers = findShulkers(bot, 50)
-  if (afterShulkers.length === 0) {
-    fail('chunk_persistence_airship', 'Airship not found after cycle')
-    return
-  }
-
-  // Compare: check if ANY shulker is near expected position (1 block tolerance)
-  const afterPositions = afterShulkers.map(s => s.position)
-  const { foundNearby, minError } = findNearestPosition(afterPositions, beforePositions)
-
-  say(`Airship position error: ${minError.toFixed(2)} blocks`)
-
-  if (foundNearby) {
-    pass('chunk_persistence_airship')
-  } else {
-    fail('chunk_persistence_airship', `Airship position shifted by ${minError.toFixed(2)} blocks (need <1)`)
-  }
+  await testPositionPersistenceBase('chunk_persistence_airship', spawnCustomAirshipAtFar, true)
 }
 
 async function testPostRecoverySteeringAirship() {
-  say('=== TEST: Post-Recovery Steering (Airship) ===')
-
-  await cleanup(bot)
-  await setupFarRunway()
-
-  if (!await spawnCustomAirshipAtFar()) {
-    fail('chunk_steering_airship', 'Could not spawn airship')
-    return
-  }
-
-  // Record ship position before cycle
-  const shipPos = bot.entity.position.clone()
-
-  // Force chunk cycle BEFORE mounting
-  say('Forcing chunk cycle before mounting...')
-  await forceChunkCycle(shipPos)
-
-  bot.chat('/clear @s')
-  await sleep(300)
-
-  // Try to mount recovered airship
-  if (!await mountShip(bot, log)) {
-    fail('chunk_steering_airship', 'Could not mount recovered airship')
-    return
-  }
-
-  // Test steering (with jump for airship)
-  const startPos = bot.entity.position.clone()
-  say('Testing steering on recovered airship...')
-  await steerShip(bot, 1.0, 0, true, 2000)
-  await sleep(500)
-
-  const endPos = bot.entity.position
-  const moved = endPos.distanceTo(startPos)
-  say(`Moved ${moved.toFixed(1)} blocks`)
-
-  customDismount(bot, log)
-  await sleep(300)
-
-  if (moved > 1.0) {
-    pass('chunk_steering_airship')
-  } else {
-    fail('chunk_steering_airship', 'Recovered airship did not respond to steering')
-  }
+  await testPostRecoverySteeringBase('chunk_steering_airship', spawnCustomAirshipAtFar, true)
 }
 
 // =============================================================================

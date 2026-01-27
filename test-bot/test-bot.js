@@ -170,11 +170,8 @@ async function runControlSequence(startPos) {
   log('Dismounting...')
   let dismountError = null
   try {
-    const dismounted = await customDismount(bot, log)
-    if (!dismounted) {
-      log('All dismount methods failed, trying killentities fallback...')
-      bot.chat('/blockships killentities confirm')
-      await sleep(1000)
+    const result = await customDismount(bot, log)
+    if (result.usedFallback) {
       dismountError = 'Failed to dismount (used killentities fallback)'
     }
   } catch (e) {

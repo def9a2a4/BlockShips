@@ -300,8 +300,10 @@ async function mountShip(bot, log) {
 async function customDismount(bot, log) {
   if (!bot.vehicle) {
     if (log) log('Warning: customDismount called but not mounted')
-    return false
+    return { success: false, method: null, usedFallback: false }
   }
+
+  const startPos = bot.entity.position.clone()
 
   const quickWait = async (ms) => {
     const start = Date.now()
@@ -311,21 +313,77 @@ async function customDismount(bot, log) {
     return !bot.vehicle
   }
 
-  // Use mineflayer's built-in dismount - it correctly sends jump flag for vehicle exit
-  // Mineflayer sends: player_input { inputs: { jump: true } } for 1.21.6+
-  //                   steer_vehicle { sideways: 0, forward: 0, jump: 0x02 } for older versions
-  try {
-    bot.dismount()
-  } catch (e) {
-    if (log) log(`  bot.dismount() error: ${e.message}`)
+  // Try ALL dismount methods on ALL versions (200ms between each)
+  const methods = [
+    { name: 'bot.dismount()', fn: () => bot.dismount() },
+    { name: 'sneak control', fn: () => {
+      bot.setControlState('sneak', true)
+      setTimeout(() => bot.setControlState('sneak', false), 100)
+    }},
+    // Raw packet: player_input with shift (1.21.3+)
+    { name: 'raw player_input (shift)', fn: () => bot._client.write('player_input', {
+      forward: false, backward: false, left: false, right: false,
+      jump: false, shift: true, sprint: false
+    })},
+    // Raw packet: steer_vehicle with unmount (pre-1.21.2)
+    { name: 'raw steer_vehicle (unmount)', fn: () => bot._client.write('steer_vehicle', {
+      sideways: 0, forward: 0, jump: 0, unmount: 1
+    })},
+  ]
+
+  // Try each method with 200ms wait
+  for (const method of methods) {
+    if (log) log(`  Trying: ${method.name}`)
+    try {
+      method.fn()
+    } catch (e) {
+      if (log) log(`    Error: ${e.message}`)
+    }
+
+    if (await quickWait(200)) {
+      const endPos = bot.entity.position.clone()
+      if (log) log(`  Success via ${method.name}`)
+      return { success: true, method: method.name, usedFallback: false, startPos, endPos }
+    }
   }
 
+  // Wait 1s for any delayed server response
+  if (log) log('  Waiting 1s for delayed dismount...')
   if (await quickWait(1000)) {
-    return true
+    const endPos = bot.entity.position.clone()
+    return { success: true, method: 'delayed', usedFallback: false, startPos, endPos }
   }
 
-  if (log) log('  Dismount did not complete within timeout')
-  return false
+  // Check position before fallback
+  const preKillPos = bot.entity.position.clone()
+  if (log) log(`  Position before fallback: ${preKillPos.x.toFixed(2)}, ${preKillPos.y.toFixed(2)}, ${preKillPos.z.toFixed(2)}`)
+
+  // Fallback 1: /blockships dismount command
+  if (log) log('  Trying /blockships dismount...')
+  bot.chat('/blockships dismount')
+  if (await quickWait(1000)) {
+    const endPos = bot.entity.position.clone()
+    if (log) log(`  Success via /blockships dismount`)
+    return { success: true, method: '/blockships dismount', usedFallback: true, startPos, preKillPos, endPos }
+  }
+
+  // Fallback 2: kill entities
+  if (log) log('  All methods failed, using killentities fallback...')
+  bot.chat('/blockships killentities confirm')
+  await sleep(1000)
+
+  // Check position after fallback
+  const endPos = bot.entity.position.clone()
+  if (log) log(`  Position after fallback: ${endPos.x.toFixed(2)}, ${endPos.y.toFixed(2)}, ${endPos.z.toFixed(2)}`)
+
+  return {
+    success: !bot.vehicle,
+    method: 'killentities',
+    usedFallback: true,
+    startPos,
+    preKillPos,
+    endPos
+  }
 }
 
 async function waitForDismount(bot, timeoutMs = 3000) {
