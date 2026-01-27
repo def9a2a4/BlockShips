@@ -4,6 +4,8 @@ const {
   createSay,
   createTestTracker,
   sleep,
+  clearInventory,
+  AIRSHIP_BLOCKS,
   findShulkers,
   findWheelBlock,
   mountShip,

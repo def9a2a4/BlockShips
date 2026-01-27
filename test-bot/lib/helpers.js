@@ -119,6 +119,76 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+async function clearInventory(bot) {
+  bot.chat('/clear @s')
+  await sleep(300)
+}
+
+// =============================================================================
+// Ship Configurations (layer-based)
+// =============================================================================
+
+const CUSTOM_SHIP = {
+  layers: [
+    ["P P P",
+     "P P P",
+     "P P P"],
+    ["- - -",
+     "- W -",
+     "- - -"]
+  ],
+  blocks: {
+    'P': 'oak_planks',
+    'W': 'wheel'
+  }
+}
+
+const CUSTOM_AIRSHIP = {
+  layers: [
+    ["G P G",
+     "P W P",
+     "G P G"]
+  ],
+  blocks: {
+    'G': 'glowstone',
+    'P': 'oak_planks',
+    'W': 'wheel'
+  }
+}
+
+async function buildShipFromLayers(bot, config, centerX, centerY, centerZ) {
+  const { layers, blocks } = config
+  let wheelPos = null
+
+  for (let y = 0; y < layers.length; y++) {
+    const layer = layers[y]
+    for (let z = 0; z < layer.length; z++) {
+      const row = layer[z].split(' ')
+      for (let x = 0; x < row.length; x++) {
+        const char = row[x]
+        if (char === '-' || char === '') continue
+
+        const material = blocks[char]
+        if (!material) continue
+
+        const offsetX = x - Math.floor(row.length / 2)
+        const offsetZ = z - Math.floor(layer.length / 2)
+        const blockX = centerX + offsetX
+        const blockY = centerY + y
+        const blockZ = centerZ + offsetZ
+
+        if (material === 'wheel') {
+          wheelPos = { x: blockX, y: blockY, z: blockZ }
+        } else {
+          bot.chat(`/setblock ${blockX} ${blockY} ${blockZ} minecraft:${material}`)
+        }
+      }
+    }
+  }
+  await sleep(500)
+  return wheelPos
+}
+
 // =============================================================================
 // Ship Helpers
 // =============================================================================
@@ -480,6 +550,12 @@ module.exports = {
 
   // Utilities
   sleep,
+  clearInventory,
+
+  // Ship configs
+  CUSTOM_SHIP,
+  CUSTOM_AIRSHIP,
+  buildShipFromLayers,
 
   // Ship helpers
   findShulkers,
