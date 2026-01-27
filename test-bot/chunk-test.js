@@ -200,6 +200,9 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   bot.chat('/clear @s')
   await sleep(300)
 
+  // Capture position BEFORE mounting (mineflayer position doesn't update while riding)
+  const startPos = bot.entity.position.clone()
+
   if (!await mountShip(bot, log)) {
     fail(testName, 'Could not mount ship')
     return
@@ -207,19 +210,19 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
 
   // 1) Move ship
   say('Moving ship...')
-  const startPos = bot.entity.position.clone()
   await steerShip(bot, 1.0, 0, isAirship, 3000)
 
-  // Stay in ship for 1s after finishing movement
-  await sleep(1000)
+  // Wait longer for ship to settle before dismounting
+  await sleep(2000)
 
+  // 2) Exit ship FIRST, then measure position (same approach as test-bot.js)
+  await customDismount(bot, log)
+  await sleep(500)
+
+  // Record position after dismounting - use this for teleport back
   const movedPos = bot.entity.position.clone()
   const moveDistance = movedPos.distanceTo(startPos)
   say(`Moved ${moveDistance.toFixed(1)} blocks`)
-
-  // 2) Exit ship
-  await customDismount(bot, log)
-  await sleep(500)
 
   // 3) Check shulker positions AFTER dismount
   const beforeShulkers = findShulkers(bot, 50)
@@ -231,11 +234,8 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
     return
   }
 
-  // Use first shulker position for teleport reference
-  const shipPos = beforePositions[0].clone()
-
-  // 4) Teleport away, wait 5s, teleport back
-  await forceChunkCycle(shipPos)
+  // 4) Teleport away, wait, teleport back to recorded position
+  await forceChunkCycle(movedPos)
 
   // 5) Check positions of all shulkers
   const afterShulkers = findShulkers(bot, 50)
@@ -282,6 +282,9 @@ async function testPostRecoverySteeringBase(testName, spawnFn, isAirship = false
   bot.chat('/clear @s')
   await sleep(300)
 
+  // Capture position BEFORE mounting (mineflayer position doesn't update while riding)
+  const startPos = bot.entity.position.clone()
+
   // Try to mount recovered ship
   if (!await mountShip(bot, log)) {
     fail(testName, 'Could not mount recovered ship')
@@ -289,17 +292,17 @@ async function testPostRecoverySteeringBase(testName, spawnFn, isAirship = false
   }
 
   // Test steering
-  const startPos = bot.entity.position.clone()
   say('Testing steering on recovered ship...')
   await steerShip(bot, 1.0, 0, isAirship, 2000)
   await sleep(500)
 
+  // Dismount FIRST, then measure position (same approach as test-bot.js)
+  await customDismount(bot, log)
+  await sleep(300)
+
   const endPos = bot.entity.position
   const moved = endPos.distanceTo(startPos)
   say(`Moved ${moved.toFixed(1)} blocks`)
-
-  await customDismount(bot, log)
-  await sleep(300)
 
   if (moved > 1.0) {
     pass(testName)
