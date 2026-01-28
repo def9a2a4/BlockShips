@@ -30,6 +30,10 @@
 - allow setting extra colliders in a model. have this just be another list at the end, separate from blocks and items
   - this is useful for large balloons. the balloon might be a giant item display entity and we might want to have one or more large colliders for it
 
+- set `camera_distance` attribute on shulkers the player rides to modify third person camera distance when riding ships.
+  - configurable values for prefab ships
+  - custom ships: possibly add buttons in the menu, or a separate menu GUI, for adjusting this, since trying to determine it from the ship is hard
+  - see https://minecraft.wiki/w/Attribute#camera_distance
 
 
 ## MAYBE
