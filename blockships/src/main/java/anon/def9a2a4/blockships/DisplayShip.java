@@ -1096,6 +1096,9 @@ public class DisplayShip implements Listener {
 
     @EventHandler
     public void onShulkerClick(PlayerInteractEntityEvent e) {
+        // Only process main hand interactions to prevent double-firing
+        if (e.getHand() != org.bukkit.inventory.EquipmentSlot.HAND) return;
+
         Entity clicked = e.getRightClicked();
         Player player = e.getPlayer();
 
@@ -1158,6 +1161,21 @@ public class DisplayShip implements Listener {
 
         ShipInstance inst = ShipRegistry.byId(shipId);
         if (inst == null || !inst.vehicle.isValid()) return;
+
+        // Check if player is holding a ship wheel - show info message
+        if (isShipWheel(player.getInventory().getItemInMainHand())) {
+            if ("custom".equals(inst.shipType)) {
+                player.sendMessage("§eShip wheels cannot be added to assembled ships. " +
+                    "Use the existing wheel (sneak + right-click) to access the ship menu. " +
+                    "Enter this ship by right-clicking with an empty hand.");
+            } else {
+                player.sendMessage("§eShip wheels are for creating custom ships from blocks you build. " +
+                    "This is a prefab ship - these are spawned from ship kits crafted at a crafting table. " +
+                    "You can enter this ship by right-clicking with an empty hand.");
+            }
+            e.setCancelled(true);
+            return;
+        }
 
         // Debug tool: if player holds echo shard, show collision info
         if (player.getInventory().getItemInMainHand().getType() == Material.ECHO_SHARD) {
