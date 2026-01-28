@@ -85,6 +85,8 @@ test-server-setup: test-server-plugin-copy
 	else \
 		printf 'settings:\n  connection-throttle: -1\n' > $(TEST_SERVER_DIR)/bukkit.yml; \
 	fi
+	@mkdir -p $(TEST_SERVER_DIR)/plugins/bStats
+	@printf 'enabled: false\nserverUuid: "00000000-0000-0000-0000-000000000000"\nlogFailedRequests: false\nlogSentData: false\nlogResponseStatusText: false\n' > $(TEST_SERVER_DIR)/plugins/bStats/config.yml
 
 $(DOWNLOAD_CACHE)/paper-%.jar:
 	@mkdir -p $(DOWNLOAD_CACHE)
