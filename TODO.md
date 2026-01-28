@@ -45,6 +45,7 @@
   - add an extra mast collider at the top of the mast, set that as a seat
 
 - ship info should show number of seats in ship info
+  - add a "highlight seats" button which adds particles around seats (blocks or shulkers) when clicked. should work for both prefab and custom ships
 
 ## HARDER
 
