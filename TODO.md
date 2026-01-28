@@ -1,9 +1,21 @@
 # BUGS
 
-- wall banner rendering broken
-- prefab ship (medium) needs more seats
-  - two on the sides
-  - add an extra mast collider at the top of the mast, set that as a seat
+## SHORT TERM
+
+- banner rendering broken
+  - floor banners not rotated correctly
+  - position and rotation of wall banners is off -- this used to work at some point?
+  - significant duplication in this code path, refactor it
+
+- fix health display on shulkers -- should show current/max health. Since some ships have a *lot* of health:
+  - if total health under 20 hearts (40 HP?), show directly as hearts
+  - if total health over 20 hearts, scale max health to 20 and show a percentage
+
+- ladder duplication bug: when supporting blocks get removed, the blocks supported by them get dropped as items
+  - filter for blocks that need to be supported and remove those first (ladders, torches, signs, etc)
+  - still edge cases where blocks that need support are supporting other blocks (eg signs on top of signs) but this is acceptable for now
+
+## LONG TERM
 
 - ShipRegistry uses non-thread-safe HashMap but is accessed from multiple threads (chunk events, periodic saves). Use ConcurrentHashMap to prevent ConcurrentModificationException.
 - (pre-1.21.9) Rotation logic bug - delta rotation math in ShipInstance.java:1110-1130 has inconsistencies, displays may rotate incorrectly
@@ -13,28 +25,40 @@
 - ship to ship collisions not working, temporarily disabled
 - fix heads on walls display and colliders
 - multiple ships wheels is buggy?
-- ladder duplication bug
 - loading colliders for really large ships sometimes goes wrong
-- fix health display
+
 
 
 # FEATURES
 
-- implement furnaces (normal furnaces) on ships
-- add TileEntity serialization for campfires, chiseled bookshelves, decorated pots
+## SHORT TERM
+
+- when a player tries to right click on a prefab ship with a ship wheel, show an error message explaining the difference.
+
+- set `camera_distance` attribute on shulkers the player rides to modify third person camera distance when riding ships.
+  - configurable values for prefab ships
+  - custom ships: possibly add buttons in the menu, or a separate menu GUI, for adjusting this, since trying to determine it from the ship is hard
+  - see https://minecraft.wiki/w/Attribute#camera_distance
+
+- prefab ship (medium) needs more seats
+  - two on the sides
+  - add an extra mast collider at the top of the mast, set that as a seat
+
+- ship info should show number of seats in ship info
+
+## HARDER
+
 - custom ship stats:
   - base acceleration/rotation speed depends on total mass.
   - "sails" (banners, wool blocks) increase acceleration/rotation speed
   - any blast furnaces connected via "copper network" to ships wheel will use fuel to increase acceleration/max speed/etc
   - stats (fuel, number of "engines") displayed in ship info
 
+- implement furnaces (normal furnaces) on ships
+- add TileEntity serialization for campfires, chiseled bookshelves, decorated pots, signs, etc?
+
 - allow setting extra colliders in a model. have this just be another list at the end, separate from blocks and items
   - this is useful for large balloons. the balloon might be a giant item display entity and we might want to have one or more large colliders for it
-
-- set `camera_distance` attribute on shulkers the player rides to modify third person camera distance when riding ships.
-  - configurable values for prefab ships
-  - custom ships: possibly add buttons in the menu, or a separate menu GUI, for adjusting this, since trying to determine it from the ship is hard
-  - see https://minecraft.wiki/w/Attribute#camera_distance
 
 
 ## MAYBE
