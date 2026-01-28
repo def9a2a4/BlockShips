@@ -1498,6 +1498,7 @@ public class DisplayShip implements Listener {
             inst.destroyAndDropItem();
         } else {
             inst.vehicle.setHealth(newHealth);
+            inst.syncSeatShulkerHealth(newHealth);
         }
     }
 
@@ -1566,6 +1567,7 @@ public class DisplayShip implements Listener {
             inst.destroyAndDropItem();
         } else {
             inst.vehicle.setHealth(newHealth);
+            inst.syncSeatShulkerHealth(newHealth);
         }
 
         // Remove projectile (it would normally bounce/do nothing)

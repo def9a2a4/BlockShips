@@ -701,6 +701,17 @@ public class ShipInstance {
                                         s.addScoreboardTag(ShipTags.seatTag(seatIdx));
                                         // Store reference in seatShulkers list for fast lookup
                                         seatShulkers.set(seatIdx, s);
+                                        // Set health attributes for HUD display when riding
+                                        // If maxHealth <= 40, show directly; otherwise scale to 20 hearts
+                                        double shulkerMaxHealth = model.maxHealth <= 40 ? model.maxHealth : 40.0;
+                                        org.bukkit.attribute.Attribute maxHealthAttr = anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth();
+                                        if (maxHealthAttr != null) {
+                                            org.bukkit.attribute.AttributeInstance attr = s.getAttribute(maxHealthAttr);
+                                            if (attr != null) {
+                                                attr.setBaseValue(shulkerMaxHealth);
+                                            }
+                                        }
+                                        s.setHealth(shulkerMaxHealth);  // Start at full health
                                         break;
                                     }
                                 }
@@ -1078,6 +1089,11 @@ public class ShipInstance {
                         double regenPerTick = model.healthRegenPerSecond / 20.0;
                         double newHealth = java.lang.Math.min(currentHealth + regenPerTick, maxHealth);
                         vehicle.setHealth(newHealth);
+
+                        // Sync seat shulker health for HUD display (only if health changed)
+                        if (newHealth != currentHealth) {
+                            syncSeatShulkerHealth(newHealth);
+                        }
 
                         // Check for ship destruction
                         if (currentHealth <= 0) {
@@ -1470,6 +1486,38 @@ public class ShipInstance {
             }
             // Snap position and rotation to reduce floating-point jitter
             physics.snapToFineGrid();
+        }
+    }
+
+    /**
+     * Syncs seat shulker health to match ship health for HUD display when riding.
+     * If maxHealth <= 40, health is shown directly (1:1 mapping).
+     * If maxHealth > 40, health is scaled to 20 hearts max (40 HP).
+     */
+    public void syncSeatShulkerHealth(double currentHealth) {
+        double maxHealth = model.maxHealth;
+        double shulkerMaxHealth;
+        double shulkerCurrentHealth;
+
+        if (maxHealth <= 40) {
+            shulkerMaxHealth = maxHealth;
+            shulkerCurrentHealth = java.lang.Math.max(0, currentHealth);
+        } else {
+            shulkerMaxHealth = 40.0; // 20 hearts
+            shulkerCurrentHealth = java.lang.Math.max(0, (currentHealth / maxHealth) * 40.0);
+        }
+
+        org.bukkit.attribute.Attribute maxHealthAttr = anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth();
+        for (Shulker seat : seatShulkers) {
+            if (seat != null && seat.isValid()) {
+                if (maxHealthAttr != null) {
+                    org.bukkit.attribute.AttributeInstance attr = seat.getAttribute(maxHealthAttr);
+                    if (attr != null) {
+                        attr.setBaseValue(shulkerMaxHealth);
+                    }
+                }
+                seat.setHealth(shulkerCurrentHealth);
+            }
         }
     }
 
