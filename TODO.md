@@ -2,16 +2,16 @@
 
 ## SHORT TERM
 
-- banner rendering broken
+- [ ] banner rendering broken
   - floor banners not rotated correctly
   - position and rotation of wall banners is off -- this used to work at some point?
   - significant duplication in this code path, refactor it
 
-- fix health display on shulkers -- should show current/max health. Since some ships have a *lot* of health:
+- [ ] fix health display on shulkers -- should show current/max health. Since some ships have a *lot* of health:
   - if total health under 20 hearts (40 HP?), show directly as hearts
   - if total health over 20 hearts, scale max health to 20 and show a percentage
 
-- ladder duplication bug: when supporting blocks get removed, the blocks supported by them get dropped as items
+- [ ] ladder duplication bug: when supporting blocks get removed, the blocks supported by them get dropped as items
   - filter for blocks that need to be supported and remove those first (ladders, torches, signs, etc)
   - still edge cases where blocks that need support are supporting other blocks (eg signs on top of signs) but this is acceptable for now
 
@@ -33,18 +33,18 @@
 
 ## SHORT TERM
 
-- when a player tries to right click on a prefab ship with a ship wheel, show an error message explaining the difference.
+- [x] when a player tries to right click on a prefab ship with a ship wheel, show an error message explaining the difference.
 
-- set `camera_distance` attribute on shulkers the player rides to modify third person camera distance when riding ships.
+- [ ] set `camera_distance` attribute on shulkers the player rides to modify third person camera distance when riding ships.
   - configurable values for prefab ships
   - custom ships: possibly add buttons in the menu, or a separate menu GUI, for adjusting this, since trying to determine it from the ship is hard
   - see https://minecraft.wiki/w/Attribute#camera_distance
 
-- prefab ship (medium) needs more seats
+- [ ] prefab ship (medium) needs more seats
   - two on the sides
   - add an extra mast collider at the top of the mast, set that as a seat
 
-- ship info should show number of seats in ship info
+- [ ] ship info should show number of seats in ship info
   - add a "highlight seats" button which adds particles around seats (blocks or shulkers) when clicked. should work for both prefab and custom ships
 
 ## HARDER
