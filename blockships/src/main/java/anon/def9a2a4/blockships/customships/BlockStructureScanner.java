@@ -486,7 +486,8 @@ public class BlockStructureScanner {
         // Calculate health from positive block weights (heavier blocks = more health)
         // Blocks with negative/zero weight don't reduce health, just contribute nothing
         double maxHealth = Math.min(1024.0, Math.max(1.0, totalPositiveWeight));
-        double healthRegenPerSecond = 0.5;
+        // TODO: healthRegenPerSecond may be modified in the future by properties of the ship
+        double healthRegenPerSecond = 1.0;
 
         // Calculate center of volume (only from blocks with weight)
         Vector3f centerOfVolume = weightedBlockCount > 0

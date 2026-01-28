@@ -2,6 +2,7 @@ package anon.def9a2a4.blockships.ship;
 
 import anon.def9a2a4.blockships.ShipConfig;
 import anon.def9a2a4.blockships.ShipTags;
+import anon.def9a2a4.blockships.util.TeleportCompat;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Sound;
@@ -33,8 +34,48 @@ public class ShipPhysics {
     // Sound cooldown (ticks until next sound can play)
     private int soundCooldown = 0;
 
+    // Reusable Locations for physics calculations - reduces GC pressure
+    private Location workLocation = null;
+    private Location workLocation2 = null;  // Second work location for buoyancy (hull check vs water scan)
+
     public ShipPhysics(ShipInstance ship) {
         this.ship = ship;
+    }
+
+    /**
+     * Sets the work location to match the given location (lazy init).
+     * Reuses the same Location object to avoid allocations.
+     */
+    private Location reuseLocation(Location source) {
+        if (workLocation == null) {
+            workLocation = source.clone();
+        } else {
+            workLocation.setWorld(source.getWorld());
+            workLocation.setX(source.getX());
+            workLocation.setY(source.getY());
+            workLocation.setZ(source.getZ());
+            workLocation.setYaw(source.getYaw());
+            workLocation.setPitch(source.getPitch());
+        }
+        return workLocation;
+    }
+
+    /**
+     * Sets the second work location to match the given location (lazy init).
+     * Used when two separate locations are needed simultaneously (e.g., buoyancy).
+     */
+    private Location reuseLocation2(Location source) {
+        if (workLocation2 == null) {
+            workLocation2 = source.clone();
+        } else {
+            workLocation2.setWorld(source.getWorld());
+            workLocation2.setX(source.getX());
+            workLocation2.setY(source.getY());
+            workLocation2.setZ(source.getZ());
+            workLocation2.setYaw(source.getYaw());
+            workLocation2.setPitch(source.getPitch());
+        }
+        return workLocation2;
     }
 
     /**
@@ -69,8 +110,8 @@ public class ShipPhysics {
                 dragMultiplier = config.idleDrag;
             }
 
-            // Apply extra drag in water
-            if (isWaterOrWaterlogged(vehicleLoc.clone().subtract(0, 0.5, 0).getBlock())) {
+            // Apply extra drag in water (reuse work location)
+            if (isWaterOrWaterlogged(reuseLocation(vehicleLoc).subtract(0, 0.5, 0).getBlock())) {
                 dragMultiplier *= 0.98f;
             }
 
@@ -99,14 +140,14 @@ public class ShipPhysics {
         boolean hasVerticalMovement = Math.abs(currentYVelocity) > 0.001f;
 
         if (hasHorizontalMovement || hasVerticalMovement) {
-            Location newLoc = vehicleLoc.clone();
+            Location newLoc = reuseLocation(vehicleLoc);
             if (hasHorizontalMovement) {
                 newLoc.add(forwardX * currentSpeed, 0, forwardZ * currentSpeed);
             }
             if (hasVerticalMovement) {
                 newLoc.add(0, currentYVelocity, 0);
             }
-            ship.vehicle.teleport(newLoc);
+            TeleportCompat.teleport(ship.vehicle, newLoc);
         }
 
         // Update rotation based on input state
@@ -140,7 +181,7 @@ public class ShipPhysics {
             float newYaw = ship.vehicle.getYaw() + currentRotationVelocity;
             Location newLoc = ship.vehicle.getLocation();
             newLoc.setYaw(newYaw);
-            ship.vehicle.teleport(newLoc);
+            TeleportCompat.teleport(ship.vehicle, newLoc);
         }
 
         // Play movement sounds
@@ -171,15 +212,21 @@ public class ShipPhysics {
         ShipConfig config = ship.config;
 
         // For custom ships, check water at the ship's lowest point (hull), not at the wheel
+        // Use workLocation for hull check position
         double hullCheckY = vehicleLoc.getY() + ship.model.minY;
-        Location hullCheckLoc = vehicleLoc.clone();
+        Location hullCheckLoc = reuseLocation(vehicleLoc);
         hullCheckLoc.setY(hullCheckY);
+
+        // Check water at hull and one block below
+        Location belowHullLoc = hullCheckLoc.clone();
+        belowHullLoc.subtract(0, 1, 0);
         boolean inWater = isWaterOrWaterlogged(hullCheckLoc.getBlock())
-            || isWaterOrWaterlogged(hullCheckLoc.clone().subtract(0, 1, 0).getBlock());
+            || isWaterOrWaterlogged(belowHullLoc.getBlock());
 
         if (inWater) {
             // Find water surface Y level by scanning a fixed column
-            Location waterCheckLoc = vehicleLoc.clone();
+            // Reuse workLocation2 for water surface scan (hullCheckLoc/workLocation still has hull position)
+            Location waterCheckLoc = reuseLocation2(vehicleLoc);
             int startY = (int) Math.floor(vehicleLoc.getY()) + config.waterScanAbove;
             int endY = (int) Math.floor(hullCheckY) - config.waterScanBelow;
             waterCheckLoc.setY(startY);
@@ -225,7 +272,10 @@ public class ShipPhysics {
         } else {
             // Check ground at ship's lowest point (hull), not at the wheel
             // Use small offset (0.1) so hull settles just into the ground block
-            Material belowHullBlock = hullCheckLoc.clone().subtract(0, 0.1, 0).getBlock().getType();
+            // hullCheckLoc (workLocation) still has hull Y, use workLocation2 for below check
+            Location belowCheck = reuseLocation2(hullCheckLoc);
+            belowCheck.subtract(0, 0.1, 0);
+            Material belowHullBlock = belowCheck.getBlock().getType();
             if (belowHullBlock == Material.AIR || !belowHullBlock.isSolid()) {
                 // Fall if hull not on ground
                 currentYVelocity -= 0.08f;  // Gravity
@@ -234,6 +284,62 @@ public class ShipPhysics {
                 currentYVelocity = 0.0f;
             }
         }
+    }
+
+    /**
+     * Gets the neutral buoyancy Y position for water ships.
+     * @return The target Y position if in water, null if not in water
+     */
+    public Double getNeutralBuoyancyY() {
+        Location vehicleLoc = ship.vehicle.getLocation();
+        ShipConfig config = ship.config;
+
+        // Check water at hull
+        double hullCheckY = vehicleLoc.getY() + ship.model.minY;
+        Location hullCheckLoc = reuseLocation(vehicleLoc);
+        hullCheckLoc.setY(hullCheckY);
+
+        Location belowHullLoc = hullCheckLoc.clone();
+        belowHullLoc.subtract(0, 1, 0);
+        boolean inWater = isWaterOrWaterlogged(hullCheckLoc.getBlock())
+            || isWaterOrWaterlogged(belowHullLoc.getBlock());
+
+        if (!inWater) {
+            return null;
+        }
+
+        // Find water surface Y level
+        Location waterCheckLoc = reuseLocation2(vehicleLoc);
+        int startY = (int) Math.floor(vehicleLoc.getY()) + config.waterScanAbove;
+        int endY = (int) Math.floor(hullCheckY) - config.waterScanBelow;
+        waterCheckLoc.setY(startY);
+
+        double waterSurfaceY = waterCheckLoc.getY();
+
+        for (int y = startY; y >= endY; y--) {
+            waterCheckLoc.setY(y);
+            if (isWaterOrWaterlogged(waterCheckLoc.getBlock())) {
+                waterSurfaceY = y + 1;
+                break;
+            }
+        }
+
+        // Calculate float offset
+        double floatOffset;
+        if ("custom".equals(ship.shipType) && ship.model.blockCount > 0) {
+            float meanDensity = ship.model.getDensity();
+            float airDensity = config.airDensity;
+            float waterDensity = config.waterDensity;
+
+            float t = (meanDensity - airDensity) / (waterDensity - airDensity);
+            float referenceY = ship.model.minY;
+            float waterlineY = referenceY + t * (ship.model.centerOfVolume.y - referenceY);
+            floatOffset = -waterlineY;
+        } else {
+            floatOffset = ship.model.waterFloatOffset;
+        }
+
+        return waterSurfaceY + floatOffset;
     }
 
     /**
@@ -286,61 +392,6 @@ public class ShipPhysics {
     }
 
     /**
-     * Apply ship velocity to players standing on deck.
-     * Called per-collider from updateCollisionPositions().
-     */
-    public void applyDeckPhysics(CollisionBox cb, Vector3f velocity, boolean isFirstTick) {
-        if (!ship.hasPlayersNearby || isFirstTick) return;
-
-        for (Entity nearby : cb.entity.getNearbyEntities(1.5, 1.5, 1.5)) {
-            if (nearby instanceof Player player) {
-                if (isPlayerSeatedOnShip(player)) {
-                    continue;
-                }
-                pushPlayerOutOfShulker(player, cb.entity);
-            }
-        }
-    }
-
-    /**
-     * Check if a player is seated on any shulker belonging to this ship.
-     */
-    private boolean isPlayerSeatedOnShip(Player player) {
-        Entity vehicle = player.getVehicle();
-        if (vehicle instanceof Shulker shulker) {
-            return ShipTags.extractShipId(shulker.getScoreboardTags()) != null
-                && ShipTags.extractShipId(shulker.getScoreboardTags()).equals(ship.id);
-        }
-        return false;
-    }
-
-    /**
-     * If player is clipping into shulker and above its center, push them up.
-     */
-    private void pushPlayerOutOfShulker(Player player, Shulker shulker) {
-        org.bukkit.util.BoundingBox playerBox = player.getBoundingBox();
-        org.bukkit.util.BoundingBox shulkerBox = shulker.getBoundingBox();
-
-        if (!playerBox.overlaps(shulkerBox)) {
-            return;
-        }
-
-        double playerFeetY = playerBox.getMinY();
-        double shulkerCenterY = shulkerBox.getCenterY();
-
-        if (playerFeetY < shulkerCenterY) {
-            return;
-        }
-
-        double shulkerTopY = shulkerBox.getMaxY();
-        double targetY = shulkerTopY + 0.05;
-
-        Location playerLoc = player.getLocation();
-        playerLoc.setY(targetY);
-        player.teleport(playerLoc);
-    }
-
-    /**
      * Snaps ship position to nearest 0.25 blocks and rotation to nearest 5 degrees.
      * Called when driver exits to eliminate floating-point jitter.
      */
@@ -361,33 +412,19 @@ public class ShipPhysics {
         float pitch = loc.getPitch();
 
         Location snapped = new Location(loc.getWorld(), x, y, z, snappedYaw, pitch);
-        ship.vehicle.teleport(snapped);
+        TeleportCompat.teleport(ship.vehicle, snapped);
 
         // Update collision positions to sync with new location
         ship.updateCollisionPositions();
     }
 
     /**
-     * Snaps ship to block grid (integer coordinates, 90-degree rotation).
-     * Handles players standing on deck by teleporting them with the ship.
+     * Finds players standing on this ship's shulkers.
+     * @return Map of player to the shulker they're standing on
      */
-    public void alignToGrid() {
-        Location loc = ship.vehicle.getLocation();
-
-        // Snap position to nearest block corner
-        double x = Math.round(loc.getX());
-        double y = Math.round(loc.getY());
-        double z = Math.round(loc.getZ());
-
-        // Snap yaw to nearest 90 degrees
-        float yaw = loc.getYaw() % 360;
-        if (yaw < 0) yaw += 360;
-        int cardinal = Math.round(yaw / 90.0f) * 90;
-        float snappedYaw = cardinal % 360;
-        float snappedPitch = 0.0f;
-
-        // Find players standing on this ship's shulkers BEFORE moving
+    public Map<Player, Shulker> findPlayersOnDeck() {
         Map<Player, Shulker> playersOnDeck = new HashMap<>();
+        Location loc = ship.vehicle.getLocation();
         String shipTag = ShipTags.shipTag(ship.id);
 
         for (Player player : loc.getWorld().getPlayers()) {
@@ -418,9 +455,34 @@ public class ShipPhysics {
             }
         }
 
+        return playersOnDeck;
+    }
+
+    /**
+     * Snaps ship to block grid (integer coordinates, 90-degree rotation).
+     * Handles players standing on deck by teleporting them with the ship.
+     */
+    public void alignToGrid() {
+        Location loc = ship.vehicle.getLocation();
+
+        // Snap position to nearest block corner
+        double x = Math.round(loc.getX());
+        double y = Math.round(loc.getY());
+        double z = Math.round(loc.getZ());
+
+        // Snap yaw to nearest 90 degrees
+        float yaw = loc.getYaw() % 360;
+        if (yaw < 0) yaw += 360;
+        int cardinal = Math.round(yaw / 90.0f) * 90;
+        float snappedYaw = cardinal % 360;
+        float snappedPitch = 0.0f;
+
+        // Find players standing on deck BEFORE moving
+        Map<Player, Shulker> playersOnDeck = findPlayersOnDeck();
+
         // Set the new aligned location
         Location aligned = new Location(loc.getWorld(), x, y, z, snappedYaw, snappedPitch);
-        ship.vehicle.teleport(aligned);
+        TeleportCompat.teleport(ship.vehicle, aligned);
 
         // Update collision positions immediately
         ship.updateCollisionPositions();

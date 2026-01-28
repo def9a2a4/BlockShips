@@ -97,6 +97,7 @@ public class BlockShipsPlugin extends JavaPlugin {
         sender.sendMessage("§6=== BlockShips v" + getDescription().getVersion() + " ===");
         sender.sendMessage("§e/blockships help §7- Show this help message");
         sender.sendMessage("§e/blockships info §7- Show ship and wheel statistics");
+        sender.sendMessage("§e/blockships dismount §7- Force-dismount from a ship");
         if (sender.hasPermission("blockships.reload")) {
             sender.sendMessage("§e/blockships reload §7- Reload the plugin configuration");
         }
@@ -266,6 +267,25 @@ public class BlockShipsPlugin extends JavaPlugin {
                 return true;
             }
 
+            if (args[0].equalsIgnoreCase("dismount")) {
+                if (!(sender instanceof Player player)) {
+                    sender.sendMessage("Only players can use this command.");
+                    return true;
+                }
+
+                if (!sender.hasPermission("blockships.dismount")) {
+                    sender.sendMessage("You don't have permission to use this command.");
+                    return true;
+                }
+
+                if (ShipInstance.dismountPlayer(player)) {
+                    sender.sendMessage("Dismounted from ship.");
+                } else {
+                    sender.sendMessage("You are not riding a ship.");
+                }
+                return true;
+            }
+
             if (args[0].equalsIgnoreCase("recipes")) {
                 if (!sender.hasPermission("blockships.recipes")) {
                     sender.sendMessage("You don't have permission to unlock recipes.");
@@ -399,6 +419,7 @@ public class BlockShipsPlugin extends JavaPlugin {
             List<String> subcommands = new ArrayList<>();
             subcommands.add("help");
             subcommands.add("info");
+            subcommands.add("dismount");
             if (sender.hasPermission("blockships.reload")) subcommands.add("reload");
             if (sender.hasPermission("blockships.give")) {
                 subcommands.add("give");

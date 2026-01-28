@@ -214,7 +214,7 @@ ships:
     # Maximum health points (players see this as hearts on the health bar)
     max-health: 20.0
     # Health regeneration rate in HP per second (1.0 = 1 HP every second)
-    health-regen-per-second: 0.0
+    health-regen-per-second: 1.0
 
     # Collision detection and physics
     collision:
@@ -274,7 +274,7 @@ ships:
 
     # Health system configuration
     max-health: 50.0
-    health-regen-per-second: 0.0
+    health-regen-per-second: 1.0
 
     collision:
       mass: 100.0
@@ -324,7 +324,7 @@ ships:
       vertical-forward-nudge: 0.011  # Small forward movement during vertical travel (must exceed movement-threshold)
 
     max-health: 25.0
-    health-regen-per-second: 0.0
+    health-regen-per-second: 1.0
 
     collision:
       mass: 80.0
@@ -333,4 +333,7 @@ ships:
       terrain-speed-multiplier: 10.0
       min-penetration: 0.1
       force-decay: 0.7
+
+  custom:
+    collision-debug-glow: false
 

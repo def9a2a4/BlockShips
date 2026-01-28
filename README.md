@@ -80,15 +80,16 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 
 ## Commands
 
-| Command                           | Description                                  | Permission           |
-| --------------------------------- | -------------------------------------------- | -------------------- |
-| `/blockships help`                | Show help and list all commands              | -                    |
-| `/blockships info`                | Show ship and wheel statistics               | -                    |
-| `/blockships reload`              | Reload configuration                         | `blockships.reload`  |
-| `/blockships give <item>`         | Give yourself a ship wheel or ship kit       | `blockships.give`    |
-| `/blockships recipes [player]`    | Unlock crafting recipes                      | `blockships.recipes` |
-| `/blockships forcedisassembleall` | **(DANGEROUS) Disassemble all custom ships** | `blockships.admin`   |
-| `/blockships killentities`        | **(DANGEROUS) Remove all ship entities**     | `blockships.admin`   |
+| Command                           | Description                                  | Permission             |
+| --------------------------------- | -------------------------------------------- | ---------------------- |
+| `/blockships help`                | Show help and list all commands              | -                      |
+| `/blockships info`                | Show ship and wheel statistics               | -                      |
+| `/blockships dismount`            | Force-dismount from a ship                   | `blockships.dismount`  |
+| `/blockships reload`              | Reload configuration                         | `blockships.reload`    |
+| `/blockships give <item>`         | Give yourself a ship wheel or ship kit       | `blockships.give`      |
+| `/blockships recipes [player]`    | Unlock crafting recipes                      | `blockships.recipes`   |
+| `/blockships forcedisassembleall` | **(DANGEROUS) Disassemble all custom ships** | `blockships.admin`     |
+| `/blockships killentities`        | **(DANGEROUS) Remove all ship entities**     | `blockships.admin`     |
 
 # Installation
 

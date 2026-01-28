@@ -2,6 +2,7 @@ package anon.def9a2a4.blockships.customships;
 
 import org.bukkit.Material;
 
+import java.util.HashSet;
 import java.util.Set;
 
 /**
@@ -12,7 +13,8 @@ public final class FragileBlocks {
 
     private FragileBlocks() {} // Utility class
 
-    public static final Set<Material> FRAGILE_BLOCKS = Set.of(
+    // Base set of fragile blocks (available in 1.21.1)
+    private static final Set<Material> BASE_FRAGILE_BLOCKS = Set.of(
         // Grass and plants
         Material.SHORT_GRASS,
         Material.TALL_GRASS,
@@ -89,7 +91,6 @@ public final class FragileBlocks {
         Material.CHERRY_LEAVES,
         Material.AZALEA_LEAVES,
         Material.FLOWERING_AZALEA_LEAVES,
-        Material.PALE_OAK_LEAVES,
 
         // Saplings
         Material.OAK_SAPLING,
@@ -100,7 +101,6 @@ public final class FragileBlocks {
         Material.DARK_OAK_SAPLING,
         Material.CHERRY_SAPLING,
         Material.MANGROVE_PROPAGULE,
-        Material.PALE_OAK_SAPLING,
 
         // Other fragile blocks
         Material.SNOW,
@@ -116,6 +116,29 @@ public final class FragileBlocks {
         Material.CHORUS_PLANT,
         Material.CHORUS_FLOWER
     );
+
+    // Full set including version-specific materials
+    public static final Set<Material> FRAGILE_BLOCKS;
+
+    static {
+        Set<Material> blocks = new HashSet<>(BASE_FRAGILE_BLOCKS);
+
+        // Version-specific materials (added in 1.21.4+ with Pale Garden)
+        addIfExists(blocks, "PALE_OAK_LEAVES");
+        addIfExists(blocks, "PALE_OAK_SAPLING");
+
+        FRAGILE_BLOCKS = Set.copyOf(blocks);
+    }
+
+    /**
+     * Adds a material to the set if it exists in this server version.
+     */
+    private static void addIfExists(Set<Material> blocks, String materialName) {
+        Material mat = Material.getMaterial(materialName);
+        if (mat != null) {
+            blocks.add(mat);
+        }
+    }
 
     /**
      * Checks if a material is considered "fragile" and can be destroyed during force disassembly.

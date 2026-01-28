@@ -14,6 +14,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 
 import anon.def9a2a4.blockships.ItemUtil;
+import anon.def9a2a4.blockships.util.SteerPacketCompat;
 import org.bukkit.inventory.meta.BookMeta;
 import org.bukkit.inventory.meta.SkullMeta;
 
@@ -87,15 +88,18 @@ public class ShipWheelMenu {
     private static final String HELP_TEXTURE = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZGE5OWIwNWI5YTFkYjRkMjliNWU2NzNkNzdhZTU0YTc3ZWFiNjY4MTg1ODYwMzVjOGEyMDA1YWViODEwNjAyYSJ9fX0=";
 
     // Help content - used for both lore and book
-    private static final String[][] HELP_SECTIONS = {
-        {"Controls", "WASD to move. Airship: Space for up, Sprint for down."},
-        {"Getting Started", "Place wheel on your build, open this menu by right-clicking the wheel, click the boat to assemble."},
-        {"Riding", "Right-click ship or seat to board. Sneak to exit."},
-        {"Menu & Disassembly", "Right-click the ship's wheel, or sneak + right-click anywhere on the ship. Click the pickaxe to disassemble."},
-        {"Cannons", "Dispenser + obsidian behind it. Right-click the obsidian to fire, or use the fireball in the menu."},
-        {"Functionality", "Chests, barrels, and other containers work on ships. Attach leads to fences to bring mobs or boats along. Stairs work as extra seats for players."},
-        {"Weight & Buoyancy", "Wood/wool = light, metals = heavy. Glowstone/end rods = lighter than air (airship!). Click the book to detect your ship and see more info."}
-    };
+    // Controls text is dynamic based on server version (sprint vs S+Space for descent)
+    private static String[][] getHelpSections() {
+        return new String[][] {
+            {"Controls", SteerPacketCompat.getAirshipControlsHelp()},
+            {"Getting Started", "Place wheel on your build, open this menu by right-clicking the wheel, click the boat to assemble."},
+            {"Riding", "Right-click ship or seat to board. Sneak to exit."},
+            {"Menu & Disassembly", "Right-click the ship's wheel, or sneak + right-click anywhere on the ship. Click the pickaxe to disassemble."},
+            {"Cannons", "Dispenser + obsidian behind it. Right-click the obsidian to fire, or use the fireball in the menu."},
+            {"Functionality", "Chests, barrels, and other containers work on ships. Attach leads to fences to bring mobs or boats along. Stairs work as extra seats for players."},
+            {"Weight & Buoyancy", "Wood/wool = light, metals = heavy. Glowstone/end rods = lighter than air (airship!). Click the book to detect your ship and see more info."}
+        };
+    }
 
     // Menu item slots - Left group: detect/info, Right group: assemble/align/disassemble
     private static final int HELP_SLOT = 0;
@@ -398,7 +402,7 @@ public class ShipWheelMenu {
      */
     private static List<String> createHelpLore() {
         List<String> lore = new ArrayList<>();
-        for (String[] section : HELP_SECTIONS) {
+        for (String[] section : getHelpSections()) {
             lore.add(ChatColor.YELLOW + section[0]);
             lore.add(ChatColor.GRAY + section[1]);
         }
@@ -433,10 +437,11 @@ public class ShipWheelMenu {
 
             StringBuilder currentPage = new StringBuilder();
             int currentLines = 0;
+            String[][] helpSections = getHelpSections();
 
-            for (int i = 0; i < HELP_SECTIONS.length; i++) {
-                String title = HELP_SECTIONS[i][0];
-                String content = HELP_SECTIONS[i][1];
+            for (int i = 0; i < helpSections.length; i++) {
+                String title = helpSections[i][0];
+                String content = helpSections[i][1];
                 int sectionLines = estimateSectionLines(title, content);
 
                 // Check if this section fits on current page

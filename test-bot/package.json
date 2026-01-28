@@ -1,0 +1,15 @@
+{
+  "name": "blockships-test-bot",
+  "version": "1.0.0",
+  "description": "Mineflayer bot for testing BlockShips plugin",
+  "main": "test-bot.js",
+  "scripts": {
+    "test": "node test-bot.js",
+    "test:chunk": "node chunk-test.js",
+    "test:all": "node test-bot.js; r1=$?; node chunk-test.js; r2=$?; exit $((r1 || r2))"
+  },
+  "dependencies": {
+    "mineflayer": "^4.33.0",
+    "vec3": "^0.1.10"
+  }
+}

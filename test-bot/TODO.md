@@ -1,0 +1,6 @@
+- steering doesnt work for bots. bots appear to mount, move forward, and then unmount and look around instead of just steering. steering for players works fine.
+  - the initial implementation of the controls test did have them steering properly, check the git log
+- runway fixes:
+  - no water or walls for airships, just a two thick stone platform
+  - two thick bottom to avoid particle lag
+  - set air 1 wider in each direction

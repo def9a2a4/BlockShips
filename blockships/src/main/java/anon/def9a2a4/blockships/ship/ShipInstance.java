@@ -3,6 +3,7 @@ package anon.def9a2a4.blockships.ship;
 import anon.def9a2a4.blockships.*;
 import anon.def9a2a4.blockships.customships.ShipWheelData;
 import anon.def9a2a4.blockships.customships.ShipWheelManager;
+import anon.def9a2a4.blockships.util.TeleportCompat;
 import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
@@ -76,6 +77,7 @@ public class ShipInstance {
     private Location previousVehicleLocation;
     private float previousYaw;
     private float previousPitch;
+    private float spawnYaw;  // Track spawn yaw for pre-1.21.9 display rotation fix
     private int ticksSinceLastMovement = 0;
     private boolean taskStopped = false;
     private boolean firstTick = true; // Force first tick to update positions
@@ -127,6 +129,31 @@ public class ShipInstance {
 
     // Fast lookup for recovered display indices (O(1) vs O(n) iteration with tag parsing)
     private final Set<Integer> recoveredDisplayIndices = new HashSet<>();
+
+    // Reusable matrices for updateCollisionPositions() - object pooling to reduce GC pressure
+    private final Matrix4f workRotation = new Matrix4f();
+    private final Matrix4f workTranslation = new Matrix4f();
+    private final Matrix4f workWorld = new Matrix4f();
+    private final Vector3f workVehicleRot = new Vector3f();
+    private final Vector3f workTransformedRot = new Vector3f();
+    private final Vector3f workOffset = new Vector3f();
+    private final Vector3f workPerBlockOffset = new Vector3f();
+    private final Vector3f workCurrentWorldPos = new Vector3f();
+    private final Vector3f workVelocity = new Vector3f();
+
+    // Reusable objects for getDisplayTransform() - reduces GC pressure in per-tick display updates
+    private final Vector3f workDisplayRot = new Vector3f();
+    private final Vector3f workDisplayTransformedRot = new Vector3f();
+    private final Matrix4f workDisplayDelta = new Matrix4f();
+    private final Matrix4f workR_initial = new Matrix4f();  // For initial rotation matrix
+    private final Matrix4f workR = new Matrix4f();          // For combined rotation matrix
+    private final Matrix4f workT = new Matrix4f();          // For translation matrix
+    private final Matrix4f workT_display = new Matrix4f();  // For display translation matrix
+    private final Matrix4f workWorldMatrix = new Matrix4f(); // For per-display world transform
+
+    // Reusable Bukkit objects for updateCollisionPositions() - reduces GC pressure
+    private Location workCarrierLoc;  // Lazily initialized (needs World reference from vehicle)
+    private final org.bukkit.util.Vector workBukkitVelocity = new org.bukkit.util.Vector();
 
     /**
      * Private constructor for creating ShipInstance without spawning entities.
@@ -258,7 +285,7 @@ public class ShipInstance {
             as.addScoreboardTag(ShipTags.shipRootTag(id));
 
             // Root vehicle has health system for ship damage
-            org.bukkit.attribute.AttributeInstance maxHealthAttr = as.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH);
+            org.bukkit.attribute.AttributeInstance maxHealthAttr = as.getAttribute(anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth());
             if (maxHealthAttr != null) {
                 maxHealthAttr.setBaseValue(model.maxHealth);
             }
@@ -284,6 +311,7 @@ public class ShipInstance {
         this.previousVehicleLocation = vehicle.getLocation().clone();
         this.previousYaw = vehicle.getYaw();
         this.previousPitch = vehicle.getPitch();
+        this.spawnYaw = vehicle.getYaw();  // Track spawn yaw for pre-1.21.9 display rotation
 
         // Initialize chunk tracking for persistence
         this.currentChunkX = vehicle.getLocation().getBlockX() >> 4;
@@ -617,92 +645,137 @@ public class ShipInstance {
 
             // Spawn collision shulker if this block has collision enabled
             if (p.collision.enable) {
-                // Create spawn location with zero rotation (carriers never rotate)
-                Location carrierSpawnLoc = base.clone();
-                carrierSpawnLoc.setYaw(0);
-                carrierSpawnLoc.setPitch(0);
+                Shulker spawnedShulker = null;
+                ArmorStand carrier = null;
 
-                // Use ArmorStand as carrier (smooth interpolation)
-                ArmorStand carrier = w.spawn(carrierSpawnLoc, ArmorStand.class, as -> {
-                    as.setInvisible(true);
-                    as.setInvulnerable(true);
-                    as.setGravity(false);
-                    as.setSilent(true);
-                    as.setPersistent(true);
-                    as.setMarker(true);  // Marker mode: no hitbox, can't be pushed
-                    as.addScoreboardTag(ShipTags.shipTag(this.id));
-                    as.addScoreboardTag(ShipTags.CARRIER_TAG);
-                    as.addScoreboardTag(ShipTags.blockIndexTag(currentBlockIndex));
-                });
+                try {
+                    // Create spawn location with zero rotation (carriers never rotate)
+                    Location carrierSpawnLoc = base.clone();
+                    carrierSpawnLoc.setYaw(0);
+                    carrierSpawnLoc.setPitch(0);
 
-                // Spawn shulker as passenger for physical collision
-                // Apply size scaling via generic.scale attribute
-                float shulkerSize = p.collision.size;
-                final int finalBlockIndex = currentBlockIndex;
-                Shulker shulker = w.spawn(carrierSpawnLoc, Shulker.class, s -> {
-                    s.setAI(false);
-                    s.setGravity(false);
-                    s.setSilent(true);
-                    s.setPersistent(true);
-                    s.setCollidable(true);
-                    s.setInvisible(true);
-                    s.setGlowing(config.collisionDebugGlow);  // Glow if debug mode enabled
-                    s.setPeek(0);  // Prevent shulker from peeking/moving up
-                    s.addScoreboardTag(ShipTags.shipTag(this.id));
-                    s.addScoreboardTag(ShipTags.COLLIDER_TAG);
-                    s.addScoreboardTag(ShipTags.blockIndexTag(finalBlockIndex));
-
-                    // Add seat tag if this block is a seat and populate seatShulkers list
-                    // Tag format: shipseat:{index}
-                    // Parsed in: DisplayShip.handleShulkerInteraction
-                    for (int seatIdx = 0; seatIdx < model.seats.size(); seatIdx++) {
-                        if (model.seats.get(seatIdx).blockIndex == finalBlockIndex) {
-                            s.addScoreboardTag(ShipTags.seatTag(seatIdx));
-                            // Store reference in seatShulkers list for fast lookup
-                            seatShulkers.set(seatIdx, s);
-                            break;
+                    // Use ArmorStand as carrier (smooth interpolation)
+                    carrier = w.spawn(carrierSpawnLoc, ArmorStand.class, as -> {
+                        try {
+                            as.setInvisible(true);
+                            as.setInvulnerable(true);
+                            as.setGravity(false);
+                            as.setSilent(true);
+                            as.setPersistent(true);
+                            as.setMarker(true);
+                            as.addScoreboardTag(ShipTags.shipTag(this.id));
+                            as.addScoreboardTag(ShipTags.CARRIER_TAG);
+                            as.addScoreboardTag(ShipTags.blockIndexTag(currentBlockIndex));
+                        } catch (Throwable t) {
+                            plugin.getLogger().severe("ArmorStand config failed for block " + currentBlockIndex + ": " + t.getMessage());
+                            t.printStackTrace();
                         }
-                    }
+                    });
 
-                    // Add storage tag if this block has storage
-                    if (p.storage != null) {
-                        s.addScoreboardTag(ShipTags.storageTag(finalBlockIndex));
-                    }
+                    // Spawn shulker as passenger for physical collision
+                    // Apply size scaling via generic.scale attribute
+                    float shulkerSize = p.collision.size;
+                    final int finalBlockIndex = currentBlockIndex;
+                    final ArmorStand finalCarrier = carrier;
+                    Shulker shulker;
+                    try {
+                        shulker = w.spawn(carrierSpawnLoc, Shulker.class, s -> {
+                            try {
+                                s.setAI(false);
+                                s.setGravity(false);
+                                s.setSilent(true);
+                                s.setPersistent(true);
+                                s.setCollidable(true);
+                                s.setInvisible(true);
+                                s.setGlowing(config.collisionDebugGlow);  // Glow if debug mode enabled
+                                s.setPeek(0);  // Prevent shulker from peeking/moving up
+                                s.addScoreboardTag(ShipTags.shipTag(this.id));
+                                s.addScoreboardTag(ShipTags.COLLIDER_TAG);
+                                s.addScoreboardTag(ShipTags.blockIndexTag(finalBlockIndex));
 
-                    // Add interaction tag if this block opens an interaction GUI
-                    if (p.rawYaml.containsKey("interaction") && Boolean.TRUE.equals(p.rawYaml.get("interaction"))) {
-                        s.addScoreboardTag(ShipTags.interactTag(finalBlockIndex));
-                    }
+                                // Add seat tag if this block is a seat and populate seatShulkers list
+                                // Tag format: shipseat:{index}
+                                // Parsed in: DisplayShip.handleShulkerInteraction
+                                for (int seatIdx = 0; seatIdx < model.seats.size(); seatIdx++) {
+                                    if (model.seats.get(seatIdx).blockIndex == finalBlockIndex) {
+                                        s.addScoreboardTag(ShipTags.seatTag(seatIdx));
+                                        // Store reference in seatShulkers list for fast lookup
+                                        seatShulkers.set(seatIdx, s);
+                                        break;
+                                    }
+                                }
 
-                    // Add leadable tag if this block can have leads attached (fences)
-                    if (p.rawYaml.containsKey("leadable") && Boolean.TRUE.equals(p.rawYaml.get("leadable"))) {
-                        s.addScoreboardTag(ShipTags.leadableTag(finalBlockIndex));
-                    }
+                                // Add storage tag if this block has storage
+                                if (p.storage != null) {
+                                    s.addScoreboardTag(ShipTags.storageTag(finalBlockIndex));
+                                }
 
-                    // Add cannon tag if this obsidian block is part of a cannon
-                    for (ShipModel.CannonInfo cannon : model.cannons) {
-                        if (cannon.obsidianBlockIndex == finalBlockIndex) {
-                            s.addScoreboardTag(ShipTags.cannonTag(finalBlockIndex));
-                            break;
+                                // Add interaction tag if this block opens an interaction GUI
+                                if (p.rawYaml.containsKey("interaction") && Boolean.TRUE.equals(p.rawYaml.get("interaction"))) {
+                                    s.addScoreboardTag(ShipTags.interactTag(finalBlockIndex));
+                                }
+
+                                // Add leadable tag if this block can have leads attached (fences)
+                                if (p.rawYaml.containsKey("leadable") && Boolean.TRUE.equals(p.rawYaml.get("leadable"))) {
+                                    s.addScoreboardTag(ShipTags.leadableTag(finalBlockIndex));
+                                }
+
+                                // Add cannon tag if this obsidian block is part of a cannon
+                                for (ShipModel.CannonInfo cannon : model.cannons) {
+                                    if (cannon.obsidianBlockIndex == finalBlockIndex) {
+                                        s.addScoreboardTag(ShipTags.cannonTag(finalBlockIndex));
+                                        break;
+                                    }
+                                }
+
+                                // Apply scale attribute to change collision box size (added in 1.20.5)
+                                try {
+                                    org.bukkit.attribute.Attribute scaleAttribute = anon.def9a2a4.blockships.util.AttributeCompat.getScale();
+                                    if (scaleAttribute != null) {
+                                        org.bukkit.attribute.AttributeInstance scaleAttr = s.getAttribute(scaleAttribute);
+                                        if (scaleAttr != null) {
+                                            scaleAttr.setBaseValue(shulkerSize);
+                                        }
+                                    }
+                                } catch (Throwable scaleError) {
+                                    // Scale attribute not available on this version - shulker uses default size
+                                }
+                            } catch (Throwable e) {
+                                plugin.getLogger().severe("Shulker config failed for block " + finalBlockIndex + ": " + e.getMessage());
+                                e.printStackTrace();
+                            }
+                        });
+                    } catch (Throwable e) {
+                        // Shulker spawn failed - clean up the carrier to prevent resource leak
+                        if (finalCarrier != null && finalCarrier.isValid()) {
+                            finalCarrier.remove();
                         }
+                        throw e;  // Re-throw to be caught by outer handler
                     }
 
-                    // Apply scale attribute to change collision box size
-                    org.bukkit.attribute.AttributeInstance scaleAttr = s.getAttribute(org.bukkit.attribute.Attribute.SCALE);
-                    if (scaleAttr != null) {
-                        scaleAttr.setBaseValue(shulkerSize);
+                    // Track shulker immediately so we can clean it up if subsequent operations fail
+                    spawnedShulker = shulker;
+
+                    // Mount shulker on carrier
+                    carrier.addPassenger(shulker);
+
+                    colliders.add(new CollisionBox(carrier, shulker, new Matrix4f(p.local), p.collision, currentBlockIndex));
+                } catch (Throwable e) {
+                    // Clean up any spawned entities to prevent resource leak
+                    if (carrier != null && carrier.isValid()) {
+                        carrier.remove();
                     }
-                });
-
-                // Mount shulker on carrier
-                carrier.addPassenger(shulker);
-
-                colliders.add(new CollisionBox(carrier, shulker, new Matrix4f(p.local), p.collision, currentBlockIndex));
+                    if (spawnedShulker != null && spawnedShulker.isValid()) {
+                        spawnedShulker.remove();
+                    }
+                    plugin.getLogger().severe("Collider spawn failed for block " + currentBlockIndex + ": " + e.getMessage());
+                    e.printStackTrace();
+                }
 
                 // Store leadable shulker reference for prefab ship lead attachment (single lead point)
                 // Custom ships use per-fence attachment via leadable tags instead
-                if (!"custom".equals(shipType) && p.rawYaml.containsKey("leadable") && Boolean.TRUE.equals(p.rawYaml.get("leadable"))) {
-                    this.leadableShulker = shulker;
+                if (spawnedShulker != null && !"custom".equals(shipType) && p.rawYaml.containsKey("leadable") && Boolean.TRUE.equals(p.rawYaml.get("leadable"))) {
+                    this.leadableShulker = spawnedShulker;
                 }
             }
         }
@@ -816,20 +889,22 @@ public class ShipInstance {
         float yaw = vehicle.getYaw();
         float pitch = vehicle.getPitch();
 
-        Vector3f vehicleRot = new Vector3f(
+        // Reuse work vectors instead of allocating new ones
+        workVehicleRot.set(
             (float) java.lang.Math.toRadians(-yaw),
             (float) java.lang.Math.toRadians(-pitch),
             0f
         );
-        Vector3f transformedRot = model.rotationTransform.transform(vehicleRot, new Vector3f());
-        transformedRot.x += (float) java.lang.Math.toRadians(model.initialRotation.x);
-        transformedRot.y += (float) java.lang.Math.toRadians(model.initialRotation.y);
-        transformedRot.z += (float) java.lang.Math.toRadians(model.initialRotation.z);
+        model.rotationTransform.transform(workVehicleRot, workTransformedRot);
+        workTransformedRot.x += (float) java.lang.Math.toRadians(model.initialRotation.x);
+        workTransformedRot.y += (float) java.lang.Math.toRadians(model.initialRotation.y);
+        workTransformedRot.z += (float) java.lang.Math.toRadians(model.initialRotation.z);
 
-        return new Matrix4f()
-            .rotateY(transformedRot.x)
-            .rotateX(transformedRot.y)
-            .rotateZ(transformedRot.z);
+        // Reuse workRotation matrix instead of allocating new one
+        return workRotation.identity()
+            .rotateY(workTransformedRot.x)
+            .rotateX(workTransformedRot.y)
+            .rotateZ(workTransformedRot.z);
     }
 
     /**
@@ -877,39 +952,38 @@ public class ShipInstance {
             }
         }
 
-        // Build rotation matrix including vehicle's current orientation
+        // Build rotation matrix including vehicle's current orientation (reuses workRotation)
         Matrix4f R_full = buildRotationMatrix();
 
-        // Build translation matrix for collision offset
-        Matrix4f T_collision = new Matrix4f().translation(model.collisionOffset);
+        // Build translation matrix for collision offset (reuse workTranslation)
+        workTranslation.identity().translation(model.collisionOffset);
 
         // Add custom ship collision offset from config
         if ("custom".equals(shipType)) {
-            T_collision.translate(config.customCollisionOffset);
+            workTranslation.translate(config.customCollisionOffset);
         }
 
         // Update collider (Interaction carrier + Shulker) positions
         for (CollisionBox cb : colliders) {
-            // Calculate world transformation for this collider using collision offset
-            Matrix4f world = new Matrix4f(R_full).mul(T_collision).mul(cb.base);
+            // Calculate world transformation for this collider using collision offset (reuse workWorld)
+            workWorld.set(R_full).mul(workTranslation).mul(cb.base);
 
-            // Extract position from transformation matrix
-            Vector3f offset = new Vector3f();
-            world.getTranslation(offset);
+            // Extract position from transformation matrix (reuse workOffset)
+            workWorld.getTranslation(workOffset);
 
             // Apply per-block collision offset (rotated by R_full to follow ship orientation)
-            Vector3f perBlockOffset = new Vector3f(cb.config.offset);
-            R_full.transformPosition(perBlockOffset);
+            workPerBlockOffset.set(cb.config.offset);
+            R_full.transformPosition(workPerBlockOffset);
 
             // Calculate current world position (base position + block offset + per-block offset)
-            Vector3f currentWorldPos = new Vector3f(
-                (float) currentVehicleLoc.getX() + offset.x + perBlockOffset.x,
-                (float) currentVehicleLoc.getY() + offset.y + perBlockOffset.y,
-                (float) currentVehicleLoc.getZ() + offset.z + perBlockOffset.z
+            workCurrentWorldPos.set(
+                (float) currentVehicleLoc.getX() + workOffset.x + workPerBlockOffset.x,
+                (float) currentVehicleLoc.getY() + workOffset.y + workPerBlockOffset.y,
+                (float) currentVehicleLoc.getZ() + workOffset.z + workPerBlockOffset.z
             );
 
             // Calculate velocity (change in position since last tick)
-            Vector3f velocity = new Vector3f(currentWorldPos).sub(cb.previousWorldPos);
+            workVelocity.set(workCurrentWorldPos).sub(cb.previousWorldPos);
 
             // Check if this is the first tick (previousWorldPos was initialized to 0,0,0)
             // If so, skip velocity application to avoid massive initial velocity spike
@@ -918,16 +992,18 @@ public class ShipInstance {
             // Teleport carrier to world position (including per-block offset)
             // The shulker rides as passenger and follows smoothly (ArmorStand) or choppily (Interaction)
             // Note: Carriers never rotate - only position changes (AABBs don't rotate, shulkers inherit zero rotation)
-            Location carrierLoc = currentVehicleLoc.clone().add(
-                offset.x + perBlockOffset.x,
-                offset.y + perBlockOffset.y,
-                offset.z + perBlockOffset.z
-            );
-            carrierLoc.setYaw(0);
-            carrierLoc.setPitch(0);
+            // Reuse carrier location to avoid allocation (lazily init if world changed)
+            if (workCarrierLoc == null || workCarrierLoc.getWorld() != currentVehicleLoc.getWorld()) {
+                workCarrierLoc = currentVehicleLoc.clone();
+            }
+            workCarrierLoc.setX(currentVehicleLoc.getX() + workOffset.x + workPerBlockOffset.x);
+            workCarrierLoc.setY(currentVehicleLoc.getY() + workOffset.y + workPerBlockOffset.y);
+            workCarrierLoc.setZ(currentVehicleLoc.getZ() + workOffset.z + workPerBlockOffset.z);
+            workCarrierLoc.setYaw(0);
+            workCarrierLoc.setPitch(0);
 
             // Only teleport if position actually changed (avoids collision jitter when idle)
-            float velocityMagnitude = velocity.length();
+            float velocityMagnitude = workVelocity.length();
 
             // BEFORE teleport: capture player if this is a seat shulker
             // (teleporting carriers can sometimes dismount nested passengers)
@@ -941,35 +1017,45 @@ public class ShipInstance {
                 }
             }
 
+            // Verify passenger relationship is intact (can break on chunk reload)
+            // Must check EVERY tick, not just when moving, to fix broken relationships on stationary ships
+            if (cb.carrier.isValid() && cb.entity.isValid() && !cb.carrier.getPassengers().contains(cb.entity)) {
+                cb.carrier.addPassenger(cb.entity);
+            }
+
             if (isFirstTick || velocityMagnitude > 0.001) {
-                cb.carrier.teleport(carrierLoc);
+                TeleportCompat.teleport(cb.carrier, workCarrierLoc);
+                // DO NOT teleport shulker directly - it causes block snapping
+                // Shulker should follow carrier as passenger
 
                 // Set carrier velocity for better client/server sync (skip on first tick)
                 if (!isFirstTick) {
-                    cb.carrier.setVelocity(new org.bukkit.util.Vector(velocity.x, velocity.y, velocity.z));
+                    workBukkitVelocity.setX(workVelocity.x).setY(workVelocity.y).setZ(workVelocity.z);
+                    cb.carrier.setVelocity(workBukkitVelocity);
                 }
             }
 
-            // AFTER teleport: re-mount player if they were dismounted
+            // AFTER teleport: re-mount player if they were dismounted by teleport (not intentionally)
             if (seatedPlayer != null && !cb.entity.getPassengers().contains(seatedPlayer)) {
-                final Player playerToRemount = seatedPlayer;
-                final Shulker seat = cb.entity;
-                // Delay by 1 tick to ensure teleport fully completes
-                new BukkitRunnable() {
-                    @Override
-                    public void run() {
-                        if (playerToRemount.isValid() && seat.isValid()) {
-                            seat.addPassenger(playerToRemount);
+                // Check if seat is still occupied (intentional dismount via freeSeat() clears this)
+                int seatIdx = ShipTags.extractSeatIndex(cb.entity.getScoreboardTags());
+                if (seatIdx >= 0 && occupiedSeatIndices.contains(seatIdx)) {
+                    final Player playerToRemount = seatedPlayer;
+                    final Shulker seat = cb.entity;
+                    // Delay by 1 tick to ensure teleport fully completes
+                    new BukkitRunnable() {
+                        @Override
+                        public void run() {
+                            if (playerToRemount.isValid() && seat.isValid()) {
+                                seat.addPassenger(playerToRemount);
+                            }
                         }
-                    }
-                }.runTaskLater(plugin, 1L);
+                    }.runTaskLater(plugin, 1L);
+                }
             }
 
-            // Apply velocity to players standing on this shulker
-            physics.applyDeckPhysics(cb, velocity, isFirstTick);
-
             // Store current position for next tick
-            cb.previousWorldPos.set(currentWorldPos);
+            cb.previousWorldPos.set(workCurrentWorldPos);
         }
 
         // Note: Seats are now the shulkers themselves (no separate seat ArmorStands to update)
@@ -978,19 +1064,33 @@ public class ShipInstance {
 
     void tick() {
         // Health regeneration (20 ticks per second)
-        if (vehicle.isValid() && !vehicle.isDead()) {
-            double currentHealth = vehicle.getHealth();
-            double maxHealth = vehicle.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getBaseValue();
+        // Wrapped in try-catch to prevent tick crash if attribute lookup fails
+        try {
+            if (vehicle.isValid() && !vehicle.isDead()) {
+                org.bukkit.attribute.Attribute maxHealthAttr = anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth();
+                if (maxHealthAttr != null) {
+                    org.bukkit.attribute.AttributeInstance attrInstance = vehicle.getAttribute(maxHealthAttr);
+                    if (attrInstance != null) {
+                        double currentHealth = vehicle.getHealth();
+                        double maxHealth = attrInstance.getBaseValue();
 
-            // Regenerate health per tick (divide by 20 since this runs 20 times per second)
-            double regenPerTick = model.healthRegenPerSecond / 20.0;
-            double newHealth = java.lang.Math.min(currentHealth + regenPerTick, maxHealth);
-            vehicle.setHealth(newHealth);
+                        // Regenerate health per tick (divide by 20 since this runs 20 times per second)
+                        double regenPerTick = model.healthRegenPerSecond / 20.0;
+                        double newHealth = java.lang.Math.min(currentHealth + regenPerTick, maxHealth);
+                        vehicle.setHealth(newHealth);
 
-            // Check for ship destruction
-            if (currentHealth <= 0) {
-                destroyAndDropItem();
-                return;  // Stop processing this tick
+                        // Check for ship destruction
+                        if (currentHealth <= 0) {
+                            destroyAndDropItem();
+                            return;  // Stop processing this tick
+                        }
+                    }
+                }
+            }
+        } catch (Throwable e) {
+            // Log once and continue - don't crash the entire tick loop
+            if (firstTick) {
+                plugin.getLogger().warning("Health regeneration failed (will continue without it): " + e.getMessage());
             }
         }
 
@@ -1048,27 +1148,50 @@ public class ShipInstance {
         previousYaw = yaw;
         previousPitch = pitch;
 
-        // Build rotation matrix for initial rotation offset ONLY (not vehicle rotation)
-        // Vehicle rotation is inherited since displays are passengers of the vehicle
-        Matrix4f R_initial = new Matrix4f()
+        // Build rotation matrix for display entities (reusing work matrices to avoid allocations)
+        // On 1.21.9+: Vehicle rotation is inherited since displays are passengers of the vehicle
+        // On pre-1.21.9: Display's local coordinate system is "frozen" at spawn yaw, so we only
+        //                apply the DELTA rotation from spawn (not absolute yaw, which causes doubling)
+        workR_initial.identity()
             .rotateY((float) java.lang.Math.toRadians(model.initialRotation.x))
             .rotateX((float) java.lang.Math.toRadians(model.initialRotation.y))
             .rotateZ((float) java.lang.Math.toRadians(model.initialRotation.z));
 
-        // Build translation matrix for position offset (in local space)
-        Matrix4f T = new Matrix4f().translation(model.positionOffset);
+        if (TeleportCompat.needsPassengerEject()) {
+            // Pre-1.21.9: Apply only the DELTA rotation from spawn
+            // The display's frozen local coordinate system already has spawn_yaw
+            float deltaYaw = vehicle.getYaw() - spawnYaw;
+            float deltaPitch = vehicle.getPitch();  // Pitch starts at 0, so no spawn offset needed
 
-        // Add custom ship display offset from config
-        Matrix4f T_display = new Matrix4f(T);
-        if ("custom".equals(shipType)) {
-            T_display.translate(config.customDisplayOffset);
+            workDisplayRot.set(
+                (float) java.lang.Math.toRadians(-deltaYaw),
+                (float) java.lang.Math.toRadians(-deltaPitch),
+                0f
+            );
+            model.rotationTransform.transform(workDisplayRot, workDisplayTransformedRot);
+            workDisplayDelta.identity()
+                .rotateY(workDisplayTransformedRot.x)
+                .rotateX(workDisplayTransformedRot.y)
+                .rotateZ(workDisplayTransformedRot.z);
+            workR.set(workDisplayDelta).mul(workR_initial);
+        } else {
+            // 1.21.9+: Only initial rotation, vehicle rotation is inherited from passenger
+            workR.set(workR_initial);
         }
 
-        // Update each child's transformation: R_initial * T_display * display.base
-        // Only apply static rotations - vehicle rotation is inherited
+        // Build translation matrix for position offset (in local space)
+        workT.identity().translation(model.positionOffset);
+
+        // Add custom ship display offset from config
+        workT_display.set(workT);
+        if ("custom".equals(shipType)) {
+            workT_display.translate(config.customDisplayOffset);
+        }
+
+        // Update each child's transformation: R * T_display * display.base
         for (DisplayInstance di : displays) {
-            Matrix4f world = new Matrix4f(R_initial).mul(T_display).mul(di.base);
-            di.entity.setTransformationMatrix(world);
+            workWorldMatrix.set(workR).mul(workT_display).mul(di.base);
+            di.entity.setTransformationMatrix(workWorldMatrix);
         }
     }
 
@@ -1287,15 +1410,63 @@ public class ShipInstance {
     }
 
     /**
+     * Dismounts a player from a ship if they are riding a ship shulker.
+     * @param player The player to dismount
+     * @return true if the player was dismounted from a ship, false otherwise
+     */
+    public static boolean dismountPlayer(Player player) {
+        Entity vehicle = player.getVehicle();
+        if (!(vehicle instanceof Shulker shulker)) {
+            return false;
+        }
+
+        Set<String> tags = shulker.getScoreboardTags();
+        if (!ShipTags.isShipEntity(tags)) {
+            return false;
+        }
+
+        UUID shipId = ShipTags.extractShipId(tags);
+        int seatIndex = ShipTags.extractSeatIndex(tags);
+
+        shulker.removePassenger(player);
+
+        if (shipId != null && seatIndex >= 0) {
+            ShipInstance inst = ShipRegistry.byId(shipId);
+            if (inst != null) {
+                inst.freeSeat(seatIndex);
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Marks a seat as free.
      */
     public void freeSeat(int seatIndex) {
         occupiedSeatIndices.remove(seatIndex);
         if (seatIndex == driverSeatIndex) {
             hasDriver = false;
-            // Immediately kill vertical velocity for airships when driver exits
-            if (isAirship) {
-                physics.currentYVelocity = 0.0f;
+            // Clear all input state when driver exits
+            isForwardPressed = false;
+            isBackwardPressed = false;
+            isLeftPressed = false;
+            isRightPressed = false;
+            isSpacePressed = false;
+            isSprintPressed = false;
+            // Kill vertical velocity and stabilize position on driver exit
+            physics.currentYVelocity = 0.0f;
+            if (!isAirship) {
+                // For water ships, snap to neutral buoyancy if close
+                Double neutralY = physics.getNeutralBuoyancyY();
+                if (neutralY != null) {
+                    double currentY = vehicle.getLocation().getY();
+                    if (java.lang.Math.abs(currentY - neutralY) <= 0.5) {
+                        Location loc = vehicle.getLocation();
+                        loc.setY(neutralY);
+                        vehicle.teleport(loc);
+                    }
+                }
             }
             // Snap position and rotation to reduce floating-point jitter
             physics.snapToFineGrid();
@@ -1601,6 +1772,14 @@ public class ShipInstance {
         previousVehicleLocation = vehicle.getLocation().clone();
         previousYaw = vehicle.getYaw();
         previousPitch = vehicle.getPitch();
+        // Track spawn yaw for pre-1.21.9 display rotation fix
+        // Custom ships: use assemblyYaw (initialRotation.x) to match initial spawn state
+        // Prefab ships: use current vehicle yaw (initialRotation.x is 0 anyway)
+        if ("custom".equals(shipType)) {
+            spawnYaw = model.initialRotation.x;
+        } else {
+            spawnYaw = vehicle.getYaw();
+        }
         firstTick = true;
 
         // Initialize chunk tracking for persistence
@@ -1640,8 +1819,8 @@ public class ShipInstance {
         updateCollisionPositions();
 
         // Update display transforms to match current vehicle orientation
-        // Build rotation matrix for initial rotation offset ONLY (not vehicle rotation)
-        // Vehicle rotation is inherited since displays are passengers of the vehicle
+        // At init time, use R_initial only - the display's frozen local coordinate system
+        // already has the spawn yaw (on pre-1.21.9), or vehicle rotation is inherited (on 1.21.9+)
         Matrix4f R_initial = new Matrix4f()
             .rotateY((float) java.lang.Math.toRadians(model.initialRotation.x))
             .rotateX((float) java.lang.Math.toRadians(model.initialRotation.y))
@@ -2025,89 +2204,7 @@ public class ShipInstance {
      * Rotation is snapped to the nearest 90-degree increment.
      */
     public void alignToGrid() {
-        Location loc = vehicle.getLocation();
-
-        // Snap position to nearest block corner (integer coordinates)
-        // Ships spawn at block corner positions (e.g., 5.0, 10.0, 8.0), not block centers
-        double x = java.lang.Math.round(loc.getX());
-        double y = java.lang.Math.round(loc.getY());
-        double z = java.lang.Math.round(loc.getZ());
-
-        // Snap yaw to nearest 90 degrees (0, 90, 180, 270)
-        float yaw = loc.getYaw();
-        yaw = yaw % 360;
-        if (yaw < 0) yaw += 360;
-        int cardinal = java.lang.Math.round(yaw / 90.0f) * 90;
-        float snappedYaw = cardinal % 360;
-
-        // Snap pitch to 0 (horizontal)
-        float snappedPitch = 0.0f;
-
-        // Find players standing on this ship's shulkers BEFORE moving
-        // Map: player -> the shulker they're standing on
-        Map<Player, Shulker> playersOnDeck = new HashMap<>();
-        String shipTag = ShipTags.shipTag(this.id);
-
-        for (Player player : loc.getWorld().getPlayers()) {
-            if (player.getLocation().distance(loc) > 32) continue;
-
-            // Check nearby entities for shulkers belonging to this ship
-            for (Entity nearby : player.getNearbyEntities(2, 2, 2)) {
-                if (!(nearby instanceof Shulker shulker)) continue;
-                if (!shulker.getScoreboardTags().contains(shipTag)) continue;
-
-                // Check if player is standing on this shulker
-                org.bukkit.util.BoundingBox playerBox = player.getBoundingBox();
-                org.bukkit.util.BoundingBox shulkerBox = shulker.getBoundingBox();
-
-                double playerFeetY = playerBox.getMinY();
-                double shulkerTopY = shulkerBox.getMaxY();
-
-                boolean withinHorizontalBounds =
-                    playerBox.getMinX() < shulkerBox.getMaxX() &&
-                    playerBox.getMaxX() > shulkerBox.getMinX() &&
-                    playerBox.getMinZ() < shulkerBox.getMaxZ() &&
-                    playerBox.getMaxZ() > shulkerBox.getMinZ();
-
-                boolean onTop = playerFeetY >= shulkerTopY - 0.1 && playerFeetY <= shulkerTopY + 0.3;
-
-                if (withinHorizontalBounds && onTop) {
-                    playersOnDeck.put(player, shulker);
-                    break; // Player can only stand on one shulker
-                }
-            }
-        }
-
-        // Set the new aligned location
-        Location aligned = new Location(loc.getWorld(), x, y, z, snappedYaw, snappedPitch);
-        vehicle.teleport(aligned);
-
-        // Update collision positions immediately so shulkers move with the ship
-        updateCollisionPositions();
-
-        // Teleport players to their shulker's new position + 0.1 Y offset
-        for (Map.Entry<Player, Shulker> entry : playersOnDeck.entrySet()) {
-            Player player = entry.getKey();
-            Shulker shulker = entry.getValue();
-            Location shulkerLoc = shulker.getLocation();
-            Location playerLoc = player.getLocation();
-            // Place player at shulker's X/Z, on top of shulker's bounding box + 0.1
-            player.teleport(new Location(
-                shulkerLoc.getWorld(),
-                shulkerLoc.getX(),
-                shulker.getBoundingBox().getMaxY() + 0.1,
-                shulkerLoc.getZ(),
-                playerLoc.getYaw(),
-                playerLoc.getPitch()
-            ));
-        }
-
-        // Reset velocity and rotation
-        vehicle.setVelocity(new org.bukkit.util.Vector(0, 0, 0));
-        physics.currentSpeed = 0.0f;
-        physics.currentRotationVelocity = 0.0f;
-        physics.currentYVelocity = 0.0f;
-        physics.collisionForce.set(0, 0, 0);
+        physics.alignToGrid();
     }
 
     // ========== Cannon System ==========

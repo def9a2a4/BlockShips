@@ -26,6 +26,8 @@ import org.bukkit.event.player.PlayerAdvancementDoneEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerKickEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
 import org.bukkit.advancement.Advancement;
 import org.bukkit.advancement.AdvancementProgress;
@@ -42,6 +44,8 @@ import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 public class DisplayShip implements Listener {
@@ -59,6 +63,8 @@ public class DisplayShip implements Listener {
     private final List<NamespacedKey> registeredRecipes = new ArrayList<>();
     private final Map<UUID, Long> lastShulkerInteraction = new HashMap<>();  // Cooldown for preventing double-entry
     private final Set<UUID> shipsBeingRecovered = Collections.synchronizedSet(new HashSet<>());  // Prevent concurrent recovery
+    private final Set<Long> chunksBeingRecovered = ConcurrentHashMap.newKeySet();  // Track chunks with pending async recovery
+    private final org.joml.Vector3f workWheelTranslation = new org.joml.Vector3f();  // Reusable for findWheelCollider
 
     public DisplayShip(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -342,6 +348,8 @@ public class DisplayShip implements Listener {
     public void shutdown() {
         // Save all ships to per-world storage - entities persist via Minecraft
         shipWorldData.saveAll();
+        // Shutdown async I/O executor
+        shipWorldData.shutdown();
         // Don't call destroyAll() - let entities persist for recovery on restart
         // Just clear the in-memory registry
         ShipRegistry.clear();
@@ -365,6 +373,10 @@ public class DisplayShip implements Listener {
     @EventHandler
     public void onChunkUnload(ChunkUnloadEvent event) {
         org.bukkit.Chunk chunk = event.getChunk();
+
+        // Cancel any pending async recovery for this chunk
+        chunksBeingRecovered.remove(chunk.getChunkKey());
+
         for (ShipInstance ship : ShipRegistry.getShipsInChunk(chunk)) {
             // Save current state to per-world storage before suspension
             shipWorldData.saveShipMetadata(ship);
@@ -383,129 +395,192 @@ public class DisplayShip implements Listener {
      * Handles chunk load events.
      * Looks up ships in the chunk from per-world data, creates ShipInstance, and recovers entity references.
      * Also handles incremental recovery for ships that span multiple chunks.
+     * File I/O is performed asynchronously to avoid blocking the main thread.
      */
     @EventHandler
     public void onChunkLoad(ChunkLoadEvent event) {
         org.bukkit.Chunk chunk = event.getChunk();
+        World world = event.getWorld();
+        int chunkX = chunk.getX();
+        int chunkZ = chunk.getZ();
+        long chunkKey = chunk.getChunkKey();
 
-        // Track ships that failed recovery in this event to avoid duplicate attempts in Part 3
-        Set<UUID> failedRecoveryThisEvent = new HashSet<>();
+        // PART 1: Normal recovery for ships indexed in this chunk (async file I/O)
+        List<UUID> shipIds = shipWorldData.getShipsInChunk(world, chunkX, chunkZ);
 
-        // PART 1: Normal recovery for ships indexed in this chunk
-        List<UUID> shipIds = shipWorldData.getShipsInChunk(event.getWorld(), chunk.getX(), chunk.getZ());
-
+        // Filter to ships that need recovery
+        List<UUID> shipsToRecover = new ArrayList<>();
         for (UUID shipId : shipIds) {
-            // Skip if already in registry
-            if (ShipRegistry.byId(shipId) != null) {
-                continue;
-            }
-
-            // Check if this ship is already being recovered (prevent concurrent recovery)
-            if (!shipsBeingRecovered.add(shipId)) {
-                continue;
-            }
-
-            try {
-                // Load ship metadata from per-world YAML
-                ShipPersistence.ShipState state = shipWorldData.loadShipMetadata(event.getWorld(), shipId);
-                if (state == null) {
-                    // No metadata file - remove stale entry from chunk index
-                    shipWorldData.removeFromChunkIndex(event.getWorld(), shipId, chunk.getX(), chunk.getZ());
-                    continue;
-                }
-
-                // Count entities in this chunk only
-                int entitiesInChunk = countEntitiesInChunk(chunk, shipId);
-                if (entitiesInChunk == 0) {
-                    // No entities in indexed chunk - ship may have moved elsewhere
-                    // Remove stale index entry but keep metadata for recovery when actual chunk loads
-                    plugin.getLogger().fine("Ship " + shipId + " not in indexed chunk - removing stale index entry");
-                    shipWorldData.removeFromChunkIndex(event.getWorld(), shipId, chunk.getX(), chunk.getZ());
-                    continue;
-                }
-
-                // Load model
-                ShipModel model = loadModelForState(state);
-                if (model == null) {
-                    plugin.getLogger().warning("Could not load model for ship " + shipId + " (type: " + state.shipType + ")");
-                    failedRecoveryThisEvent.add(shipId);
-                    continue;
-                }
-
-                // Create ShipInstance from state (without spawning entities)
-                ShipInstance ship = ShipInstance.fromState(plugin, state, model);
-                if (ship == null) {
-                    plugin.getLogger().warning("Failed to create ShipInstance for " + shipId);
-                    failedRecoveryThisEvent.add(shipId);
-                    continue;
-                }
-
-                // Set expected entity count from metadata for incremental recovery tracking
-                ship.setExpectedEntityCount(state.entityCount);
-
-                // Try to recover - recoverEntities searches this chunk + 32-block radius
-                boolean recovered = ship.recoverEntities(chunk);
-
-                if (!recovered) {
-                    // Vehicle not found - remove from this chunk's index but keep metadata
-                    // Ship will be created when vehicle's chunk loads
-                    plugin.getLogger().info("Ship " + shipId + " vehicle not in this chunk - will recover when vehicle chunk loads");
-                    shipWorldData.removeFromChunkIndex(event.getWorld(), shipId, chunk.getX(), chunk.getZ());
-                    failedRecoveryThisEvent.add(shipId);
-                    continue;
-                }
-
-                // Register recovered ship
-                ShipRegistry.register(ship);
-
-                // Log recovery status
-                if (!ship.isRecoveryComplete()) {
-                    plugin.getLogger().info("Ship " + shipId + " partially recovered - waiting for more chunks");
-                } else {
-                    plugin.getLogger().info("Recovered ship " + shipId + " from chunk load at " + chunk.getX() + "," + chunk.getZ());
-                }
-            } finally {
-                shipsBeingRecovered.remove(shipId);
+            if (ShipRegistry.byId(shipId) == null && shipsBeingRecovered.add(shipId)) {
+                shipsToRecover.add(shipId);
             }
         }
 
-        // PART 2 & 3: Incremental recovery and orphan cleanup (single pass)
+        if (!shipsToRecover.isEmpty()) {
+            // Mark chunk as having pending recovery
+            chunksBeingRecovered.add(chunkKey);
+
+            // Load all metadata asynchronously in parallel
+            List<CompletableFuture<ShipPersistence.ShipState>> futures = shipsToRecover.stream()
+                .map(id -> shipWorldData.loadShipMetadataAsync(world, id))
+                .toList();
+
+            // When all loads complete, sync back to main thread for entity operations
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                .thenRun(() -> {
+                    // Run entity recovery on main thread
+                    Bukkit.getScheduler().runTask(plugin, () -> {
+                        // Check if chunk was unloaded while we were loading
+                        if (!chunksBeingRecovered.remove(chunkKey) || !chunk.isLoaded()) {
+                            // Chunk unloaded - cleanup and skip recovery
+                            shipsToRecover.forEach(shipsBeingRecovered::remove);
+                            return;
+                        }
+
+                        Set<UUID> failedRecovery = new HashSet<>();
+
+                        for (int i = 0; i < shipsToRecover.size(); i++) {
+                            UUID shipId = shipsToRecover.get(i);
+                            try {
+                                // Re-check chunk state before each ship recovery (chunk could unload mid-loop)
+                                if (!chunk.isLoaded()) {
+                                    plugin.getLogger().fine("Chunk unloaded during recovery loop - aborting remaining ships");
+                                    // Clean up remaining ships (current ship's finally block will handle itself)
+                                    for (int j = i + 1; j < shipsToRecover.size(); j++) {
+                                        shipsBeingRecovered.remove(shipsToRecover.get(j));
+                                    }
+                                    return;
+                                }
+
+                                // Skip if already registered (another chunk may have recovered it)
+                                if (ShipRegistry.byId(shipId) != null) {
+                                    continue;
+                                }
+
+                                ShipPersistence.ShipState state;
+                                try {
+                                    state = futures.get(i).join();
+                                } catch (Exception e) {
+                                    plugin.getLogger().warning("Failed to load metadata for ship " + shipId + ": " + e.getMessage());
+                                    failedRecovery.add(shipId);
+                                    continue;
+                                }
+                                if (state == null) {
+                                    shipWorldData.removeFromChunkIndex(world, shipId, chunkX, chunkZ);
+                                    continue;
+                                }
+
+                                // Count entities in this chunk only
+                                int entitiesInChunk = countEntitiesInChunk(chunk, shipId);
+                                if (entitiesInChunk == 0) {
+                                    plugin.getLogger().fine("Ship " + shipId + " not in indexed chunk - removing stale index entry");
+                                    shipWorldData.removeFromChunkIndex(world, shipId, chunkX, chunkZ);
+                                    continue;
+                                }
+
+                                // Load model
+                                ShipModel model = loadModelForState(state);
+                                if (model == null) {
+                                    plugin.getLogger().warning("Could not load model for ship " + shipId + " (type: " + state.shipType + ")");
+                                    failedRecovery.add(shipId);
+                                    continue;
+                                }
+
+                                // Create ShipInstance from state
+                                ShipInstance ship = ShipInstance.fromState(plugin, state, model);
+                                if (ship == null) {
+                                    plugin.getLogger().warning("Failed to create ShipInstance for " + shipId);
+                                    failedRecovery.add(shipId);
+                                    continue;
+                                }
+
+                                ship.setExpectedEntityCount(state.entityCount);
+
+                                // Try to recover entities (re-check chunk state first)
+                                if (!chunk.isLoaded()) {
+                                    plugin.getLogger().fine("Chunk unloaded before entity recovery for " + shipId);
+                                    failedRecovery.add(shipId);
+                                    continue;
+                                }
+                                boolean recovered = ship.recoverEntities(chunk);
+                                if (!recovered) {
+                                    plugin.getLogger().info("Ship " + shipId + " vehicle not in this chunk - will recover when vehicle chunk loads");
+                                    shipWorldData.removeFromChunkIndex(world, shipId, chunkX, chunkZ);
+                                    failedRecovery.add(shipId);
+                                    continue;
+                                }
+
+                                ShipRegistry.register(ship);
+
+                                if (!ship.isRecoveryComplete()) {
+                                    plugin.getLogger().info("Ship " + shipId + " partially recovered - waiting for more chunks");
+                                } else {
+                                    plugin.getLogger().info("Recovered ship " + shipId + " from chunk load at " + chunkX + "," + chunkZ);
+                                }
+                            } finally {
+                                shipsBeingRecovered.remove(shipId);
+                            }
+                        }
+
+                        // Run orphan cleanup after async recovery completes (only if chunk still loaded)
+                        if (chunk.isLoaded()) {
+                            processOrphanCleanup(chunk, world, failedRecovery);
+                        }
+                    });
+                });
+        }
+
+        // PART 2: Immediate incremental recovery for already-registered incomplete ships
+        // (This runs synchronously since it doesn't involve file I/O)
         Set<UUID> processedIncompleteShips = new HashSet<>();
         for (Entity e : chunk.getEntities()) {
             UUID entityShipId = ShipTags.extractShipId(e.getScoreboardTags());
             if (entityShipId == null) continue;
 
             ShipInstance ship = ShipRegistry.byId(entityShipId);
+            // Skip ships being recovered asynchronously to avoid concurrent modification
+            if (ship != null && !ship.isRecoveryComplete() && !shipsBeingRecovered.contains(entityShipId) && processedIncompleteShips.add(entityShipId)) {
+                ship.collectEntitiesFromChunk(chunk);
+            }
+        }
 
-            if (ship != null) {
-                // Part 2: Incremental recovery for incomplete ships
-                // Use add() return value to process each ship only once per chunk
-                if (!ship.isRecoveryComplete() && processedIncompleteShips.add(entityShipId)) {
-                    ship.collectEntitiesFromChunk(chunk);
-                }
-            } else {
-                // Part 3: Ship not registered - check if recoverable or orphaned
-                // Skip if we already tried to recover this ship earlier in this event
-                if (failedRecoveryThisEvent.contains(entityShipId)) {
-                    continue;
-                }
+        // PART 3: Orphan cleanup - only if no async recovery is pending
+        // (If async recovery is pending, orphan cleanup runs after it completes)
+        if (shipsToRecover.isEmpty()) {
+            processOrphanCleanup(chunk, world, Collections.emptySet());
+        }
+    }
 
-                if (!shipWorldData.hasMetadata(event.getWorld(), entityShipId)) {
-                    // No metadata - truly orphaned, remove entity
-                    e.remove();
-                    plugin.getLogger().fine("Removed orphaned entity " + e.getType() + " for deleted ship " + entityShipId);
-                } else if (ShipTags.isRoot(e.getScoreboardTags()) && e instanceof ArmorStand) {
-                    // Found vehicle for unregistered ship with metadata - attempt recovery
-                    // This handles ships that moved chunks between save and load
-                    if (shipsBeingRecovered.add(entityShipId)) {
-                        try {
-                            recoverShipFromVehicle(event.getWorld(), chunk, entityShipId, (ArmorStand) e, failedRecoveryThisEvent);
-                        } finally {
-                            shipsBeingRecovered.remove(entityShipId);
-                        }
+    /**
+     * Processes orphan cleanup for entities in a chunk.
+     * Handles unregistered ships by either recovering them or removing orphaned entities.
+     */
+    private void processOrphanCleanup(org.bukkit.Chunk chunk, World world, Set<UUID> failedRecoveryThisEvent) {
+        for (Entity e : chunk.getEntities()) {
+            UUID entityShipId = ShipTags.extractShipId(e.getScoreboardTags());
+            if (entityShipId == null) continue;
+
+            ShipInstance ship = ShipRegistry.byId(entityShipId);
+            if (ship != null) continue; // Already registered
+
+            // Skip if we already tried to recover this ship
+            if (failedRecoveryThisEvent.contains(entityShipId)) {
+                continue;
+            }
+
+            if (!shipWorldData.hasMetadata(world, entityShipId)) {
+                // No metadata - truly orphaned, remove entity
+                e.remove();
+                plugin.getLogger().fine("Removed orphaned entity " + e.getType() + " for deleted ship " + entityShipId);
+            } else if (ShipTags.isRoot(e.getScoreboardTags()) && e instanceof ArmorStand) {
+                // Found vehicle for unregistered ship with metadata - attempt recovery
+                if (shipsBeingRecovered.add(entityShipId)) {
+                    try {
+                        recoverShipFromVehicle(world, chunk, entityShipId, (ArmorStand) e, failedRecoveryThisEvent);
+                    } finally {
+                        shipsBeingRecovered.remove(entityShipId);
                     }
                 }
-                // Other entities (displays, colliders) will be picked up once ship is registered
             }
         }
     }
@@ -1000,14 +1075,20 @@ public class DisplayShip implements Listener {
     @EventHandler
     public void onSneak(PlayerToggleSneakEvent e) {
         if (!e.isSneaking()) return;
-        Entity vehicle = e.getPlayer().getVehicle();
+        Player player = e.getPlayer();
+        Entity vehicle = player.getVehicle();
+
+        // Handle player riding a ship seat shulker (sneak to dismount)
+        if (vehicle instanceof Shulker) {
+            ShipInstance.dismountPlayer(player);
+        }
+
+        // Legacy: handle ArmorStand seats (if any remain from old versions)
         if (vehicle instanceof ArmorStand armorStand) {
-            // Check if this is a ship seat
             if (armorStand.getScoreboardTags().stream().anyMatch(tag -> tag.contains(":seat"))) {
                 ShipInstance inst = ShipRegistry.byVehicle(armorStand);
                 if (inst != null) {
-                    // Keep ship running; uncomment to despawn when driver sneaks:
-                    // inst.destroy();
+                    // Keep ship running
                 }
             }
         }
@@ -1315,6 +1396,28 @@ public class DisplayShip implements Listener {
     }
 
     /**
+     * Handle player disconnect while riding a ship to prevent entity removal.
+     * Must eject player BEFORE disconnect completes.
+     */
+    private void handlePlayerDisconnectOnShip(Player player) {
+        try {
+            ShipInstance.dismountPlayer(player);
+        } catch (Exception e) {
+            plugin.getLogger().warning("Error handling player disconnect from ship: " + e.getMessage());
+        }
+    }
+
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent e) {
+        handlePlayerDisconnectOnShip(e.getPlayer());
+    }
+
+    @EventHandler
+    public void onPlayerKick(PlayerKickEvent e) {
+        handlePlayerDisconnectOnShip(e.getPlayer());
+    }
+
+    /**
      * Handle damage to collision shulkers and apply it to the ship's health.
      */
     @EventHandler
@@ -1350,7 +1453,9 @@ public class DisplayShip implements Listener {
         double currentHealth = inst.vehicle.getHealth();
         double newHealth = currentHealth - damage;
 
-        double maxHealth = inst.vehicle.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getBaseValue();
+        org.bukkit.attribute.Attribute maxHealthAttr = anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth();
+        org.bukkit.attribute.AttributeInstance maxHealthInstance = maxHealthAttr != null ? inst.vehicle.getAttribute(maxHealthAttr) : null;
+        double maxHealth = maxHealthInstance != null ? maxHealthInstance.getBaseValue() : 100.0;  // Fallback to 100 if unavailable
 
         // Show health feedback to attacker via action bar
         if (e instanceof EntityDamageByEntityEvent damageByEntity) {
@@ -1421,7 +1526,9 @@ public class DisplayShip implements Listener {
         // Apply damage to ship health
         double currentHealth = inst.vehicle.getHealth();
         double newHealth = currentHealth - damage;
-        double maxHealth = inst.vehicle.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getBaseValue();
+        org.bukkit.attribute.Attribute maxHealthAttr = anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth();
+        org.bukkit.attribute.AttributeInstance maxHealthInstance = maxHealthAttr != null ? inst.vehicle.getAttribute(maxHealthAttr) : null;
+        double maxHealth = maxHealthInstance != null ? maxHealthInstance.getBaseValue() : 100.0;  // Fallback to 100 if unavailable
 
         // Show feedback if shooter is a player
         if (projectile.getShooter() instanceof Player player) {
@@ -1507,9 +1614,8 @@ public class DisplayShip implements Listener {
      */
     private CollisionBox findWheelCollider(ShipInstance ship) {
         for (CollisionBox collider : ship.colliders) {
-            org.joml.Vector3f translation = new org.joml.Vector3f();
-            collider.base.getTranslation(translation);
-            if (Math.abs(translation.x) < 0.01f && Math.abs(translation.y) < 0.01f && Math.abs(translation.z) < 0.01f) {
+            collider.base.getTranslation(workWheelTranslation);
+            if (Math.abs(workWheelTranslation.x) < 0.01f && Math.abs(workWheelTranslation.y) < 0.01f && Math.abs(workWheelTranslation.z) < 0.01f) {
                 return collider;
             }
         }
@@ -1573,8 +1679,11 @@ public class DisplayShip implements Listener {
         player.sendMessage("§eShip ID: §f" + inst.id);
         player.sendMessage("§eShip Type: §f" + inst.shipType);
         player.sendMessage("§eWood Type: §f" + inst.customization.getWoodType());
+        org.bukkit.attribute.Attribute maxHealthAttr = anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth();
+        org.bukkit.attribute.AttributeInstance maxHealthInstance = maxHealthAttr != null ? inst.vehicle.getAttribute(maxHealthAttr) : null;
+        double maxHealthValue = maxHealthInstance != null ? maxHealthInstance.getValue() : 100.0;
         player.sendMessage("§eHealth: §f" + String.format("%.1f", inst.vehicle.getHealth()) + "/" +
-                          String.format("%.1f", inst.vehicle.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getValue()));
+                          String.format("%.1f", maxHealthValue));
         player.sendMessage("§eSpeed: §f" + String.format("%.3f", inst.physics.currentSpeed));
 
         // Find the CollisionBox for this shulker
