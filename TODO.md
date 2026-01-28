@@ -15,6 +15,7 @@
 - multiple ships wheels is buggy?
 - ladder duplication bug
 - loading colliders for really large ships sometimes goes wrong
+- fix health display
 
 
 # FEATURES
