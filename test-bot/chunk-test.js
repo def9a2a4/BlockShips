@@ -35,7 +35,7 @@ const RUNWAY_HALF_WIDTH = 10
 const RUNWAY_LENGTH = 60
 
 // Timing
-const CHUNK_UNLOAD_WAIT_MS = 5000
+const CHUNK_UNLOAD_WAIT_MS = 20000
 const CHUNK_LOAD_WAIT_MS = 5000
 
 // Logging
@@ -55,6 +55,11 @@ async function forceChunkCycle(shipPos) {
   const z2 = FAR_Z - RUNWAY_LENGTH
   bot.chat(`/forceload remove ${x1 - 1} ${z1 + 1} ${x2 + 1} ${z2 - 1}`)
   await sleep(200)
+
+  // Verify forceload was removed
+  log('Verifying forceload removal...')
+  bot.chat('/forceload query')
+  await sleep(500)
 
   log(`Teleporting to origin (${ORIGIN_X}, 100, ${ORIGIN_Z}) to trigger chunk unload...`)
   bot.chat(`/tp @s ${ORIGIN_X} 100 ${ORIGIN_Z}`)
