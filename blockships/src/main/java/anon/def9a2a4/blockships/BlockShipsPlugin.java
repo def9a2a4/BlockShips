@@ -5,12 +5,15 @@ import anon.def9a2a4.blockships.customships.ShipWheelData;
 import anon.def9a2a4.blockships.customships.ShipWheelManager;
 import anon.def9a2a4.blockships.ship.ShipInstance;
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Shulker;
+import org.bukkit.util.Vector;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bstats.bukkit.Metrics;
@@ -98,6 +101,7 @@ public class BlockShipsPlugin extends JavaPlugin {
         sender.sendMessage("§e/blockships help §7- Show this help message");
         sender.sendMessage("§e/blockships info §7- Show ship and wheel statistics");
         sender.sendMessage("§e/blockships dismount §7- Force-dismount from a ship");
+        sender.sendMessage("§e/blockships highlightseats §7- Highlight seats on the ship you're looking at");
         if (sender.hasPermission("blockships.reload")) {
             sender.sendMessage("§e/blockships reload §7- Reload the plugin configuration");
         }
@@ -113,6 +117,31 @@ public class BlockShipsPlugin extends JavaPlugin {
             sender.sendMessage("§e/blockships killentities §7- Remove all BlockShips entities from worlds §c§l[DANGEROUS]");
         }
         sender.sendMessage("§7Found a bug? Report it at: §bhttps://github.com/def9a2a4/BlockShips/issues");
+    }
+
+    /**
+     * Finds the ship the player is currently looking at via raycasting.
+     * @param player The player
+     * @return The ShipInstance being looked at, or null if none found
+     */
+    private ShipInstance findLookedAtShip(Player player) {
+        Location eye = player.getEyeLocation();
+        Vector direction = eye.getDirection();
+
+        // Check entities along the ray (up to 50 blocks)
+        for (double d = 0; d <= 50; d += 0.5) {
+            Location check = eye.clone().add(direction.clone().multiply(d));
+
+            for (Entity e : check.getWorld().getNearbyEntities(check, 1, 1, 1)) {
+                if (!(e instanceof Shulker shulker)) continue;
+
+                java.util.UUID shipId = ShipTags.extractShipId(shulker.getScoreboardTags());
+                if (shipId != null) {
+                    return ShipRegistry.byId(shipId);
+                }
+            }
+        }
+        return null;
     }
 
     @Override
@@ -286,6 +315,22 @@ public class BlockShipsPlugin extends JavaPlugin {
                 return true;
             }
 
+            if (args[0].equalsIgnoreCase("highlightseats")) {
+                if (!(sender instanceof Player player)) {
+                    sender.sendMessage("Only players can use this command.");
+                    return true;
+                }
+
+                ShipInstance ship = findLookedAtShip(player);
+                if (ship == null) {
+                    sender.sendMessage("§cYou are not looking at a ship.");
+                    return true;
+                }
+
+                shipWheelManager.highlightSeats(player, ship);
+                return true;
+            }
+
             if (args[0].equalsIgnoreCase("recipes")) {
                 if (!sender.hasPermission("blockships.recipes")) {
                     sender.sendMessage("You don't have permission to unlock recipes.");
@@ -420,6 +465,7 @@ public class BlockShipsPlugin extends JavaPlugin {
             subcommands.add("help");
             subcommands.add("info");
             subcommands.add("dismount");
+            subcommands.add("highlightseats");
             if (sender.hasPermission("blockships.reload")) subcommands.add("reload");
             if (sender.hasPermission("blockships.give")) {
                 subcommands.add("give");

@@ -118,18 +118,30 @@ blocks:
     facing: east
     half: top
     shape: straight
+# port side bench seat
 - block: SPRUCE_STAIRS
   transformation: [1.0, 0.0, 0.0, 0.5, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, 0.0, 1.0]
   properties:
     facing: west
     half: top
     shape: straight
+  collision:
+    enable: true
+    size: 1
+  seat:
+    is_driver: false
+# starboard side bench seat
 - block: SPRUCE_STAIRS
   transformation: [1.0, 0.0, 0.0, -1.5, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, 0.0, 1.0]
   properties:
     facing: east
     half: top
     shape: straight
+  collision:
+    enable: true
+    size: 1
+  seat:
+    is_driver: false
 - block: SPRUCE_STAIRS
   transformation: [1.0, 0.0, 0.0, 0.5, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, -2.0, 0.0, 0.0, 0.0, 1.0]
   properties:
@@ -230,10 +242,15 @@ blocks:
   transformation: [1.75, 0.0, 0.0, -0.875, 0.0, 2.0, 0, 3.0, 0.0, 0, 1.75, -2.125, 0.0, 0.0, 0.0, 1.0]
   collision:
     enable: false
+# crow's nest seat
 - block: SPRUCE_FENCE
   transformation: [1.75, 0.0, 0.0, -0.875, 0.0, 2.0, 0, 5.0, 0.0, 0, 1.75, -2.125, 0.0, 0.0, 0.0, 1.0]
   collision:
-    enable: false
+    enable: true
+    size: 0.5
+    offset: [0.4, 1.5, 0.35]
+  seat:
+    is_driver: false
 
 # fences are purely decorative, no collision
 - block: SPRUCE_FENCE

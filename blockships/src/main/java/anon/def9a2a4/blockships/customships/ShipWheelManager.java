@@ -1038,4 +1038,176 @@ public class ShipWheelManager {
             );
         }
     }
+
+    /**
+     * Spawns particles above a seat shulker with randomness.
+     * Used for assembled ships to highlight the rideable surface.
+     * Spawns at center X/Z, 0.25 blocks above the top of the shulker.
+     */
+    private void spawnShulkerSeatParticles(Shulker shulker, Color color) {
+        Location loc = shulker.getLocation();
+        if (loc.getWorld() == null) {
+            return;
+        }
+
+        // Get shulker scale (default 1.0) to compute actual height
+        double scale = 1.0;
+        org.bukkit.attribute.Attribute scaleAttribute = anon.def9a2a4.blockships.util.AttributeCompat.getScale();
+        if (scaleAttribute != null) {
+            var scaleAttr = shulker.getAttribute(scaleAttribute);
+            if (scaleAttr != null) {
+                scale = scaleAttr.getBaseValue();
+            }
+        }
+
+        // Shulker base height is 1.0 block, scaled by the scale attribute
+        double shulkerHeight = 1.0 * scale;
+        double particleY = loc.getY() + shulkerHeight + 0.25;
+
+        Particle.DustOptions dustOptions = new Particle.DustOptions(color, 1.2f);
+
+        // Spawn multiple particles above the shulker with randomness
+        loc.getWorld().spawnParticle(
+            Particle.DUST,
+            loc.getX(),
+            particleY,
+            loc.getZ(),
+            8,                          // Count - spawn multiple
+            0.25,                       // X spread (randomness)
+            0.25,                       // Y spread
+            0.25,                       // Z spread (randomness)
+            0,                          // Speed
+            dustOptions
+        );
+    }
+
+    /**
+     * Highlights seat positions with particles.
+     * For unassembled ships: uses detected seat block locations (corner particles).
+     * For assembled ships: uses seat shulker entity locations (center-top with randomness).
+     *
+     * @param player The player who triggered the action
+     * @param wheelData The ship wheel data
+     */
+    public void highlightSeats(Player player, ShipWheelData wheelData) {
+        // Cancel any existing particle task
+        wheelData.cancelParticleTask();
+
+        if (wheelData.isAssembled()) {
+            // Delegate to ShipInstance version for assembled ships
+            ShipInstance ship = ShipRegistry.byId(wheelData.getAssembledShipUUID());
+            if (ship == null) {
+                player.sendMessage("§cShip not found!");
+                return;
+            }
+            highlightSeats(player, ship);
+        } else {
+            // Unassembled: use block locations with corner particles
+            Set<Location> seatBlocks = new HashSet<>();
+            Location driverSeat = wheelData.getLastDetectedDriverSeat();
+            Set<Location> detected = wheelData.getLastDetectedSeatBlocks();
+
+            if ((detected == null || detected.isEmpty()) && driverSeat == null) {
+                player.sendMessage("§eNo seats detected. Click 'Detect Ship' first.");
+                return;
+            }
+
+            if (detected != null) {
+                seatBlocks.addAll(detected);
+            }
+
+            int totalSeats = seatBlocks.size() + (driverSeat != null ? 1 : 0);
+            player.sendMessage("§aHighlighting " + totalSeats + " seat(s) for 5 seconds...");
+
+            final Set<Location> finalSeatBlocks = seatBlocks;
+            final Location finalDriverSeat = driverSeat;
+            final int[] iterationsLeft = {10};
+
+            BukkitRunnable particleTask = new BukkitRunnable() {
+                @Override
+                public void run() {
+                    if (iterationsLeft[0] <= 0) {
+                        wheelData.cancelParticleTask();
+                        this.cancel();
+                        return;
+                    }
+
+                    for (Location blockLoc : finalSeatBlocks) {
+                        spawnBlockParticles(blockLoc, PARTICLE_ORANGE);
+                    }
+
+                    if (finalDriverSeat != null) {
+                        spawnBlockParticles(finalDriverSeat, PARTICLE_RED);
+                    }
+
+                    iterationsLeft[0]--;
+                }
+            };
+
+            wheelData.setParticleTask(particleTask.runTaskTimer(plugin, 0L, 10L));
+        }
+    }
+
+    /**
+     * Highlights seat positions with particles for an assembled ship.
+     * Used by the /blockships highlightseats command.
+     * Spawns particles at center-top of seat shulkers with randomness.
+     *
+     * @param player The player who triggered the action
+     * @param ship The ship instance to highlight seats on
+     */
+    public void highlightSeats(Player player, ShipInstance ship) {
+        List<Shulker> passengerSeats = new ArrayList<>();
+        Shulker driverSeatShulker = null;
+
+        for (int i = 0; i < ship.seatShulkers.size(); i++) {
+            Shulker seat = ship.seatShulkers.get(i);
+            if (seat != null && seat.isValid()) {
+                if (i == 0) {
+                    driverSeatShulker = seat;
+                } else {
+                    passengerSeats.add(seat);
+                }
+            }
+        }
+
+        if (driverSeatShulker == null && passengerSeats.isEmpty()) {
+            player.sendMessage("§eNo seats found on this ship.");
+            return;
+        }
+
+        int totalSeats = passengerSeats.size() + (driverSeatShulker != null ? 1 : 0);
+        player.sendMessage("§aHighlighting " + totalSeats + " seat(s) for 5 seconds...");
+
+        final List<Shulker> finalPassengerSeats = passengerSeats;
+        final Shulker finalDriverSeat = driverSeatShulker;
+        final int[] iterationsLeft = {10};  // 10 iterations × 10 ticks = 5 seconds
+
+        BukkitRunnable particleTask = new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (iterationsLeft[0] <= 0) {
+                    this.cancel();
+                    return;
+                }
+
+                // Spawn orange particles on passenger seat shulkers
+                for (Shulker seat : finalPassengerSeats) {
+                    if (seat.isValid()) {
+                        spawnShulkerSeatParticles(seat, PARTICLE_ORANGE);
+                    }
+                }
+
+                // Spawn red particles on driver seat shulker
+                if (finalDriverSeat != null && finalDriverSeat.isValid()) {
+                    spawnShulkerSeatParticles(finalDriverSeat, PARTICLE_RED);
+                }
+
+                iterationsLeft[0]--;
+            }
+        };
+
+        // Run every 10 ticks (0.5 seconds)
+        particleTask.runTaskTimer(plugin, 0L, 10L);
+    }
 }

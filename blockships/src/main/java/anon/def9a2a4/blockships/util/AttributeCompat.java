@@ -15,6 +15,7 @@ import java.util.logging.Logger;
  * - 1.20.5+: Added GENERIC_SCALE attribute
  * - 1.21.2 and earlier: Attribute is an enum with GENERIC_MAX_HEALTH, GENERIC_SCALE
  * - 1.21.3+: Attribute is an interface, use Registry.ATTRIBUTE.get() with short names (max_health, scale)
+ * - 1.21.6+: Added GENERIC_CAMERA_DISTANCE attribute for third-person camera distance when riding entities
  *
  * This class uses PURE REFLECTION to avoid bytecode references that would fail on older versions.
  */
@@ -23,8 +24,10 @@ public class AttributeCompat {
 
     private static Attribute MAX_HEALTH;
     private static Attribute SCALE;
+    private static Attribute CAMERA_DISTANCE;
     private static boolean initialized = false;
     private static boolean scaleAvailable = true;
+    private static boolean cameraDistanceAvailable = true;
 
     static {
         initialize();
@@ -47,6 +50,15 @@ public class AttributeCompat {
         } else {
             scaleAvailable = false;
             LOGGER.info("[AttributeCompat] SCALE not available on this server version - shulkers will use default size");
+        }
+
+        // Resolve CAMERA_DISTANCE - optional (added in 1.21.6)
+        CAMERA_DISTANCE = resolveAttribute("camera_distance", "GENERIC_CAMERA_DISTANCE", "CAMERA_DISTANCE", false);
+        if (CAMERA_DISTANCE != null) {
+            LOGGER.info("[AttributeCompat] CAMERA_DISTANCE resolved successfully");
+        } else {
+            cameraDistanceAvailable = false;
+            LOGGER.info("[AttributeCompat] CAMERA_DISTANCE not available - using default camera distance");
         }
     }
 
@@ -198,5 +210,24 @@ public class AttributeCompat {
     public static boolean isScaleAvailable() {
         if (!initialized) initialize();
         return scaleAvailable;
+    }
+
+    /**
+     * Get the CAMERA_DISTANCE attribute for the current server version.
+     * This attribute controls third-person camera distance when riding an entity.
+     * @return The CAMERA_DISTANCE attribute, or null if not available (servers before 1.21.6)
+     */
+    public static Attribute getCameraDistance() {
+        if (!initialized) initialize();
+        return CAMERA_DISTANCE;
+    }
+
+    /**
+     * Check if the camera distance attribute is available on this server version.
+     * @return true if camera distance attribute is available (1.21.6+), false otherwise
+     */
+    public static boolean isCameraDistanceAvailable() {
+        if (!initialized) initialize();
+        return cameraDistanceAvailable;
     }
 }

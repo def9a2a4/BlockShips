@@ -230,6 +230,11 @@ ships:
       min-penetration: 0.1
       # Collision force retention per tick (0.0-1.0, higher = slower decay, 1.0 = no decay)
       force-decay: 0.7
+
+    # Third-person camera distance when riding (default: 4, range: 0-32)
+    # Larger values zoom the camera out further for better visibility on large ships
+    camera-distance: 4.0
+
   bigship:
     model-path: prefab_ships/ship_big.yml
 
@@ -284,6 +289,9 @@ ships:
       min-penetration: 0.1
       force-decay: 0.7
 
+    # Third-person camera distance when riding (default: 4, range: 0-32)
+    camera-distance: 8.0
+
   smallairship:
     type: airship
     model-path: prefab_ships/airship_small.yml
@@ -333,6 +341,9 @@ ships:
       terrain-speed-multiplier: 10.0
       min-penetration: 0.1
       force-decay: 0.7
+
+    # Third-person camera distance when riding (default: 4, range: 0-32)
+    camera-distance: 6.0
 
   custom:
     collision-debug-glow: false

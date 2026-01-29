@@ -3,6 +3,7 @@ package anon.def9a2a4.blockships;
 import anon.def9a2a4.blockships.customships.ShipWheelData;
 import anon.def9a2a4.blockships.customships.ShipWheelManager;
 import anon.def9a2a4.blockships.customships.ShipWheelMenu;
+import anon.def9a2a4.blockships.util.AttributeCompat;
 import anon.def9a2a4.blockships.ship.CollisionBox;
 import anon.def9a2a4.blockships.ship.ShipInstance;
 import org.bukkit.*;
@@ -1096,6 +1097,9 @@ public class DisplayShip implements Listener {
 
     @EventHandler
     public void onShulkerClick(PlayerInteractEntityEvent e) {
+        // Only process main hand interactions to prevent double-firing
+        if (e.getHand() != org.bukkit.inventory.EquipmentSlot.HAND) return;
+
         Entity clicked = e.getRightClicked();
         Player player = e.getPlayer();
 
@@ -1158,6 +1162,21 @@ public class DisplayShip implements Listener {
 
         ShipInstance inst = ShipRegistry.byId(shipId);
         if (inst == null || !inst.vehicle.isValid()) return;
+
+        // Check if player is holding a ship wheel - show info message
+        if (isShipWheel(player.getInventory().getItemInMainHand())) {
+            if ("custom".equals(inst.shipType)) {
+                player.sendMessage("§eShip wheels cannot be added to assembled ships. " +
+                    "Use the existing wheel (sneak + right-click) to access the ship menu. " +
+                    "Enter this ship by right-clicking with an empty hand.");
+            } else {
+                player.sendMessage("§eShip wheels are for creating custom ships from blocks you build. " +
+                    "This is a prefab ship - these are spawned from ship kits crafted at a crafting table. " +
+                    "You can enter this ship by right-clicking with an empty hand.");
+            }
+            e.setCancelled(true);
+            return;
+        }
 
         // Debug tool: if player holds echo shard, show collision info
         if (player.getInventory().getItemInMainHand().getType() == Material.ECHO_SHARD) {
@@ -1271,6 +1290,8 @@ public class DisplayShip implements Listener {
         if (seatIndex >= 0) {
             // Player clicked on a seat collider - mount directly to this shulker if not occupied
             if (!shulker.getPassengers().stream().anyMatch(p -> p instanceof Player)) {
+                // Set camera distance before mounting
+                setCameraDistanceOnShulker(shulker, getCameraDistanceForShip(inst));
                 shulker.addPassenger(player);
                 inst.occupySeat(seatIndex);
                 // Update timestamp after successful mount
@@ -1286,6 +1307,8 @@ public class DisplayShip implements Listener {
         // Player clicked on a non-seat collider - mount to first available seat shulker
         Shulker availableSeatShulker = inst.getFirstAvailableSeatShulker();
         if (availableSeatShulker != null) {
+            // Set camera distance before mounting
+            setCameraDistanceOnShulker(availableSeatShulker, getCameraDistanceForShip(inst));
             availableSeatShulker.addPassenger(player);
             // Mark seat as occupied (extract seat index from shulker tags)
             int idx = ShipTags.extractSeatIndex(availableSeatShulker.getScoreboardTags());
@@ -1480,6 +1503,7 @@ public class DisplayShip implements Listener {
             inst.destroyAndDropItem();
         } else {
             inst.vehicle.setHealth(newHealth);
+            inst.syncSeatShulkerHealth(newHealth);
         }
     }
 
@@ -1548,6 +1572,7 @@ public class DisplayShip implements Listener {
             inst.destroyAndDropItem();
         } else {
             inst.vehicle.setHealth(newHealth);
+            inst.syncSeatShulkerHealth(newHealth);
         }
 
         // Remove projectile (it would normally bounce/do nothing)
@@ -1988,6 +2013,14 @@ public class DisplayShip implements Listener {
                     }
                 }
                 break;
+            case HIGHLIGHT_SEATS:
+                manager.highlightSeats(player, wheelData);
+                break;
+            case CAMERA_DISTANCE_DECREASE:
+            case CAMERA_DISTANCE_INCREASE:
+                handleCameraDistanceChange(player, wheelData, action == ShipWheelMenu.MenuAction.CAMERA_DISTANCE_INCREASE, event.getInventory());
+                // Don't set stateChanged - we update items in place
+                break;
         }
 
         // Close and reopen menu if state changed (for assemble/disassemble)
@@ -2021,6 +2054,83 @@ public class DisplayShip implements Listener {
             }
             wheelData.setPendingMenuReopen(false);
         }
+    }
+
+    /**
+     * Handles camera distance adjustment from the ship wheel menu.
+     * Updates the value, applies to all seat shulkers, and refreshes menu items in place.
+     *
+     * @param player The player adjusting the camera distance
+     * @param wheelData The ship wheel data
+     * @param increase true to increase, false to decrease
+     * @param inventory The menu inventory to update in place
+     */
+    private void handleCameraDistanceChange(Player player, ShipWheelData wheelData, boolean increase, Inventory inventory) {
+        ShipInstance ship = ShipRegistry.byId(wheelData.getAssembledShipUUID());
+        if (ship == null) return;
+
+        float current = wheelData.getCameraDistance();
+        if (current < 0) {
+            current = ShipWheelData.calculateDefaultCameraDistance(ship.model.blockCount);
+        }
+
+        float step = 2f;  // Adjust by 2 per click
+        float newValue = increase ? current + step : current - step;
+        newValue = Math.max(4f, Math.min(32f, newValue));  // Clamp to valid range
+
+        wheelData.setCameraDistance(newValue);
+
+        // Update all seat shulkers immediately (so change takes effect if player is riding)
+        for (Shulker shulker : ship.seatShulkers) {
+            setCameraDistanceOnShulker(shulker, newValue);
+        }
+
+        // Update menu items in place (no close/reopen)
+        ShipWheelMenu.updateCameraItems(inventory, wheelData, ship);
+    }
+
+    /**
+     * Sets the camera_distance attribute on a shulker for third-person camera positioning.
+     * Only effective on Minecraft 1.21.6+ where this attribute exists.
+     *
+     * @param shulker The shulker to set the attribute on
+     * @param distance The camera distance (4-32, default 4)
+     */
+    private void setCameraDistanceOnShulker(Shulker shulker, float distance) {
+        org.bukkit.attribute.Attribute cameraDistAttr = AttributeCompat.getCameraDistance();
+        if (cameraDistAttr != null) {
+            try {
+                org.bukkit.attribute.AttributeInstance attr = shulker.getAttribute(cameraDistAttr);
+                if (attr != null) {
+                    attr.setBaseValue(distance);
+                }
+            } catch (Exception e) {
+                // Silently ignore - attribute may not be applicable on this server version
+            }
+        }
+    }
+
+    /**
+     * Gets the appropriate camera distance for a ship instance.
+     * For prefab ships, returns the config value.
+     * For custom ships, returns the wheel data value or calculates from block count.
+     *
+     * @param inst The ship instance
+     * @return The camera distance to use
+     */
+    private float getCameraDistanceForShip(ShipInstance inst) {
+        if ("custom".equals(inst.shipType)) {
+            // For custom ships, check wheel data for per-ship setting
+            ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
+            ShipWheelData wheelData = manager.getWheelByShipUUID(inst.id);
+            if (wheelData != null && wheelData.getCameraDistance() >= 0) {
+                return wheelData.getCameraDistance();
+            } else {
+                return ShipWheelData.calculateDefaultCameraDistance(inst.model.blockCount);
+            }
+        }
+        // For prefab ships, use config value
+        return inst.config.cameraDistance;
     }
 
     /**
