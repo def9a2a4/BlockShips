@@ -336,7 +336,10 @@ public class ShipInstance {
 
             // Check if this part needs special rendering (player head or banner)
             boolean hasSkullProfile = p.rawYaml.containsKey("skull_profile");
-            boolean hasBannerPatterns = p.rawYaml.containsKey("banner_patterns");
+            // Detect banners by rotation/facing keys (works for both plain and patterned banners)
+            boolean hasBannerPatterns = p.rawYaml.containsKey("banner_patterns") ||
+                                        p.rawYaml.containsKey("banner_rotation") ||
+                                        p.rawYaml.containsKey("banner_facing");
 
             org.bukkit.entity.Display child;
             Matrix4f displayTransform;  // Transform used for DisplayInstance (may include rotation)
@@ -456,38 +459,7 @@ public class ShipInstance {
                         // FIXED mode displays item at actual size, so we need to scale and position it
                         id.setItemDisplayTransform(org.bukkit.entity.ItemDisplay.ItemDisplayTransform.FIXED);
 
-                        // Get banner rotation from rawYaml to determine if wall or standing banner
-                        boolean isWallBanner = p.rawYaml.containsKey("banner_facing");
-
-                        Matrix4f bannerTransform = new Matrix4f(finalTransform);
-
-                        // Calculate yaw from stored rotation data
-                        float bannerYaw = 0.0f;
-                        if (isWallBanner) {
-                            // Wall banner: 4-direction facing
-                            BlockFace facing = safeBlockFace(p.rawYaml, "banner_facing", BlockFace.NORTH);
-                            bannerYaw = getYawFromBlockFace(facing);
-                        } else if (p.rawYaml.containsKey("banner_rotation")) {
-                            // Standing banner: 16-step rotation
-                            BlockFace rotation = safeBlockFace(p.rawYaml, "banner_rotation", BlockFace.NORTH);
-                            bannerYaw = getYawFromBlockFace(rotation);
-                        }
-
-                        // Tuning values for banner display
-                        float bannerScale = 2f;  // Scale to proper size
-
-                        if (isWallBanner) {
-                            // Wall banner: center in block, rotate, offset to wall
-                            bannerTransform.translate(0.5f, 0.5f, 0.5f);
-                            bannerTransform.rotateY((float) java.lang.Math.toRadians(-bannerYaw));
-                            bannerTransform.scale(bannerScale);
-                            bannerTransform.translate(0.0f, -0.5f, -0.275f);  // down 1 block, forward 0.25, wall offset
-                        } else {
-                            // Standing banner: position at block center, rotate
-                            bannerTransform.translate(0.5f, 0.5f, 0.5f);
-                            bannerTransform.rotateY((float) java.lang.Math.toRadians(-bannerYaw));
-                            bannerTransform.scale(bannerScale);
-                        }
+                        Matrix4f bannerTransform = calculateBannerTransform(finalTransform, p.rawYaml);
                         id.setTransformationMatrix(bannerTransform);
                     }
                 });
@@ -516,27 +488,7 @@ public class ShipInstance {
                         displayTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw));
                     }
                 } else if (hasBannerPatterns) {
-                    // Apply banner rotation to displayTransform (must match spawn transforms above)
-                    boolean isWallBanner = p.rawYaml.containsKey("banner_facing");
-                    float bannerYaw = 0.0f;
-                    if (isWallBanner) {
-                        BlockFace facing = safeBlockFace(p.rawYaml, "banner_facing", BlockFace.NORTH);
-                        bannerYaw = getYawFromBlockFace(facing);
-                    } else if (p.rawYaml.containsKey("banner_rotation")) {
-                        BlockFace rotation = safeBlockFace(p.rawYaml, "banner_rotation", BlockFace.NORTH);
-                        bannerYaw = getYawFromBlockFace(rotation);
-                    }
-                    float bannerScale = 2f;
-                    if (isWallBanner) {
-                        displayTransform.translate(0.5f, 0.5f, 0.5f);
-                        displayTransform.rotateY((float) java.lang.Math.toRadians(-bannerYaw));
-                        displayTransform.scale(bannerScale);
-                        displayTransform.translate(0.0f, -0.5f, -0.275f);  // down 1 block, forward 0.25, wall offset
-                    } else {
-                        displayTransform.translate(0.5f, 0.5f, 0.5f);
-                        displayTransform.rotateY((float) java.lang.Math.toRadians(-bannerYaw));
-                        displayTransform.scale(bannerScale);
-                    }
+                    displayTransform = calculateBannerTransform(new Matrix4f(p.local), p.rawYaml);
                 }
             } else {
                 // Compute display transform (may include rotation for blocks like chests)
@@ -1313,6 +1265,41 @@ public class ShipInstance {
         }
     }
 
+    /**
+     * Calculate transform matrix for banner display entities.
+     * Handles both floor (standing) and wall banners.
+     */
+    private Matrix4f calculateBannerTransform(Matrix4f baseTransform, Map<?, ?> rawYaml) {
+        Matrix4f transform = new Matrix4f(baseTransform);
+        boolean isWallBanner = rawYaml.containsKey("banner_facing");
+
+        float bannerYaw = 0.0f;
+        if (isWallBanner) {
+            BlockFace facing = safeBlockFace(rawYaml, "banner_facing", BlockFace.NORTH);
+            bannerYaw = getYawFromBlockFace(facing);
+        } else if (rawYaml.containsKey("banner_rotation")) {
+            BlockFace rotation = safeBlockFace(rawYaml, "banner_rotation", BlockFace.NORTH);
+            bannerYaw = getYawFromBlockFace(rotation);
+        }
+
+        float bannerScale = 2f;
+
+        if (isWallBanner) {
+            // Wall banner: position at block center, rotate, offset toward wall
+            transform.translate(0.5f, 0.5f, 0.5f);
+            transform.rotateY((float) java.lang.Math.toRadians(-bannerYaw));
+            transform.translate(0.0f, -0.97f, -0.5f);  // Down 0.75 + toward wall (local -Z after rotation)
+            transform.scale(bannerScale);
+        } else {
+            // Floor banner: position at block center, rotate to face banner direction
+            transform.translate(0.5f, 0.5f, 0.5f);
+            transform.rotateY((float) java.lang.Math.toRadians(-bannerYaw));
+            transform.scale(bannerScale);
+        }
+
+        return transform;
+    }
+
     // Start a slower-polling task to check for movement when ship is idle
     private void startIdleCheckTask() {
         if (idleCheckTask != null) {
@@ -1927,7 +1914,10 @@ public class ShipInstance {
 
             // Handle skulls and banners
             boolean hasSkullProfile = part.rawYaml.containsKey("skull_profile");
-            boolean hasBannerPatterns = part.rawYaml.containsKey("banner_patterns");
+            // Detect banners by rotation/facing keys (works for both plain and patterned banners)
+            boolean hasBannerPatterns = part.rawYaml.containsKey("banner_patterns") ||
+                                        part.rawYaml.containsKey("banner_rotation") ||
+                                        part.rawYaml.containsKey("banner_facing");
 
             if (hasSkullProfile) {
                 float skullYaw = 0.0f;
@@ -1941,26 +1931,7 @@ public class ShipInstance {
                 transform.translate(0.5f, 0.5f, 0.5f);
                 transform.rotateY((float) java.lang.Math.toRadians(-skullYaw));
             } else if (hasBannerPatterns) {
-                boolean isWallBanner = part.rawYaml.containsKey("banner_facing");
-                float bannerYaw = 0.0f;
-                if (isWallBanner) {
-                    BlockFace facing = safeBlockFace(part.rawYaml, "banner_facing", BlockFace.NORTH);
-                    bannerYaw = getYawFromBlockFace(facing);
-                } else if (part.rawYaml.containsKey("banner_rotation")) {
-                    BlockFace rotation = safeBlockFace(part.rawYaml, "banner_rotation", BlockFace.NORTH);
-                    bannerYaw = getYawFromBlockFace(rotation);
-                }
-                float bannerScale = 2f;
-                if (isWallBanner) {
-                    transform.translate(0.5f, 0.5f, 0.5f);
-                    transform.rotateY((float) java.lang.Math.toRadians(-bannerYaw));
-                    transform.scale(bannerScale);
-                    transform.translate(0.0f, -0.5f, -0.275f);
-                } else {
-                    transform.translate(0.5f, 0.5f, 0.5f);
-                    transform.rotateY((float) java.lang.Math.toRadians(-bannerYaw));
-                    transform.scale(bannerScale);
-                }
+                return calculateBannerTransform(new Matrix4f(part.local), part.rawYaml);
             }
 
             return transform;
