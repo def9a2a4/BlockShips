@@ -7,7 +7,6 @@ import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.block.data.type.Light;
-import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
@@ -23,7 +22,7 @@ import java.util.Map;
  */
 public class ShipLighting {
     private final ShipInstance ship;
-    private final List<Location> placedLights = new ArrayList<>();
+    private final List<int[]> placedLights = new ArrayList<>(32);  // {x, y, z} coordinates
 
     // Tracking for threshold-based updates (reuse vector to reduce GC)
     private final Vector3f lastUpdatePos = new Vector3f();
@@ -36,8 +35,8 @@ public class ShipLighting {
     private final float updateThresholdBlocks;
     private final float updateThresholdRotation;
 
-    // Map from block index to CollisionBox for fast lookup
-    private Map<Integer, CollisionBox> blockIndexToCollider;
+    // Array from block index to CollisionBox for fast lookup (indices are dense)
+    private CollisionBox[] blockIndexToCollider;
 
     /**
      * Creates a new ShipLighting manager for the given ship.
@@ -52,20 +51,20 @@ public class ShipLighting {
         this.enabled = config.getBoolean("custom-ships.lighting.enabled", true);
         this.maxLights = config.getInt("custom-ships.lighting.max-lights-per-ship", 32);
         this.updateThresholdBlocks = (float) config.getDouble("custom-ships.lighting.update-threshold-blocks", 1.0);
-        this.updateThresholdRotation = (float) config.getDouble("custom-ships.lighting.update-threshold-rotation", 10.0);
+        this.updateThresholdRotation = (float) config.getDouble("custom-ships.lighting.update-threshold-rotation", 3.0);
 
         // Note: blockIndexToCollider is built lazily in placeLights()
         // because colliders may not be spawned yet when this constructor is called
     }
 
     /**
-     * Builds a map from block index to CollisionBox for fast lookup.
+     * Builds an array from block index to CollisionBox for fast lookup.
      * Called lazily on first use since colliders may not exist at construction time.
      */
-    private void buildColliderMap() {
-        blockIndexToCollider = new HashMap<>();
+    private void buildColliderArray() {
+        blockIndexToCollider = new CollisionBox[ship.model.parts.size()];
         for (CollisionBox cb : ship.colliders) {
-            blockIndexToCollider.put(cb.blockIndex, cb);
+            blockIndexToCollider[cb.blockIndex] = cb;
         }
     }
 
@@ -90,16 +89,26 @@ public class ShipLighting {
             return;
         }
 
-        // Remove old lights and place new ones
-        int oldCount = placedLights.size();
-        removePlacedLights();
-        placeLights(vehicleLoc.getWorld());
-        ship.plugin.getLogger().info("[ShipLighting] Updated: removed " + oldCount + ", placed " + placedLights.size() + " lights");
+        // Place new lights first, then remove old ones (reduces flickering)
+        List<int[]> oldLights = new ArrayList<>(placedLights);
+        placedLights.clear();
+        World world = vehicleLoc.getWorld();
+        placeLights(world);
+        removeOldLights(oldLights, world);
 
         // Track last update position (reuse vector)
         lastUpdatePos.set((float) vehicleLoc.getX(), (float) vehicleLoc.getY(), (float) vehicleLoc.getZ());
         lastUpdateYaw = currentYaw;
         hasLastUpdate = true;
+    }
+
+    /**
+     * Forces an immediate light update regardless of movement thresholds.
+     * Useful after teleportation or other instant position changes.
+     */
+    public void forceUpdate() {
+        hasLastUpdate = false;
+        update();
     }
 
     /**
@@ -145,58 +154,59 @@ public class ShipLighting {
             return;
         }
 
-        // Build collider map lazily (colliders aren't available at construction time)
+        // Build collider array lazily (colliders aren't available at construction time)
         if (blockIndexToCollider == null) {
-            buildColliderMap();
+            buildColliderArray();
         }
 
+        // Cache chunk loaded status to avoid redundant checks
+        Map<Long, Boolean> chunkLoadedCache = new HashMap<>();
+
         int placed = 0;
-        int skippedNoCollider = 0;
-        int skippedNotAir = 0;
         for (ShipModel.LightSource source : ship.model.lightSources) {
             if (placed >= maxLights) {
                 break;
             }
 
             // Get the collider for this light source's target shulker
-            CollisionBox collider = blockIndexToCollider.get(source.targetShulkerBlockIndex);
+            CollisionBox collider = blockIndexToCollider[source.targetShulkerBlockIndex];
             if (collider == null || collider.entity == null || !collider.entity.isValid()) {
-                skippedNoCollider++;
                 continue;  // No valid shulker for this light
             }
 
             // Get shulker center position (getLocation returns feet, add 0.5 for center)
             Location shulkerLoc = collider.entity.getLocation().add(0, 0.5, 0);
 
-            // Skip if chunk not loaded (avoid forcing chunk loads at boundaries)
-            if (!shulkerLoc.isChunkLoaded()) {
+            // Skip if chunk not loaded (use cache to avoid redundant world queries)
+            int chunkX = shulkerLoc.getBlockX() >> 4;
+            int chunkZ = shulkerLoc.getBlockZ() >> 4;
+            long chunkKey = ((long) chunkX << 32) | (chunkZ & 0xFFFFFFFFL);
+            boolean chunkLoaded = chunkLoadedCache.computeIfAbsent(chunkKey,
+                    k -> world.isChunkLoaded(chunkX, chunkZ));
+            if (!chunkLoaded) {
                 continue;
             }
 
             Block block = shulkerLoc.getBlock();
+            Material blockType = block.getType();
 
-            // Only place if target block is air (don't replace existing blocks)
-            if (block.getType().isAir()) {
+            // Place if target block is air or water (waterlogged light)
+            if (blockType.isAir() || blockType == Material.WATER) {
                 try {
-                    // Create LIGHT block with the appropriate level
                     BlockData lightData = Material.LIGHT.createBlockData();
                     if (lightData instanceof Light light) {
                         light.setLevel(source.lightLevel);
+                        if (blockType == Material.WATER) {
+                            light.setWaterlogged(true);
+                        }
                     }
-                    // Set block without physics update (false) to avoid cascading updates
                     block.setBlockData(lightData, false);
-                    placedLights.add(shulkerLoc.clone());
+                    placedLights.add(new int[]{block.getX(), block.getY(), block.getZ()});
                     placed++;
                 } catch (Exception e) {
-                    // Silently ignore errors (e.g., chunk not loaded)
+                    // Silently ignore errors
                 }
-            } else {
-                skippedNotAir++;
-                ship.plugin.getLogger().info("[ShipLighting] Block at " + block.getX() + "," + block.getY() + "," + block.getZ() + " is " + block.getType());
             }
-        }
-        if (skippedNoCollider > 0 || skippedNotAir > 0) {
-            ship.plugin.getLogger().info("[ShipLighting] Skipped: " + skippedNoCollider + " no collider, " + skippedNotAir + " not air (total sources: " + ship.model.lightSources.size() + ")");
         }
     }
 
@@ -204,20 +214,68 @@ public class ShipLighting {
      * Removes all LIGHT blocks that were placed by this manager.
      */
     public void removePlacedLights() {
-        for (Location loc : placedLights) {
+        World world = ship.vehicle != null && ship.vehicle.isValid() ? ship.vehicle.getWorld() : null;
+        if (world != null) {
+            for (int[] pos : placedLights) {
+                try {
+                    if (world.isChunkLoaded(pos[0] >> 4, pos[2] >> 4)) {
+                        Block block = world.getBlockAt(pos[0], pos[1], pos[2]);
+                        if (block.getType() == Material.LIGHT) {
+                            BlockData data = block.getBlockData();
+                            if (data instanceof Light light && light.isWaterlogged()) {
+                                block.setType(Material.WATER, false);
+                            } else {
+                                block.setType(Material.AIR, false);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    // Silently ignore
+                }
+            }
+        }
+        placedLights.clear();
+    }
+
+    /**
+     * Removes LIGHT blocks at the specified positions.
+     * Skips positions that have new lights placed (to avoid removing lights we just placed).
+     */
+    private void removeOldLights(List<int[]> positions, World world) {
+        for (int[] pos : positions) {
+            // Skip if this position has a new light placed
+            if (hasLightAt(pos[0], pos[1], pos[2])) {
+                continue;
+            }
             try {
-                if (loc.isChunkLoaded()) {
-                    Block block = loc.getBlock();
-                    // Only remove if it's still a LIGHT block (don't remove player-placed blocks)
+                if (world.isChunkLoaded(pos[0] >> 4, pos[2] >> 4)) {
+                    Block block = world.getBlockAt(pos[0], pos[1], pos[2]);
                     if (block.getType() == Material.LIGHT) {
-                        block.setType(Material.AIR, false);
+                        // Restore water if the light was waterlogged
+                        BlockData data = block.getBlockData();
+                        if (data instanceof Light light && light.isWaterlogged()) {
+                            block.setType(Material.WATER, false);
+                        } else {
+                            block.setType(Material.AIR, false);
+                        }
                     }
                 }
             } catch (Exception e) {
                 // Silently ignore errors
             }
         }
-        placedLights.clear();
+    }
+
+    /**
+     * Checks if placedLights contains a light at the same block position.
+     */
+    private boolean hasLightAt(int x, int y, int z) {
+        for (int[] pos : placedLights) {
+            if (pos[0] == x && pos[1] == y && pos[2] == z) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -1091,6 +1091,9 @@ public class BlockStructureScanner {
             lightSources.add(new ShipModel.LightSource(i, targetShulkerBlockIndex, lightLevel));
         }
 
+        // Sort by light level descending so brightest lights are placed first when maxLights is reached
+        lightSources.sort((a, b) -> Integer.compare(b.lightLevel, a.lightLevel));
+
         return lightSources;
     }
 
