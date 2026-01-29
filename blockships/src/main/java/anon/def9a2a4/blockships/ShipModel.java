@@ -34,6 +34,7 @@ public final class ShipModel {
 
     public final List<SeatInfo> seats;     // Multiple seat positions, in order they appear in model file
     public final List<CannonInfo> cannons; // Detected cannons (dispenser + obsidian behind)
+    public final List<LightSource> lightSources;  // Light-emitting blocks for fake lighting
     public final float waterFloatOffset;   // Y-position offset from water surface where ship floats (for prefab ships)
 
     // Buoyancy system (for custom block ships)
@@ -52,7 +53,7 @@ public final class ShipModel {
 
     public ShipModel(List<ModelPart> parts, List<ItemPart> items, Vector3f initialRotation, Vector3f positionOffset,
                      Vector3f collisionOffset, Matrix3f rotationTransform, List<SeatInfo> seats, List<CannonInfo> cannons,
-                     float waterFloatOffset, double maxHealth, double healthRegenPerSecond,
+                     List<LightSource> lightSources, float waterFloatOffset, double maxHealth, double healthRegenPerSecond,
                      int totalWeight, int blockCount, Vector3f centerOfVolume, float minY, float maxY, float assemblyYaw) {
         this.parts = parts;
         this.items = items;
@@ -62,6 +63,7 @@ public final class ShipModel {
         this.rotationTransform = rotationTransform;
         this.seats = seats;
         this.cannons = cannons;
+        this.lightSources = lightSources;
         this.waterFloatOffset = waterFloatOffset;
         this.maxHealth = maxHealth;
         this.healthRegenPerSecond = healthRegenPerSecond;
@@ -378,8 +380,11 @@ public final class ShipModel {
         // Prefab ships don't use weight-based buoyancy - they use waterFloatOffset from YAML
         // Set weight/blockCount to 0, centerOfVolume to origin, minY/maxY to 0, and assemblyYaw to 0 (prefab ships don't rotate on assembly)
         // Prefab ships have no cannons (empty list)
+        // Prefab ships don't use weight-based buoyancy - they use waterFloatOffset from YAML
+        // Set weight/blockCount to 0, centerOfVolume to origin, minY/maxY to 0, and assemblyYaw to 0 (prefab ships don't rotate on assembly)
+        // Prefab ships have no cannons or light sources (empty lists)
         return new ShipModel(out, items, initialRotation, positionOffset, collisionOffset, rotationTransform,
-                           seats, new ArrayList<>(), waterFloatOffset, maxHealth, healthRegenPerSecond,
+                           seats, new ArrayList<>(), new ArrayList<>(), waterFloatOffset, maxHealth, healthRegenPerSecond,
                            0, 0, new Vector3f(0, 0, 0), 0f, 0f, 0f);
     }
 
@@ -571,6 +576,37 @@ public final class ShipModel {
         }
     }
 
+    /**
+     * Represents a light-emitting block on the ship for fake lighting with LIGHT blocks.
+     * The LIGHT block is placed at the position of the target shulker (collision box).
+     */
+    public static final class LightSource {
+        public final int blockIndex;              // Index of the light-emitting block in model.parts
+        public final int targetShulkerBlockIndex; // Index of the block whose shulker to use for positioning
+        public final int lightLevel;              // 0-15 light level from source block
+
+        public LightSource(int blockIndex, int targetShulkerBlockIndex, int lightLevel) {
+            this.blockIndex = blockIndex;
+            this.targetShulkerBlockIndex = targetShulkerBlockIndex;
+            this.lightLevel = java.lang.Math.max(0, java.lang.Math.min(15, lightLevel));  // Clamp to valid range
+        }
+
+        public Map<String, Object> toMap() {
+            Map<String, Object> map = new HashMap<>();
+            map.put("block_index", blockIndex);
+            map.put("target_shulker_block_index", targetShulkerBlockIndex);
+            map.put("light_level", lightLevel);
+            return map;
+        }
+
+        public static LightSource fromMap(Map<String, Object> map) {
+            int blockIndex = ((Number) map.get("block_index")).intValue();
+            int targetShulkerBlockIndex = ((Number) map.get("target_shulker_block_index")).intValue();
+            int lightLevel = ((Number) map.get("light_level")).intValue();
+            return new LightSource(blockIndex, targetShulkerBlockIndex, lightLevel);
+        }
+    }
+
     // ===== Serialization for custom ship persistence =====
 
     /**
@@ -624,6 +660,13 @@ public final class ShipModel {
             cannonsList.add(cannon.toMap());
         }
         map.put("cannons", cannonsList);
+
+        // Serialize light sources
+        List<Map<String, Object>> lightsList = new ArrayList<>();
+        for (LightSource light : lightSources) {
+            lightsList.add(light.toMap());
+        }
+        map.put("light_sources", lightsList);
 
         return map;
     }
@@ -729,6 +772,16 @@ public final class ShipModel {
             }
         }
 
+        // Deserialize light sources
+        List<LightSource> lightSources = new ArrayList<>();
+        if (map.containsKey("light_sources")) {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> lightsList = (List<Map<String, Object>>) map.get("light_sources");
+            for (Map<String, Object> lightMap : lightsList) {
+                lightSources.add(LightSource.fromMap(lightMap));
+            }
+        }
+
         // Custom ships use assemblyYaw for display rotation (must match BlockStructureScanner)
         Vector3f initialRotation = new Vector3f(assemblyYaw, 0, 0);
         Vector3f positionOffset = new Vector3f(0, 0, 0);
@@ -739,7 +792,7 @@ public final class ShipModel {
         double healthRegenPerSecond = 2.0;
 
         return new ShipModel(parts, new ArrayList<>(), initialRotation, positionOffset,
-            collisionOffset, rotationTransform, seats, cannons, waterFloatOffset,
+            collisionOffset, rotationTransform, seats, cannons, lightSources, waterFloatOffset,
             maxHealth, healthRegenPerSecond, totalWeight, blockCount,
             centerOfVolume, minY, maxY, assemblyYaw);
     }

@@ -137,6 +137,12 @@ public class BlockConfigManager {
         // Parse storage config if present
         ShipModel.StorageConfig storage = parseStorage(config.getConfigurationSection("storage"));
 
+        // Parse light_level - null means use Minecraft default
+        Integer lightLevel = null;
+        if (config.contains("light_level")) {
+            lightLevel = config.getInt("light_level");
+        }
+
         // Check for conditional rules
         if (config.contains("collider.type") && config.getString("collider.type").equals("conditional")) {
             // Has conditional rules - rules is a YAML list, not a section
@@ -144,13 +150,13 @@ public class BlockConfigManager {
 
             // Parse conditional properties
             List<BlockProperties.ConditionalRule> conditionalRules = parseConditionalRules(rulesList);
-            BlockProperties baseProps = new BlockProperties(allowed, weight, CollisionConfig.DEFAULT, leadable, seat, displayRotation, interaction, storage, conditionalRules);
+            BlockProperties baseProps = new BlockProperties(allowed, weight, CollisionConfig.DEFAULT, leadable, seat, displayRotation, interaction, storage, lightLevel, conditionalRules);
 
             applyToMaterials(key, baseProps);
         } else {
             // Simple non-conditional properties
             CollisionConfig collider = parseCollider(config.get("collider"));
-            BlockProperties props = new BlockProperties(allowed, weight, collider, leadable, seat, displayRotation, interaction, storage, null);
+            BlockProperties props = new BlockProperties(allowed, weight, collider, leadable, seat, displayRotation, interaction, storage, lightLevel, null);
 
             applyToMaterials(key, props);
         }
@@ -378,5 +384,22 @@ public class BlockConfigManager {
             return new BlockProperties(false, 0, CollisionConfig.NONE, false, false);
         }
         return props;
+    }
+
+    /**
+     * Get the effective light level for a block.
+     * Returns the configured light_level if set, otherwise uses Minecraft's default emission level.
+     *
+     * @param material The block material
+     * @param blockData The block data (for state-specific properties)
+     * @return The light level (0-15), or 0 if the block doesn't emit light
+     */
+    public int getEffectiveLightLevel(Material material, BlockData blockData) {
+        BlockProperties props = getProperties(material, blockData);
+        if (props.hasLightLevel()) {
+            return props.getLightLevel();
+        }
+        // Fall back to Minecraft's default light emission
+        return blockData.getLightEmission();
     }
 }

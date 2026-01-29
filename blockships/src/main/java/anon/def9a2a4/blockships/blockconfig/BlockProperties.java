@@ -18,25 +18,30 @@ public class BlockProperties {
     private final boolean displayRotation;  // true = BlockDisplay ignores facing, apply rotation manually
     private final boolean interaction;  // true = block opens workbench-style GUI when clicked
     private final ShipModel.StorageConfig storage;  // storage config for container blocks
+    private final Integer lightLevel;  // null = use Minecraft default, or override light level 0-15
     private final List<ConditionalRule> conditionalRules;
 
     public BlockProperties(boolean allowed, Integer weight, CollisionConfig collider, boolean leadable, boolean seat) {
-        this(allowed, weight, collider, leadable, seat, false, false, null, null);
+        this(allowed, weight, collider, leadable, seat, false, false, null, null, null);
     }
 
     public BlockProperties(boolean allowed, Integer weight, CollisionConfig collider, boolean leadable, boolean seat, List<ConditionalRule> conditionalRules) {
-        this(allowed, weight, collider, leadable, seat, false, false, null, conditionalRules);
+        this(allowed, weight, collider, leadable, seat, false, false, null, null, conditionalRules);
     }
 
     public BlockProperties(boolean allowed, Integer weight, CollisionConfig collider, boolean leadable, boolean seat, boolean displayRotation, List<ConditionalRule> conditionalRules) {
-        this(allowed, weight, collider, leadable, seat, displayRotation, false, null, conditionalRules);
+        this(allowed, weight, collider, leadable, seat, displayRotation, false, null, null, conditionalRules);
     }
 
     public BlockProperties(boolean allowed, Integer weight, CollisionConfig collider, boolean leadable, boolean seat, boolean displayRotation, boolean interaction, List<ConditionalRule> conditionalRules) {
-        this(allowed, weight, collider, leadable, seat, displayRotation, interaction, null, conditionalRules);
+        this(allowed, weight, collider, leadable, seat, displayRotation, interaction, null, null, conditionalRules);
     }
 
     public BlockProperties(boolean allowed, Integer weight, CollisionConfig collider, boolean leadable, boolean seat, boolean displayRotation, boolean interaction, ShipModel.StorageConfig storage, List<ConditionalRule> conditionalRules) {
+        this(allowed, weight, collider, leadable, seat, displayRotation, interaction, storage, null, conditionalRules);
+    }
+
+    public BlockProperties(boolean allowed, Integer weight, CollisionConfig collider, boolean leadable, boolean seat, boolean displayRotation, boolean interaction, ShipModel.StorageConfig storage, Integer lightLevel, List<ConditionalRule> conditionalRules) {
         this.allowed = allowed;
         this.weight = weight;
         this.collider = collider;
@@ -45,6 +50,7 @@ public class BlockProperties {
         this.displayRotation = displayRotation;
         this.interaction = interaction;
         this.storage = storage;
+        this.lightLevel = lightLevel;
         this.conditionalRules = conditionalRules;
     }
 
@@ -100,6 +106,20 @@ public class BlockProperties {
      */
     public ShipModel.StorageConfig getStorage() {
         return storage;
+    }
+
+    /**
+     * Returns true if this block has an explicit light level configured.
+     */
+    public boolean hasLightLevel() {
+        return lightLevel != null;
+    }
+
+    /**
+     * Returns the configured light level for this block, or null if using Minecraft default.
+     */
+    public Integer getLightLevel() {
+        return lightLevel;
     }
 
     /**

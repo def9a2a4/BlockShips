@@ -33,6 +33,20 @@ custom-ships:
   max-ship-size: 1000  # Maximum number of blocks in a custom ship
   max-scan-size: 5000  # Maximum blocks to scan when ship exceeds limit (for reporting actual size)
 
+  # Fake lighting system for custom ships
+  # Since ship blocks are display entities (not real blocks), light-emitting blocks
+  # don't actually emit light. This system places invisible LIGHT blocks at
+  # corresponding positions to simulate lighting.
+  lighting:
+    # Enable/disable fake lighting (default: true)
+    enabled: true
+    # Maximum number of LIGHT blocks per ship (for performance)
+    max-lights-per-ship: 32
+    # Distance threshold (blocks) - only update lights when ship moves this far
+    update-threshold-blocks: 1.0
+    # Rotation threshold (degrees) - only update lights when ship rotates this much
+    update-threshold-rotation: 10.0
+
   # Buoyancy system - weight-based floating
   # Ships float based on their density (total weight / block count) compared to water density
   # - Density < water: floats higher (surface offset increases)

@@ -545,6 +545,9 @@ public class BlockStructureScanner {
         // Detect cannons (dispenser + obsidian behind)
         List<ShipModel.CannonInfo> cannons = detectCannons(parts);
 
+        // Detect light sources (light-emitting blocks that are not fully enclosed)
+        List<ShipModel.LightSource> lightSources = detectLightSources(parts, shipBlocks, configManager);
+
         return new ShipModel(
             parts,
             Collections.emptyList(),  // No items for MVP
@@ -554,6 +557,7 @@ public class BlockStructureScanner {
             rotationTransform,
             seats,
             cannons,
+            lightSources,
             waterFloatOffset,
             maxHealth,
             healthRegenPerSecond,
@@ -617,7 +621,8 @@ public class BlockStructureScanner {
             Material type = block.getType();
 
             // Check if block location is replaceable (air or similar)
-            if (!type.isAir() && type != Material.WATER && type != Material.LAVA) {
+            // LIGHT blocks are ignored because they may be ship lighting that hasn't been cleaned up yet
+            if (!type.isAir() && type != Material.WATER && type != Material.LAVA && type != Material.LIGHT) {
                 if (FragileBlocks.isFragile(type)) {
                     fragile++;
                 } else {
@@ -682,7 +687,8 @@ public class BlockStructureScanner {
             Material existingType = block.getType();
 
             // Handle conflicts in force mode
-            if (!existingType.isAir() && existingType != Material.WATER && existingType != Material.LAVA) {
+            // LIGHT blocks are always replaceable (ship lighting that hasn't been cleaned up yet)
+            if (!existingType.isAir() && existingType != Material.WATER && existingType != Material.LAVA && existingType != Material.LIGHT) {
                 if (force && FragileBlocks.isFragile(existingType)) {
                     // Destroy fragile block (no drops)
                     block.setType(Material.AIR, false);
@@ -1008,6 +1014,161 @@ public class BlockStructureScanner {
         }
 
         return cannons;
+    }
+
+    /**
+     * Detects light-emitting blocks on the ship that are not fully enclosed.
+     * Interior blocks (surrounded by solid blocks on all 6 sides) are excluded
+     * since they wouldn't emit visible light anyway.
+     *
+     * For blocks with colliders (like glowstone), the LIGHT block is placed at their shulker.
+     * For blocks without colliders (like torches/lanterns), the LIGHT block is placed at the
+     * shulker of the block they're attached to.
+     *
+     * @param parts The list of model parts (blocks) on the ship
+     * @param shipBlocks The set of all ship block locations (unused, kept for API compatibility)
+     * @param configManager The block config manager for getting light levels
+     * @return List of light sources for fake lighting
+     */
+    private static List<ShipModel.LightSource> detectLightSources(
+            List<ShipModel.ModelPart> parts,
+            Set<Location> shipBlocks,
+            BlockConfigManager configManager) {
+
+        List<ShipModel.LightSource> lightSources = new ArrayList<>();
+
+        // Build position -> blockIndex map for parent block lookup
+        Map<String, Integer> positionToIndex = new HashMap<>();
+        Map<String, Boolean> solidPositions = new HashMap<>();
+        for (int i = 0; i < parts.size(); i++) {
+            ShipModel.ModelPart part = parts.get(i);
+            Vector3f pos = new Vector3f();
+            part.local.getTranslation(pos);
+            String key = posKey(pos);
+            positionToIndex.put(key, i);
+            solidPositions.put(key, part.block.getMaterial().isOccluding());
+        }
+
+        // Check each block for light emission
+        for (int i = 0; i < parts.size(); i++) {
+            ShipModel.ModelPart part = parts.get(i);
+            Material material = part.block.getMaterial();
+
+            // Get effective light level (configured or Minecraft default)
+            int lightLevel = configManager.getEffectiveLightLevel(material, part.block);
+            if (lightLevel <= 0) {
+                continue;  // Not a light source
+            }
+
+            // Get block position
+            Vector3f pos = new Vector3f();
+            part.local.getTranslation(pos);
+
+            // Check if this block is interior (surrounded by solid blocks on all 6 sides)
+            if (isInteriorBlock(pos, solidPositions)) {
+                continue;  // Skip interior blocks - no visible light
+            }
+
+            // Find target shulker block index
+            int targetShulkerBlockIndex;
+            if (part.collision.enable) {
+                // Block has its own collider - use it
+                targetShulkerBlockIndex = i;
+            } else {
+                // Block has no collider - find parent block (for torches/lanterns)
+                Integer parentIndex = findParentBlockIndex(part.block, pos, positionToIndex, parts);
+                if (parentIndex == null) {
+                    continue;  // Can't find parent, skip this light
+                }
+                // Verify parent has a collider
+                if (!parts.get(parentIndex).collision.enable) {
+                    continue;  // Parent has no collider, skip
+                }
+                targetShulkerBlockIndex = parentIndex;
+            }
+
+            // This is an exposed light source with a valid shulker target
+            lightSources.add(new ShipModel.LightSource(i, targetShulkerBlockIndex, lightLevel));
+        }
+
+        return lightSources;
+    }
+
+    /**
+     * Finds the block index of the parent block that a torch/lantern is attached to.
+     *
+     * @param blockData The block data of the light-emitting block
+     * @param lightPos The position of the light-emitting block
+     * @param positionToIndex Map from position key to block index
+     * @param parts The list of model parts (for collision checking)
+     * @return The block index of the parent, or null if not found
+     */
+    private static Integer findParentBlockIndex(BlockData blockData, Vector3f lightPos,
+                                                 Map<String, Integer> positionToIndex,
+                                                 List<ShipModel.ModelPart> parts) {
+        Vector3f parentPos = new Vector3f(lightPos);
+
+        // Wall-mounted blocks (wall_torch, etc.) - attached to block behind them
+        if (blockData instanceof org.bukkit.block.data.Directional directional) {
+            BlockFace facing = directional.getFacing();
+            BlockFace parentFace = facing.getOppositeFace();
+            parentPos.add(parentFace.getModX(), parentFace.getModY(), parentFace.getModZ());
+        }
+        // Lanterns - hanging (UP) or floor-standing (DOWN)
+        else if (blockData instanceof org.bukkit.block.data.type.Lantern lantern) {
+            if (lantern.isHanging()) {
+                parentPos.add(0, 1, 0);  // Attached to ceiling
+            } else {
+                parentPos.add(0, -1, 0); // Attached to floor
+            }
+        }
+        // Regular floor torches (non-directional) - attached to block below
+        else {
+            parentPos.add(0, -1, 0);
+        }
+
+        return positionToIndex.get(posKey(parentPos));
+    }
+
+    /**
+     * Creates a position key string for map lookups.
+     */
+    private static String posKey(Vector3f pos) {
+        return Math.round(pos.x) + "," + Math.round(pos.y) + "," + Math.round(pos.z);
+    }
+
+    /**
+     * Checks if a block is fully surrounded by solid blocks on all 6 sides.
+     * Such blocks are considered "interior" and don't need fake lighting.
+     *
+     * @param pos The relative position of the block
+     * @param solidPositions Map of position keys to whether they contain solid blocks
+     * @return true if the block is interior (surrounded), false if exposed
+     */
+    private static boolean isInteriorBlock(Vector3f pos, Map<String, Boolean> solidPositions) {
+        int x = Math.round(pos.x);
+        int y = Math.round(pos.y);
+        int z = Math.round(pos.z);
+
+        // Check all 6 faces
+        int[][] offsets = {
+            {1, 0, 0}, {-1, 0, 0},  // +X, -X
+            {0, 1, 0}, {0, -1, 0},  // +Y, -Y
+            {0, 0, 1}, {0, 0, -1}   // +Z, -Z
+        };
+
+        for (int[] offset : offsets) {
+            String neighborKey = (x + offset[0]) + "," + (y + offset[1]) + "," + (z + offset[2]);
+            Boolean isSolid = solidPositions.get(neighborKey);
+
+            // If neighbor doesn't exist in ship or is not solid, this block is exposed
+            if (isSolid == null || !isSolid) {
+                return false;
+            }
+        }
+
+        // All 6 neighbors are solid ship blocks - this is an interior block
+        return true;
     }
 
     /**

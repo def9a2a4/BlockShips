@@ -22,45 +22,54 @@
 
 
 # === FLOATATION BLOCKS (weight: -10, lighter than air) ===
+# These blocks have light_level for fake lighting on ships
 glowstone:
   allowed: true
   weight: -5
   collider: true
+  light_level: 15
 
 sea_lantern:
   allowed: true
   weight: -3
   collider: true
+  light_level: 15
 
 beacon:
   allowed: true
   weight: -15
   collider: true
+  light_level: 15
 
 shroomlight:
   allowed: true
   weight: -5
   collider: true
+  light_level: 15
 
 ochre_froglight:
   allowed: true
   weight: -5
   collider: true
+  light_level: 15
 
 pearlescent_froglight:
   allowed: true
   weight: -5
   collider: true
+  light_level: 15
 
 verdant_froglight:
   allowed: true
   weight: -5
   collider: true
+  light_level: 15
 
 end_rod:
   allowed: true
   weight: -20
   collider: false
+  light_level: 14
 
 
 # === WOOD FAMILY (weight: 2) ===
@@ -329,11 +338,13 @@ redstone_torch:
   allowed: true
   weight: 1
   collider: false
+  light_level: 7
 
 redstone_wall_torch:
   allowed: true
   weight: 1
   collider: false
+  light_level: 7
 
 redstone_block:
   allowed: true
@@ -533,56 +544,67 @@ lectern:
 
 
 # === LIGHTING (weight: 1, except glowstone) ===
+# light_level is used for fake lighting on ships
 torch:
   allowed: true
   weight: 1
   collider: false
+  light_level: 14
 
 wall_torch:
   allowed: true
   weight: 1
   collider: false
+  light_level: 14
 
 soul_torch:
   allowed: true
   weight: 1
   collider: false
+  light_level: 10
 
 soul_wall_torch:
   allowed: true
   weight: 1
   collider: false
+  light_level: 10
 
 lantern:
   allowed: true
   weight: 1
   collider: false
+  light_level: 15
 
 soul_lantern:
   allowed: true
   weight: 1
   collider: false
+  light_level: 10
 
 copper_torch:
   allowed: true
   weight: 1
   collider: false
+  light_level: 14
 
 copper_wall_torch:
   allowed: true
   weight: 1
   collider: false
+  light_level: 14
 
 # Copper lanterns - matches all oxidation variants (copper, exposed, weathered, oxidized, waxed)
 copper_lantern:
   allowed: true
   weight: 1
   collider: false
+  light_level: 15
 
 "*_copper_lantern":
   allowed: true
   weight: 1
   collider: false
+  light_level: 15
 
 # misc
 

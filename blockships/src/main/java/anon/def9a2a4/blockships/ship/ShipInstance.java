@@ -89,9 +89,10 @@ public class ShipInstance {
     // All config values loaded from config.yml
     public final ShipConfig config;
 
-    // Delegate instances for physics and collision
+    // Delegate instances for physics, collision, and lighting
     public ShipPhysics physics;
     public ShipCollision collision;
+    public ShipLighting lighting;
 
     // Driver and player tracking (public for delegates)
     public boolean hasDriver = false;
@@ -181,6 +182,7 @@ public class ShipInstance {
         // Initialize delegates
         this.physics = new ShipPhysics(this);
         this.collision = new ShipCollision(this);
+        this.lighting = new ShipLighting(this);
 
         // Entity references will be recovered via recoverEntities()
         // vehicle, parent, displays, colliders are null/empty
@@ -306,6 +308,7 @@ public class ShipInstance {
         // Initialize delegates
         this.physics = new ShipPhysics(this);
         this.collision = new ShipCollision(this);
+        this.lighting = new ShipLighting(this);
 
         // Initialize previous state
         this.previousVehicleLocation = vehicle.getLocation().clone();
@@ -1067,6 +1070,7 @@ public class ShipInstance {
         collision.detect();  // Detect collisions and accumulate forces
         physics.update();    // Apply physics (movement, rotation, buoyancy)
         collision.applyResponse();  // Apply collision response
+        lighting.update();           // Update fake light block positions
         updateCollisionPositions();  // Sync collision boxes with vehicle BEFORE movement check
 
         // Get current vehicle state
@@ -1958,6 +1962,8 @@ public class ShipInstance {
             idleCheckTask.cancel();
             idleCheckTask = null;
         }
+        // Clean up LIGHT blocks before suspension
+        if (lighting != null) lighting.cleanup();
         // Clear references (they'll be stale anyway after chunk unloads)
         parent = null;
         displays.clear();
@@ -1971,6 +1977,7 @@ public class ShipInstance {
     public void destroy() {
         if (task != null) task.cancel();
         if (idleCheckTask != null) idleCheckTask.cancel();
+        if (lighting != null) lighting.cleanup();  // Remove all placed LIGHT blocks
         if (parent != null) {
             Entity vehicleEntity = parent.getVehicle();
             if (vehicleEntity != null) {
