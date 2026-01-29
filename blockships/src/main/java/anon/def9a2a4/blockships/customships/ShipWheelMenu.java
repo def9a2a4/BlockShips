@@ -103,6 +103,8 @@ public class ShipWheelMenu {
 
     // Menu item slots - Left group: detect/info, Right group: assemble/align/disassemble
     private static final int HELP_SLOT = 0;
+    private static final int CAMERA_MINUS_SLOT = 4;   // Decrease camera distance
+    private static final int CAMERA_PLUS_SLOT = 5;    // Increase camera distance
     private static final int DETECT_SLOT = 10;
     private static final int INFO_SLOT = 11;
     private static final int FIRE_CANNONS_SLOT = 12;
@@ -110,6 +112,7 @@ public class ShipWheelMenu {
     private static final int ALIGN_SLOT = 15;
     private static final int DISASSEMBLE_SLOT = 16;
     private static final int FORCE_DISASSEMBLE_SLOT = 17;  // Right of disassemble button
+    private static final int HIGHLIGHT_SEATS_SLOT = 19;    // Below detect slot (row 3)
 
     /**
      * Opens the ship wheel menu for a player.
@@ -224,10 +227,51 @@ public class ShipWheelMenu {
                 }
                 menu.setItem(FIRE_CANNONS_SLOT, fireItem);
             }
+
+            // Camera distance adjustment buttons (for custom ships)
+            if (ship != null) {
+                float currentDistance = wheelData.getCameraDistance();
+                if (currentDistance < 0) {
+                    // Not yet set - calculate default from block count
+                    currentDistance = ShipWheelData.calculateDefaultCameraDistance(ship.model.blockCount);
+                }
+                int displayDistance = Math.round(currentDistance);
+
+                // Decrease button
+                ItemStack minusItem = new ItemStack(Material.RED_STAINED_GLASS_PANE);
+                ItemMeta minusMeta = minusItem.getItemMeta();
+                if (minusMeta != null) {
+                    minusMeta.setDisplayName(ChatColor.RED + "- Camera Distance");
+                    minusMeta.setLore(Arrays.asList(
+                        ChatColor.GRAY + "Current: " + ChatColor.WHITE + displayDistance,
+                        ChatColor.GRAY + "Decrease third-person camera distance",
+                        ChatColor.DARK_GRAY + "(Range: 4 - 32)"
+                    ));
+                    minusItem.setItemMeta(minusMeta);
+                }
+                menu.setItem(CAMERA_MINUS_SLOT, minusItem);
+
+                // Increase button
+                ItemStack plusItem = new ItemStack(Material.LIME_STAINED_GLASS_PANE);
+                ItemMeta plusMeta = plusItem.getItemMeta();
+                if (plusMeta != null) {
+                    plusMeta.setDisplayName(ChatColor.GREEN + "+ Camera Distance");
+                    plusMeta.setLore(Arrays.asList(
+                        ChatColor.GRAY + "Current: " + ChatColor.WHITE + displayDistance,
+                        ChatColor.GRAY + "Increase third-person camera distance",
+                        ChatColor.DARK_GRAY + "(Range: 4 - 32)"
+                    ));
+                    plusItem.setItemMeta(plusMeta);
+                }
+                menu.setItem(CAMERA_PLUS_SLOT, plusItem);
+            }
         }
 
         // Ship Info button - shows weight, density, and buoyancy info from last detection
         menu.setItem(INFO_SLOT, createInfoItem(wheelData));
+
+        // Highlight Seats button - always shown
+        menu.setItem(HIGHLIGHT_SEATS_SLOT, createHighlightSeatsItem(wheelData));
 
         player.openInventory(menu);
     }
@@ -253,6 +297,9 @@ public class ShipWheelMenu {
         FORCE_DISASSEMBLE,
         INFO,
         FIRE_CANNONS,
+        HIGHLIGHT_SEATS,
+        CAMERA_DISTANCE_DECREASE,
+        CAMERA_DISTANCE_INCREASE,
         NONE
     }
 
@@ -276,6 +323,12 @@ public class ShipWheelMenu {
             return MenuAction.INFO;
         } else if (slot == FIRE_CANNONS_SLOT) {
             return MenuAction.FIRE_CANNONS;
+        } else if (slot == HIGHLIGHT_SEATS_SLOT) {
+            return MenuAction.HIGHLIGHT_SEATS;
+        } else if (slot == CAMERA_MINUS_SLOT) {
+            return MenuAction.CAMERA_DISTANCE_DECREASE;
+        } else if (slot == CAMERA_PLUS_SLOT) {
+            return MenuAction.CAMERA_DISTANCE_INCREASE;
         }
         return MenuAction.NONE;
     }
@@ -375,6 +428,106 @@ public class ShipWheelMenu {
      */
     public static void updateInfoItem(Inventory inventory, ShipWheelData wheelData) {
         inventory.setItem(INFO_SLOT, createInfoItem(wheelData));
+    }
+
+    /**
+     * Updates the camera distance buttons in an existing inventory without closing/reopening.
+     *
+     * @param inventory The inventory to update
+     * @param wheelData The ship wheel data containing camera distance setting
+     * @param ship The ship instance (for calculating default from block count)
+     */
+    public static void updateCameraItems(Inventory inventory, ShipWheelData wheelData, ShipInstance ship) {
+        float currentDistance = wheelData.getCameraDistance();
+        if (currentDistance < 0) {
+            currentDistance = ShipWheelData.calculateDefaultCameraDistance(ship.model.blockCount);
+        }
+        int displayDistance = Math.round(currentDistance);
+
+        // Update minus button
+        ItemStack minusItem = new ItemStack(Material.RED_STAINED_GLASS_PANE);
+        ItemMeta minusMeta = minusItem.getItemMeta();
+        if (minusMeta != null) {
+            minusMeta.setDisplayName(ChatColor.RED + "- Camera Distance");
+            minusMeta.setLore(Arrays.asList(
+                ChatColor.GRAY + "Current: " + ChatColor.WHITE + displayDistance,
+                ChatColor.GRAY + "Decrease third-person camera distance",
+                ChatColor.DARK_GRAY + "(Range: 4 - 32)"
+            ));
+            minusItem.setItemMeta(minusMeta);
+        }
+        inventory.setItem(CAMERA_MINUS_SLOT, minusItem);
+
+        // Update plus button
+        ItemStack plusItem = new ItemStack(Material.LIME_STAINED_GLASS_PANE);
+        ItemMeta plusMeta = plusItem.getItemMeta();
+        if (plusMeta != null) {
+            plusMeta.setDisplayName(ChatColor.GREEN + "+ Camera Distance");
+            plusMeta.setLore(Arrays.asList(
+                ChatColor.GRAY + "Current: " + ChatColor.WHITE + displayDistance,
+                ChatColor.GRAY + "Increase third-person camera distance",
+                ChatColor.DARK_GRAY + "(Range: 4 - 32)"
+            ));
+            plusItem.setItemMeta(plusMeta);
+        }
+        inventory.setItem(CAMERA_PLUS_SLOT, plusItem);
+    }
+
+    /**
+     * Creates the Highlight Seats button item.
+     *
+     * @param wheelData The ship wheel data containing detection results
+     * @return The Highlight Seats item with seat count info
+     */
+    private static ItemStack createHighlightSeatsItem(ShipWheelData wheelData) {
+        ItemStack seatsItem = new ItemStack(Material.OAK_STAIRS);
+        ItemMeta seatsMeta = seatsItem.getItemMeta();
+        if (seatsMeta != null) {
+            seatsMeta.setDisplayName(ChatColor.YELLOW + "Seats");
+            List<String> lore = new ArrayList<>();
+
+            int seatCount = 0;
+            int occupiedCount = 0;
+
+            if (wheelData.isAssembled()) {
+                // Get info from assembled ship
+                ShipInstance ship = ShipRegistry.byId(wheelData.getAssembledShipUUID());
+                if (ship != null) {
+                    seatCount = ship.model.seats.size();
+                    // Count occupied seats
+                    for (org.bukkit.entity.Shulker seat : ship.seatShulkers) {
+                        if (seat != null && seat.isValid()) {
+                            boolean hasPlayer = seat.getPassengers().stream()
+                                .anyMatch(p -> p instanceof Player);
+                            if (hasPlayer) {
+                                occupiedCount++;
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Get info from last detection
+                seatCount = wheelData.getLastDetectedSeatCount();
+            }
+
+            if (seatCount > 0) {
+                int passengers = seatCount - 1;
+                lore.add(ChatColor.GRAY + "Seats: " + ChatColor.WHITE + seatCount +
+                    ChatColor.GRAY + " (1 driver + " + passengers + " passengers)");
+                if (wheelData.isAssembled()) {
+                    lore.add(ChatColor.GRAY + "Occupied: " + ChatColor.WHITE + occupiedCount + " / " + seatCount);
+                }
+            } else {
+                lore.add(ChatColor.GRAY + "Seats: " + ChatColor.WHITE + "unknown");
+            }
+
+            lore.add("");
+            lore.add(ChatColor.DARK_GRAY + "Click to highlight");
+
+            seatsMeta.setLore(lore);
+            seatsItem.setItemMeta(seatsMeta);
+        }
+        return seatsItem;
     }
 
     /**

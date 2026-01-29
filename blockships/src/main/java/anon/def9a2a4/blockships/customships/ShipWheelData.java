@@ -65,6 +65,10 @@ public class ShipWheelData {
     public float lastMinY;             // Bottom of ship relative to wheel
     public float lastSurfaceOffset;    // Calculated surface offset
 
+    // Camera distance setting (persisted per-ship)
+    // -1 means "not set, use calculated default based on block count"
+    private float cameraDistance = -1;
+
     public ShipWheelData(Location blockLocation, BlockFace facing) {
         this.blockLocation = blockLocation.clone();
         this.facing = facing;
@@ -230,6 +234,33 @@ public class ShipWheelData {
     }
 
     /**
+     * Gets the configured camera distance for this ship.
+     * @return The camera distance, or -1 if not set (use calculated default)
+     */
+    public float getCameraDistance() {
+        return cameraDistance;
+    }
+
+    /**
+     * Sets the camera distance for this ship.
+     * @param distance The camera distance (4-32), or -1 to use calculated default
+     */
+    public void setCameraDistance(float distance) {
+        this.cameraDistance = distance;
+    }
+
+    /**
+     * Calculates a default camera distance based on the number of blocks in the ship.
+     * Scales from 4 (small ships) to ~16 (large ships), capped at 20.
+     * @param blockCount The number of blocks in the ship
+     * @return The calculated default camera distance
+     */
+    public static float calculateDefaultCameraDistance(int blockCount) {
+        // Formula: 4 + sqrt(blockCount) * 0.5, clamped to [4, 20]
+        return Math.min(20f, Math.max(4f, 4f + (float) Math.sqrt(blockCount) * 0.5f));
+    }
+
+    /**
      * Snaps a yaw angle to the nearest 90-degree increment (0, 90, 180, 270)
      */
     public static float snapToNearestCardinal(float yaw) {
@@ -294,6 +325,10 @@ public class ShipWheelData {
         if (assembledShipUUID != null) {
             map.put("ship_uuid", assembledShipUUID.toString());
         }
+        // Only save camera distance if explicitly set (not -1)
+        if (cameraDistance >= 0) {
+            map.put("camera_distance", cameraDistance);
+        }
         return map;
     }
 
@@ -319,6 +354,11 @@ public class ShipWheelData {
 
         if (map.containsKey("ship_uuid")) {
             data.setAssembledShipUUID(UUID.fromString((String) map.get("ship_uuid")));
+        }
+
+        // Load camera distance if present (backwards compatible - defaults to -1 if missing)
+        if (map.containsKey("camera_distance")) {
+            data.setCameraDistance(((Number) map.get("camera_distance")).floatValue());
         }
 
         return data;
