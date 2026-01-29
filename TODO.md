@@ -2,7 +2,7 @@
 
 ## SHORT TERM
 
-- [ ] banner rendering broken
+- [x] banner rendering broken
   - floor banners not rotated correctly
   - position and rotation of wall banners is off -- this used to work at some point?
   - significant duplication in this code path, refactor it
@@ -11,7 +11,7 @@
   - if total health under 20 hearts (40 HP?), show directly as hearts
   - if total health over 20 hearts, scale max health to 20 and show a percentage
 
-- [ ] ladder duplication bug: when supporting blocks get removed, the blocks supported by them get dropped as items
+- [x] ladder duplication bug: when supporting blocks get removed, the blocks supported by them get dropped as items
   - filter for blocks that need to be supported and remove those first (ladders, torches, signs, etc)
   - still edge cases where blocks that need support are supporting other blocks (eg signs on top of signs) but this is acceptable for now
 
@@ -46,6 +46,8 @@
 
 - [x] ship info should show number of seats in ship info
   - add a "highlight seats" button which adds particles around seats (blocks or shulkers) when clicked. should work for both prefab and custom ships
+
+- [ ] use light blocks to fake like coming from light-emitting blocks on ships
 
 ## HARDER
 
