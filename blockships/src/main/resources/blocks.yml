@@ -563,6 +563,27 @@ soul_lantern:
   weight: 1
   collider: false
 
+copper_torch:
+  allowed: true
+  weight: 1
+  collider: false
+
+copper_wall_torch:
+  allowed: true
+  weight: 1
+  collider: false
+
+# Copper lanterns - matches all oxidation variants (copper, exposed, weathered, oxidized, waxed)
+copper_lantern:
+  allowed: true
+  weight: 1
+  collider: false
+
+"*_copper_lantern":
+  allowed: true
+  weight: 1
+  collider: false
+
 # misc
 
 bookshelf:

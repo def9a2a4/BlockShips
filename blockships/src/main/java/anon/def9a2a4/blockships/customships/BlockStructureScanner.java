@@ -220,15 +220,44 @@ public class BlockStructureScanner {
     }
 
     /**
-     * Checks if a material is an attachable block (banners, signs, torches, etc.).
-     * These should be removed after their support blocks.
+     * Set of materials that are attachable blocks (need support from other blocks).
+     * These are removed BEFORE their support blocks to prevent item drops.
+     * Built once at class load time for O(1) runtime lookups.
      */
+    private static final Set<Material> ATTACHABLE_MATERIALS = buildAttachableMaterials();
+
+    private static Set<Material> buildAttachableMaterials() {
+        Set<Material> set = EnumSet.noneOf(Material.class);
+
+        // Patterns to match against material names (using contains())
+        String[] patterns = {
+            "BANNER", "SIGN", "TORCH", "BUTTON", "LEVER", "CARPET", "PRESSURE_PLATE",
+            "LADDER", "LANTERN", "BELL", "CANDLE",
+            "REPEATER", "COMPARATOR", "TRIPWIRE", "RAIL"
+        };
+
+        for (Material mat : Material.values()) {
+            String name = mat.name();
+
+            // Exact match for REDSTONE (to avoid REDSTONE_BLOCK, REDSTONE_ORE, etc.)
+            if (name.equals("REDSTONE")) {
+                set.add(mat);
+            }
+
+            // Pattern matching (contains)
+            for (String pattern : patterns) {
+                if (name.contains(pattern)) {
+                    set.add(mat);
+                    break;
+                }
+            }
+        }
+
+        return set;
+    }
+
     private static boolean isAttachable(Material type) {
-        String name = type.name();
-        return name.contains("BANNER") || name.contains("SIGN") ||
-               name.contains("TORCH") || name.contains("BUTTON") ||
-               name.contains("LEVER") || name.contains("CARPET") ||
-               name.contains("PRESSURE_PLATE");
+        return ATTACHABLE_MATERIALS.contains(type);
     }
 
     // ========== Main Methods ==========
