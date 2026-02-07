@@ -1,0 +1,71 @@
+**New Features**
+
+**Wider Minecraft Version Support**
+- New compatibility layer supports Minecraft 1.21.1 through 1.21.11
+- purpur support in addition to existing paper support
+- Pre-1.21.2: Uses S+Space for airship descent (sprint unavailable in packet)
+
+**Better ship collider handling**
+- standing on ship decks works more reliably, no longer bugs out as much
+
+**/blockships dismount Command**
+- New command allows players to force-dismount from ships when normal methods fail
+- Permission: `blockships.dismount` (default: true)
+
+**Health Regeneration Enabled by Default**
+- All ship types now regenerate 1.0 HP/second by default (was 0.0)
+- Applies to: galley, airship, skiff, and custom ships
+
+**Performance & Stability Improvements**
+- Reduced GC pressure via object pooling (33+ reusable work objects)
+- Async I/O for ship recovery prevents main thread blocking during chunk loads
+- Thread-safe steering packet handling with cached reflection methods
+- Early termination in terrain collision detection
+
+---
+
+**Bug Fixes**
+
+**Sneak-to-Dismount for Shulker Seats**
+- Fixed sneak (shift) dismount for Shulker seats across all Minecraft versions
+- Version-specific packet handling for 1.21.2+ and 1.21.3+ formats
+- Applies to all ship passengers, not just the driver
+
+**Ship Entity Persistence on Player Disconnect**
+- New `PlayerQuitEvent` and `PlayerKickEvent` handlers
+- Ejects player from ship seat before disconnect completes
+- Prevents vanilla Minecraft from removing ridden entities
+- Properly frees seat for other players
+
+**Dismount Re-mount Prevention**
+- Fixed: Players being forced back into seats after intentional dismount
+- `updateCollisionPositions()` now checks `occupiedSeatIndices` before re-mounting
+- `freeSeat()` removes seat from occupied set, preventing re-mount
+
+**Input State Cleanup on Driver Exit**
+- `freeSeat()` now clears ALL input flags when driver exits
+- Prevents ships from continuing movement with stale input state
+- Airships get `currentYVelocity = 0`; water ships snap to neutral buoyancy
+
+**Passenger Relationship Verification**
+- Added every-tick check that shulker is still passenger of carrier
+- Fixes broken relationships on chunk reload
+- Re-adds passenger if relationship breaks (even on stationary ships)
+
+**Collision Shulker Spawn Error Handling**
+- Wrapped collider spawn in try-catch blocks
+- Cleans up dangling carriers/shulkers on failure
+- Prevents resource leaks and NPEs during configuration
+
+**Attribute Compatibility Fixes**
+- MAX_HEALTH and SCALE access wrapped with null checks and version comatibilities
+- Health regeneration wrapped in try-catch to prevent tick crashes
+
+**Pre-1.21.9 Display Rotation Fix**
+- Added `spawnYaw` tracking for display rotation compatibility
+- Prevents double-rotation bug on older versions
+- Display rotation uses delta from spawn instead of absolute yaw
+
+**Removed Non-functional Deck Physics**
+- Deleted `applyDeckPhysics()` and `pushPlayerOutOfShulker()` methods
+- These caused buggy movements on ships, and were non-functional, removed them

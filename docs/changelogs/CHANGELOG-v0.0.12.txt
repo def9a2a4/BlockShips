@@ -1,0 +1,82 @@
+NEW FEATURES
+
+------------
+
+Seat Highlighting & Third-Person Camera Distance (517a89c)
+
+  - `/blockships highlightseats` command: Look at a ship and run this
+    command to highlight all seats with colored particles. Orange
+    particles indicate passenger seats, red particles indicate driver
+    seat. Particles remain visible for 5 seconds.
+
+  - Seats button in ship wheel menu: Shows seat count and current
+    occupancy.
+
+  - Camera distance customization: New camera-distance config option
+    for prefab ships. Per-ship camera distance setting for custom ships
+    via +/- buttons in menu. Auto-calculates sensible defaults based on
+    ship block count. Range: 4-32 blocks (Minecraft 1.21.6+ via
+    GENERIC_CAMERA_DISTANCE attribute).
+
+Ship Health HUD Display (b84f36d)
+
+  When players ride seat shulkers, the Minecraft health bar HUD now
+  shows the ship's health (similar to riding a horse). Health syncs
+  after melee damage, projectile damage, and health regeneration.
+  Ships with 40 HP or less display directly (1:1 mapping). Ships with
+  more than 40 HP scale proportionally to 20 hearts max.
+
+Ship Wheel Info Message (fef8bb1)
+
+  Right-clicking a ship with a ship wheel now shows a helpful message.
+  For custom ships: explains wheels cannot be added to assembled ships
+  and to use sneak+right-click for menu. For prefab ships: explains
+  wheels are for custom builds and that prefabs come from ship kits.
+  Also fixes PlayerInteractEntityEvent firing twice by filtering to
+  main hand only. Motivated by user confusion in issues:
+    #1
+    #3
+
+BigShip Seats (e9f5c4c)
+
+  Added 3 new seats to the big ship prefab: two side passenger seats
+  and one crow's nest seat.
+
+BUG FIXES
+---------
+
+Banner Rendering Fix (e164326)
+
+  Fixed multiple banner display issues on ships:
+
+  - Plain banners now detected: Previously only patterned banners
+    worked. Now checks for banner_rotation and banner_facing keys in
+    addition to banner_patterns, so any banner item works.
+
+  - Floor banner rotation corrected: Banners now face the correct
+    direction.
+
+  - Wall banner positioning fixed: Correct Y offset and Z offset
+    toward wall.
+
+  - Code refactor: Extracted calculateBannerTransform() helper to
+    eliminate duplication across 3 locations.
+
+Ladder Duplication Bug Fix (dfd105b)
+
+  Fixed blocks that need support (ladders, torches, etc.) dropping as
+  items during ship assembly.
+
+  Root cause: isAttachable() was incomplete, causing supported blocks
+  to be removed after their support blocks.
+
+  Solution: Refactored to use precomputed EnumSet for O(1) lookups.
+  Added missing blocks: ladder, lantern, bell, candle, repeater,
+  comparator, tripwire, rail, redstone wire. Added copper torches and
+  copper lanterns to allowed blocks list.
+
+Chunk Test Improvements (c62495b)
+
+  Increased CHUNK_UNLOAD_WAIT_MS from 5s to 20s for more reliable
+  chunk unloading in tests. Added /forceload query verification after forceload
+  removal.
