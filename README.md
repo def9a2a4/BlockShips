@@ -25,6 +25,7 @@ Ships can include:
 - **Health & damage** - Ships have health, take damage from collisions/attacks, and regenerate over time. Visual and audio feedback on hits.
 - **Movement Sounds** - Movement sounds in water and air (volume configurable in config.yml)
 - **Special drowned** - Rare drowned mobs (5% spawn chance) drop ship wheels as an alternative to crafting
+- **Dynamic lighting** - Light-emitting blocks (glowstone, lanterns, torches, etc.) on ships emit dynamic light when [DynLight](https://github.com/def9a2a4/DynLight) is installed (optional)
 
 ## Custom Ships
 
