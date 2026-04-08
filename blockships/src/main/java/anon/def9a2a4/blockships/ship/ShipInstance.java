@@ -335,6 +335,64 @@ public class ShipInstance {
             d.addScoreboardTag(ShipTags.PARENT_TAG);
         });
 
+        // Pre-compute dynlight tags for shulkers: build position index, check occlusion, resolve neighbor fallback
+        Map<Integer, Integer> shulkerLightTags = new HashMap<>();
+        if (SHIP_LIGHTS_ENABLED) {
+            Map<String, Integer> posMap = new HashMap<>();
+            Map<Integer, Integer> lightEmission = new HashMap<>();
+            for (int i = 0; i < model.parts.size(); i++) {
+                ShipModel.ModelPart mp = model.parts.get(i);
+                Matrix4f m = mp.local;
+                int x = java.lang.Math.round(m.m30()), y = java.lang.Math.round(m.m31()), z = java.lang.Math.round(m.m32());
+                posMap.put(x + "," + y + "," + z, i);
+                if (mp.block != null && mp.block.getLightEmission() > 0) {
+                    lightEmission.put(i, mp.block.getLightEmission());
+                }
+            }
+
+            // Check occlusion: skip blocks fully surrounded by opaque blocks
+            int[][] allNeighbors = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
+            Set<Integer> occluded = new HashSet<>();
+            for (var entry : lightEmission.entrySet()) {
+                int idx = entry.getKey();
+                Matrix4f m = model.parts.get(idx).local;
+                int x = java.lang.Math.round(m.m30()), y = java.lang.Math.round(m.m31()), z = java.lang.Math.round(m.m32());
+                boolean allOpaque = true;
+                for (int[] d : allNeighbors) {
+                    Integer ni = posMap.get((x + d[0]) + "," + (y + d[1]) + "," + (z + d[2]));
+                    if (ni == null || !model.parts.get(ni).block.getMaterial().isOccluding()) {
+                        allOpaque = false;
+                        break;
+                    }
+                }
+                if (allOpaque) occluded.add(idx);
+            }
+
+            // Assign light to shulkers: own collider if available, otherwise delegate to neighbor
+            int[][] neighborPriority = {{0,-1,0},{1,0,0},{-1,0,0},{0,0,1},{0,0,-1},{0,1,0}};
+            for (var entry : lightEmission.entrySet()) {
+                int idx = entry.getKey();
+                int emission = entry.getValue();
+                if (occluded.contains(idx)) continue;
+
+                ShipModel.ModelPart mp = model.parts.get(idx);
+                if (mp.collision.enable) {
+                    shulkerLightTags.merge(idx, emission, java.lang.Math::max);
+                } else {
+                    // No collider (torch, etc.) — find neighbor with collider
+                    Matrix4f m = mp.local;
+                    int x = java.lang.Math.round(m.m30()), y = java.lang.Math.round(m.m31()), z = java.lang.Math.round(m.m32());
+                    for (int[] d : neighborPriority) {
+                        Integer ni = posMap.get((x + d[0]) + "," + (y + d[1]) + "," + (z + d[2]));
+                        if (ni != null && model.parts.get(ni).collision.enable) {
+                            shulkerLightTags.merge(ni, emission, java.lang.Math::max);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         // Spawn each block display part as a child
         for (int blockIndex = 0; blockIndex < model.parts.size(); blockIndex++) {
             ShipModel.ModelPart p = model.parts.get(blockIndex);
@@ -560,12 +618,6 @@ public class ShipInstance {
                 bd.setPersistent(true);
                 bd.addScoreboardTag(ShipTags.shipTag(this.id));
                 bd.addScoreboardTag(ShipTags.displayIndexTag(currentBlockIndex));
-                if (SHIP_LIGHTS_ENABLED) {
-                    int emission = blockData.getLightEmission();
-                    if (emission > 0) {
-                        bd.addScoreboardTag(ShipTags.dynlightTag(emission));
-                    }
-                }
 
                 // TODO: Sign text cannot be displayed on BlockDisplay entities (Minecraft limitation).
                 // A workaround would be to spawn TextDisplay entities near signs to show the text.
@@ -700,6 +752,14 @@ public class ShipInstance {
                                     if (cannon.obsidianBlockIndex == finalBlockIndex) {
                                         s.addScoreboardTag(ShipTags.cannonTag(finalBlockIndex));
                                         break;
+                                    }
+                                }
+
+                                // Add dynlight tag if this shulker represents a light-emitting block
+                                if (SHIP_LIGHTS_ENABLED) {
+                                    Integer lightLevel = shulkerLightTags.get(finalBlockIndex);
+                                    if (lightLevel != null) {
+                                        s.addScoreboardTag(ShipTags.dynlightTag(lightLevel));
                                     }
                                 }
 
