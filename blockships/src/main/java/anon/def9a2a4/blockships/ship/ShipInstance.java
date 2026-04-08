@@ -27,6 +27,8 @@ public class ShipInstance {
     private static float PLAYER_PROXIMITY_RADIUS = 10.0f;
     private static float PLAYER_PROXIMITY_RADIUS_SQ = 100.0f;  // Squared for fast distance checks
     private static boolean SHIP_LIGHTS_ENABLED = true;
+    private static boolean TNT_ENABLED = false;
+    private static int TNT_FUSE_TICKS = 80;
 
     /**
      * Loads global physics config values from plugin config.
@@ -41,6 +43,8 @@ public class ShipInstance {
         PLAYER_PROXIMITY_RADIUS = (float) cfg.getDouble("physics.player-proximity-radius", 10.0);
         PLAYER_PROXIMITY_RADIUS_SQ = PLAYER_PROXIMITY_RADIUS * PLAYER_PROXIMITY_RADIUS;
         SHIP_LIGHTS_ENABLED = cfg.getBoolean("ship-lights", true);
+        TNT_ENABLED = cfg.getBoolean("cannons.tnt-enabled", false);
+        TNT_FUSE_TICKS = cfg.getInt("cannons.tnt-fuse-ticks", 80);
     }
 
     /**
@@ -2419,6 +2423,17 @@ public class ShipInstance {
                     potion.setItem(item.clone());
                     potion.setVelocity(velocity);
                 });
+                break;
+            case TNT:
+                if (TNT_ENABLED) {
+                    world.spawn(spawnLoc, TNTPrimed.class, tnt -> {
+                        tnt.setFuseTicks(TNT_FUSE_TICKS);
+                        tnt.setVelocity(velocity);
+                    });
+                } else {
+                    Item droppedTnt = world.dropItem(spawnLoc, new ItemStack(type, 1));
+                    droppedTnt.setVelocity(velocity.multiply(0.5));
+                }
                 break;
             default:
                 // Drop as item for unsupported types

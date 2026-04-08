@@ -91,6 +91,10 @@ physics:
 cannons:
   # Cooldown between cannon fires in milliseconds (per cannon)
   cooldown-ms: 1000
+  # Whether TNT can be fired from ship cannons (disabled by default to prevent griefing)
+  tnt-enabled: false
+  # Fuse time in ticks for TNT fired from cannons (vanilla default: 80 ticks = 4 seconds)
+  tnt-fuse-ticks: 80
 
 # Sound settings (global volume multipliers)
 sounds:
