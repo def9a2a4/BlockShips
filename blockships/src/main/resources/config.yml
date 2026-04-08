@@ -3,6 +3,9 @@
 # Set to false to disable config mismatch warnings on startup
 warn-config-mismatch: true
 
+# Whether ship blocks emit dynamic light (requires DynLight plugin)
+ship-lights: true
+
 # Special Drowned Configuration
 # These rare drowned mobs drop ship wheels when killed
 special-drowned:

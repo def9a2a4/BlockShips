@@ -26,6 +26,7 @@ public class ShipInstance {
     private static int IDLE_CHECK_INTERVAL = 20;
     private static float PLAYER_PROXIMITY_RADIUS = 10.0f;
     private static float PLAYER_PROXIMITY_RADIUS_SQ = 100.0f;  // Squared for fast distance checks
+    private static boolean SHIP_LIGHTS_ENABLED = true;
 
     /**
      * Loads global physics config values from plugin config.
@@ -39,6 +40,7 @@ public class ShipInstance {
         IDLE_CHECK_INTERVAL = cfg.getInt("physics.idle-check-interval", 20);
         PLAYER_PROXIMITY_RADIUS = (float) cfg.getDouble("physics.player-proximity-radius", 10.0);
         PLAYER_PROXIMITY_RADIUS_SQ = PLAYER_PROXIMITY_RADIUS * PLAYER_PROXIMITY_RADIUS;
+        SHIP_LIGHTS_ENABLED = cfg.getBoolean("ship-lights", true);
     }
 
     /**
@@ -554,6 +556,12 @@ public class ShipInstance {
                 bd.setPersistent(true);
                 bd.addScoreboardTag(ShipTags.shipTag(this.id));
                 bd.addScoreboardTag(ShipTags.displayIndexTag(currentBlockIndex));
+                if (SHIP_LIGHTS_ENABLED) {
+                    int emission = blockData.getLightEmission();
+                    if (emission > 0) {
+                        bd.addScoreboardTag(ShipTags.dynlightTag(emission));
+                    }
+                }
 
                 // TODO: Sign text cannot be displayed on BlockDisplay entities (Minecraft limitation).
                 // A workaround would be to spawn TextDisplay entities near signs to show the text.
