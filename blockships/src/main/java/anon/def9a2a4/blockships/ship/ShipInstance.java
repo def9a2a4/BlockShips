@@ -326,8 +326,8 @@ public class ShipInstance {
         // Spawn invisible parent display for rotation control
         parent = w.spawn(base, BlockDisplay.class, d -> {
             d.setBlock(Bukkit.createBlockData(Material.AIR));
-            d.setInterpolationDuration(1);
-            d.setTeleportDuration(1);
+            d.setInterpolationDuration(config.displayInterpolationDuration);
+            d.setTeleportDuration(config.displayInterpolationDuration);
             d.setViewRange(64f);
             d.setPersistent(true);
             d.setGravity(false);
@@ -470,8 +470,8 @@ public class ShipInstance {
 
                     id.setItemStack(displayItem);
                     id.setViewRange(64f);
-                    id.setInterpolationDuration(1);
-                    id.setTeleportDuration(1);
+                    id.setInterpolationDuration(config.displayInterpolationDuration);
+                    id.setTeleportDuration(config.displayInterpolationDuration);
                     id.setShadowRadius(0f);
                     id.setShadowStrength(0f);
                     id.setGlowing(false);
@@ -609,8 +609,8 @@ public class ShipInstance {
 
                 bd.setBlock(blockData);
                 bd.setViewRange(64f);
-                bd.setInterpolationDuration(1);
-                bd.setTeleportDuration(1);
+                bd.setInterpolationDuration(config.displayInterpolationDuration);
+                bd.setTeleportDuration(config.displayInterpolationDuration);
                 bd.setShadowRadius(0f);
                 bd.setShadowStrength(0f);
                 bd.setGlowing(false);
@@ -850,8 +850,8 @@ public class ShipInstance {
                 id.setItemStack(displayItem);
                 id.setItemDisplayTransform(p.displayMode);
                 id.setViewRange(64f);
-                id.setInterpolationDuration(1);
-                id.setTeleportDuration(1);
+                id.setInterpolationDuration(config.displayInterpolationDuration);
+                id.setTeleportDuration(config.displayInterpolationDuration);
                 id.setShadowRadius(0f);
                 id.setShadowStrength(0f);
                 id.setGlowing(false);
@@ -1041,9 +1041,9 @@ public class ShipInstance {
             float velocityMagnitude = workVelocity.length();
 
             // BEFORE teleport: capture player if this is a seat shulker
-            // (teleporting carriers can sometimes dismount nested passengers)
+            // (teleporting carriers can sometimes dismount nested passengers on pre-1.21.9)
             Player seatedPlayer = null;
-            if (seatShulkers.contains(cb.entity)) {
+            if (TeleportCompat.needsPassengerEject() && seatShulkers.contains(cb.entity)) {
                 for (Entity passenger : cb.entity.getPassengers()) {
                     if (passenger instanceof Player p) {
                         seatedPlayer = p;
@@ -1058,7 +1058,7 @@ public class ShipInstance {
                 cb.carrier.addPassenger(cb.entity);
             }
 
-            if (isFirstTick || velocityMagnitude > 0.001) {
+            if (isFirstTick || velocityMagnitude > 0.005) {
                 TeleportCompat.teleport(cb.carrier, workCarrierLoc);
                 // DO NOT teleport shulker directly - it causes block snapping
                 // Shulker should follow carrier as passenger
@@ -1070,22 +1070,14 @@ public class ShipInstance {
                 }
             }
 
-            // AFTER teleport: re-mount player if they were dismounted by teleport (not intentionally)
+            // AFTER teleport: re-mount player if they were dismounted by teleport (pre-1.21.9 only)
             if (seatedPlayer != null && !cb.entity.getPassengers().contains(seatedPlayer)) {
                 // Check if seat is still occupied (intentional dismount via freeSeat() clears this)
                 int seatIdx = ShipTags.extractSeatIndex(cb.entity.getScoreboardTags());
                 if (seatIdx >= 0 && occupiedSeatIndices.contains(seatIdx)) {
                     final Player playerToRemount = seatedPlayer;
                     final Shulker seat = cb.entity;
-                    // Delay by 1 tick to ensure teleport fully completes
-                    new BukkitRunnable() {
-                        @Override
-                        public void run() {
-                            if (playerToRemount.isValid() && seat.isValid()) {
-                                seat.addPassenger(playerToRemount);
-                            }
-                        }
-                    }.runTaskLater(plugin, 1L);
+                    seat.addPassenger(playerToRemount);
                 }
             }
 

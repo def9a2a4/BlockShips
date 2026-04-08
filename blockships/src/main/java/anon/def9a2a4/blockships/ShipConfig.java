@@ -70,6 +70,9 @@ public class ShipConfig {
     public final float airshipSoundVolume;
     public final float soundPitch;
 
+    // Display settings
+    public final int displayInterpolationDuration;  // Ticks for display entity interpolation (default: 2, range: 1-4)
+
     // Camera settings
     public final float cameraDistance;  // Third-person camera distance when riding (default: 4, range: 0-32)
 
@@ -119,6 +122,7 @@ public class ShipConfig {
         this.soundVolume = b.soundVolume;
         this.airshipSoundVolume = b.airshipSoundVolume;
         this.soundPitch = b.soundPitch;
+        this.displayInterpolationDuration = b.displayInterpolationDuration;
         this.cameraDistance = b.cameraDistance;
     }
 
@@ -212,6 +216,8 @@ public class ShipConfig {
             .soundVolume((float) cfg.getDouble(p + "movement-sounds.volume", cfg.getDouble("sounds.volume", 1.5)))
             .airshipSoundVolume((float) cfg.getDouble(p + "movement-sounds.airship-volume", cfg.getDouble("sounds.airship-volume", 0.15)))
             .soundPitch((float) cfg.getDouble(p + "movement-sounds.pitch", cfg.getDouble("sounds.pitch", 1.0)))
+            // Display interpolation (global setting, higher = smoother but more latency)
+            .displayInterpolationDuration(cfg.getInt("physics.display-interpolation-duration", 2))
             // Camera distance (for prefab ships; custom ships use per-ship value from ShipWheelData)
             .cameraDistance((float) cfg.getDouble(p + "camera-distance", 4.0))
             .build();
@@ -275,6 +281,7 @@ public class ShipConfig {
         float soundVolume = 1.5f;
         float airshipSoundVolume = 0.15f;
         float soundPitch = 1.0f;
+        int displayInterpolationDuration = 2;  // Ticks for display entity interpolation (1-4)
         float cameraDistance = 4.0f;  // Default matches Minecraft default
 
         Builder collisionDebugGlow(boolean v) { collisionDebugGlow = v; return this; }
@@ -322,6 +329,7 @@ public class ShipConfig {
         Builder soundVolume(float v) { soundVolume = v; return this; }
         Builder airshipSoundVolume(float v) { airshipSoundVolume = v; return this; }
         Builder soundPitch(float v) { soundPitch = v; return this; }
+        Builder displayInterpolationDuration(int v) { displayInterpolationDuration = Math.max(1, Math.min(4, v)); return this; }
         Builder cameraDistance(float v) { cameraDistance = v; return this; }
 
         ShipConfig build() { return new ShipConfig(this); }
