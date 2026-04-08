@@ -2415,9 +2415,10 @@ public class ShipInstance {
                 break;
             case SPLASH_POTION:
             case LINGERING_POTION:
-                ThrownPotion potion = world.spawn(spawnLoc, ThrownPotion.class);
-                potion.setItem(item.clone());
-                potion.setVelocity(velocity);
+                world.spawn(spawnLoc, ThrownPotion.class, potion -> {
+                    potion.setItem(item.clone());
+                    potion.setVelocity(velocity);
+                });
                 break;
             default:
                 // Drop as item for unsupported types
