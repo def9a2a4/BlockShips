@@ -318,6 +318,15 @@ public class BlockStructureScanner {
             Block block = blockLoc.getBlock();
             BlockData blockData = block.getBlockData();
 
+            // Force double chests to single to prevent item duplication (GitHub #12)
+            // and display issues. Each half keeps only its own inventory slots.
+            if (blockData instanceof org.bukkit.block.data.type.Chest) {
+                org.bukkit.block.data.type.Chest chestData = (org.bukkit.block.data.type.Chest) blockData;
+                if (chestData.getType() != org.bukkit.block.data.type.Chest.Type.SINGLE) {
+                    chestData.setType(org.bukkit.block.data.type.Chest.Type.SINGLE);
+                }
+            }
+
             // Get block properties from config
             BlockProperties props = configManager.getProperties(block.getType(), blockData);
 
@@ -377,7 +386,7 @@ public class BlockStructureScanner {
                 if (storage != null) {
                     // Serialize inventory contents
                     org.bukkit.block.Container container = (org.bukkit.block.Container) block.getState();
-                    org.bukkit.inventory.Inventory inv = container.getInventory();
+                    org.bukkit.inventory.Inventory inv = container.getSnapshotInventory();
                     rawYaml.put("container_items", serializeInventory(inv));
 
                     // Serialize storage config for persistence
@@ -761,7 +770,7 @@ public class BlockStructureScanner {
                     (java.util.List<Map<String, Object>>) part.rawYaml.get("container_items");
 
                 org.bukkit.block.Container container = (org.bukkit.block.Container) block.getState();
-                org.bukkit.inventory.ItemStack[] items = deserializeInventory(itemsData, container.getInventory().getSize());
+                org.bukkit.inventory.ItemStack[] items = deserializeInventory(itemsData, container.getSnapshotInventory().getSize());
 
                 // Set items on the snapshot's inventory, then update to persist
                 container.getSnapshotInventory().setContents(items);
