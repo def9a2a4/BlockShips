@@ -1,0 +1,72 @@
+NEW FEATURES
+
+------------
+
+DynLight Integration for Light-Emitting Ship Blocks (c5ad222, d10feb3)
+
+  Ship blocks that emit light (glowstone, lanterns, torches, etc.) now
+  produce dynamic lighting via DynLight plugin integration. BlockDisplay
+  entities are tagged with dynlight:<level> scoreboard tags so DynLight
+  can render real-time light around moving ships.
+
+  - Configurable via ship-lights toggle in config.yml.
+  - No compile-time dependency — tags are inert if DynLight is absent.
+  - Dynlight tags are applied to collision shulkers (not BlockDisplay
+    entities) so DynLight can track their world position accurately.
+  - Blocks without colliders (torches, etc.) delegate their light to the
+    nearest neighbor shulker (below first, then sides, then above).
+  - Blocks fully surrounded by opaque blocks are skipped via occlusion
+    culling to avoid wasted light sources.
+
+Configurable TNT Cannon Projectile Support (183284f)
+
+  TNT loaded into ship dispensers now spawns as primed TNT instead of
+  dropping as an inert item. This enables functional TNT cannons on
+  ships.
+
+  - Controlled by cannons.tnt-enabled (default: false) and
+    cannons.tnt-fuse-ticks (default: 80) in config.yml.
+  - Disabled by default to prevent griefing on public servers.
+
+  Ref: https://github.com/def9a2a4/BlockShips/issues/15
+
+BUG FIXES
+---------
+
+Double Chest Item Duplication on Ship Assembly (5b882c2)
+
+  Fixed double chests duplicating their entire 54-slot shared inventory
+  into each half during ship assembly, resulting in doubled items on
+  disassembly.
+
+  Root cause: DoubleChestInventory was being serialized for both halves,
+  so each half stored all 54 slots instead of its own 27.
+
+  Solution: Force double chests to single chests during block scanning
+  so each half only serializes its own 27-slot inventory. BlockData is
+  also stored as type=single to prevent auto-merging on disassembly.
+
+  Fixes: https://github.com/def9a2a4/BlockShips/issues/12
+
+Lingering Potion Visual When Fired From Ship Cannons (fe03538)
+
+  Lingering potions fired from ship dispensers appeared as generic
+  thrown potions on the client side because the potion item data was
+  set after the entity entered the world.
+
+  Solution: Set potion item before entity enters the world by using
+  lambda-based spawn, so clients see the correct lingering potion
+  particle and bottle texture.
+
+  Fixes: https://github.com/def9a2a4/BlockShips/issues/15
+
+Lingering Potion Using Splash Behavior on Impact (d994684)
+
+  Lingering potions fired from ship cannons were splashing on impact
+  instead of creating an area effect cloud, because they were spawned
+  as ThrownPotion entities.
+
+  Solution: Use LingeringPotion entity class so lingering potions
+  correctly create an area effect cloud on impact.
+
+  Ref: https://github.com/def9a2a4/BlockShips/issues/15
