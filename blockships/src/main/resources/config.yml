@@ -4,6 +4,7 @@
 warn-config-mismatch: true
 
 # Whether ship blocks emit dynamic light (requires DynLight plugin)
+# https://github.com/def9a2a4/DynLight
 ship-lights: true
 
 # Special Drowned Configuration
