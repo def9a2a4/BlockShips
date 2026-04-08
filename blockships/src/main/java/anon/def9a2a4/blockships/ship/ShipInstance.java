@@ -2418,8 +2418,13 @@ public class ShipInstance {
                 egg.setVelocity(velocity);
                 break;
             case SPLASH_POTION:
-            case LINGERING_POTION:
                 world.spawn(spawnLoc, ThrownPotion.class, potion -> {
+                    potion.setItem(item.clone());
+                    potion.setVelocity(velocity);
+                });
+                break;
+            case LINGERING_POTION:
+                world.spawn(spawnLoc, LingeringPotion.class, potion -> {
                     potion.setItem(item.clone());
                     potion.setVelocity(velocity);
                 });
