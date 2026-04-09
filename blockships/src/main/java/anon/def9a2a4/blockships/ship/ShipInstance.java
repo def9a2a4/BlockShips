@@ -65,6 +65,7 @@ public class ShipInstance {
     public final ShipModel model;
     public final String shipType;  // Ship type identifier (e.g., "smallship", "bigship")
     public ArmorStand vehicle;  // Root entity used for physics (non-final for chunk recovery)
+    private Location cachedVehicleLoc;  // Cached per-tick to avoid redundant getLocation() clones
     public final int driverSeatIndex;  // Index of driver seat (always 0)
     public final UUID id;  // Ship UUID - generated on spawn or restored from state
     public final ShipCustomization customization;  // Ship customization data (banner, wood type, colors, textures)
@@ -883,9 +884,9 @@ public class ShipInstance {
                 task = new BukkitRunnable() {
                     @Override
                     public void run() {
-                        // Check if chunk is loaded - if not, skip tick but don't destroy
-                        Location loc = vehicle.getLocation();
-                        if (!loc.isChunkLoaded()) {
+                        // Cache vehicle location once per tick to avoid redundant clones
+                        cachedVehicleLoc = vehicle.getLocation();
+                        if (!cachedVehicleLoc.isChunkLoaded()) {
                             return; // Chunk unloaded, suspend ship but don't destroy
                         }
                         if (vehicle.isDead() || !vehicle.isValid()) {
@@ -970,7 +971,7 @@ public class ShipInstance {
     }
 
     public void updateCollisionPositions() {
-        Location currentVehicleLoc = vehicle.getLocation();
+        Location currentVehicleLoc = cachedVehicleLoc != null ? cachedVehicleLoc : vehicle.getLocation();
 
         // Calculate collision detection radius once (on first call after colliders are spawned)
         if (collisionRadius < 0) {
@@ -1133,8 +1134,8 @@ public class ShipInstance {
         collision.applyResponse();  // Apply collision response
         updateCollisionPositions();  // Sync collision boxes with vehicle BEFORE movement check
 
-        // Get current vehicle state
-        Location currentVehicleLoc = vehicle.getLocation();
+        // Get current vehicle state (reuse cached location from tick runnable)
+        Location currentVehicleLoc = cachedVehicleLoc;
         float yaw = vehicle.getYaw();
         float pitch = vehicle.getPitch();
 
@@ -1399,9 +1400,9 @@ public class ShipInstance {
                     task = new BukkitRunnable() {
                         @Override
                         public void run() {
-                            // Check if chunk is loaded - if not, skip tick but don't destroy
-                            Location tickLoc = vehicle.getLocation();
-                            if (!tickLoc.isChunkLoaded()) {
+                            // Cache vehicle location once per tick to avoid redundant clones
+                            cachedVehicleLoc = vehicle.getLocation();
+                            if (!cachedVehicleLoc.isChunkLoaded()) {
                                 return; // Chunk unloaded, suspend ship but don't destroy
                             }
                             if (vehicle.isDead() || !vehicle.isValid()) {
