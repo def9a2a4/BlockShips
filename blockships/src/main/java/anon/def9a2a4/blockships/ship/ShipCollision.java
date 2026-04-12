@@ -34,6 +34,7 @@ public class ShipCollision {
     private final Vector3f workSeparationNormal = new Vector3f();
     private final Vector3f workTerrainForce = new Vector3f();  // For calculateTerrainCollisionForce
     private final Vector3f workPenetrationForce = new Vector3f();  // For calculatePenetrationForce return value
+    private final org.bukkit.util.BoundingBox workBlockBox = new org.bukkit.util.BoundingBox(0, 0, 0, 1, 1, 1);
 
     public ShipCollision(ShipInstance ship) {
         this.ship = ship;
@@ -317,8 +318,8 @@ public class ShipCollision {
         int minZ = (int) Math.floor(shulkerBox.getMinZ());
         int maxZ = (int) Math.ceil(shulkerBox.getMaxZ());
 
-        // Reuse single BoundingBox instance to avoid allocations in tight loop
-        org.bukkit.util.BoundingBox blockBox = new org.bukkit.util.BoundingBox(0, 0, 0, 1, 1, 1);
+        // Reuse field-level BoundingBox to avoid allocations in tight loop
+        org.bukkit.util.BoundingBox blockBox = workBlockBox;
 
         outerLoop:
         for (int x = minX; x <= maxX; x++) {
@@ -327,7 +328,8 @@ public class ShipCollision {
                     Block block = world.getBlockAt(x, y, z);
 
                     // Skip non-solid blocks
-                    if (!block.getType().isSolid() || block.getType() == Material.WATER) {
+                    Material type = block.getType();
+                    if (!type.isSolid() || type == Material.WATER) {
                         continue;
                     }
 

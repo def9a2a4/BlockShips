@@ -1132,6 +1132,7 @@ public class ShipInstance {
         collision.detect();  // Detect collisions and accumulate forces
         physics.update();    // Apply physics (movement, rotation, buoyancy)
         collision.applyResponse();  // Apply collision response
+        cachedVehicleLoc = vehicle.getLocation();  // Refresh after physics moved the vehicle
         updateCollisionPositions();  // Sync collision boxes with vehicle BEFORE movement check
 
         // Get current vehicle state (reuse cached location from tick runnable)
