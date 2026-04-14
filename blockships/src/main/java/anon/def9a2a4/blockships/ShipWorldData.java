@@ -120,6 +120,54 @@ public class ShipWorldData {
         File shipFile = getShipFile(world.getName(), ship.id);
         shipFile.getParentFile().mkdirs();
 
+        YamlConfiguration config = buildShipMetadataConfig(ship);
+        config.set("entity_count", ship.countEntities());
+
+        try {
+            config.save(shipFile);
+            // Populate cache on successful save
+            metadataExistsCache.put(world.getName() + ":" + ship.id, true);
+        } catch (IOException e) {
+            plugin.getLogger().severe("Failed to save ship metadata for " + ship.id + ": " + e.getMessage());
+        }
+    }
+
+    /**
+     * Saves ship metadata asynchronously: snapshots state on calling thread (must be main thread),
+     * then writes YAML to disk on the IO executor thread.
+     */
+    public void saveShipMetadataAsync(ShipInstance ship) {
+        World world = ship.vehicle.getLocation().getWorld();
+        if (world == null) return;
+
+        // Snapshot: build YamlConfiguration on main thread (all Bukkit API calls happen here)
+        String worldName = world.getName();
+        UUID shipId = ship.id;
+        YamlConfiguration config = buildShipMetadataConfig(ship);
+        int entityCount = ship.countEntities();
+        config.set("entity_count", entityCount);
+
+        // Write: file I/O on async thread
+        pendingIOOperations.incrementAndGet();
+        ioExecutor.submit(() -> {
+            try {
+                File shipFile = getShipFile(worldName, shipId);
+                shipFile.getParentFile().mkdirs();
+                config.save(shipFile);
+                metadataExistsCache.put(worldName + ":" + shipId, true);
+            } catch (Exception e) {
+                plugin.getLogger().severe("Failed to async save ship metadata for " + shipId + ": " + e.getMessage());
+            } finally {
+                pendingIOOperations.decrementAndGet();
+            }
+        });
+    }
+
+    /**
+     * Builds a YamlConfiguration with all ship metadata.
+     * Must be called on the main thread (accesses Bukkit API).
+     */
+    private YamlConfiguration buildShipMetadataConfig(ShipInstance ship) {
         YamlConfiguration config = new YamlConfiguration();
         config.set("id", ship.id.toString());
         config.set("ship_type", ship.shipType);
@@ -171,16 +219,50 @@ public class ShipWorldData {
             config.set("inventories", inventories);
         }
 
-        // Entity count for recovery validation
-        config.set("entity_count", ship.countEntities());
+        return config;
+    }
 
-        try {
-            config.save(shipFile);
-            // Populate cache on successful save
-            metadataExistsCache.put(world.getName() + ":" + ship.id, true);
-        } catch (IOException e) {
-            plugin.getLogger().severe("Failed to save ship metadata for " + ship.id + ": " + e.getMessage());
+    /**
+     * Saves all chunk indices to disk asynchronously.
+     * Snapshots index data on calling thread, writes on IO thread.
+     */
+    public void saveAllChunkIndicesAsync() {
+        // Snapshot: deep copy chunk indices on main thread
+        Map<String, Map<String, List<String>>> snapshot = new HashMap<>();
+        for (Map.Entry<String, Map<String, List<UUID>>> worldEntry : chunkIndices.entrySet()) {
+            Map<String, List<String>> worldSnapshot = new HashMap<>();
+            for (Map.Entry<String, List<UUID>> chunkEntry : worldEntry.getValue().entrySet()) {
+                List<String> uuidStrings = new ArrayList<>();
+                for (UUID uuid : chunkEntry.getValue()) {
+                    uuidStrings.add(uuid.toString());
+                }
+                worldSnapshot.put(chunkEntry.getKey(), uuidStrings);
+            }
+            snapshot.put(worldEntry.getKey(), worldSnapshot);
         }
+
+        // Write on async thread
+        pendingIOOperations.incrementAndGet();
+        ioExecutor.submit(() -> {
+            try {
+                for (Map.Entry<String, Map<String, List<String>>> worldEntry : snapshot.entrySet()) {
+                    String worldName = worldEntry.getKey();
+                    File worldDir = new File(worldsFolder, worldName);
+                    worldDir.mkdirs();
+                    File chunksFile = new File(worldDir, "chunks.yml");
+
+                    YamlConfiguration config = new YamlConfiguration();
+                    for (Map.Entry<String, List<String>> chunkEntry : worldEntry.getValue().entrySet()) {
+                        config.set(chunkEntry.getKey(), chunkEntry.getValue());
+                    }
+                    config.save(chunksFile);
+                }
+            } catch (Exception e) {
+                plugin.getLogger().severe("Failed to async save chunk indices: " + e.getMessage());
+            } finally {
+                pendingIOOperations.decrementAndGet();
+            }
+        });
     }
 
     /**

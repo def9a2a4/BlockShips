@@ -211,9 +211,9 @@ public class DisplayShip implements Listener {
         new BukkitRunnable() {
             @Override
             public void run() {
-                // Save all currently loaded ships and ensure they're in chunk index
+                // Snapshot ship state on main thread, then write async
                 for (ShipInstance ship : ShipRegistry.getAllShips()) {
-                    shipWorldData.saveShipMetadata(ship);
+                    shipWorldData.saveShipMetadataAsync(ship);
 
                     // Ensure ship is in chunk index (may have been missed or moved)
                     Location loc = ship.vehicle.getLocation();
@@ -221,7 +221,7 @@ public class DisplayShip implements Listener {
                     int chunkZ = loc.getBlockZ() >> 4;
                     shipWorldData.addToChunkIndex(loc.getWorld(), ship.id, chunkX, chunkZ);
                 }
-                shipWorldData.saveAllChunkIndices();
+                shipWorldData.saveAllChunkIndicesAsync();
             }
         }.runTaskTimer(plugin, 20L * 60, 20L * 60);  // Every 60 seconds
     }

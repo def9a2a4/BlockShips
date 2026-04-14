@@ -126,6 +126,10 @@ public class ShipInstance {
     // Chunk tracking for persistence - updated on movement
     private int currentChunkX, currentChunkZ;
 
+    // Throttle passenger integrity checks (only needed after chunk reload, not every tick)
+    private int passengerCheckCounter = 0;
+    private static final int PASSENGER_CHECK_INTERVAL = 20;
+
     // Incremental recovery tracking
     private int expectedEntityCount = 0;
     private boolean recoveryComplete = true;  // true for newly spawned ships
@@ -153,6 +157,8 @@ public class ShipInstance {
     private final Vector3f workDisplayTransformedRot = new Vector3f();
     private final Matrix4f workDisplayDelta = new Matrix4f();
     private final Matrix4f workR_initial = new Matrix4f();  // For initial rotation matrix
+    private final Matrix4f cachedR_initial = new Matrix4f(); // Pre-computed initial rotation (model.initialRotation is final)
+    private float initialRotRadX, initialRotRadY, initialRotRadZ; // Pre-computed toRadians(model.initialRotation)
     private final Matrix4f workR = new Matrix4f();          // For combined rotation matrix
     private final Matrix4f workT = new Matrix4f();          // For translation matrix
     private final Matrix4f workT_display = new Matrix4f();  // For display translation matrix
@@ -184,6 +190,12 @@ public class ShipInstance {
         for (int i = 0; i < model.seats.size(); i++) {
             seatShulkers.add(null);
         }
+
+        // Cache initial rotation radians (model.initialRotation is final)
+        this.initialRotRadX = (float) java.lang.Math.toRadians(model.initialRotation.x);
+        this.initialRotRadY = (float) java.lang.Math.toRadians(model.initialRotation.y);
+        this.initialRotRadZ = (float) java.lang.Math.toRadians(model.initialRotation.z);
+        cachedR_initial.identity().rotateY(initialRotRadX).rotateX(initialRotRadY).rotateZ(initialRotRadZ);
 
         // Initialize delegates
         this.physics = new ShipPhysics(this);
@@ -309,6 +321,12 @@ public class ShipInstance {
         for (int i = 0; i < model.seats.size(); i++) {
             seatShulkers.add(null);
         }
+
+        // Cache initial rotation radians (model.initialRotation is final)
+        this.initialRotRadX = (float) java.lang.Math.toRadians(model.initialRotation.x);
+        this.initialRotRadY = (float) java.lang.Math.toRadians(model.initialRotation.y);
+        this.initialRotRadZ = (float) java.lang.Math.toRadians(model.initialRotation.z);
+        cachedR_initial.identity().rotateY(initialRotRadX).rotateX(initialRotRadY).rotateZ(initialRotRadZ);
 
         // Initialize delegates
         this.physics = new ShipPhysics(this);
@@ -932,9 +950,9 @@ public class ShipInstance {
             0f
         );
         model.rotationTransform.transform(workVehicleRot, workTransformedRot);
-        workTransformedRot.x += (float) java.lang.Math.toRadians(model.initialRotation.x);
-        workTransformedRot.y += (float) java.lang.Math.toRadians(model.initialRotation.y);
-        workTransformedRot.z += (float) java.lang.Math.toRadians(model.initialRotation.z);
+        workTransformedRot.x += initialRotRadX;
+        workTransformedRot.y += initialRotRadY;
+        workTransformedRot.z += initialRotRadZ;
 
         // Reuse workRotation matrix instead of allocating new one
         return workRotation.identity()
@@ -999,6 +1017,9 @@ public class ShipInstance {
             workTranslation.translate(config.customCollisionOffset);
         }
 
+        // Throttle passenger integrity checks (only needed after chunk reload, not every tick)
+        boolean shouldCheckPassengers = (++passengerCheckCounter % PASSENGER_CHECK_INTERVAL == 0);
+
         // Update collider (Interaction carrier + Shulker) positions
         for (CollisionBox cb : colliders) {
             // Calculate world transformation for this collider using collision offset (reuse workWorld)
@@ -1054,8 +1075,9 @@ public class ShipInstance {
             }
 
             // Verify passenger relationship is intact (can break on chunk reload)
-            // Must check EVERY tick, not just when moving, to fix broken relationships on stationary ships
-            if (cb.carrier.isValid() && cb.entity.isValid() && !cb.carrier.getPassengers().contains(cb.entity)) {
+            // Throttled: TeleportCompat already re-adds passengers after each teleport,
+            // so this only catches chunk reload edge cases — checking every 20 ticks is sufficient
+            if (shouldCheckPassengers && cb.carrier.isValid() && cb.entity.isValid() && !cb.carrier.getPassengers().contains(cb.entity)) {
                 cb.carrier.addPassenger(cb.entity);
             }
 
@@ -1105,10 +1127,10 @@ public class ShipInstance {
                         // Regenerate health per tick (divide by 20 since this runs 20 times per second)
                         double regenPerTick = model.healthRegenPerSecond / 20.0;
                         double newHealth = java.lang.Math.min(currentHealth + regenPerTick, maxHealth);
-                        vehicle.setHealth(newHealth);
 
-                        // Sync seat shulker health for HUD display (only if health changed)
+                        // Only update health when it actually changed (avoids NMS overhead at full health)
                         if (newHealth != currentHealth) {
+                            vehicle.setHealth(newHealth);
                             syncSeatShulkerHealth(newHealth);
                         }
 
@@ -1186,10 +1208,7 @@ public class ShipInstance {
         // On 1.21.9+: Vehicle rotation is inherited since displays are passengers of the vehicle
         // On pre-1.21.9: Display's local coordinate system is "frozen" at spawn yaw, so we only
         //                apply the DELTA rotation from spawn (not absolute yaw, which causes doubling)
-        workR_initial.identity()
-            .rotateY((float) java.lang.Math.toRadians(model.initialRotation.x))
-            .rotateX((float) java.lang.Math.toRadians(model.initialRotation.y))
-            .rotateZ((float) java.lang.Math.toRadians(model.initialRotation.z));
+        workR_initial.set(cachedR_initial);
 
         if (TeleportCompat.needsPassengerEject()) {
             // Pre-1.21.9: Apply only the DELTA rotation from spawn
