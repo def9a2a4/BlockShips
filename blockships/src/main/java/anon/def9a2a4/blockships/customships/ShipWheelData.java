@@ -1,5 +1,6 @@
 package anon.def9a2a4.blockships.customships;
 
+import anon.def9a2a4.blockships.ShipTags;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -265,8 +266,7 @@ public class ShipWheelData {
      */
     public static float snapToNearestCardinal(float yaw) {
         // Normalize yaw to 0-360 range
-        yaw = yaw % 360;
-        if (yaw < 0) yaw += 360;
+        yaw = ShipTags.normalizeYaw(yaw);
 
         // Round to nearest 90 degrees
         int cardinal = Math.round(yaw / 90.0f) * 90;

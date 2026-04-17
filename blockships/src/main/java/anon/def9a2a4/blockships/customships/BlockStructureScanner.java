@@ -2,6 +2,7 @@ package anon.def9a2a4.blockships.customships;
 
 import anon.def9a2a4.blockships.BlockShipsPlugin;
 import anon.def9a2a4.blockships.ShipModel;
+import anon.def9a2a4.blockships.ShipTags;
 import anon.def9a2a4.blockships.blockconfig.BlockConfigManager;
 import anon.def9a2a4.blockships.blockconfig.BlockProperties;
 import anon.def9a2a4.blockships.blockconfig.ShipDetector;
@@ -45,8 +46,7 @@ public class BlockStructureScanner {
      */
     public static BlockFace yawToBlockFace(float yaw) {
         // Normalize to 0-360
-        yaw = yaw % 360;
-        if (yaw < 0) yaw += 360;
+        yaw = ShipTags.normalizeYaw(yaw);
 
         // Round to nearest 90 degrees
         int rounded = Math.round(yaw / 90.0f) * 90;

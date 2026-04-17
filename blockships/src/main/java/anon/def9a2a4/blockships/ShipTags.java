@@ -70,7 +70,30 @@ public final class ShipTags {
         return DYNLIGHT_PREFIX + lightLevel;
     }
 
+    /**
+     * Normalizes a yaw angle to the 0-360 range.
+     */
+    public static float normalizeYaw(float yaw) {
+        yaw = yaw % 360;
+        if (yaw < 0) yaw += 360;
+        return yaw;
+    }
+
     // Tag parsing helpers
+
+    private static int extractIntIndex(Set<String> tags, String prefix) {
+        for (String tag : tags) {
+            if (tag.startsWith(prefix)) {
+                try {
+                    return Integer.parseInt(tag.substring(prefix.length()));
+                } catch (NumberFormatException e) {
+                    // Invalid index, continue checking
+                }
+            }
+        }
+        return -1;
+    }
+
     public static UUID extractShipId(Set<String> tags) {
         for (String tag : tags) {
             if (tag.startsWith(SHIP_PREFIX)) {
@@ -91,29 +114,11 @@ public final class ShipTags {
     }
 
     public static int extractSeatIndex(Set<String> tags) {
-        for (String tag : tags) {
-            if (tag.startsWith(SEAT_PREFIX)) {
-                try {
-                    return Integer.parseInt(tag.substring(SEAT_PREFIX.length()));
-                } catch (NumberFormatException e) {
-                    // Invalid index, continue checking
-                }
-            }
-        }
-        return -1;
+        return extractIntIndex(tags, SEAT_PREFIX);
     }
 
     public static int extractStorageIndex(Set<String> tags) {
-        for (String tag : tags) {
-            if (tag.startsWith(STORAGE_PREFIX)) {
-                try {
-                    return Integer.parseInt(tag.substring(STORAGE_PREFIX.length()));
-                } catch (NumberFormatException e) {
-                    // Invalid index, continue checking
-                }
-            }
-        }
-        return -1;
+        return extractIntIndex(tags, STORAGE_PREFIX);
     }
 
     public static String extractWheelLocation(Set<String> tags) {
@@ -126,29 +131,11 @@ public final class ShipTags {
     }
 
     public static int extractInteractIndex(Set<String> tags) {
-        for (String tag : tags) {
-            if (tag.startsWith(INTERACT_PREFIX)) {
-                try {
-                    return Integer.parseInt(tag.substring(INTERACT_PREFIX.length()));
-                } catch (NumberFormatException e) {
-                    // Invalid index, continue checking
-                }
-            }
-        }
-        return -1;
+        return extractIntIndex(tags, INTERACT_PREFIX);
     }
 
     public static int extractLeadableIndex(Set<String> tags) {
-        for (String tag : tags) {
-            if (tag.startsWith(LEADABLE_PREFIX)) {
-                try {
-                    return Integer.parseInt(tag.substring(LEADABLE_PREFIX.length()));
-                } catch (NumberFormatException e) {
-                    // Invalid index, continue checking
-                }
-            }
-        }
-        return -1;
+        return extractIntIndex(tags, LEADABLE_PREFIX);
     }
 
     public static boolean isShipEntity(Set<String> tags) {
@@ -161,42 +148,15 @@ public final class ShipTags {
     }
 
     public static int extractBlockIndex(Set<String> tags) {
-        for (String tag : tags) {
-            if (tag.startsWith(BLOCK_INDEX_PREFIX)) {
-                try {
-                    return Integer.parseInt(tag.substring(BLOCK_INDEX_PREFIX.length()));
-                } catch (NumberFormatException e) {
-                    // Invalid index, continue checking
-                }
-            }
-        }
-        return -1;
+        return extractIntIndex(tags, BLOCK_INDEX_PREFIX);
     }
 
     public static int extractDisplayIndex(Set<String> tags) {
-        for (String tag : tags) {
-            if (tag.startsWith(DISPLAY_INDEX_PREFIX)) {
-                try {
-                    return Integer.parseInt(tag.substring(DISPLAY_INDEX_PREFIX.length()));
-                } catch (NumberFormatException e) {
-                    // Invalid index, continue checking
-                }
-            }
-        }
-        return -1;
+        return extractIntIndex(tags, DISPLAY_INDEX_PREFIX);
     }
 
     public static int extractCannonIndex(Set<String> tags) {
-        for (String tag : tags) {
-            if (tag.startsWith(CANNON_PREFIX)) {
-                try {
-                    return Integer.parseInt(tag.substring(CANNON_PREFIX.length()));
-                } catch (NumberFormatException e) {
-                    // Invalid index, continue checking
-                }
-            }
-        }
-        return -1;
+        return extractIntIndex(tags, CANNON_PREFIX);
     }
 
     public static boolean isParent(Set<String> tags) {

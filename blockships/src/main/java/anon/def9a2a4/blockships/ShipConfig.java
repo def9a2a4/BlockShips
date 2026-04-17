@@ -206,8 +206,8 @@ public class ShipConfig {
             .mobMediumMass((float) cfg.getDouble("entity-masses.mob-medium", 50.0))
             .mobLargeMass((float) cfg.getDouble("entity-masses.mob-large", 200.0))
             // Custom ship offsets (only used for custom ships, but loaded for all)
-            .customDisplayOffset(readVector3f(cfg, "custom-ships.display-offset", new Vector3f(0, 1.975f, 0)))
-            .customCollisionOffset(readVector3f(cfg, "custom-ships.collision-offset", new Vector3f(0, 0, 0)))
+            .customDisplayOffset(ShipModel.readVector3fFromConfig(cfg, "custom-ships.display-offset", new Vector3f(0, 1.975f, 0)))
+            .customCollisionOffset(ShipModel.readVector3fFromConfig(cfg, "custom-ships.collision-offset", new Vector3f(0, 0, 0)))
             // Movement sound settings (per-ship with fallback to global)
             .soundMinSpeed((float) cfg.getDouble(p + "movement-sounds.min-speed", cfg.getDouble("sounds.min-speed", 0.1)))
             .airshipSoundMinSpeed((float) cfg.getDouble(p + "movement-sounds.airship-min-speed", cfg.getDouble("sounds.airship-min-speed", 0.45)))
@@ -221,18 +221,6 @@ public class ShipConfig {
             // Camera distance (for prefab ships; custom ships use per-ship value from ShipWheelData)
             .cameraDistance((float) cfg.getDouble(p + "camera-distance", 4.0))
             .build();
-    }
-
-    private static Vector3f readVector3f(org.bukkit.configuration.file.FileConfiguration cfg, String key, Vector3f defaultValue) {
-        java.util.List<Double> values = cfg.getDoubleList(key);
-        if (values.size() >= 3) {
-            return new Vector3f(
-                values.get(0).floatValue(),
-                values.get(1).floatValue(),
-                values.get(2).floatValue()
-            );
-        }
-        return new Vector3f(defaultValue);
     }
 
     private static class Builder {

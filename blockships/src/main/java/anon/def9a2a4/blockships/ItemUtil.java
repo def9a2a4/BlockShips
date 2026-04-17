@@ -5,7 +5,6 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.Recipe;
 import org.bukkit.inventory.ShapedRecipe;
 import org.bukkit.inventory.RecipeChoice;
-import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.SkullMeta;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
@@ -137,59 +136,6 @@ public class ItemUtil {
         Bukkit.addRecipe(recipe, true);
         registeredRecipes.add(recipeKey);
         return true;
-    }
-
-    /**
-     * Creates a display item for recipe registration with default texture and generic name.
-     */
-    private static ItemStack createItemForRecipe(Plugin plugin, String itemType, String configPath) {
-        String recipePath = configPath + ".recipe";
-
-        // Get base material
-        String resultItemName = plugin.getConfig().getString(recipePath + ".result-item", "PAPER");
-        Material resultMaterial;
-        try {
-            resultMaterial = Material.valueOf(resultItemName.toUpperCase());
-        } catch (IllegalArgumentException e) {
-            resultMaterial = Material.PAPER;
-        }
-
-        ItemStack item = new ItemStack(resultMaterial);
-        ItemMeta meta = item.getItemMeta();
-        if (meta == null) return item;
-
-        // Create generic display name (strip variant placeholders)
-        String nameTemplate = plugin.getConfig().getString(recipePath + ".result-name", "Item");
-        String displayName = WoodTypeUtil.stripPlaceholders(nameTemplate);
-
-        meta.displayName(net.kyori.adventure.text.Component.text(displayName)
-                .color(net.kyori.adventure.text.format.NamedTextColor.AQUA));
-
-        // Add lore hint
-        List<net.kyori.adventure.text.Component> lore = new ArrayList<>();
-        lore.add(net.kyori.adventure.text.Component.text("Customizable based on materials used")
-                .color(net.kyori.adventure.text.format.NamedTextColor.GRAY));
-        meta.lore(lore);
-
-        // Apply default texture if this is a player head
-        if (resultMaterial == Material.PLAYER_HEAD && meta instanceof SkullMeta) {
-            String textureSetName = plugin.getConfig().getString(recipePath + ".result-texture-set");
-            if (textureSetName != null) {
-                ItemTextureManager textureManager = ((anon.def9a2a4.blockships.BlockShipsPlugin) plugin)
-                        .getDisplayShip().getTextureManager();
-                String defaultTexture = textureManager.getTexture(textureSetName, "_DEFAULT");
-
-                if (defaultTexture != null) {
-                    applyPlayerHeadTextureFromBase64((SkullMeta) meta, defaultTexture, plugin);
-                } else {
-                    plugin.getLogger().warning("No _DEFAULT texture found for " + textureSetName +
-                            " (recipe: " + itemType + ")");
-                }
-            }
-        }
-
-        item.setItemMeta(meta);
-        return item;
     }
 
     /**

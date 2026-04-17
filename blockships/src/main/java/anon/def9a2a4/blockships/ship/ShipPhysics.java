@@ -43,38 +43,29 @@ public class ShipPhysics {
     }
 
     /**
-     * Sets the work location to match the given location (lazy init).
+     * Copies source into target (lazy init: clones if target is null).
      * Reuses the same Location object to avoid allocations.
      */
-    private Location reuseLocation(Location source) {
-        if (workLocation == null) {
-            workLocation = source.clone();
-        } else {
-            workLocation.setWorld(source.getWorld());
-            workLocation.setX(source.getX());
-            workLocation.setY(source.getY());
-            workLocation.setZ(source.getZ());
-            workLocation.setYaw(source.getYaw());
-            workLocation.setPitch(source.getPitch());
+    private static Location reuseLocationInto(Location target, Location source) {
+        if (target == null) {
+            return source.clone();
         }
+        target.setWorld(source.getWorld());
+        target.setX(source.getX());
+        target.setY(source.getY());
+        target.setZ(source.getZ());
+        target.setYaw(source.getYaw());
+        target.setPitch(source.getPitch());
+        return target;
+    }
+
+    private Location reuseLocation(Location source) {
+        workLocation = reuseLocationInto(workLocation, source);
         return workLocation;
     }
 
-    /**
-     * Sets the second work location to match the given location (lazy init).
-     * Used when two separate locations are needed simultaneously (e.g., buoyancy).
-     */
     private Location reuseLocation2(Location source) {
-        if (workLocation2 == null) {
-            workLocation2 = source.clone();
-        } else {
-            workLocation2.setWorld(source.getWorld());
-            workLocation2.setX(source.getX());
-            workLocation2.setY(source.getY());
-            workLocation2.setZ(source.getZ());
-            workLocation2.setYaw(source.getYaw());
-            workLocation2.setPitch(source.getPitch());
-        }
+        workLocation2 = reuseLocationInto(workLocation2, source);
         return workLocation2;
     }
 
@@ -231,41 +222,8 @@ public class ShipPhysics {
             || isWaterOrWaterlogged(belowHullLoc.getBlock());
 
         if (inWater) {
-            // Find water surface Y level by scanning a fixed column
-            // Reuse workLocation2 for water surface scan (hullCheckLoc/workLocation still has hull position)
-            Location waterCheckLoc = reuseLocation2(vehicleLoc);
-            int startY = (int) Math.floor(vehicleLoc.getY()) + config.waterScanAbove;
-            int endY = (int) Math.floor(hullCheckY) - config.waterScanBelow;
-            waterCheckLoc.setY(startY);
-
-            double waterSurfaceY = waterCheckLoc.getY();
-
-            // Scan downward to find air-water boundary
-            for (int y = startY; y >= endY; y--) {
-                waterCheckLoc.setY(y);
-                if (isWaterOrWaterlogged(waterCheckLoc.getBlock())) {
-                    waterSurfaceY = y + 1;
-                    break;
-                }
-            }
-
-            // Target Y position: water surface + float offset
-            double floatOffset;
-            if ("custom".equals(ship.shipType) && ship.model.blockCount > 0) {
-                // Interpolation-based buoyancy
-                float meanDensity = ship.model.getDensity();
-                float airDensity = config.airDensity;
-                float waterDensity = config.waterDensity;
-
-                float t = (meanDensity - airDensity) / (waterDensity - airDensity);
-                float referenceY = ship.model.minY;
-                float waterlineY = referenceY + t * (ship.model.centerOfVolume.y - referenceY);
-                floatOffset = -waterlineY;
-            } else {
-                floatOffset = ship.model.waterFloatOffset;
-            }
-
-            double targetY = waterSurfaceY + floatOffset;
+            double waterSurfaceY = findWaterSurfaceY(vehicleLoc, hullCheckY);
+            double targetY = waterSurfaceY + calculateFloatOffset();
             double currentY = vehicleLoc.getY();
             double yDifference = targetY - currentY;
 
@@ -324,7 +282,15 @@ public class ShipPhysics {
             return null;
         }
 
-        // Find water surface Y level
+        return findWaterSurfaceY(vehicleLoc, hullCheckY) + calculateFloatOffset();
+    }
+
+    /**
+     * Scans downward to find the water surface Y level.
+     * Uses workLocation2 for the scan, so workLocation remains available.
+     */
+    private double findWaterSurfaceY(Location vehicleLoc, double hullCheckY) {
+        ShipConfig config = ship.config;
         Location waterCheckLoc = reuseLocation2(vehicleLoc);
         int startY = (int) Math.floor(vehicleLoc.getY()) + config.waterScanAbove;
         int endY = (int) Math.floor(hullCheckY) - config.waterScanBelow;
@@ -339,9 +305,14 @@ public class ShipPhysics {
                 break;
             }
         }
+        return waterSurfaceY;
+    }
 
-        // Calculate float offset
-        double floatOffset;
+    /**
+     * Calculates the buoyancy float offset based on ship density or config.
+     */
+    private double calculateFloatOffset() {
+        ShipConfig config = ship.config;
         if ("custom".equals(ship.shipType) && ship.model.blockCount > 0) {
             float meanDensity = ship.model.getDensity();
             float airDensity = config.airDensity;
@@ -350,12 +321,10 @@ public class ShipPhysics {
             float t = (meanDensity - airDensity) / (waterDensity - airDensity);
             float referenceY = ship.model.minY;
             float waterlineY = referenceY + t * (ship.model.centerOfVolume.y - referenceY);
-            floatOffset = -waterlineY;
+            return -waterlineY;
         } else {
-            floatOffset = ship.model.waterFloatOffset;
+            return ship.model.waterFloatOffset;
         }
-
-        return waterSurfaceY + floatOffset;
     }
 
     /**
@@ -420,8 +389,7 @@ public class ShipPhysics {
         double z = Math.round(loc.getZ() * FINE_GRID_RESOLUTION) / FINE_GRID_RESOLUTION;
 
         // Snap yaw to nearest 5 degrees
-        float yaw = loc.getYaw() % 360;
-        if (yaw < 0) yaw += 360;
+        float yaw = ShipTags.normalizeYaw(loc.getYaw());
         float snappedYaw = Math.round(yaw / 5.0f) * 5.0f;
         if (snappedYaw >= 360) snappedYaw = 0;
 
@@ -487,8 +455,7 @@ public class ShipPhysics {
         double z = Math.round(loc.getZ());
 
         // Snap yaw to nearest 90 degrees
-        float yaw = loc.getYaw() % 360;
-        if (yaw < 0) yaw += 360;
+        float yaw = ShipTags.normalizeYaw(loc.getYaw());
         int cardinal = Math.round(yaw / 90.0f) * 90;
         float snappedYaw = cardinal % 360;
         float snappedPitch = 0.0f;
