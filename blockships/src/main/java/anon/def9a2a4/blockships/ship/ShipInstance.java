@@ -1588,7 +1588,7 @@ public class ShipInstance {
                         attr.setBaseValue(shulkerMaxHealth);
                     }
                 }
-                seat.setHealth(shulkerCurrentHealth);
+                seat.setHealth(java.lang.Math.min(shulkerCurrentHealth, shulkerMaxHealth));
             }
         }
     }
