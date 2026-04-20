@@ -250,10 +250,10 @@ public class ShipWheelManager {
         if (plugin instanceof BlockShipsPlugin bsp) {
             Location loc = ship.vehicle.getLocation();
             ShipWorldData shipWorldData = bsp.getDisplayShip().getShipWorldData();
-            shipWorldData.saveShipMetadata(ship);
+            shipWorldData.saveShipMetadataAsync(ship);
             shipWorldData.addToChunkIndex(loc.getWorld(), ship.id,
                 loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
-            shipWorldData.saveAllChunkIndices();
+            shipWorldData.saveAllChunkIndicesAsync();
         }
 
         // Link the wheel to the ship

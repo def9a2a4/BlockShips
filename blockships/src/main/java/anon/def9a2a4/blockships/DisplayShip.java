@@ -379,8 +379,9 @@ public class DisplayShip implements Listener {
         chunksBeingRecovered.remove(chunk.getChunkKey());
 
         for (ShipInstance ship : ShipRegistry.getShipsInChunk(chunk)) {
-            // Save current state to per-world storage before suspension
-            shipWorldData.saveShipMetadata(ship);
+            // Snapshot state on main thread, write async via ioExecutor
+            // (safe: chunk load also uses ioExecutor, so reads are serialized after writes)
+            shipWorldData.saveShipMetadataAsync(ship);
 
             // Suspend tasks and clear stale references
             ship.suspendForChunkUnload();
@@ -388,8 +389,8 @@ public class DisplayShip implements Listener {
             ShipRegistry.unregister(ship);
             plugin.getLogger().fine("Suspended ship " + ship.id + " for chunk unload at " + chunk.getX() + "," + chunk.getZ());
         }
-        // Persist chunk indices
-        shipWorldData.saveAllChunkIndices();
+        // Persist chunk indices (async — serialized behind metadata writes on ioExecutor)
+        shipWorldData.saveAllChunkIndicesAsync();
     }
 
     /**
