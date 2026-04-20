@@ -1498,7 +1498,54 @@ public class ShipInstance {
     }
 
     /**
+     * Calculates a safe dismount position above collision shulkers near the seat.
+     * Scans nearby colliders to find the highest top surface and places the player above it.
+     */
+    private Location calculateSafeDismountPosition(Player player, Shulker seatShulker) {
+        Location seatLoc = seatShulker.getLocation();
+        Location playerLoc = player.getLocation();
+
+        double seatTopY = seatLoc.getY() + getShulkerHeight(seatShulker);
+
+        // Scan nearby colliders for the highest top surface that overlaps horizontally
+        double highestTopY = seatTopY;
+        double horizontalThreshold = 0.8; // half player width + half shulker width
+        for (CollisionBox cb : colliders) {
+            Location cbLoc = cb.entity.getLocation();
+            double dx = java.lang.Math.abs(cbLoc.getX() - seatLoc.getX());
+            double dz = java.lang.Math.abs(cbLoc.getZ() - seatLoc.getZ());
+            if (dx < horizontalThreshold && dz < horizontalThreshold) {
+                double cbTopY = cbLoc.getY() + getShulkerHeight(cb.entity);
+                if (cbTopY > highestTopY) {
+                    highestTopY = cbTopY;
+                }
+            }
+        }
+
+        Location safe = seatLoc.clone();
+        safe.setY(highestTopY + 0.05);
+        safe.setYaw(playerLoc.getYaw());
+        safe.setPitch(playerLoc.getPitch());
+        return safe;
+    }
+
+    /** Returns the height of a shulker's collision box (1.0 * scale). */
+    private static double getShulkerHeight(Shulker shulker) {
+        try {
+            org.bukkit.attribute.Attribute scaleAttr = anon.def9a2a4.blockships.util.AttributeCompat.getScale();
+            if (scaleAttr != null) {
+                org.bukkit.attribute.AttributeInstance inst = shulker.getAttribute(scaleAttr);
+                if (inst != null) {
+                    return inst.getBaseValue(); // height = 1.0 * scale
+                }
+            }
+        } catch (Throwable ignored) {}
+        return 1.0;
+    }
+
+    /**
      * Dismounts a player from a ship if they are riding a ship shulker.
+     * Teleports the player to a safe position above collision shulkers to prevent fall-through.
      * @param player The player to dismount
      * @return true if the player was dismounted from a ship, false otherwise
      */
@@ -1515,14 +1562,22 @@ public class ShipInstance {
 
         UUID shipId = ShipTags.extractShipId(tags);
         int seatIndex = ShipTags.extractSeatIndex(tags);
+        ShipInstance inst = (shipId != null) ? ShipRegistry.byId(shipId) : null;
 
+        // Calculate safe position BEFORE removing passenger (shulker location is current)
+        Location safePos = (inst != null) ? inst.calculateSafeDismountPosition(player, shulker) : null;
+
+        // Remove passenger (triggers VehicleExitEvent synchronously)
         shulker.removePassenger(player);
 
-        if (shipId != null && seatIndex >= 0) {
-            ShipInstance inst = ShipRegistry.byId(shipId);
-            if (inst != null) {
-                inst.freeSeat(seatIndex);
-            }
+        // Immediately teleport to safe position above collision shulkers
+        if (safePos != null) {
+            player.teleport(safePos);
+            player.setFallDistance(0);
+        }
+
+        if (inst != null && seatIndex >= 0) {
+            inst.freeSeat(seatIndex);
         }
 
         return true;

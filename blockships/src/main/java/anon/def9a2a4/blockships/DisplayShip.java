@@ -1385,36 +1385,29 @@ public class DisplayShip implements Listener {
                 inst.freeSeat(seatIndex);
                 // Speed persists - don't reset currentSpeed
 
-                // Transfer ship velocity to exiting player
+                // Transfer ship velocity to exiting player (1-tick delay for teleport to settle)
+                // Safe position teleport is handled by dismountPlayer() immediately
                 Player player = (Player) e.getExited();
                 float currentSpeed = inst.physics.currentSpeed;
                 float currentYVelocity = inst.physics.currentYVelocity;
 
-                // Calculate ship velocity from currentSpeed and yaw (needed if ship is moving)
                 float yawRad = (float) Math.toRadians(-inst.vehicle.getYaw());
                 double forwardX = Math.sin(yawRad) * currentSpeed;
                 double forwardZ = Math.cos(yawRad) * currentSpeed;
                 boolean shipIsMoving = Math.abs(currentSpeed) > 0.01 || Math.abs(currentYVelocity) > 0.01;
 
-                // Delay by 2 ticks to ensure Minecraft's dismount logic completes
-                new BukkitRunnable() {
-                    @Override
-                    public void run() {
-                        // Teleport player up 0.1 blocks to prevent clipping into shulker
-                        Location loc = player.getLocation();
-                        loc.setY(loc.getY() + 0.1);
-                        player.teleport(loc);
-
-                        // Transfer ship velocity if ship is moving (horizontally or vertically)
-                        if (shipIsMoving) {
+                if (shipIsMoving) {
+                    new BukkitRunnable() {
+                        @Override
+                        public void run() {
                             player.setVelocity(new org.bukkit.util.Vector(
                                 forwardX,
                                 currentYVelocity,
                                 forwardZ
                             ));
                         }
-                    }
-                }.runTaskLater(plugin, 2L);
+                    }.runTaskLater(plugin, 1L);
+                }
             }
         }
     }
