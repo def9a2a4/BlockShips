@@ -8,6 +8,7 @@ test-bot/node_modules/
 test-bot/.mc-version
 docs/assets/dev/
 .download-cache/
+.temp/
 test-bot/test-results.txt
 test-bot/chunk-test-results.txt
 

@@ -1,6 +1,6 @@
 # BUGS
 
-## SHORT TERM
+## SEMI-COMPLETE
 
 - [x] banner rendering broken
   - floor banners not rotated correctly
@@ -17,50 +17,37 @@
 
 ## LONG TERM
 
-- ShipRegistry uses non-thread-safe HashMap but is accessed from multiple threads (chunk events, periodic saves). Use ConcurrentHashMap to prevent ConcurrentModificationException.
-- (pre-1.21.9) Rotation logic bug - delta rotation math in ShipInstance.java:1110-1130 has inconsistencies, displays may rotate incorrectly
-- (pre-1.21.9) Custom ship spawnYaw mismatch - initial spawn uses vehicle.getYaw() but recovery uses model.initialRotation.x, causing rotation snap after restart
-- (pre-1.21.9) spawnYaw not persisted to save data - ships rotated before restart may snap when loaded
-- player does not get moved along with a ship, does not inherit velocity properly
-- ship to ship collisions not working, temporarily disabled
-- fix heads on walls display and colliders
-- multiple ships wheels is buggy?
-- loading colliders for really large ships sometimes goes wrong
+- [ ] ShipRegistry uses non-thread-safe HashMap but is accessed from multiple threads (chunk events, periodic saves). Use ConcurrentHashMap to prevent ConcurrentModificationException.
+- [ ] (pre-1.21.9) Rotation logic bug - delta rotation math in ShipInstance.java:1110-1130 has inconsistencies, displays may rotate incorrectly
+- [ ] (pre-1.21.9) Custom ship spawnYaw mismatch - initial spawn uses vehicle.getYaw() but recovery uses model.initialRotation.x, causing rotation snap after restart
+- [ ] (pre-1.21.9) spawnYaw not persisted to save data - ships rotated before restart may snap when loaded
+- [ ] player does not get moved along with a ship, does not inherit velocity properly
+- [ ] ship to ship collisions not working, temporarily disabled
+- [ ] fix heads on walls display and colliders
+- [ ] multiple ships wheels is buggy?
+
+## UNCLEAR
+
+- [ ] loading colliders for really large ships sometimes goes wrong?
 
 
 
 # FEATURES
 
-## SHORT TERM
-
-- [x] when a player tries to right click on a prefab ship with a ship wheel, show an error message explaining the difference.
-
-- [x] set `camera_distance` attribute on shulkers the player rides to modify third person camera distance when riding ships.
-  - configurable values for prefab ships
-  - custom ships: possibly add buttons in the menu, or a separate menu GUI, for adjusting this, since trying to determine it from the ship is hard
-  - see https://minecraft.wiki/w/Attribute#camera_distance
-
-- [x] prefab ship (medium) needs more seats
-  - two on the sides
-  - add an extra mast collider at the top of the mast, set that as a seat
-
-- [x] ship info should show number of seats in ship info
-  - add a "highlight seats" button which adds particles around seats (blocks or shulkers) when clicked. should work for both prefab and custom ships
-
-- [ ] use light blocks to fake like coming from light-emitting blocks on ships
-
 ## HARDER
 
-- custom ship stats:
+- [ ] ship-to-ship collisions
+
+- [ ] custom ship stats:
   - base acceleration/rotation speed depends on total mass.
   - "sails" (banners, wool blocks) increase acceleration/rotation speed
   - any blast furnaces connected via "copper network" to ships wheel will use fuel to increase acceleration/max speed/etc
   - stats (fuel, number of "engines") displayed in ship info
 
-- implement furnaces (normal furnaces) on ships
-- add TileEntity serialization for campfires, chiseled bookshelves, decorated pots, signs, etc?
+- [ ] implement furnaces (normal furnaces) on ships
+- [ ] add TileEntity serialization for campfires, chiseled bookshelves, decorated pots, signs, etc?
 
-- allow setting extra colliders in a model. have this just be another list at the end, separate from blocks and items
+- [ ] allow setting extra colliders in a model. have this just be another list at the end, separate from blocks and items
   - this is useful for large balloons. the balloon might be a giant item display entity and we might want to have one or more large colliders for it
 
 
@@ -85,7 +72,23 @@
 - SteerPacketCompat.logged field should be volatile for thread safety
 
 
-# RECENTLY FIXED
+# RECENTLY DONE
+
+- [x] when a player tries to right click on a prefab ship with a ship wheel, show an error message explaining the difference.
+
+- [x] set `camera_distance` attribute on shulkers the player rides to modify third person camera distance when riding ships.
+  - configurable values for prefab ships
+  - custom ships: possibly add buttons in the menu, or a separate menu GUI, for adjusting this, since trying to determine it from the ship is hard
+  - see https://minecraft.wiki/w/Attribute#camera_distance
+
+- [x] prefab ship (medium) needs more seats
+  - two on the sides
+  - add an extra mast collider at the top of the mast, set that as a seat
+
+- [x] ship info should show number of seats in ship info
+  - add a "highlight seats" button which adds particles around seats (blocks or shulkers) when clicked. should work for both prefab and custom ships
+
+- [x] use light blocks to fake like coming from light-emitting blocks on ships
 
 - [x] Unsafe null dereference in DisplayShip.java getAttribute().getBaseValue() calls - added null checks
 - [x] AttributeCompat.getMaxHealth() javadoc claimed "never null" but could return null - fixed docs
