@@ -13,6 +13,7 @@ commands:
       /blockships help - Show help and list all commands
       /blockships info - Show ship and wheel statistics
       /blockships dismount - Force-dismount from a ship
+      /blockships highlightcolliders - Toggle glowing on collider shulkers
       /blockships reload - Reload the plugin configuration
       /blockships give <item> - Give yourself a ship wheel or ship kit
       /blockships recipes [player] - Unlock all BlockShips recipes

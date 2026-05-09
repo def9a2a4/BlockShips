@@ -102,6 +102,7 @@ public class BlockShipsPlugin extends JavaPlugin {
         sender.sendMessage("§e/blockships info §7- Show ship and wheel statistics");
         sender.sendMessage("§e/blockships dismount §7- Force-dismount from a ship");
         sender.sendMessage("§e/blockships highlightseats §7- Highlight seats on the ship you're looking at");
+        sender.sendMessage("§e/blockships highlightcolliders §7- Toggle glowing on collider shulkers");
         if (sender.hasPermission("blockships.reload")) {
             sender.sendMessage("§e/blockships reload §7- Reload the plugin configuration");
         }
@@ -331,6 +332,27 @@ public class BlockShipsPlugin extends JavaPlugin {
                 return true;
             }
 
+            if (args[0].equalsIgnoreCase("highlightcolliders")) {
+                if (!(sender instanceof Player player)) {
+                    sender.sendMessage("Only players can use this command.");
+                    return true;
+                }
+
+                ShipInstance ship = findLookedAtShip(player);
+                if (ship == null) {
+                    sender.sendMessage("§cYou are not looking at a ship.");
+                    return true;
+                }
+
+                boolean anyGlowing = ship.colliders.stream().anyMatch(c -> c.entity.isGlowing());
+                boolean newState = !anyGlowing;
+                for (var c : ship.colliders) {
+                    c.entity.setGlowing(newState);
+                }
+                sender.sendMessage(newState ? "§aColliders now glowing." : "§7Collider glow disabled.");
+                return true;
+            }
+
             if (args[0].equalsIgnoreCase("recipes")) {
                 if (!sender.hasPermission("blockships.recipes")) {
                     sender.sendMessage("You don't have permission to unlock recipes.");
@@ -466,6 +488,7 @@ public class BlockShipsPlugin extends JavaPlugin {
             subcommands.add("info");
             subcommands.add("dismount");
             subcommands.add("highlightseats");
+            subcommands.add("highlightcolliders");
             if (sender.hasPermission("blockships.reload")) subcommands.add("reload");
             if (sender.hasPermission("blockships.give")) {
                 subcommands.add("give");
