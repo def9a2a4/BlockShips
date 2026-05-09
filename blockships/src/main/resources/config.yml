@@ -86,8 +86,8 @@ physics:
   rotation-threshold: 0.001
   # Radius in blocks to check for nearby players (for unmanned drag detection)
   player-proximity-radius: 2.0
-  # Display entity interpolation duration in ticks (1-4, default: 2)
-  # Higher values = smoother ship movement but slightly more visual latency
+  # Display entity transform interpolation duration in ticks (1-4, default: 2)
+  # Controls rotation/scale smoothing. Position follows vehicle instantly.
   display-interpolation-duration: 2
 
 # Cannon system configuration

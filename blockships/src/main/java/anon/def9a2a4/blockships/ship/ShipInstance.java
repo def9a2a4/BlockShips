@@ -346,7 +346,7 @@ public class ShipInstance {
         parent = w.spawn(base, BlockDisplay.class, d -> {
             d.setBlock(Bukkit.createBlockData(Material.AIR));
             d.setInterpolationDuration(config.displayInterpolationDuration);
-            d.setTeleportDuration(config.displayInterpolationDuration);
+            d.setTeleportDuration(0);  // Position comes from passenger chain, not teleports
             d.setViewRange(64f);
             d.setPersistent(true);
             d.setGravity(false);
@@ -490,7 +490,7 @@ public class ShipInstance {
                     id.setItemStack(displayItem);
                     id.setViewRange(64f);
                     id.setInterpolationDuration(config.displayInterpolationDuration);
-                    id.setTeleportDuration(config.displayInterpolationDuration);
+                    id.setTeleportDuration(0);  // Position comes from passenger chain, not teleports
                     id.setShadowRadius(0f);
                     id.setShadowStrength(0f);
                     id.setGlowing(false);
@@ -629,7 +629,7 @@ public class ShipInstance {
                 bd.setBlock(blockData);
                 bd.setViewRange(64f);
                 bd.setInterpolationDuration(config.displayInterpolationDuration);
-                bd.setTeleportDuration(config.displayInterpolationDuration);
+                bd.setTeleportDuration(0);  // Position comes from passenger chain, not teleports
                 bd.setShadowRadius(0f);
                 bd.setShadowStrength(0f);
                 bd.setGlowing(false);
@@ -870,7 +870,7 @@ public class ShipInstance {
                 id.setItemDisplayTransform(p.displayMode);
                 id.setViewRange(64f);
                 id.setInterpolationDuration(config.displayInterpolationDuration);
-                id.setTeleportDuration(config.displayInterpolationDuration);
+                id.setTeleportDuration(0);  // Position comes from passenger chain, not teleports
                 id.setShadowRadius(0f);
                 id.setShadowStrength(0f);
                 id.setGlowing(false);
@@ -1514,7 +1514,8 @@ public class ShipInstance {
             Location cbLoc = cb.entity.getLocation();
             double dx = java.lang.Math.abs(cbLoc.getX() - seatLoc.getX());
             double dz = java.lang.Math.abs(cbLoc.getZ() - seatLoc.getZ());
-            if (dx < horizontalThreshold && dz < horizontalThreshold) {
+            double cbBottomY = cbLoc.getY();
+            if (dx < horizontalThreshold && dz < horizontalThreshold && cbBottomY <= seatTopY + 1.8) {
                 double cbTopY = cbLoc.getY() + getShulkerHeight(cb.entity);
                 if (cbTopY > highestTopY) {
                     highestTopY = cbTopY;
