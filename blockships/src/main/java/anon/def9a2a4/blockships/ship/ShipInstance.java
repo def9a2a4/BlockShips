@@ -685,7 +685,11 @@ public class ShipInstance {
 
                 try {
                     // Create spawn location with zero rotation (carriers never rotate)
-                    Location carrierSpawnLoc = base.clone();
+                    // TODO: HACK - spawn 2 blocks below ship root to avoid entity cramming
+                    // pushing players away during the 1-tick window before updateCollisionPositions()
+                    // moves carriers to their correct positions. Ideally carriers would spawn at
+                    // their final positions directly, but that requires duplicating transform math.
+                    Location carrierSpawnLoc = base.clone().add(0, -2, 0);
                     carrierSpawnLoc.setYaw(0);
                     carrierSpawnLoc.setPitch(0);
 
