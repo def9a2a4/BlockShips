@@ -8,6 +8,7 @@ version = "0.0.13"
 
 java {
     toolchain {
+        // languageVersion.set(JavaLanguageVersion.of(25))
         languageVersion.set(JavaLanguageVersion.of(21))
     }
 }
@@ -21,6 +22,7 @@ repositories {
 }
 
 dependencies {
+    // compileOnly("io.papermc.paper:paper-api:26.1.2.build.60-stable")
     compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
     // compileOnly("io.papermc.paper:paper-api:1.21.1-R0.1-SNAPSHOT")
     compileOnly("net.dmulloy2:ProtocolLib:5.4.0")
