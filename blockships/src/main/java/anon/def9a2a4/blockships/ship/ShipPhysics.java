@@ -140,12 +140,8 @@ public class ShipPhysics {
             }
             TeleportCompat.teleport(ship.vehicle, newLoc);
 
-            // Set velocity on vehicle for client-side inter-tick interpolation
-            ship.vehicle.setVelocity(new org.bukkit.util.Vector(
-                hasHorizontalMovement ? forwardX * currentSpeed : 0,
-                hasVerticalMovement ? currentYVelocity : 0,
-                hasHorizontalMovement ? forwardZ * currentSpeed : 0
-            ));
+            // Vehicle velocity is set in ShipInstance.tick() after collision response,
+            // using actual displacement to match carrier velocity computation.
         }
 
         // Update rotation based on input state
@@ -479,7 +475,7 @@ public class ShipPhysics {
             player.teleport(new Location(
                 shulkerLoc.getWorld(),
                 shulkerLoc.getX(),
-                shulker.getBoundingBox().getMaxY() + 0.1,
+                shulker.getBoundingBox().getMaxY() + ship.config.assemblyNudgeHeight,
                 shulkerLoc.getZ(),
                 playerLoc.getYaw(),
                 playerLoc.getPitch()

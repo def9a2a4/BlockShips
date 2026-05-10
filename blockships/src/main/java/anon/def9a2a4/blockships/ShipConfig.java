@@ -76,6 +76,9 @@ public class ShipConfig {
     // Camera settings
     public final float cameraDistance;  // Third-person camera distance when riding (default: 4, range: 0-32)
 
+    // Assembly/disassembly settings
+    public final float assemblyNudgeHeight;  // Teleport players up by this amount during assembly/disassembly (0 to disable)
+
     private ShipConfig(Builder b) {
         this.collisionDebugGlow = b.collisionDebugGlow;
         this.maxSpeed = b.maxSpeed;
@@ -124,6 +127,7 @@ public class ShipConfig {
         this.soundPitch = b.soundPitch;
         this.displayInterpolationDuration = b.displayInterpolationDuration;
         this.cameraDistance = b.cameraDistance;
+        this.assemblyNudgeHeight = b.assemblyNudgeHeight;
     }
 
     /**
@@ -220,6 +224,7 @@ public class ShipConfig {
             .displayInterpolationDuration(cfg.getInt("physics.display-interpolation-duration", 2))
             // Camera distance (for prefab ships; custom ships use per-ship value from ShipWheelData)
             .cameraDistance((float) cfg.getDouble(p + "camera-distance", 4.0))
+            .assemblyNudgeHeight((float) cfg.getDouble("custom-ships.assembly-nudge-height", 0.2))
             .build();
     }
 
@@ -271,6 +276,7 @@ public class ShipConfig {
         float soundPitch = 1.0f;
         int displayInterpolationDuration = 2;  // Ticks for display entity interpolation (1-4)
         float cameraDistance = 4.0f;  // Default matches Minecraft default
+        float assemblyNudgeHeight = 0.2f;
 
         Builder collisionDebugGlow(boolean v) { collisionDebugGlow = v; return this; }
         Builder maxSpeed(float v) { maxSpeed = v; return this; }
@@ -319,6 +325,7 @@ public class ShipConfig {
         Builder soundPitch(float v) { soundPitch = v; return this; }
         Builder displayInterpolationDuration(int v) { displayInterpolationDuration = Math.max(1, Math.min(4, v)); return this; }
         Builder cameraDistance(float v) { cameraDistance = v; return this; }
+        Builder assemblyNudgeHeight(float v) { assemblyNudgeHeight = v; return this; }
 
         ShipConfig build() { return new ShipConfig(this); }
     }

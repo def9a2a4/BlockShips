@@ -902,6 +902,10 @@ public class ShipInstance {
                 // This prevents them from appearing to "jump" when player first interacts
                 updateCollisionPositions();
 
+                // Teleport any players who are inside collision shulkers to the top
+                // (they were standing on real blocks that were removed during assembly)
+                pushPlayersOutOfColliders();
+
                 // Start tick loop
                 task = new BukkitRunnable() {
                     @Override
@@ -1159,6 +1163,18 @@ public class ShipInstance {
         physics.update();    // Apply physics (movement, rotation, buoyancy)
         collision.applyResponse();  // Apply collision response
         cachedVehicleLoc = vehicle.getLocation();  // Refresh after physics moved the vehicle
+
+        // Set vehicle velocity from actual displacement (after physics + collision response)
+        // Must match carrier velocity computation (currentPos - previousPos) so client-side
+        // prediction between tracker updates keeps vehicle and carriers in sync
+        if (previousVehicleLocation != null) {
+            vehicle.setVelocity(new org.bukkit.util.Vector(
+                cachedVehicleLoc.getX() - previousVehicleLocation.getX(),
+                cachedVehicleLoc.getY() - previousVehicleLocation.getY(),
+                cachedVehicleLoc.getZ() - previousVehicleLocation.getZ()
+            ));
+        }
+
         updateCollisionPositions();  // Sync collision boxes with vehicle BEFORE movement check
 
         // Get current vehicle state (reuse cached location from tick runnable)
@@ -1505,7 +1521,7 @@ public class ShipInstance {
      * Calculates a safe dismount position above collision shulkers near the seat.
      * Scans nearby colliders to find the highest top surface and places the player above it.
      */
-    private Location calculateSafeDismountPosition(Player player, Shulker seatShulker) {
+    public Location calculateSafeDismountPosition(Player player, Shulker seatShulker) {
         Location seatLoc = seatShulker.getLocation();
         Location playerLoc = player.getLocation();
 
@@ -1528,10 +1544,37 @@ public class ShipInstance {
         }
 
         Location safe = seatLoc.clone();
-        safe.setY(highestTopY + 0.05);
+        safe.setY(highestTopY + config.assemblyNudgeHeight);
         safe.setYaw(playerLoc.getYaw());
         safe.setPitch(playerLoc.getPitch());
         return safe;
+    }
+
+    /**
+     * Scans for nearby players whose bounding box overlaps a collision shulker
+     * and teleports them to the top of the highest overlapping collider.
+     * Called after updateCollisionPositions() on first tick to fix assembly clipping.
+     */
+    private void pushPlayersOutOfColliders() {
+        Location center = vehicle.getLocation();
+        for (Player player : center.getWorld().getPlayers()) {
+            if (player.getLocation().distanceSquared(center) > PLAYER_PROXIMITY_RADIUS_SQ) continue;
+            org.bukkit.util.BoundingBox playerBox = player.getBoundingBox();
+            double highestTop = Double.NEGATIVE_INFINITY;
+            for (CollisionBox cb : colliders) {
+                org.bukkit.util.BoundingBox shulkerBox = cb.entity.getBoundingBox();
+                if (playerBox.overlaps(shulkerBox) && playerBox.getMinY() < shulkerBox.getMaxY() - 0.1) {
+                    double top = shulkerBox.getMaxY();
+                    if (top > highestTop) highestTop = top;
+                }
+            }
+            if (highestTop > Double.NEGATIVE_INFINITY) {
+                Location safeLoc = player.getLocation().clone();
+                safeLoc.setY(highestTop + config.assemblyNudgeHeight);
+                player.teleport(safeLoc);
+                player.setFallDistance(0);
+            }
+        }
     }
 
     /** Returns the height of a shulker's collision box (1.0 * scale). */
@@ -1550,7 +1593,8 @@ public class ShipInstance {
 
     /**
      * Dismounts a player from a ship if they are riding a ship shulker.
-     * Teleports the player to a safe position above collision shulkers to prevent fall-through.
+     * Calls removePassenger which triggers VehicleExitEvent — the DisplayShip
+     * event handler handles safe-position teleport, seat freeing, and velocity transfer.
      * @param player The player to dismount
      * @return true if the player was dismounted from a ship, false otherwise
      */
@@ -1565,25 +1609,9 @@ public class ShipInstance {
             return false;
         }
 
-        UUID shipId = ShipTags.extractShipId(tags);
-        int seatIndex = ShipTags.extractSeatIndex(tags);
-        ShipInstance inst = (shipId != null) ? ShipRegistry.byId(shipId) : null;
-
-        // Calculate safe position BEFORE removing passenger (shulker location is current)
-        Location safePos = (inst != null) ? inst.calculateSafeDismountPosition(player, shulker) : null;
-
-        // Remove passenger (triggers VehicleExitEvent synchronously)
+        // Remove passenger (triggers VehicleExitEvent synchronously, which handles
+        // safe-position teleport and seat freeing via DisplayShip.onPlayerExitVehicle)
         shulker.removePassenger(player);
-
-        // Immediately teleport to safe position above collision shulkers
-        if (safePos != null) {
-            player.teleport(safePos);
-            player.setFallDistance(0);
-        }
-
-        if (inst != null && seatIndex >= 0) {
-            inst.freeSeat(seatIndex);
-        }
 
         return true;
     }
@@ -2125,6 +2153,15 @@ public class ShipInstance {
                 passenger.remove();
             }
             parent.remove();
+        }
+        // Dismount any riders before removing shulkers
+        // (removePassenger triggers VehicleExitEvent, which handles safe-position teleport)
+        for (CollisionBox cb : colliders) {
+            for (Entity passenger : cb.entity.getPassengers()) {
+                if (passenger instanceof Player p) {
+                    cb.entity.removePassenger(p);
+                }
+            }
         }
         // Remove all collision shulkers and their carriers
         // Note: Seats are now the shulkers themselves (no separate seat ArmorStands)

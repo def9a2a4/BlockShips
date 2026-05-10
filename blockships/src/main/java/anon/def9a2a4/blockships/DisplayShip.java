@@ -1385,9 +1385,12 @@ public class DisplayShip implements Listener {
                 inst.freeSeat(seatIndex);
                 // Speed persists - don't reset currentSpeed
 
-                // Transfer ship velocity to exiting player (1-tick delay for teleport to settle)
-                // Safe position teleport is handled by dismountPlayer() immediately
                 Player player = (Player) e.getExited();
+
+                // Teleport player to safe position above collision shulkers
+                Location safePos = inst.calculateSafeDismountPosition(player, shulker);
+                player.teleport(safePos);
+                player.setFallDistance(0);
                 float currentSpeed = inst.physics.currentSpeed;
                 float currentYVelocity = inst.physics.currentYVelocity;
 

@@ -243,6 +243,10 @@ public class ShipWheelManager {
         // NOW remove the blocks from the world (after leads are transferred)
         BlockStructureScanner.removeBlocks(wheelLoc, model);
 
+        // Nudge nearby players up to prevent falling through during the 1-tick
+        // window before collision shulkers are positioned
+        nudgeNearbyPlayersUp(wheelLoc, ship.config.assemblyNudgeHeight);
+
         // Register the ship
         ShipRegistry.register(ship);
 
@@ -396,8 +400,11 @@ public class ShipWheelManager {
         updateWheelLocation(wheelData, newWheelLocation, newFacing);
 
         // Destroy the ship
+        Location shipLoc2 = ship.vehicle.getLocation();
         ship.destroy();
-        ShipRegistry.unregister(ship);
+
+        // Nudge nearby players up to prevent clipping into placed blocks
+        nudgeNearbyPlayersUp(shipLoc2, ship.config.assemblyNudgeHeight);
 
         // Remove ship from per-world storage (delete file and chunk index)
         if (plugin instanceof BlockShipsPlugin bsp) {
@@ -413,6 +420,26 @@ public class ShipWheelManager {
 
         if (player != null) player.sendMessage("§aShip disassembled!");
         return true;
+    }
+
+    /**
+     * Teleports nearby players up slightly to prevent them from clipping into
+     * collision shulkers or placed blocks during assembly/disassembly transitions.
+     */
+    private static void nudgeNearbyPlayersUp(Location center, float nudgeHeight) {
+        if (nudgeHeight <= 0) return;
+        double radius = 20;
+        double radiusSq = radius * radius;
+        for (Player p : center.getWorld().getPlayers()) {
+            Location pLoc = p.getLocation();
+            if (pLoc.distanceSquared(center) <= radiusSq
+                    && Math.abs(pLoc.getY() - center.getY()) < 10) {
+                Location loc = pLoc.clone();
+                loc.setY(loc.getY() + nudgeHeight);
+                p.teleport(loc);
+                p.setFallDistance(0);
+            }
+        }
     }
 
     /**
