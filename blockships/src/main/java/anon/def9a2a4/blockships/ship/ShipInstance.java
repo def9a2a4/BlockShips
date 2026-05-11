@@ -347,8 +347,12 @@ public class ShipInstance {
         this.currentChunkX = vehicle.getLocation().getBlockX() >> 4;
         this.currentChunkZ = vehicle.getLocation().getBlockZ() >> 4;
 
+        // Spawn displays above the vehicle so they don't flash below ground before
+        // being mounted as passengers (1 tick later). Manually tuned offset.
+        Location displaySpawnLoc = base.clone().add(0, 2.5, 0);
+
         // Spawn invisible parent display for rotation control
-        parent = w.spawn(base, BlockDisplay.class, d -> {
+        parent = w.spawn(displaySpawnLoc, BlockDisplay.class, d -> {
             d.setBlock(Bukkit.createBlockData(Material.AIR));
             d.setInterpolationDuration(config.displayInterpolationDuration);
             d.setTeleportDuration(0);  // Position comes from passenger chain, not teleports
@@ -429,6 +433,15 @@ public class ShipInstance {
         Vector3f spawnWorkPos = new Vector3f();
         Location vehicleLoc = vehicle.getLocation();
 
+        // Pre-compute display world transform for spawn-time visual correctness
+        // Uses spawnR (full rotation including vehicle yaw + initial rotation)
+        // because at spawn time, displays are free-floating entities (not yet passengers)
+        Matrix4f spawnDisplayT = new Matrix4f().translation(model.positionOffset);
+        if ("custom".equals(shipType)) {
+            spawnDisplayT.translate(config.customDisplayOffset);
+        }
+        Matrix4f spawnDisplayWorld = new Matrix4f(spawnR).mul(spawnDisplayT);
+
         // Spawn each block display part as a child
         for (int blockIndex = 0; blockIndex < model.parts.size(); blockIndex++) {
             ShipModel.ModelPart p = model.parts.get(blockIndex);
@@ -446,7 +459,7 @@ public class ShipInstance {
 
             if (hasSkullProfile || hasBannerPatterns) {
                 // Spawn as ItemDisplay to preserve textures
-                child = w.spawn(base, org.bukkit.entity.ItemDisplay.class, id -> {
+                child = w.spawn(displaySpawnLoc, org.bukkit.entity.ItemDisplay.class, id -> {
                     // Create ItemStack for the display
                     ItemStack displayItem;
 
@@ -553,14 +566,14 @@ public class ShipInstance {
                             skullTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw));
                         }
 
-                        id.setTransformationMatrix(skullTransform);
+                        id.setTransformationMatrix(new Matrix4f(spawnDisplayWorld).mul(skullTransform));
                     } else {
                         // Banners: use FIXED transform mode with custom scaling
                         // FIXED mode displays item at actual size, so we need to scale and position it
                         id.setItemDisplayTransform(org.bukkit.entity.ItemDisplay.ItemDisplayTransform.FIXED);
 
                         Matrix4f bannerTransform = calculateBannerTransform(finalTransform, p.rawYaml);
-                        id.setTransformationMatrix(bannerTransform);
+                        id.setTransformationMatrix(new Matrix4f(spawnDisplayWorld).mul(bannerTransform));
                     }
                 });
                 // ItemDisplay: apply same rotation transforms as used above for tick() updates
@@ -606,7 +619,7 @@ public class ShipInstance {
                 final Matrix4f blockDisplayTransform = displayTransform;
 
                 // Spawn as BlockDisplay (normal blocks)
-                child = w.spawn(base, BlockDisplay.class, bd -> {
+                child = w.spawn(displaySpawnLoc, BlockDisplay.class, bd -> {
                 BlockData blockData;
 
                 // For custom ships, use the saved blockdata string to preserve ALL properties
@@ -658,7 +671,7 @@ public class ShipInstance {
                 // TODO: Sign text cannot be displayed on BlockDisplay entities (Minecraft limitation).
                 // A workaround would be to spawn TextDisplay entities near signs to show the text.
 
-                bd.setTransformationMatrix(blockDisplayTransform);
+                bd.setTransformationMatrix(new Matrix4f(spawnDisplayWorld).mul(blockDisplayTransform));
             });
             }
             // Use displayTransform for tick updates (includes rotation for blocks that need it)
@@ -860,7 +873,7 @@ public class ShipInstance {
         for (int itemIndex = 0; itemIndex < model.items.size(); itemIndex++) {
             ShipModel.ItemPart p = model.items.get(itemIndex);
             final int displayIndex = itemDisplayOffset + itemIndex;
-            ItemDisplay child = w.spawn(base, ItemDisplay.class, id -> {
+            ItemDisplay child = w.spawn(displaySpawnLoc, ItemDisplay.class, id -> {
                 // Use custom banner if this is a banner display and we have custom banner data
                 ItemStack displayItem = p.item.clone();
                 if (customization.getCustomBanner() != null && p.item.getType().name().endsWith("_BANNER")) {
@@ -898,7 +911,7 @@ public class ShipInstance {
                 id.setPersistent(true);
                 id.addScoreboardTag(ShipTags.shipTag(this.id));
                 id.addScoreboardTag(ShipTags.displayIndexTag(displayIndex));
-                id.setTransformationMatrix(p.local);
+                id.setTransformationMatrix(new Matrix4f(spawnDisplayWorld).mul(p.local));
             });
             displays.add(new DisplayInstance(child, new Matrix4f(p.local)));
         }
