@@ -1100,12 +1100,6 @@ public class ShipInstance {
                 // NOTE: Do NOT set velocity on carriers — it causes client-side prediction
                 // to fight with teleport positioning, producing Y-axis jitter for players
                 // standing on the shulkers. Carriers move only via teleport.
-                cb.wasMoving = true;
-            } else if (cb.wasMoving) {
-                // Send one final teleport so client has a definitive resting position
-                // (clears any interpolation buffer from the movement period)
-                TeleportCompat.teleport(cb.carrier, workCarrierLoc);
-                cb.wasMoving = false;
             }
 
             // AFTER teleport: re-mount player if they were dismounted by teleport (pre-1.21.9 only)
