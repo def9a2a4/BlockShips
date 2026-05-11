@@ -36,7 +36,6 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
     private static final int SOUND_COOLDOWN_TICKS = 15; // ~0.75s between collision sounds per pair
     private static final Particle.DustOptions COLLISION_DUST =
             new Particle.DustOptions(Color.fromRGB(180, 180, 180), 0.8f);
-    private static final Vector3f ZERO_FORCE = new Vector3f(0, 0, 0);
 
     // Force map: ship UUID -> accumulated ship-to-ship force for this tick
     private final Map<UUID, Vector3f> forceMap = new HashMap<>();
@@ -90,7 +89,7 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
      */
     public Vector3f getShipCollisionForce(UUID shipId) {
         Vector3f force = forceMap.get(shipId);
-        return force != null ? new Vector3f(force) : ZERO_FORCE;
+        return force != null ? new Vector3f(force) : new Vector3f(0, 0, 0);
     }
 
     @Override
