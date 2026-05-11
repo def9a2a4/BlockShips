@@ -417,6 +417,18 @@ public class ShipInstance {
             }
         }
 
+        // Pre-compute rotation and collision offset for spawning carriers at final positions
+        Matrix4f spawnR = buildRotationMatrix();
+        Matrix4f spawnT = new Matrix4f().translation(model.collisionOffset);
+        if ("custom".equals(shipType)) {
+            spawnT.translate(config.customCollisionOffset);
+        }
+        Matrix4f spawnWorkWorld = new Matrix4f();
+        Vector3f spawnWorkOffset = new Vector3f();
+        Vector3f spawnWorkPerBlock = new Vector3f();
+        Vector3f spawnWorkPos = new Vector3f();
+        Location vehicleLoc = vehicle.getLocation();
+
         // Spawn each block display part as a child
         for (int blockIndex = 0; blockIndex < model.parts.size(); blockIndex++) {
             ShipModel.ModelPart p = model.parts.get(blockIndex);
@@ -689,14 +701,12 @@ public class ShipInstance {
                 ArmorStand carrier = null;
 
                 try {
-                    // Create spawn location with zero rotation (carriers never rotate)
-                    // TODO: HACK - spawn 2 blocks below ship root to avoid entity cramming
-                    // pushing players away during the 1-tick window before updateCollisionPositions()
-                    // moves carriers to their correct positions. Ideally carriers would spawn at
-                    // their final positions directly, but that requires duplicating transform math.
-                    Location carrierSpawnLoc = base.clone().add(0, -2, 0);
-                    carrierSpawnLoc.setYaw(0);
-                    carrierSpawnLoc.setPitch(0);
+                    // Compute carrier's final world position so it spawns in-place
+                    // (avoids entity interpolation pushing players off the ship)
+                    computeColliderWorldPos(spawnR, spawnT, p.local, p.collision.offset,
+                            vehicleLoc, spawnWorkWorld, spawnWorkOffset, spawnWorkPerBlock, spawnWorkPos);
+                    Location carrierSpawnLoc = new Location(w,
+                            spawnWorkPos.x, spawnWorkPos.y, spawnWorkPos.z, 0, 0);
 
                     // Use ArmorStand as carrier (smooth interpolation)
                     carrier = w.spawn(carrierSpawnLoc, ArmorStand.class, as -> {
@@ -976,6 +986,27 @@ public class ShipInstance {
     }
 
     /**
+     * Computes a collider's world position from the rotation matrix, collision translation,
+     * local transform, and per-block offset. Writes result into {@code outPos}.
+     * All matrix/vector parameters are used as scratch space — callers can pass work fields
+     * for zero-alloc usage in the tick loop, or temporary locals elsewhere.
+     */
+    private static void computeColliderWorldPos(
+            Matrix4f R_full, Matrix4f T_collision, Matrix4f localBase, Vector3f perBlockOffset,
+            Location vehicleLoc,
+            Matrix4f workWorld, Vector3f workOffset, Vector3f workPerBlockOff, Vector3f outPos) {
+        workWorld.set(R_full).mul(T_collision).mul(localBase);
+        workWorld.getTranslation(workOffset);
+        workPerBlockOff.set(perBlockOffset);
+        R_full.transformPosition(workPerBlockOff);
+        outPos.set(
+            (float) vehicleLoc.getX() + workOffset.x + workPerBlockOff.x,
+            (float) vehicleLoc.getY() + workOffset.y + workPerBlockOff.y,
+            (float) vehicleLoc.getZ() + workOffset.z + workPerBlockOff.z
+        );
+    }
+
+    /**
      * Calculates the collision detection radius for getNearbyEntities optimization.
      * Uses configured value for prefab ships, or auto-calculates from collider positions.
      */
@@ -1036,22 +1067,9 @@ public class ShipInstance {
 
         // Update collider (Interaction carrier + Shulker) positions
         for (CollisionBox cb : colliders) {
-            // Calculate world transformation for this collider using collision offset (reuse workWorld)
-            workWorld.set(R_full).mul(workTranslation).mul(cb.base);
-
-            // Extract position from transformation matrix (reuse workOffset)
-            workWorld.getTranslation(workOffset);
-
-            // Apply per-block collision offset (rotated by R_full to follow ship orientation)
-            workPerBlockOffset.set(cb.config.offset);
-            R_full.transformPosition(workPerBlockOffset);
-
-            // Calculate current world position (base position + block offset + per-block offset)
-            workCurrentWorldPos.set(
-                (float) currentVehicleLoc.getX() + workOffset.x + workPerBlockOffset.x,
-                (float) currentVehicleLoc.getY() + workOffset.y + workPerBlockOffset.y,
-                (float) currentVehicleLoc.getZ() + workOffset.z + workPerBlockOffset.z
-            );
+            // Calculate world position for this collider (reuses work* fields for zero-alloc)
+            computeColliderWorldPos(R_full, workTranslation, cb.base, cb.config.offset,
+                    currentVehicleLoc, workWorld, workOffset, workPerBlockOffset, workCurrentWorldPos);
 
             // Calculate velocity (change in position since last tick)
             workVelocity.set(workCurrentWorldPos).sub(cb.previousWorldPos);
@@ -2084,19 +2102,13 @@ public class ShipInstance {
         }
 
         // Initialize each collider's previousWorldPos to current position
+        Matrix4f tempWorld = new Matrix4f();
+        Vector3f tempOffset = new Vector3f();
+        Vector3f tempPerBlock = new Vector3f();
         for (CollisionBox cb : colliders) {
-            Matrix4f world = new Matrix4f(R_full).mul(T_collision).mul(cb.base);
-            Vector3f offset = new Vector3f();
-            world.getTranslation(offset);
-
-            Vector3f perBlockOffset = new Vector3f(cb.config.offset);
-            R_full.transformPosition(perBlockOffset);
-
-            cb.previousWorldPos = new Vector3f(
-                (float) currentVehicleLoc.getX() + offset.x + perBlockOffset.x,
-                (float) currentVehicleLoc.getY() + offset.y + perBlockOffset.y,
-                (float) currentVehicleLoc.getZ() + offset.z + perBlockOffset.z
-            );
+            cb.previousWorldPos = new Vector3f();
+            computeColliderWorldPos(R_full, T_collision, cb.base, cb.config.offset,
+                    currentVehicleLoc, tempWorld, tempOffset, tempPerBlock, cb.previousWorldPos);
         }
 
         // Position collision boxes immediately before starting tick task
