@@ -7,8 +7,7 @@ v0.0.14 - Bugfix & Performance Update
 - Fixed players getting launched off the ship when assembling (collision
   shulkers are now created at their final positions instead of being
   teleported from ship root)
-- Improvements to walking on ship decks — should be less buggy. Some
-  edge cases persist; relogging fixes any remaining jitter.
+- Fixed deck jitter when walking on moving ships
 - Fixed ships with trapdoor or top-slab bottoms appearing to float
   (buoyancy now accounts for slab half-height and ignores trapdoors)
 - Lots of general performance improvements and optimizations
@@ -94,22 +93,23 @@ Player Launch on Ship Assembly (63c1941, bae9102)
   positions instead of teleporting them from the ship root. Collider
   world-position math extracted into computeColliderWorldPos for reuse.
 
-Deck Jitter on Moving Ships (c61fbb6, ce17c97, fbb6961, 0e3a942)
+Deck Jitter on Moving Ships (c61fbb6, ce17c97, fbb6961, 0e3a942, 35fa46a)
 
-  Players standing on a moving ship's deck experienced visual jitter,
-  especially on ships with buoyancy. Multiple approaches were attempted
-  and reverted before arriving at a stable fix.
+  Players standing on a moving ship's deck experienced rapid ~0.1 block
+  Y oscillation, especially on ships with buoyancy.
 
-  - Removed carrier velocity injection which caused oscillation when
-    combined with buoyancy forces.
-  - Widened the buoyancy deadzone to prevent micro-corrections from
-    triggering jitter.
-  - Fixed carrier-display desync where collision carriers and their
-    associated display entities moved on different tick phases.
-  - Fixed stale previousVehicleLocation persisting when a ship was idle,
-    causing a velocity spike on the first tick of new movement.
-  - Reverted setInterpolationDelay(0) on displays which caused blocks
-    to visually collapse toward the ship root entity.
+  Root cause: Minecraft's entity tracker sends relative-move packets at
+  1/4096 block resolution. Over time, carrier ArmorStand positions on
+  the client accumulate precision drift, putting shulker collision boxes
+  at Y values where the client's gravity-collision cycle doesn't
+  converge. The jitter was purely client-side — it persisted even during
+  /tick freeze and only cleared after ~10 seconds or a relog.
+
+  Solution: When the ship stops moving, call hideEntity + showEntity on
+  each carrier for all tracked players. This forces the client to
+  discard stale entity state and receive fresh SPAWN_ENTITY packets
+  with exact server-side positions. For airships, the refresh also
+  triggers when vertical velocity zeroes out.
 
 Display Entity Teleport Smoothing (9ebe9a6)
 

@@ -2,307 +2,129 @@
 
 ## Overview
 
-A dynamic stats system where **sails** and **engines** increase ship performance, while **mass** decreases it. The goal is an intuitive system where players naturally understand: more sails = faster, heavier ship = slower, engines = power boost.
+Ship speed, acceleration, and rotation scale with a **power-to-mass ratio**. Sails and engines provide power points; block weights provide mass. The ratio maps linearly to stats, with sails capped so engines are needed to reach maximum performance.
 
 ---
 
-## Components
+## Power Points
 
-### Sails (Passive Propulsion)
-| Block Type | Points | Notes |
-|------------|--------|-------|
-| Wool (any color) | 1 | Already tagged `#wool` in blocks.yml |
-| Banner (any type) | 3 | Already tagged `#banners` in blocks.yml |
+Every ship starts with **2 free power points** (ensures even tiny ships have some base ratio).
 
-Sails are passive - they always contribute to stats. Banners are worth more because they're more decorative/fragile and feel more "sail-like".
+| Source | Points | Mass (weight) | Notes |
+|--------|--------|---------------|-------|
+| Base | 2 | — | Free, every ship |
+| Wool (any color) | 3 | 1 | Tagged `#wool` in blocks.yml |
+| Banner (any type) | 7 | 1 | Tagged `#banners` in blocks.yml |
+| Ship Engine (fueled) | ~30 | ~3 | Custom blast furnace, only when fueled |
+| Ship Engine (unfueled) | 0 | ~3 | Dead weight — adds mass, no power |
 
-### Ship Engines (Active Propulsion)
-- **Item:** Blast furnace with custom NBT (name, lore, enchantment glint)
-- **Points:** 10 per engine (only when fueled)
-- **Fuel:** Standard furnace fuels (coal, charcoal, lava bucket, etc.)
-- When unfueled: contributes 0 points (dead weight - adds mass but no power)
-
-**Engine Detection:**
-- During ship scan, check for blast furnaces with specific custom model data or NBT
-- Could use: custom name containing "[Ship Engine]", or custom model data, or enchantment glint
-
-### Mass
-- Use existing `totalPositiveWeight` from BlockStructureScanner (same as health calculation)
-- Range: 1 to 1024 (capped)
-- Typical values:
-  - Small ship (50 blocks): ~100-150 mass
-  - Medium ship (200 blocks): ~400-600 mass
-  - Large ship (500+ blocks): ~800-1024 mass
+All other blocks contribute 0 power points but still contribute their weight as mass.
 
 ---
 
-## Stats Affected
+## Horizontal Stats Formula
 
-| Stat | Current Default | Description |
-|------|-----------------|-------------|
-| `maxSpeed` | 0.55 | Maximum forward/backward speed (blocks/tick) |
-| `acceleration` | 0.02 | Speed increase per tick when W/S held |
-| `rotationSpeed` | 1.5 | Maximum rotation speed (degrees/tick) |
-| `rotationAcceleration` | 0.3 | Rotation speed increase per tick |
+### Core Ratio
 
-**Question:** Should all stats scale equally, or should sails affect speed more and engines affect acceleration/rotation more?
+```
+sail_power = wool_blocks * 3 + banner_blocks * 7
+engine_power = fueled_engines * 30
 
----
-
-## Absolute Caps and Floors
-
-Hard ceilings and floors on final computed stat values. These are distinct from the formula's `MIN`/`MAX` multiplier clamp — the multiplier clamp limits the *scaling factor*, these limit the *actual stat value* after the multiplier is applied.
-
-No matter how many sails/engines a ship has, it won't exceed the caps. No matter how heavy or sail-less a ship is, it won't drop below the floors.
-
-| Stat | Floor (Example) | Cap (Example) | Description |
-|------|-----------------|---------------|-------------|
-| `absoluteMinSpeed` / `absoluteMaxSpeed` | 0.15 / 0.8 blocks/tick | Forward/backward speed bounds |
-| `absoluteMinAcceleration` / `absoluteMaxAcceleration` | 0.005 / 0.04 | Acceleration bounds |
-| `absoluteMinRotationSpeed` / `absoluteMaxRotationSpeed` | 0.5 / 2.5 degrees/tick | Rotation speed bounds |
-| `absoluteMinVerticalSpeed` / `absoluteMaxVerticalSpeed` | 0.05 / 0.5 blocks/tick | Airship vertical speed bounds |
-| `absoluteMinVerticalAcceleration` / `absoluteMaxVerticalAcceleration` | 0.01 / 0.1 | Airship lift/descend accel bounds |
-
-```java
-// Applied after multiplier calculation:
-float finalMaxSpeed = clamp(baseMaxSpeed * multiplier, absoluteMinSpeed, absoluteMaxSpeed);
-float finalAccel = clamp(baseAccel * multiplier, absoluteMinAcceleration, absoluteMaxAcceleration);
-float finalRotation = clamp(baseRotation * multiplier, absoluteMinRotationSpeed, absoluteMaxRotationSpeed);
+// Sails can push ratio up to 0.8 at most; engines push past it
+non_engine_ratio = min((BASE_POWER + sail_power) / mass, 0.8)
+ratio = min(non_engine_ratio + engine_power / mass, 1.0)
 ```
 
+### Ratio → Stats (Linear)
+
+```
+ratio 0.0 → absolute floor
+ratio 0.7 → current default stats
+ratio 1.0 → absolute cap (1.5× current defaults)
+```
+
+Linear interpolation between these anchor points:
+
+```java
+// For a given stat:
+float floor = absoluteMin;          // e.g., 0.05 blocks/tick for speed
+float defaultVal = currentDefault;  // e.g., 0.55 blocks/tick
+float cap = currentDefault * 1.5;   // e.g., 0.825 blocks/tick
+
+float stat;
+if (ratio <= 0.7) {
+    // Interpolate floor → default over ratio 0.0 → 0.7
+    stat = floor + (ratio / 0.7f) * (defaultVal - floor);
+} else {
+    // Interpolate default → cap over ratio 0.7 → 1.0
+    stat = defaultVal + ((ratio - 0.7f) / 0.3f) * (cap - defaultVal);
+}
+```
+
+### Absolute Floors and Caps
+
+| Stat | Floor | Default (ratio 0.7) | Cap (ratio 1.0) |
+|------|-------|---------------------|-----------------|
+| `maxSpeed` | 0.05 blocks/tick (1 block/sec) | 0.55 blocks/tick | 0.825 blocks/tick |
+| `acceleration` | configurable | 0.02 | 0.03 |
+| `rotationSpeed` | 0.6 deg/tick (30s/revolution) | 1.5 deg/tick | 2.25 deg/tick |
+| `rotationAcceleration` | configurable | 0.3 | 0.45 |
+
 All configurable in `config.yml`.
+
+### Example Ships
+
+Assuming all non-sail blocks are wood (weight 2):
+
+| Ship | Power | Mass | Raw Ratio | Effective Ratio | Speed |
+|------|-------|------|-----------|-----------------|-------|
+| 90 wood, 0 wool | 2 | 180 | 0.01 | 0.01 | ~floor |
+| 60 wood, 30 wool | 2+90=92 | 150 | 0.61 | 0.61 | ~87% of default |
+| 56 wood, 34 wool | 2+102=104 | 146 | 0.71 | 0.71 | ~default |
+| 45 wood, 45 wool | 2+135=137 | 135 | 1.01→**0.80** | 0.80 (sail cap) | above default |
+| 60 wood, 30 wool, 1 eng | 92+30=122 | 153 | — | 0.80 | sail cap |
+| 60 wood, 30 wool, 2 eng | 92+60=152 | 156 | — | 0.97 | near max |
+| 45 wood, 45 wool, 1 eng | 137+30=167 | 138 | — | **1.0** (capped) | max |
+| 60 wood, 30 wool, 1 eng (unfueled) | 92+0=92 | 153 | 0.60 | 0.60 | below default |
 
 ---
 
 ## Airship Vertical Stats
 
-### Current Behavior
-Fixed values for all airships: `maxVerticalSpeed` (0.3), `liftAcceleration` (0.05), `descendAcceleration` (0.05). Every airship moves vertically the same regardless of build.
-
-### New Behavior
-Vertical speed and acceleration scale with **density magnitude** and **fueled engines**.
+### Behavior
+Vertical speed and acceleration scale with **density magnitude** and **fueled engines**. Sails do not affect vertical stats.
 
 **Design decisions:**
-- Density magnitude affects **both** max vertical speed and vertical acceleration
-- **Engines** boost vertical stats; **sails do not** (sails are wind-powered, horizontal only)
-- **Symmetric:** density affects ascent and descent equally (barely-buoyant = sluggish both ways)
-- Density > 0 = not an airship (water ship), no vertical controls
+- Density magnitude affects both max vertical speed and vertical acceleration
+- Engines provide a vertical bonus (separate from horizontal ratio)
+- Symmetric: density affects ascent and descent equally
+- Density > 0 = water ship, no vertical controls
 
 ### Formula
 
 ```
-densityMagnitude = abs(density)        // e.g., 0.1 to 5.0
-engineBonus = fueled_engine_points * ENGINE_VERTICAL_SCALE
+densityMag = abs(density)              // e.g., 0.1 to 5.0
+engineRatio = engine_points / mass     // same engine points as horizontal
 
-verticalMultiplier = clamp(
-  BASE_VERTICAL + densityMagnitude * DENSITY_SCALE + engineBonus,
-  MIN_VERTICAL, MAX_VERTICAL
-)
+verticalRatio = clamp(densityMag * DENSITY_SCALE + engineRatio * ENGINE_VERTICAL_SCALE, 0, 1)
 
-effectiveMaxVerticalSpeed = clamp(baseMaxVerticalSpeed * verticalMultiplier, absoluteMinVerticalSpeed, absoluteMaxVerticalSpeed)
-effectiveLiftAccel = clamp(baseLiftAccel * verticalMultiplier, absoluteMinVerticalAccel, absoluteMaxVerticalAccel)
-effectiveDescendAccel = clamp(baseDescendAccel * verticalMultiplier, absoluteMinVerticalAccel, absoluteMaxVerticalAccel)
+// Then same linear mapping as horizontal:
+// verticalRatio 0.0 → vertical floor
+// verticalRatio 0.7 → current vertical defaults
+// verticalRatio 1.0 → vertical cap
 ```
 
-### Example Tuning
-```
-BASE_VERTICAL = 0.2
-DENSITY_SCALE = 0.3
-ENGINE_VERTICAL_SCALE = 0.01
-MIN_VERTICAL = 0.1
-MAX_VERTICAL = 2.0
-
-// Barely-buoyant airship (density -0.1), no engines:
-verticalMultiplier = 0.2 + 0.1 * 0.3 + 0 = 0.23
-effectiveMaxVerticalSpeed = 0.3 * 0.23 = 0.069 blocks/tick (very slow)
-
-// Moderately buoyant (density -1.5), 2 fueled engines (20 pts):
-verticalMultiplier = 0.2 + 1.5 * 0.3 + 20 * 0.01 = 0.85
-effectiveMaxVerticalSpeed = 0.3 * 0.85 = 0.255 blocks/tick
-
-// Very buoyant (density -5.0), 3 fueled engines (30 pts):
-verticalMultiplier = 0.2 + 5.0 * 0.3 + 30 * 0.01 = 2.0 (capped)
-effectiveMaxVerticalSpeed = min(0.3 * 2.0, 0.5) = 0.5 (absolute cap)
-```
-
----
-
-## Math Formula Options
-
-### Option A: Power-to-Weight Ratio (Recommended)
-
-```
-power = sail_points + fueled_engine_points
-ratio = power / mass
-multiplier = clamp(BASE + ratio * SCALE, MIN, MAX)
-```
-
-**Example tuning:**
-```
-BASE = 0.5      // ship with zero sails runs at 50% stats
-SCALE = 50      // scaling factor
-MIN = 0.3       // floor (30% of base stats)
-MAX = 1.5       // ceiling (150% of base stats)
-
-// Example: 20 sail points, 200 mass
-multiplier = 0.5 + (20/200) * 50 = 0.5 + 5 = 1.5 (capped)
-
-// Example: 5 sail points, 500 mass
-multiplier = 0.5 + (5/500) * 50 = 0.5 + 0.5 = 1.0
-
-// Example: 0 sail points, 100 mass
-multiplier = 0.5 + 0 = 0.5
-```
-
-**Pros:**
-- Intuitive: "I need sails proportional to my ship size"
-- Self-balancing: big ships need big sails
-- Like real vehicles (power-to-weight matters)
-
-**Cons:**
-- Tiny ships with one wool block become very fast (need MIN cap)
-- Need to tune SCALE carefully
-
----
-
-### Option B: Diminishing Returns
-
-```
-sail_bonus = sqrt(sail_points) * SAIL_SCALE
-engine_bonus = fueled_engine_points * ENGINE_SCALE
-mass_penalty = sqrt(mass) * MASS_SCALE
-multiplier = clamp(BASE + sail_bonus + engine_bonus - mass_penalty, MIN, MAX)
-```
-
-**Example tuning:**
-```
-BASE = 0.8
-SAIL_SCALE = 0.05      // sqrt(100 sails) * 0.05 = 0.5 bonus
-ENGINE_SCALE = 0.02    // 30 engine points * 0.02 = 0.6 bonus
-MASS_SCALE = 0.02      // sqrt(400 mass) * 0.02 = 0.4 penalty
-MIN = 0.3
-MAX = 1.5
-
-// Example: 100 sail points, 30 engine points, 400 mass
-multiplier = 0.8 + 0.5 + 0.6 - 0.4 = 1.5
-
-// Example: 25 sail points, 0 engines, 100 mass
-multiplier = 0.8 + 0.25 + 0 - 0.2 = 0.85
-```
-
-**Pros:**
-- Prevents sail stacking exploits (diminishing returns)
-- Engines have linear scaling (rewarding)
-- Mass penalty grows slower than mass (big ships aren't crippled)
-- Very tunable
-
-**Cons:**
-- Less intuitive for players
-- More constants to balance
-
----
-
-### Option C: Composition Percentage
-
-```
-sail_ratio = sail_points / mass
-engine_ratio = fueled_engine_points / mass
-multiplier = clamp(BASE + sail_ratio * SAIL_SCALE + engine_ratio * ENGINE_SCALE, MIN, MAX)
-```
-
-**Example tuning:**
-```
-BASE = 0.6
-SAIL_SCALE = 5.0       // 10% sail composition = 0.5 bonus
-ENGINE_SCALE = 10.0    // 5% engine composition = 0.5 bonus
-MIN = 0.3
-MAX = 1.5
-
-// Example: 50 sail points, 20 engine points, 500 mass (10% sails, 4% engines)
-multiplier = 0.6 + 0.5 + 0.4 = 1.5
-
-// Example: 10 sail points, 0 engines, 200 mass (5% sails)
-multiplier = 0.6 + 0.25 = 0.85
-```
-
-**Pros:**
-- Rewards efficient ship design
-- Scales naturally with ship size
-- Encourages thinking about composition
-
-**Cons:**
-- Can punish large ships that are "realistic" (lots of wood, few sails)
-- Players might game it by removing solid blocks
-
----
-
-### Option D: Hybrid (Power-to-Weight with Diminishing Sails)
-
-```
-effective_sails = sqrt(sail_points) * 3    // diminishing returns
-effective_engines = fueled_engine_points   // linear
-power = effective_sails + effective_engines
-ratio = power / sqrt(mass)                 // mass penalty also diminishes
-multiplier = clamp(BASE + ratio * SCALE, MIN, MAX)
-```
-
-This combines the intuitive power-to-weight concept with diminishing returns to prevent exploits.
-
----
-
-## Per-Stat Scaling
-
-Not all stats need to scale equally. Possible approach:
-
-| Stat | Sail Influence | Engine Influence |
-|------|----------------|------------------|
-| `maxSpeed` | 100% | 100% |
-| `acceleration` | 50% | 100% |
-| `rotationSpeed` | 30% | 70% |
-| `rotationAcceleration` | 30% | 70% |
-| `maxVerticalSpeed` | 0% | 100% |
-| `liftAcceleration` | 0% | 100% |
-| `descendAcceleration` | 0% | 100% |
-
-**Rationale:** Sails help you go fast but don't help you turn or accelerate quickly. Engines provide raw power for everything. Vertical stats are driven primarily by density magnitude with engines as a bonus — sails are wind-powered and only affect horizontal movement.
-
-```java
-float speedMultiplier = calculateMultiplier(sailPoints, enginePoints, mass);
-float accelMultiplier = calculateMultiplier(sailPoints * 0.5, enginePoints, mass);
-float rotationMultiplier = calculateMultiplier(sailPoints * 0.3, enginePoints * 0.7, mass);
-
-// Vertical stats (airships only) - no sail influence, density is primary driver
-float verticalMultiplier = calculateVerticalMultiplier(densityMagnitude, enginePoints);
-```
+Tuning constants (`DENSITY_SCALE`, `ENGINE_VERTICAL_SCALE`) configurable in `config.yml`.
 
 ---
 
 ## Engine Fuel System
 
-### Fuel Consumption Options
-
-**A. When Ship is Moving**
-- Fuel ticks down while `currentSpeed != 0`
-- Stopped ships don't consume fuel
-- Intuitive: engines run when ship moves
-
-**B. When Accelerating Only**
-- Fuel only consumed while W/S/A/D pressed
-- Coasting uses no fuel
-- More tactical, rewards momentum management
-
-**C. Constant When Driver Present**
-- Engines burn fuel whenever someone is at the wheel
-- Simplest mental model
-- Encourages parking ship when AFK
-
-**D. Proportional to Power Output**
-- Fuel consumption scales with how much the engine contributes
-- Higher speeds = more fuel
-- Most realistic but complex
+### Fuel Consumption
+Fuel ticks down whenever the **W key is held** (accelerating or maintaining speed). Releasing W = no fuel consumption, even while coasting.
 
 ### Fuel Values
-Use existing Minecraft fuel tick values:
+Standard Minecraft furnace fuels:
 | Fuel | Ticks | Real Time |
 |------|-------|-----------|
 | Coal | 1600 | 80 sec |
@@ -313,26 +135,16 @@ Use existing Minecraft fuel tick values:
 
 ### Engine GUI
 - Custom inventory menu (not the normal blast furnace smelting UI)
-- Shows: fuel slot, fuel remaining bar, engine status
-- Only accepts valid furnace fuels
+- **Multiple fuel slots** — load up fuel in advance
+- Shows fuel remaining and estimated burn time
+- **Hopper-compatible** if feasible (auto-fuel from adjacent hoppers)
 
----
+### Engine Detection
+- Custom crafting recipe produces a tagged blast furnace
+- Placed block tagged via NBT or custom model data (details TBD)
 
-## Copper Network (Optional Enhancement)
-
-From the TODO: "any blast furnaces connected via copper network to ships wheel will use fuel"
-
-### If Implemented:
-- Engines must connect to the ship wheel via copper blocks
-- Path-finding from wheel to engine through copper blocks
-- Encourages interesting ship designs with visible "wiring"
-
-### Simpler Alternative:
-- Engines work anywhere on the ship
-- No connection required
-- Much simpler to implement
-
-**Recommendation:** Start without copper network, add it later as an optional enhancement.
+### Visual Feedback
+- Running engines emit smoke particles
 
 ---
 
@@ -341,21 +153,28 @@ From the TODO: "any blast furnaces connected via copper network to ships wheel w
 The ship info menu should show:
 ```
 === Ship Stats ===
-Mass: 450
-Sails: 35 points (12 wool, 8 banners)
-Engines: 2 (1 fueled, 1 empty)
+Mass: 150
+Power: 92 (2 base + 90 sails)
+  Wool: 30 blocks (90 pts)
+  Banners: 0
+  Engines: 0
 
-Speed: 120% (base 0.55 -> 0.66)
-Acceleration: 95%
-Rotation: 85%
+Ratio: 0.61 / 1.00
+Speed: 87% (0.48 blocks/tick)
+Acceleration: 87%
+Rotation: 87%
+```
 
-[Highlight Sails] [Manage Engines]
+With engines:
+```
+Power: 122 (2 base + 90 sails + 30 engines)
+  Engines: 1 fueled, 0 empty
 ```
 
 For airships, also show:
 ```
 Density: -1.5 (airship)
-Vertical Speed: 85% (base 0.30 -> 0.26)
+Vertical Speed: 85%
 Vertical Accel: 85%
 ```
 
@@ -364,29 +183,28 @@ Vertical Accel: 85%
 ## Implementation Phases
 
 ### Phase 1: Detection & Data Storage
-1. Count wool blocks and banners during ship scan
+1. Count wool blocks and banners during ship scan in `BlockStructureScanner`
 2. Detect ship engines (custom blast furnaces)
-3. Add fields to `ShipModel`: `sailPoints`, `engineLocations`
-4. Add fields to `ShipWheelData`: `engineFuelLevels` (Map<BlockPos, Integer>)
+3. Add fields to `ShipModel`: `woolCount`, `bannerCount`, `engineLocations`
+4. Compute and store `sailPower`, `totalPower`, `ratio`
 
-### Phase 2: Basic Stat Calculation
-5. Implement chosen math formula for horizontal stats
-6. Implement vertical stat scaling (density magnitude + engines) for airships
-7. Apply horizontal multipliers in `ShipPhysics.update()`
-8. Apply vertical multipliers in `ShipPhysics.applyAirshipVerticalPhysics()`
-9. Enforce absolute caps on all final stat values
-10. Test with various ship configurations (water ships, barely-buoyant airships, heavy airships)
+### Phase 2: Stat Calculation & Physics
+5. Implement ratio → stat linear interpolation
+6. Apply multipliers in `ShipPhysics.update()` for horizontal stats
+7. Apply vertical scaling in `ShipPhysics.applyAirshipVerticalPhysics()`
+8. Enforce absolute floors and caps
+9. Test with various ship configurations
 
 ### Phase 3: Engine Fuel System
-8. Create ship engine item (custom blast furnace recipe?)
-9. Create engine fuel GUI
-10. Implement fuel consumption
-11. Real-time stat updates when fuel runs out
+10. Create ship engine crafting recipe and tagged block
+11. Create engine fuel GUI (multiple slots, hopper-compatible)
+12. Implement fuel consumption (ticks down while W held)
+13. Real-time stat updates when fuel runs out (engine becomes dead weight)
+14. Smoke particles on running engines
 
 ### Phase 4: UI & Polish
-12. Update ship info menu with new stats
-13. Add engine management to menu
-14. Visual feedback (particles when engines running?)
+15. Update ship info menu with power/ratio/stat breakdown
+16. Add engine management to menu
 
 ---
 
@@ -394,29 +212,36 @@ Vertical Accel: 85%
 
 | File | Changes |
 |------|---------|
-| `BlockStructureScanner.java` | Count sails, detect engines |
-| `ShipModel.java` | Store sail/engine data |
+| `BlockStructureScanner.java` | Count wool, banners, detect engines during scan |
+| `ShipModel.java` | Store wool/banner counts, engine locations, computed ratio |
 | `ShipWheelData.java` | Persist engine fuel state |
-| `ShipPhysics.java` | Apply stat multipliers (horizontal + vertical), enforce absolute caps |
-| `ShipConfig.java` | Base multiplier config values, absolute caps, vertical scaling constants |
-| New: `ShipEngine.java` | Engine item/logic |
+| `ShipPhysics.java` | Apply ratio → stat mapping, enforce floors/caps, vertical scaling |
+| `ShipConfig.java` | Power point values, ratio anchors, floors/caps, vertical constants |
+| `config.yml` | All tuning constants |
+| New: `ShipEngine.java` | Engine crafting recipe, item, block tagging |
 | New: `EngineMenuGUI.java` | Fuel management GUI |
 
 ---
 
-## Open Questions
-
-1. **Math formula:** Which option (A/B/C/D)?
-2. **Per-stat scaling:** Should sails affect rotation less than speed?
-3. **Fuel consumption:** When does fuel tick down?
-4. **Copper network:** Implement now, later, or never?
-5. **Engine crafting:** Recipe? Or just NBT on any blast furnace?
-6. **Visual feedback:** Particles/sounds when engines running?
-7. **Vertical tuning:** What density-to-vertical-speed curve feels right? (see example tuning in "Airship Vertical Stats" section)
-8. **Absolute floor/cap values:** What should the hard floors and ceilings be for speed, acceleration, rotation, vertical speed?
-
 ## Resolved Decisions
 
-- **Airship vertical:** Density magnitude affects both max vertical speed AND vertical acceleration
-- **Airship vertical:** Engines boost vertical stats; sails do NOT
-- **Airship vertical:** Symmetric — density affects ascent and descent equally (slow up = slow down)
+- **Formula:** Power-to-mass ratio with sail cap at 0.8, linear mapping to stats
+- **Ratio anchors:** 0.0 = floor, 0.7 = current default, 1.0 = 1.5× default (cap)
+- **Sail cap:** Non-engine power capped at ratio 0.8; engines needed to reach 1.0
+- **All horizontal stats use the same ratio** (no per-stat weighting for now)
+- **Absolute floors:** 0.05 blocks/tick speed (1 block/sec), 0.6 deg/tick rotation (30s/revolution)
+- **Absolute caps:** 1.5× current defaults
+- **Unfueled engines:** Dead weight (0 power, still adds mass)
+- **Fuel consumption:** While W key held (accelerating or maintaining speed)
+- **Airship vertical:** Density magnitude + engine bonus, symmetric ascent/descent
+- **Airship vertical:** Sails do NOT affect vertical stats
+- **Copper network:** Cut
+- **Engine particles:** Smoke when running
+
+## Open Questions
+
+1. **Engine detection specifics:** Exact NBT/tag approach for custom blast furnace
+2. **Vertical tuning:** `DENSITY_SCALE` and `ENGINE_VERTICAL_SCALE` values
+3. **Acceleration floor:** Exact value (configurable, will tune in-game)
+4. **Engine points:** ~30 confirmed, exact value may need tuning
+5. **Hopper integration:** Feasibility of auto-fueling engines from hoppers on assembled ships
