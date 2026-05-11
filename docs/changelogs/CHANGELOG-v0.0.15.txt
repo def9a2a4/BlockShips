@@ -1,0 +1,104 @@
+# v0.0.15 - Ship-to-Ship Collision
+
+- Ships now physically collide with each other!
+  - This used to kind of work, but was disabled for performance reasons. now it's back!
+  - We did some clever math to make it fast: collision detection uses axis-aligned binning, designed to handle ships with 1000+ colliders without impacting server performance
+  - Force is proportional to mass: heavy ships barely move, light ships bounce off
+  - Parked ships (no driver) resist being pushed but aren't immovable
+  - Grey dust particles and a quiet wooden impact sound play at the collision contact point
+  - Players seated on either ship hear a quieter version of the sound so large-ship riders don't miss collisions happening far away. also fixed for terrain collision sounds.
+  - Ship-to-ship collision can be disabled entirely for performance by setting `collision.ship-to-ship-enabled: false` in config.yml
+- Reduced visual pop-in when ships spawn or load from chunks — display entities now appear closer to their final position
+  - still WIP, initial wrong rotation still flashes
+- Fixed CI test flakiness (by skipping certain tests on old versions)
+  - Added version-based test skips and `--only` filter to bot test runners
+  - issue is bot inputs persist after it exists the ship
+
+---
+
+## New Features
+
+### Ship-to-Ship Collision Detection (7042ebd, a0ddad9)
+
+Ships now physically collide with each other. A global ShipCollisionCoordinator singleton runs once per server tick before individual ship ticks, computing all ship-ship forces centrally. Each ship reads its pre-computed force during its own collision detection pass.
+
+This architecture eliminates three problems that plagued the previous (disabled) implementation:
+- No entity scanning: uses ShipRegistry directly instead of getNearbyEntities + scoreboard tag parsing
+- No double-counting: each ship pair is processed exactly once
+- No tick-ordering bugs: forces are pre-computed, not mutated cross-ship during detection
+
+The narrow phase uses axis-aligned binning for performance:
+- Broad phase groups ships by world and checks vehicle distance vs sum of collision radii for each unique pair
+- Narrow phase projects all colliders onto the ship-to-ship axis, drops them into 2.0-block-wide bins via O(n) counting sort, then only checks cross-ship pairs in matching/adjacent bins
+- Early exit after a configurable max collisions per pair (default 20)
+
+All per-tick data structures are reusable flat arrays with zero steady-state allocation. Designed to handle 1000+ colliders per ship.
+
+The force model is simple push-apart: total penetration depth summed across overlapping collider pairs, pushed along the ship-to-ship axis, split by inverse mass ratio. Heavy ships barely move, light ships get pushed more. Equal mass ships each get half.
+
+Parked ships (no driver) receive 30% of the collision force, so they resist being pushed but aren't completely immovable.
+
+New config values:
+
+```yaml
+# Ship-to-ship collision settings (global)
+collision:
+  # Enable/disable ship-to-ship collision detection
+  # (disable for performance on busy servers)
+  ship-to-ship-enabled: true
+  # Maximum number of collider overlaps to process per ship pair
+  # (early exit for performance)
+  ship-to-ship-max-collisions: 20
+```
+
+Per-ship mass is derived from blocks for custom ships, or configured under each prefab ship type's collision section (already existed):
+
+```yaml
+ships:
+  smallship:
+    collision:
+      mass: 100.0  # heavier = harder to push
+```
+
+### Collision Effects (b4e3be7)
+
+Ship-to-ship collisions now produce visual and audio feedback.
+
+Grey dust particles (3-6, scaled by penetration depth) spawn at the midpoint of the first overlapping collider pair — the actual contact point, not the midpoint between vehicles.
+
+The impact sound (ENTITY_ZOMBIE_ATTACK_WOODEN_DOOR, same as ship damage but much quieter) plays at the contact point with a per-pair cooldown of 15 ticks (0.75s) to prevent spam during sustained collisions.
+
+For large ships where the contact point may be far from seated players, the sound also plays at each seated player's location via player.playSound() at half volume. Only the target player hears this — no sound pollution for bystanders.
+
+New config value:
+
+```yaml
+sounds:
+  # Volume multiplier for ship-to-ship collision sounds
+  # (0.0 = disabled, 1.0 = normal)
+  ship-collision-volume: 0.15
+```
+
+## Bug Fixes
+
+### Stationary Ships Ignoring Collision Forces (a0ddad9)
+
+A stationary ship being rammed by another ship would not react. ShipCollision.detect() had an early return when the ship wasn't moving and had no previous collision force, which bailed out before reading the coordinator's pre-computed force.
+
+Solution: Restructure detect() so the terrain collision loop is gated behind the movement check (expensive, per-collider) but the coordinator force lookup always runs (single HashMap get).
+
+### Display Entity Spawn Pop-In (a59e611)
+
+Display entities spawned at the vehicle's ground-level position, then jumped up when mounted as passengers 1 tick later, causing a visible pop-in flash when ships spawn or load from chunks.
+
+Solution: Spawn display entities 2.5 blocks higher (approximate passenger attachment height) and pre-multiply their transformation matrices with the ship's rotation and position offset so they appear closer to their final position during the brief pre-mount window.
+
+### CI Test: Airship Driver Seat Mounting (72cac94, 6ab1dbd)
+
+Bot-based integration tests for airships intermittently failed because mountShip() picks the nearest shulker, which after the v0.0.14 spawn-at-final-position change is the passenger seat for airships, not the driver seat.
+
+Solution: Teleport the bot 1 block in -Z before mounting so the driver seat is the closest shulker. Applied to both smallairship and chunk-test airship test suites.
+
+### CI Test: Version-Based Test Skips (8dffcff, 8aab3ec)
+
+Added VERSION_SKIPS map to skip tests on specific Minecraft versions where protocol differences cause false failures (e.g. mineflayer hardcodes jump:0x01 in steer_vehicle packets on pre-1.21.3, causing airship drift). Both test-bot.js and chunk-test.js now support `--only=<substring>` to run specific tests.
