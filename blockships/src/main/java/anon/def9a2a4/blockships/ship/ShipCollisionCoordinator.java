@@ -1,8 +1,14 @@
 package anon.def9a2a4.blockships.ship;
 
 import anon.def9a2a4.blockships.ShipRegistry;
+import org.bukkit.Color;
 import org.bukkit.Location;
+import org.bukkit.Particle;
+import org.bukkit.Sound;
 import org.bukkit.World;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Player;
+import org.bukkit.entity.Shulker;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.BoundingBox;
@@ -23,9 +29,13 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
 
     private static ShipCollisionCoordinator instance;
 
+    private final JavaPlugin plugin;
     private final boolean enabled;
     private final int maxCollisionsPerPair;
     private static final float BIN_WIDTH = 2.0f;
+    private static final int SOUND_COOLDOWN_TICKS = 15; // ~0.75s between collision sounds per pair
+    private static final Particle.DustOptions COLLISION_DUST =
+            new Particle.DustOptions(Color.fromRGB(180, 180, 180), 0.8f);
 
     // Force map: ship UUID -> accumulated ship-to-ship force for this tick
     private final Map<UUID, Vector3f> forceMap = new HashMap<>();
@@ -46,7 +56,11 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
     // Reusable list for grouping ships by world
     private final Map<World, List<ShipInstance>> shipsByWorld = new HashMap<>();
 
-    private ShipCollisionCoordinator(boolean enabled, int maxCollisionsPerPair) {
+    // Per-pair sound cooldown: pair key -> remaining ticks
+    private final Map<Long, Integer> soundCooldowns = new HashMap<>();
+
+    private ShipCollisionCoordinator(JavaPlugin plugin, boolean enabled, int maxCollisionsPerPair) {
+        this.plugin = plugin;
         this.enabled = enabled;
         this.maxCollisionsPerPair = maxCollisionsPerPair;
     }
@@ -55,7 +69,7 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
         if (instance != null) {
             instance.cancel();
         }
-        instance = new ShipCollisionCoordinator(enabled, maxCollisionsPerPair);
+        instance = new ShipCollisionCoordinator(plugin, enabled, maxCollisionsPerPair);
         instance.runTaskTimer(plugin, 0L, 1L);
     }
 
@@ -85,6 +99,9 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
         // Reset force map and vector pool
         forceMap.clear();
         vectorPoolIndex = 0;
+
+        // Tick down sound cooldowns
+        soundCooldowns.entrySet().removeIf(e -> e.setValue(e.getValue() - 1) <= 0);
 
         // Group ships by world
         shipsByWorld.clear();
@@ -273,6 +290,7 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
         // Check A-bins against matching/adjacent B-bins
         int collisionCount = 0;
         float totalPenetration = 0;
+        double contactX = 0, contactY = 0, contactZ = 0;
 
         outerLoop:
         for (int binA = 0; binA < numBins; binA++) {
@@ -305,6 +323,12 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
                             if (pen > 0.001f) {
                                 totalPenetration += pen;
                                 collisionCount++;
+                                // Record first overlap midpoint as contact location
+                                if (collisionCount == 1) {
+                                    contactX = (boxA.getCenterX() + boxB.getCenterX()) * 0.5;
+                                    contactY = (boxA.getCenterY() + boxB.getCenterY()) * 0.5;
+                                    contactZ = (boxA.getCenterZ() + boxB.getCenterZ()) * 0.5;
+                                }
                                 if (collisionCount >= maxCollisionsPerPair) {
                                     break outerLoop;
                                 }
@@ -338,6 +362,64 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
         // Accumulate into force map
         forceMap.merge(shipA.id, forceA, (existing, incoming) -> existing.add(incoming));
         forceMap.merge(shipB.id, forceB, (existing, incoming) -> existing.add(incoming));
+
+        // Collision effects (particles + sound)
+        spawnCollisionEffects(shipA, shipB, contactX, contactY, contactZ, totalPenetration);
+    }
+
+    /**
+     * Spawn particles and play sound at the collision contact point.
+     */
+    private void spawnCollisionEffects(ShipInstance shipA, ShipInstance shipB,
+                                        double cx, double cy, double cz,
+                                        float totalPenetration) {
+        World world = shipA.vehicle.getWorld();
+        Location contact = new Location(world, cx, cy, cz);
+
+        // Grey dust particles scaled by penetration (3-6 particles)
+        int count = Math.min(3 + (int) (totalPenetration * 2), 6);
+        world.spawnParticle(Particle.DUST, contact, count, 0.3, 0.3, 0.3, 0, COLLISION_DUST);
+
+        // Sound with per-pair cooldown
+        long pairKey = pairKey(shipA.id, shipB.id);
+        if (!soundCooldowns.containsKey(pairKey)) {
+            float volume = (float) plugin.getConfig().getDouble("sounds.ship-collision-volume", 0.15);
+            world.playSound(contact, Sound.ENTITY_ZOMBIE_ATTACK_WOODEN_DOOR, 0.4f * volume, 1.2f);
+
+            // Also play quiet sound for all seated players on both ships
+            // so players far from the contact point still feel the bump
+            float playerVolume = volume * 0.5f;
+            playForSeatedPlayers(shipA, playerVolume);
+            playForSeatedPlayers(shipB, playerVolume);
+
+            soundCooldowns.put(pairKey, SOUND_COOLDOWN_TICKS);
+        }
+    }
+
+    /**
+     * Play collision sound at each seated player's location (only they hear it).
+     */
+    private static void playForSeatedPlayers(ShipInstance ship, float volume) {
+        for (Shulker seat : ship.seatShulkers) {
+            if (seat == null) continue;
+            for (Entity passenger : seat.getPassengers()) {
+                if (passenger instanceof Player player) {
+                    player.playSound(player.getLocation(),
+                            Sound.ENTITY_ZOMBIE_ATTACK_WOODEN_DOOR, volume, 1.2f);
+                }
+            }
+        }
+    }
+
+    /**
+     * Canonical pair key from two UUIDs (order-independent).
+     */
+    private static long pairKey(UUID a, UUID b) {
+        int ha = a.hashCode();
+        int hb = b.hashCode();
+        long lo = Math.min(ha, hb);
+        long hi = Math.max(ha, hb);
+        return (hi << 32) | (lo & 0xFFFFFFFFL);
     }
 
     /**

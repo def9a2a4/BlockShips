@@ -116,6 +116,8 @@ sounds:
   cannon-volume: 0.35
   # Volume multiplier for lead break sounds (0.0 = disabled, 1.0 = normal)
   lead-break-volume: 1.0
+  # Volume multiplier for ship-to-ship collision sounds (0.0 = disabled, 1.0 = normal)
+  ship-collision-volume: 0.15
 
 # Ship-to-ship collision settings (global)
 collision:
