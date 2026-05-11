@@ -36,6 +36,7 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
     private static final int SOUND_COOLDOWN_TICKS = 15; // ~0.75s between collision sounds per pair
     private static final Particle.DustOptions COLLISION_DUST =
             new Particle.DustOptions(Color.fromRGB(180, 180, 180), 0.8f);
+    private static final Vector3f ZERO_FORCE = new Vector3f(0, 0, 0);
 
     // Force map: ship UUID -> accumulated ship-to-ship force for this tick
     private final Map<UUID, Vector3f> forceMap = new HashMap<>();
@@ -89,7 +90,7 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
      */
     public Vector3f getShipCollisionForce(UUID shipId) {
         Vector3f force = forceMap.get(shipId);
-        return force != null ? force : new Vector3f(0, 0, 0);
+        return force != null ? new Vector3f(force) : ZERO_FORCE;
     }
 
     @Override
@@ -101,10 +102,12 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
         vectorPoolIndex = 0;
 
         // Tick down sound cooldowns
-        soundCooldowns.entrySet().removeIf(e -> e.setValue(e.getValue() - 1) <= 0);
+        soundCooldowns.entrySet().removeIf(e -> { int v = e.getValue() - 1; e.setValue(v); return v <= 0; });
 
-        // Group ships by world
-        shipsByWorld.clear();
+        // Group ships by world (reuse lists to avoid allocation)
+        for (List<ShipInstance> list : shipsByWorld.values()) {
+            list.clear();
+        }
         for (ShipInstance ship : ShipRegistry.getAllShips()) {
             if (ship.vehicle == null || ship.vehicle.isDead()) continue;
             World world = ship.vehicle.getWorld();
@@ -179,9 +182,9 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
         ensureArraySize(nA, nB);
 
         // Use midpoint as projection origin
-        float originX = (float) (locA.getX() + locB.getX()) * 0.5f;
-        float originY = (float) (locA.getY() + locB.getY()) * 0.5f;
-        float originZ = (float) (locA.getZ() + locB.getZ()) * 0.5f;
+        float originX = (float) ((locA.getX() + locB.getX()) * 0.5);
+        float originY = (float) ((locA.getY() + locB.getY()) * 0.5);
+        float originZ = (float) ((locA.getZ() + locB.getZ()) * 0.5);
 
         float globalMin = Float.MAX_VALUE;
         float globalMax = -Float.MAX_VALUE;
@@ -342,8 +345,8 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
         if (collisionCount == 0) return;
 
         // Compute force along ship-to-ship axis, split by mass ratio
-        float massA = shipA.config.shipMass;
-        float massB = shipB.config.shipMass;
+        float massA = Math.max(shipA.config.shipMass, 1.0f);
+        float massB = Math.max(shipB.config.shipMass, 1.0f);
         float totalMass = massA + massB;
 
         // Force on A: push away from B (along axis from B to A = negative axis direction)
