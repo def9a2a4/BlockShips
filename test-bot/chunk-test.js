@@ -215,6 +215,12 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   bot.chat('/clear @s')
   await sleep(300)
 
+  // Nudge forward so the driver seat is the nearest shulker
+  if (isAirship) {
+    bot.chat(`/tp @s ~ ~ ~-1`)
+    await sleep(500)
+  }
+
   // Capture position BEFORE mounting (mineflayer position doesn't update while riding)
   const startPos = bot.entity.position.clone()
 
@@ -305,6 +311,12 @@ async function testPostRecoverySteeringBase(testName, spawnFn, isAirship = false
 
   bot.chat('/clear @s')
   await sleep(300)
+
+  // Nudge forward so the driver seat is the nearest shulker
+  if (isAirship) {
+    bot.chat(`/tp @s ~ ~ ~-1`)
+    await sleep(500)
+  }
 
   // Capture position BEFORE mounting (mineflayer position doesn't update while riding)
   const startPos = bot.entity.position.clone()
