@@ -13,6 +13,8 @@ import org.bukkit.Registry;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.type.Slab;
+import org.bukkit.block.data.type.TrapDoor;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -335,10 +337,21 @@ public class BlockStructureScanner {
             double dy = blockLoc.getY() - wheelOrigin.getY();
             double dz = blockLoc.getZ() - wheelOrigin.getZ();
 
-            // Track ship bounds (all blocks contribute)
+            // Track ship bounds (all blocks contribute, except trapdoors)
             float blockY = (float) dy;
-            if (blockY < minY) minY = blockY;
-            if (blockY > maxY) maxY = blockY;
+            if (!(blockData instanceof TrapDoor)) {
+                float adjustedMinY = blockY;
+                float adjustedMaxY = blockY;
+                if (blockData instanceof Slab slab) {
+                    if (slab.getType() == Slab.Type.TOP) {
+                        adjustedMinY = blockY + 0.5f;
+                    } else if (slab.getType() == Slab.Type.BOTTOM) {
+                        adjustedMaxY = blockY - 0.5f;
+                    }
+                }
+                if (adjustedMinY < minY) minY = adjustedMinY;
+                if (adjustedMaxY > maxY) maxY = adjustedMaxY;
+            }
 
             // Only accumulate weight and center of volume for blocks with weight
             // Blocks with null weight are excluded from density calculations
