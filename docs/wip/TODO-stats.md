@@ -49,6 +49,84 @@ Sails are passive - they always contribute to stats. Banners are worth more beca
 
 ---
 
+## Absolute Caps and Floors
+
+Hard ceilings and floors on final computed stat values. These are distinct from the formula's `MIN`/`MAX` multiplier clamp — the multiplier clamp limits the *scaling factor*, these limit the *actual stat value* after the multiplier is applied.
+
+No matter how many sails/engines a ship has, it won't exceed the caps. No matter how heavy or sail-less a ship is, it won't drop below the floors.
+
+| Stat | Floor (Example) | Cap (Example) | Description |
+|------|-----------------|---------------|-------------|
+| `absoluteMinSpeed` / `absoluteMaxSpeed` | 0.15 / 0.8 blocks/tick | Forward/backward speed bounds |
+| `absoluteMinAcceleration` / `absoluteMaxAcceleration` | 0.005 / 0.04 | Acceleration bounds |
+| `absoluteMinRotationSpeed` / `absoluteMaxRotationSpeed` | 0.5 / 2.5 degrees/tick | Rotation speed bounds |
+| `absoluteMinVerticalSpeed` / `absoluteMaxVerticalSpeed` | 0.05 / 0.5 blocks/tick | Airship vertical speed bounds |
+| `absoluteMinVerticalAcceleration` / `absoluteMaxVerticalAcceleration` | 0.01 / 0.1 | Airship lift/descend accel bounds |
+
+```java
+// Applied after multiplier calculation:
+float finalMaxSpeed = clamp(baseMaxSpeed * multiplier, absoluteMinSpeed, absoluteMaxSpeed);
+float finalAccel = clamp(baseAccel * multiplier, absoluteMinAcceleration, absoluteMaxAcceleration);
+float finalRotation = clamp(baseRotation * multiplier, absoluteMinRotationSpeed, absoluteMaxRotationSpeed);
+```
+
+All configurable in `config.yml`.
+
+---
+
+## Airship Vertical Stats
+
+### Current Behavior
+Fixed values for all airships: `maxVerticalSpeed` (0.3), `liftAcceleration` (0.05), `descendAcceleration` (0.05). Every airship moves vertically the same regardless of build.
+
+### New Behavior
+Vertical speed and acceleration scale with **density magnitude** and **fueled engines**.
+
+**Design decisions:**
+- Density magnitude affects **both** max vertical speed and vertical acceleration
+- **Engines** boost vertical stats; **sails do not** (sails are wind-powered, horizontal only)
+- **Symmetric:** density affects ascent and descent equally (barely-buoyant = sluggish both ways)
+- Density > 0 = not an airship (water ship), no vertical controls
+
+### Formula
+
+```
+densityMagnitude = abs(density)        // e.g., 0.1 to 5.0
+engineBonus = fueled_engine_points * ENGINE_VERTICAL_SCALE
+
+verticalMultiplier = clamp(
+  BASE_VERTICAL + densityMagnitude * DENSITY_SCALE + engineBonus,
+  MIN_VERTICAL, MAX_VERTICAL
+)
+
+effectiveMaxVerticalSpeed = clamp(baseMaxVerticalSpeed * verticalMultiplier, absoluteMinVerticalSpeed, absoluteMaxVerticalSpeed)
+effectiveLiftAccel = clamp(baseLiftAccel * verticalMultiplier, absoluteMinVerticalAccel, absoluteMaxVerticalAccel)
+effectiveDescendAccel = clamp(baseDescendAccel * verticalMultiplier, absoluteMinVerticalAccel, absoluteMaxVerticalAccel)
+```
+
+### Example Tuning
+```
+BASE_VERTICAL = 0.2
+DENSITY_SCALE = 0.3
+ENGINE_VERTICAL_SCALE = 0.01
+MIN_VERTICAL = 0.1
+MAX_VERTICAL = 2.0
+
+// Barely-buoyant airship (density -0.1), no engines:
+verticalMultiplier = 0.2 + 0.1 * 0.3 + 0 = 0.23
+effectiveMaxVerticalSpeed = 0.3 * 0.23 = 0.069 blocks/tick (very slow)
+
+// Moderately buoyant (density -1.5), 2 fueled engines (20 pts):
+verticalMultiplier = 0.2 + 1.5 * 0.3 + 20 * 0.01 = 0.85
+effectiveMaxVerticalSpeed = 0.3 * 0.85 = 0.255 blocks/tick
+
+// Very buoyant (density -5.0), 3 fueled engines (30 pts):
+verticalMultiplier = 0.2 + 5.0 * 0.3 + 30 * 0.01 = 2.0 (capped)
+effectiveMaxVerticalSpeed = min(0.3 * 2.0, 0.5) = 0.5 (absolute cap)
+```
+
+---
+
 ## Math Formula Options
 
 ### Option A: Power-to-Weight Ratio (Recommended)
@@ -182,13 +260,19 @@ Not all stats need to scale equally. Possible approach:
 | `acceleration` | 50% | 100% |
 | `rotationSpeed` | 30% | 70% |
 | `rotationAcceleration` | 30% | 70% |
+| `maxVerticalSpeed` | 0% | 100% |
+| `liftAcceleration` | 0% | 100% |
+| `descendAcceleration` | 0% | 100% |
 
-**Rationale:** Sails help you go fast but don't help you turn or accelerate quickly. Engines provide raw power for everything.
+**Rationale:** Sails help you go fast but don't help you turn or accelerate quickly. Engines provide raw power for everything. Vertical stats are driven primarily by density magnitude with engines as a bonus — sails are wind-powered and only affect horizontal movement.
 
 ```java
 float speedMultiplier = calculateMultiplier(sailPoints, enginePoints, mass);
 float accelMultiplier = calculateMultiplier(sailPoints * 0.5, enginePoints, mass);
 float rotationMultiplier = calculateMultiplier(sailPoints * 0.3, enginePoints * 0.7, mass);
+
+// Vertical stats (airships only) - no sail influence, density is primary driver
+float verticalMultiplier = calculateVerticalMultiplier(densityMagnitude, enginePoints);
 ```
 
 ---
@@ -268,6 +352,13 @@ Rotation: 85%
 [Highlight Sails] [Manage Engines]
 ```
 
+For airships, also show:
+```
+Density: -1.5 (airship)
+Vertical Speed: 85% (base 0.30 -> 0.26)
+Vertical Accel: 85%
+```
+
 ---
 
 ## Implementation Phases
@@ -279,9 +370,12 @@ Rotation: 85%
 4. Add fields to `ShipWheelData`: `engineFuelLevels` (Map<BlockPos, Integer>)
 
 ### Phase 2: Basic Stat Calculation
-5. Implement chosen math formula
-6. Apply multipliers in `ShipPhysics.update()`
-7. Test with various ship configurations
+5. Implement chosen math formula for horizontal stats
+6. Implement vertical stat scaling (density magnitude + engines) for airships
+7. Apply horizontal multipliers in `ShipPhysics.update()`
+8. Apply vertical multipliers in `ShipPhysics.applyAirshipVerticalPhysics()`
+9. Enforce absolute caps on all final stat values
+10. Test with various ship configurations (water ships, barely-buoyant airships, heavy airships)
 
 ### Phase 3: Engine Fuel System
 8. Create ship engine item (custom blast furnace recipe?)
@@ -303,8 +397,8 @@ Rotation: 85%
 | `BlockStructureScanner.java` | Count sails, detect engines |
 | `ShipModel.java` | Store sail/engine data |
 | `ShipWheelData.java` | Persist engine fuel state |
-| `ShipPhysics.java` | Apply stat multipliers |
-| `ShipConfig.java` | Base multiplier config values |
+| `ShipPhysics.java` | Apply stat multipliers (horizontal + vertical), enforce absolute caps |
+| `ShipConfig.java` | Base multiplier config values, absolute caps, vertical scaling constants |
 | New: `ShipEngine.java` | Engine item/logic |
 | New: `EngineMenuGUI.java` | Fuel management GUI |
 
@@ -318,3 +412,11 @@ Rotation: 85%
 4. **Copper network:** Implement now, later, or never?
 5. **Engine crafting:** Recipe? Or just NBT on any blast furnace?
 6. **Visual feedback:** Particles/sounds when engines running?
+7. **Vertical tuning:** What density-to-vertical-speed curve feels right? (see example tuning in "Airship Vertical Stats" section)
+8. **Absolute floor/cap values:** What should the hard floors and ceilings be for speed, acceleration, rotation, vertical speed?
+
+## Resolved Decisions
+
+- **Airship vertical:** Density magnitude affects both max vertical speed AND vertical acceleration
+- **Airship vertical:** Engines boost vertical stats; sails do NOT
+- **Airship vertical:** Symmetric — density affects ascent and descent equally (slow up = slow down)
