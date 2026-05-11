@@ -90,6 +90,12 @@ physics:
   # Display entity transform interpolation duration in ticks (1-4, default: 2)
   # Controls rotation/scale smoothing. Position follows vehicle instantly.
   display-interpolation-duration: 2
+  # Extra position sync packets for smoother ship visuals (requires ProtocolLib)
+  # Sends vehicle position every tick instead of every 3 ticks
+  position-sync-enabled: true
+  # Minimum speed (blocks/tick) to send extra position sync packets (default: 0.02)
+  # Below this threshold, packets are not sent to avoid jitter on stationary ships
+  position-sync-threshold: 0.02
 
 # Cannon system configuration
 cannons:

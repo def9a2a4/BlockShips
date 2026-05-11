@@ -29,6 +29,8 @@ public class ShipInstance {
     private static boolean SHIP_LIGHTS_ENABLED = true;
     private static boolean TNT_ENABLED = false;
     private static int TNT_FUSE_TICKS = 80;
+    private static boolean POSITION_SYNC_ENABLED = true;
+    private static double POSITION_SYNC_THRESHOLD_SQ = 0.02 * 0.02;
 
     /**
      * Loads global physics config values from plugin config.
@@ -45,6 +47,9 @@ public class ShipInstance {
         SHIP_LIGHTS_ENABLED = cfg.getBoolean("ship-lights", true);
         TNT_ENABLED = cfg.getBoolean("cannons.tnt-enabled", false);
         TNT_FUSE_TICKS = cfg.getInt("cannons.tnt-fuse-ticks", 80);
+        POSITION_SYNC_ENABLED = cfg.getBoolean("physics.position-sync-enabled", true);
+        double threshold = cfg.getDouble("physics.position-sync-threshold", 0.02);
+        POSITION_SYNC_THRESHOLD_SQ = threshold * threshold;
     }
 
     /**
@@ -1167,19 +1172,26 @@ public class ShipInstance {
         // Set vehicle velocity from actual displacement (after physics + collision response)
         // Must match carrier velocity computation (currentPos - previousPos) so client-side
         // prediction between tracker updates keeps vehicle and carriers in sync
-        org.bukkit.util.Vector vehicleVelocity = null;
         if (previousVehicleLocation != null) {
-            vehicleVelocity = new org.bukkit.util.Vector(
+            org.bukkit.util.Vector vehicleVelocity = new org.bukkit.util.Vector(
                 cachedVehicleLoc.getX() - previousVehicleLocation.getX(),
                 cachedVehicleLoc.getY() - previousVehicleLocation.getY(),
                 cachedVehicleLoc.getZ() - previousVehicleLocation.getZ()
             );
-            vehicle.setVelocity(vehicleVelocity);
-        }
+            double speedSq = vehicleVelocity.lengthSquared();
+            float yawDelta = java.lang.Math.abs(vehicle.getYaw() - previousYaw);
+            boolean hasMovement = speedSq > POSITION_SYNC_THRESHOLD_SQ;
+            boolean hasRotation = yawDelta > 0.1f;
 
-        // Send position sync packet every tick to bypass 3-tick tracker interval
-        // This keeps the vehicle (and its passenger display chain) in sync with carriers
-        sendVehiclePositionSync(cachedVehicleLoc, vehicleVelocity);
+            if (hasMovement || hasRotation) {
+                vehicle.setVelocity(vehicleVelocity);
+                // Send position sync packet every tick to bypass 3-tick tracker interval
+                // This keeps the vehicle (and its passenger display chain) in sync with carriers
+                if (POSITION_SYNC_ENABLED) {
+                    sendVehiclePositionSync(cachedVehicleLoc, vehicleVelocity);
+                }
+            }
+        }
 
         updateCollisionPositions();  // Sync collision boxes with vehicle BEFORE movement check
 
