@@ -10,20 +10,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        minecraft: ['1.21.1', '1.21.4', '1.21.8', '1.21.10', '1.21.11']
+        minecraft: ['1.21.1', '1.21.4', '1.21.8', '1.21.10', '1.21.11', '26.1.2']
         # minecraft: ['1.21.1', '1.21.11']
         server: ['paper', 'purpur']
+        java: ['21']
+        include:
+          - minecraft: '26.1.2'
+            java: '25'
 
     name: ${{ matrix.server }} ${{ matrix.minecraft }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Java 21
+      - name: Set up Java ${{ matrix.java }}
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '${{ matrix.java }}'
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

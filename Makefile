@@ -90,8 +90,10 @@ test-server-setup: test-server-plugin-copy
 
 $(DOWNLOAD_CACHE)/paper-%.jar:
 	@mkdir -p $(DOWNLOAD_CACHE)
-	$(eval BUILD := $(shell curl -s "https://api.papermc.io/v2/projects/paper/versions/$*/builds" | jq -r '.builds[-1].build'))
-	curl -o $@ "https://api.papermc.io/v2/projects/paper/versions/$*/builds/$(BUILD)/downloads/paper-$*-$(BUILD).jar"
+	curl -o $@ $$(curl -s -X POST "https://fill.papermc.io/graphql" \
+		-H "Content-Type: application/json" \
+		-d '{"query":"{ project(key: \"paper\") { version(key: \"$*\") { builds(orderBy: {direction: DESC}, first: 1) { edges { node { download(key: \"server:default\") { url } } } } } } }"}' \
+		| jq -r '.data.project.version.builds.edges[0].node.download.url')
 
 $(DOWNLOAD_CACHE)/purpur-%.jar:
 	@mkdir -p $(DOWNLOAD_CACHE)
