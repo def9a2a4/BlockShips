@@ -169,8 +169,9 @@ public class ShipInstance {
     private final Matrix4f workT_display = new Matrix4f();  // For display translation matrix
     private final Matrix4f workWorldMatrix = new Matrix4f(); // For per-display world transform
 
-    // Reusable Bukkit objects for updateCollisionPositions() - reduces GC pressure
+    // Reusable Bukkit objects for tick loop - reduces GC pressure
     private Location workCarrierLoc;  // Lazily initialized (needs World reference from vehicle)
+    private final org.bukkit.util.Vector workVehicleVelocity = new org.bukkit.util.Vector();
 
     /**
      * Private constructor for creating ShipInstance without spawning entities.
@@ -1170,23 +1171,21 @@ public class ShipInstance {
         // prediction between tracker updates keeps vehicle and carriers in sync
         boolean vehicleMovedThisTick = false;
         if (previousVehicleLocation != null) {
-            org.bukkit.util.Vector vehicleVelocity = new org.bukkit.util.Vector(
-                cachedVehicleLoc.getX() - previousVehicleLocation.getX(),
-                cachedVehicleLoc.getY() - previousVehicleLocation.getY(),
-                cachedVehicleLoc.getZ() - previousVehicleLocation.getZ()
-            );
-            double speedSq = vehicleVelocity.lengthSquared();
+            workVehicleVelocity.setX(cachedVehicleLoc.getX() - previousVehicleLocation.getX())
+                .setY(cachedVehicleLoc.getY() - previousVehicleLocation.getY())
+                .setZ(cachedVehicleLoc.getZ() - previousVehicleLocation.getZ());
+            double speedSq = workVehicleVelocity.lengthSquared();
             float yawDelta = java.lang.Math.abs(vehicle.getYaw() - previousYaw);
             boolean hasMovement = speedSq > POSITION_SYNC_THRESHOLD_SQ;
             boolean hasRotation = yawDelta > 0.1f;
             vehicleMovedThisTick = hasMovement || hasRotation;
 
             if (vehicleMovedThisTick) {
-                vehicle.setVelocity(vehicleVelocity);
+                vehicle.setVelocity(workVehicleVelocity);
                 // Send position sync packet every tick to bypass 3-tick tracker interval
                 // This keeps the vehicle (and its passenger display chain) in sync with carriers
                 if (POSITION_SYNC_ENABLED) {
-                    sendVehiclePositionSync(cachedVehicleLoc, vehicleVelocity);
+                    sendVehiclePositionSync(cachedVehicleLoc, workVehicleVelocity);
                 }
             }
         }
@@ -1206,15 +1205,13 @@ public class ShipInstance {
         boolean hasMoved = hasMovedSinceLastTick(currentVehicleLoc, yaw, pitch);
 
         if (!hasMoved && !firstTick) {
-            // Ship hasn't moved, increment idle counter
+            // Update previous state even when idle — prevents stale previousVehicleLocation
+            // from causing a velocity spike when the ship starts moving again
+            previousVehicleLocation = currentVehicleLoc.clone();
+            previousYaw = yaw;
+            previousPitch = pitch;
             ticksSinceLastMovement++;
-
-            // If idle for too long, stop the task (but keep running physics)
-            if (ticksSinceLastMovement >= IDLE_TICKS_BEFORE_STOP && !taskStopped) {
-                // Note: We don't stop the task anymore since we need physics to run
-                // Instead, we just skip display updates below
-            }
-            // Skip display/collision updates but continue physics
+            // Skip display updates but continue physics
             return;
         }
 
@@ -1282,9 +1279,13 @@ public class ShipInstance {
         }
 
         // Update each child's transformation: R * T_display * display.base
+        // Reset interpolation delay so client smoothly interpolates from current
+        // visual state to the new target (without this, the client snaps every
+        // interpolationDuration ticks instead of interpolating continuously)
         for (DisplayInstance di : displays) {
             workWorldMatrix.set(workR).mul(workT_display).mul(di.base);
             di.entity.setTransformationMatrix(workWorldMatrix);
+            di.entity.setInterpolationDelay(0);
         }
     }
 
