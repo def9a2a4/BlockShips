@@ -54,7 +54,7 @@ let runningTest = false
 
 async function setupRunway() {
   say('Creating shared runway...')
-  bot.chat(`/tp @s ${RUNWAY_X} 100 ${RUNWAY_Z}`)
+  bot.chat(`/tp @s ${RUNWAY_X} 100 ${RUNWAY_Z} 90 0`)
   await sleep(1000)
 
   const x1 = RUNWAY_X - RUNWAY_HALF_WIDTH
@@ -115,7 +115,7 @@ async function verifyRunway() {
 }
 
 async function teleportToRunway() {
-  bot.chat(`/tp @s ${RUNWAY_X} 100 ${RUNWAY_Z}`)
+  bot.chat(`/tp @s ${RUNWAY_X} 100 ${RUNWAY_Z} 90 0`)
   await sleep(500)
 }
 

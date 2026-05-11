@@ -115,7 +115,7 @@ async function setupFarRunway() {
 }
 
 async function spawnShipAtFar(shipType = 'smallship') {
-  bot.chat(`/tp @s ${FAR_X} 100 ${FAR_Z}`)
+  bot.chat(`/tp @s ${FAR_X} 100 ${FAR_Z} 90 0`)
   await sleep(500)
   bot.chat('/clear @s')
   await sleep(300)
@@ -138,7 +138,7 @@ async function spawnShipAtFar(shipType = 'smallship') {
 }
 
 async function spawnCustomAirshipAtFar() {
-  bot.chat(`/tp @s ${FAR_X} 105 ${FAR_Z}`)
+  bot.chat(`/tp @s ${FAR_X} 105 ${FAR_Z} 90 0`)
   await sleep(500)
   await clearInventory(bot)
 
