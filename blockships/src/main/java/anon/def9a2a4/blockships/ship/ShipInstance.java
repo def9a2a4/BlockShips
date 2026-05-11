@@ -733,6 +733,7 @@ public class ShipInstance {
                                 s.setInvisible(true);
                                 s.setGlowing(config.collisionDebugGlow);  // Glow if debug mode enabled
                                 s.setPeek(0);  // Prevent shulker from peeking/moving up
+                                s.setAttachedFace(org.bukkit.block.BlockFace.DOWN);  // Prevent vanilla attachment validation jitter
                                 s.addScoreboardTag(ShipTags.shipTag(this.id));
                                 s.addScoreboardTag(ShipTags.COLLIDER_TAG);
                                 s.addScoreboardTag(ShipTags.blockIndexTag(finalBlockIndex));
@@ -1279,13 +1280,9 @@ public class ShipInstance {
         }
 
         // Update each child's transformation: R * T_display * display.base
-        // Reset interpolation delay so client smoothly interpolates from current
-        // visual state to the new target (without this, the client snaps every
-        // interpolationDuration ticks instead of interpolating continuously)
         for (DisplayInstance di : displays) {
             workWorldMatrix.set(workR).mul(workT_display).mul(di.base);
             di.entity.setTransformationMatrix(workWorldMatrix);
-            di.entity.setInterpolationDelay(0);
         }
     }
 
