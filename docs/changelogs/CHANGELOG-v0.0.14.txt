@@ -1,0 +1,160 @@
+v0.0.14 - Bugfix & Performance Update
+
+- Fixed moving ship choppiness by sending extra position sync packets
+  via ProtocolLib (can be disabled in config.yml)
+- Fixed players falling through the ship on dismount, assembly, and
+  disassembly
+- Fixed players getting launched off the ship when assembling (collision
+  shulkers are now created at their final positions instead of being
+  teleported from ship root)
+- Improvements to walking on ship decks — should be less buggy. Some
+  edge cases persist; relogging fixes any remaining jitter.
+- Fixed ships with trapdoor or top-slab bottoms appearing to float
+  (buoyancy now accounts for slab half-height and ignores trapdoors)
+- Lots of general performance improvements and optimizations
+- Paper 26.1.2 support
+- New /blockships highlightcolliders debug command
+
+----------------------------------------------------------------------
+
+NEW FEATURES
+
+------------
+
+ProtocolLib Vehicle Position Sync (1c57ae3, 113c3b3)
+
+  Ship display entities now receive vehicle position packets every tick
+  via ProtocolLib, significantly reducing perceived display lag and
+  rubber-banding for riders and nearby players.
+
+  - Position sync packets are gated on speed and rotation thresholds to
+    avoid unnecessary network traffic when a ship is stationary.
+  - Thresholds are configurable in config.yml. The entire feature can be
+    disabled if it causes issues with other plugins.
+
+Highlight Colliders Debug Command (1850bd1)
+
+  New /blockships highlightcolliders command toggles a glowing outline
+  on all collision shulker entities belonging to a ship. Useful for
+  debugging collision geometry and verifying collider placement.
+
+Per-Tick Performance Improvements (7281ceb, 4d33f3d, 67e6d86, 659d90d)
+
+  Broad sweep of per-tick optimizations across the ship movement and
+  collision pipeline.
+
+  - Cache vehicle location per tick to avoid redundant getLocation()
+    clones.
+  - Reduce object allocations in the terrain collision loop.
+  - Cache rotation matrix per tick instead of recomputing per block.
+  - Guard setHealth calls to skip when health is already at max.
+  - Throttle passenger-check frequency.
+  - Move ship persistence writes to async tasks.
+  - Deduplicate tag extraction, buoyancy math, yaw normalization, and
+    location reuse across ship subsystems.
+
+Paper 26.1.2 Support (8ab89f8, a86f761, 9f0cd89)
+
+  Added Paper 26.1.2 to the CI test matrix. Bot-based integration tests
+  are skipped on 26.x until minecraft-protocol adds support for the new
+  protocol version.
+
+BUG FIXES
+---------
+
+Ship Movement Choppiness on Water Ships (e5a0f1a)
+
+  Water ships exhibited choppy movement and walking-on-deck bugs caused
+  by stale position state being fed into the buoyancy and movement
+  pipeline.
+
+  Root cause: Vehicle location was not refreshed between movement phases
+  within the same tick, so buoyancy and player-walk corrections operated
+  on outdated positions.
+
+Player Clipping on Dismount, Assembly, and Disassembly (eebd894, e94f7a7)
+
+  Players dismounting a ship could be teleported inside nearby solid
+  blocks. The previous fix used a blind Y-offset that was unreliable
+  for multi-deck ships and ships near terrain.
+
+  Solution: Calculate a safe dismount position by scanning nearby
+  colliders and finding an unobstructed location. Also fixed clipping
+  on assembly and disassembly where players were not repositioned
+  relative to the new block layout.
+
+Player Launch on Ship Assembly (63c1941, bae9102)
+
+  Assembling a ship could launch nearby players into the air because
+  collision carrier entities were spawned at the ship root and then
+  teleported to their final positions. The moving shulkers pushed
+  players as they traveled.
+
+  Solution: Spawn collision carriers directly at their final world
+  positions instead of teleporting them from the ship root. Collider
+  world-position math extracted into computeColliderWorldPos for reuse.
+
+Deck Jitter on Moving Ships (c61fbb6, ce17c97, fbb6961, 0e3a942)
+
+  Players standing on a moving ship's deck experienced visual jitter,
+  especially on ships with buoyancy. Multiple approaches were attempted
+  and reverted before arriving at a stable fix.
+
+  - Removed carrier velocity injection which caused oscillation when
+    combined with buoyancy forces.
+  - Widened the buoyancy deadzone to prevent micro-corrections from
+    triggering jitter.
+  - Fixed carrier-display desync where collision carriers and their
+    associated display entities moved on different tick phases.
+  - Fixed stale previousVehicleLocation persisting when a ship was idle,
+    causing a velocity spike on the first tick of new movement.
+  - Reverted setInterpolationDelay(0) on displays which caused blocks
+    to visually collapse toward the ship root entity.
+
+Display Entity Teleport Smoothing (9ebe9a6)
+
+  Display entities lagged behind the ship during movement because
+  teleport smoothing was not correctly applied to BlockDisplay entities.
+  Additionally, the dismount height filter incorrectly rejected valid
+  dismount positions above or below the ship center.
+
+  Solution: Apply proper interpolation to display entity teleports and
+  widen the dismount height filter to accept positions across the full
+  ship height.
+
+Stale Vehicle Location in Terrain Collision (4d33f3d)
+
+  The terrain collision loop used a cached vehicle location that could
+  become stale mid-tick after buoyancy or gravity adjustments moved the
+  ship.
+
+  Solution: Refresh the cached location after each movement phase within
+  the collision loop.
+
+Sync/Async Save Race in Chunk Unload (9ce4177)
+
+  Ship data could be corrupted or lost when a chunk unload triggered a
+  synchronous save while an async save from the wheel manager was
+  already in flight.
+
+  Solution: Serialize save operations so only one write is active at a
+  time, preventing partial overwrites.
+
+Ship Floats Above Water With Trapdoor/Top-Slab Hull (76b3993)
+
+  Ships whose bottom row was made of top slabs or trapdoors appeared to
+  float above the waterline because the buoyancy calculation used the
+  full block Y as the ship's bottom edge.
+
+  Solution: Account for top-slab half-height when computing the ship's
+  lowest extent, and exclude trapdoors from the bottom-edge calculation
+  entirely since they do not displace water.
+
+Seat Shulker Health Overflow (8b2b878)
+
+  Calling setHealth on seat shulkers could throw an IllegalArgument
+  exception when the health value exceeded the entity's max health
+  attribute.
+
+  Solution: Clamp health to the entity's max health before calling
+  setHealth.
