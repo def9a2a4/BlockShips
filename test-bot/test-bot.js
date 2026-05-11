@@ -23,6 +23,9 @@ const {
 // Configuration
 const INTERACTIVE = process.argv.includes('--interactive')
 
+// Tests to skip on specific MC versions (key = version, value = array of test key substrings)
+const VERSION_SKIPS = {}
+
 // Runway coordinates
 const RUNWAY_X = 0
 const RUNWAY_Z = 0
@@ -387,7 +390,17 @@ async function runAllTests() {
   runningTest = true
   tracker.reset()
 
-  for (const [, test] of Object.entries(TESTS)) {
+  const only = process.argv.find(a => a.startsWith('--only='))
+  const filter = only ? only.split('=')[1].split(',') : null
+
+  const skips = VERSION_SKIPS[bot.version] || []
+
+  for (const [key, test] of Object.entries(TESTS)) {
+    if (filter && !filter.some(f => key.includes(f))) continue
+    if (skips.some(s => key.includes(s))) {
+      log(`Skipping ${test.name} on ${bot.version}`)
+      continue
+    }
     try {
       await test.fn()
     } catch (e) {

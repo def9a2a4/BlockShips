@@ -21,6 +21,13 @@ const {
   setupBotEvents
 } = require('./lib/helpers')
 
+// Tests to skip on specific MC versions (key = version, value = array of test key substrings)
+// mineflayer hardcodes jump:0x01 in steer_vehicle on pre-1.21.3, causing airship drift after dismount
+const VERSION_SKIPS = {
+  '1.21.1': ['persistence_airship'],
+  '1.21.4': ['persistence_airship'],
+}
+
 // Test results file (written incrementally for CI visibility)
 const RESULTS_FILE = path.join(__dirname, 'chunk-test-results.txt')
 
@@ -394,7 +401,17 @@ const TESTS = {
 async function runAllTests() {
   tracker.reset()
 
-  for (const [, test] of Object.entries(TESTS)) {
+  const only = process.argv.find(a => a.startsWith('--only='))
+  const filter = only ? only.split('=')[1].split(',') : null
+
+  const skips = VERSION_SKIPS[bot.version] || []
+
+  for (const [key, test] of Object.entries(TESTS)) {
+    if (filter && !filter.some(f => key.includes(f))) continue
+    if (skips.some(s => key.includes(s))) {
+      log(`Skipping ${test.name} on ${bot.version}`)
+      continue
+    }
     try {
       await test.fn()
     } catch (e) {
