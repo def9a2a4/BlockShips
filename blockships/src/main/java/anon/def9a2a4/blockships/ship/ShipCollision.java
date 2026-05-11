@@ -1,21 +1,12 @@
 package anon.def9a2a4.blockships.ship;
 
 import anon.def9a2a4.blockships.ShipConfig;
-import anon.def9a2a4.blockships.ShipRegistry;
-import anon.def9a2a4.blockships.ShipTags;
 import anon.def9a2a4.blockships.util.TeleportCompat;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
-import org.bukkit.entity.*;
 import org.joml.Vector3f;
-
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
 
 /**
  * Handles collision detection and response for a ship.
@@ -57,80 +48,24 @@ public class ShipCollision {
         // Reuse work vector instead of allocating new one
         workTotalForce.set(0, 0, 0);
         int collisionCount = 0;
-        // String ownShipTag = ShipTags.shipTag(ship.id);
-
-        // Optimization: Query nearby entities once for the entire ship using cached radius
-        // Location vehicleLoc = ship.vehicle.getLocation();
-        // float radius = ship.collisionRadius;
-        // Collection<Entity> allNearbyEntities = vehicleLoc.getWorld()
-        //     .getNearbyEntities(vehicleLoc, radius, radius, radius);
-
-        // // Pre-filter: remove own ship entities once (avoid repeated tag checks per collider)
-        // List<Entity> relevantEntities = new ArrayList<>();
-        // for (Entity e : allNearbyEntities) {
-        //     if (!e.getScoreboardTags().contains(ownShipTag)) {
-        //         relevantEntities.add(e);
-        //     }
-        // }
 
         for (CollisionBox cb : ship.colliders) {
-            // 1. Check terrain collisions
+            // Check terrain collisions
             Vector3f terrainForce = calculateTerrainCollisionForce(cb);
             if (terrainForce.lengthSquared() > 0.001f) {
                 workTotalForce.add(terrainForce);
                 collisionCount++;
             }
+        }
 
-            // // 2. Check entity and ship collisions
-            // Location cbLoc = cb.entity.getLocation();
-
-            // for (Entity nearby : relevantEntities) {
-            //     // Distance check using max axis distance (matches getNearbyEntities box query)
-            //     Location nearbyLoc = nearby.getLocation();
-            //     double dx = Math.abs(cbLoc.getX() - nearbyLoc.getX());
-            //     double dy = Math.abs(cbLoc.getY() - nearbyLoc.getY());
-            //     double dz = Math.abs(cbLoc.getZ() - nearbyLoc.getZ());
-            //     if (dx > 2.0 || dy > 2.0 || dz > 2.0) {
-            //         continue; // Entity too far from this collider
-            //     }
-
-            //     // Check if entity belongs to another ship
-            //     Optional<String> otherShipTag = nearby.getScoreboardTags().stream()
-            //         .filter(tag -> tag.startsWith(ShipTags.SHIP_PREFIX))
-            //         .findFirst();
-
-            //     if (otherShipTag.isPresent() && nearby instanceof Shulker otherShulker) {
-            //         // This is another ship's collision box - ship-to-ship collision
-            //         try {
-            //             String otherShipIdStr = otherShipTag.get().substring(ShipTags.SHIP_PREFIX.length());
-            //             UUID otherShipId = UUID.fromString(otherShipIdStr);
-            //             ShipInstance otherShip = ShipRegistry.byId(otherShipId);
-
-            //             if (otherShip != null) {
-            //                 // Find the collision box for the other ship's shulker
-            //                 for (CollisionBox otherCb : otherShip.colliders) {
-            //                     if (otherCb.entity == otherShulker) {
-            //                         Vector3f shipForce = calculateShipCollisionForce(cb, otherShip, otherCb);
-            //                         if (shipForce.lengthSquared() > 0.001f) {
-            //                             totalForce.add(shipForce);
-            //                             collisionCount++;
-            //                         }
-            //                         break;
-            //                     }
-            //                 }
-            //             }
-            //         } catch (IllegalArgumentException e) {
-            //             // Invalid UUID, skip
-            //         }
-            //     } else if (nearby instanceof LivingEntity || nearby instanceof Boat || nearby instanceof Minecart) {
-            //         // Regular entity collision
-            //         Vector3f entityForce = calculateEntityCollisionForce(cb, nearby);
-            //         if (entityForce.lengthSquared() > 0.001f) {
-            //             totalForce.add(entityForce);
-            //             collisionCount++;
-            //         }
-            //     }
-            // }
+        // Ship-to-ship collision (resolved by global coordinator)
+        ShipCollisionCoordinator coordinator = ShipCollisionCoordinator.getInstance();
+        if (coordinator != null) {
+            Vector3f shipForce = coordinator.getShipCollisionForce(ship.id);
+            if (shipForce.lengthSquared() > 0.001f) {
+                workTotalForce.add(shipForce);
+                collisionCount++;
+            }
         }
 
         // Update collision force
@@ -257,47 +192,6 @@ public class ShipCollision {
     // ===== Private Helper Methods =====
 
     /**
-     * Get the mass of an entity for collision physics calculations.
-     */
-    private float getMassForEntity(Entity entity) {
-        ShipConfig config = ship.config;
-
-        // Boats and minecarts
-        if (entity instanceof Boat || entity instanceof Minecart) {
-            return config.boatMass;
-        }
-
-        // Check if entity is a living entity
-        if (!(entity instanceof LivingEntity)) {
-            return config.mobMediumMass; // Default for non-living entities
-        }
-
-        LivingEntity living = (LivingEntity) entity;
-
-        // Large mobs
-        if (living instanceof org.bukkit.entity.IronGolem ||
-            living instanceof org.bukkit.entity.Warden ||
-            living instanceof org.bukkit.entity.Ravager ||
-            living instanceof org.bukkit.entity.EnderDragon ||
-            living instanceof org.bukkit.entity.Wither) {
-            return config.mobLargeMass;
-        }
-
-        // Small mobs
-        if (living instanceof org.bukkit.entity.Chicken ||
-            living instanceof org.bukkit.entity.Rabbit ||
-            living instanceof org.bukkit.entity.Bat ||
-            living instanceof org.bukkit.entity.Parrot ||
-            living instanceof org.bukkit.entity.Silverfish) {
-            return config.mobSmallMass;
-        }
-
-        // Medium mobs (default)
-        // This includes players, zombies, skeletons, cows, horses, etc.
-        return config.mobMediumMass;
-    }
-
-    /**
      * Calculate collision force from terrain (blocks).
      */
     // Maximum collisions to process per collision box (early termination optimization)
@@ -362,87 +256,6 @@ public class ShipCollision {
         }
 
         return workTerrainForce;
-    }
-
-    /**
-     * Calculate collision force from an entity.
-     */
-    private Vector3f calculateEntityCollisionForce(CollisionBox cb, Entity otherEntity) {
-        org.bukkit.util.BoundingBox shulkerBox = cb.entity.getBoundingBox();
-        org.bukkit.util.BoundingBox entityBox = otherEntity.getBoundingBox();
-        ShipConfig config = ship.config;
-
-        // Check overlap
-        if (!shulkerBox.overlaps(entityBox)) {
-            return new Vector3f(0, 0, 0);
-        }
-
-        // Calculate penetration force
-        Vector3f penetrationForce = calculatePenetrationForce(shulkerBox, entityBox);
-
-        // Check if penetration is significant enough
-        if (penetrationForce.lengthSquared() < config.minPenetrationDepth * config.minPenetrationDepth) {
-            return new Vector3f(0, 0, 0);
-        }
-
-        // Apply momentum-based physics
-        float entityMass = getMassForEntity(otherEntity);
-        float collisionShipMass = config.shipMass;
-
-        // Get entity velocity
-        org.bukkit.util.Vector entityVelocity = otherEntity.getVelocity();
-        float entitySpeed = (float) Math.sqrt(
-            entityVelocity.getX() * entityVelocity.getX() +
-            entityVelocity.getZ() * entityVelocity.getZ()
-        );
-
-        // Calculate force based on mass ratio and relative velocity
-        // F = (m1 * v1 - m2 * v2) / (m1 + m2)
-        float massRatio = entityMass / (collisionShipMass + entityMass);
-        float forceMultiplier = massRatio * (entitySpeed + Math.abs(ship.physics.currentSpeed));
-
-        return penetrationForce.mul(forceMultiplier);
-    }
-
-    /**
-     * Calculate collision force from another ship.
-     */
-    private Vector3f calculateShipCollisionForce(CollisionBox cb, ShipInstance otherShip, CollisionBox otherCb) {
-        org.bukkit.util.BoundingBox thisBox = cb.entity.getBoundingBox();
-        org.bukkit.util.BoundingBox otherBox = otherCb.entity.getBoundingBox();
-        ShipConfig config = ship.config;
-
-        // Check overlap
-        if (!thisBox.overlaps(otherBox)) {
-            return new Vector3f(0, 0, 0);
-        }
-
-        // Calculate penetration force
-        Vector3f penetrationForce = calculatePenetrationForce(thisBox, otherBox);
-
-        // Check if penetration is significant enough
-        if (penetrationForce.lengthSquared() < config.minPenetrationDepth * config.minPenetrationDepth) {
-            return new Vector3f(0, 0, 0);
-        }
-
-        // Apply momentum-based physics for ship-to-ship collision
-        float thisMass = config.shipMass;
-        float otherMass = otherShip.config.shipMass;
-        float thisSpeed = Math.abs(ship.physics.currentSpeed);
-        float otherSpeed = Math.abs(otherShip.physics.currentSpeed);
-
-        // Calculate force based on mass and velocity
-        // F = (m1 * v1 - m2 * v2) / (m1 + m2)
-        float massRatio = otherMass / (thisMass + otherMass);
-        float forceMultiplier = massRatio * (otherSpeed + thisSpeed) * 2.0f; // Amplify ship collisions
-
-        Vector3f force = penetrationForce.mul(forceMultiplier);
-
-        // Apply reaction force to other ship (wake it up if stationary)
-        Vector3f reactionForce = new Vector3f(force).negate();
-        otherShip.physics.collisionForce.add(reactionForce);
-
-        return force;
     }
 
     /**

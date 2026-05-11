@@ -3,6 +3,7 @@ package anon.def9a2a4.blockships;
 import anon.def9a2a4.blockships.blockconfig.BlockConfigManager;
 import anon.def9a2a4.blockships.customships.ShipWheelData;
 import anon.def9a2a4.blockships.customships.ShipWheelManager;
+import anon.def9a2a4.blockships.ship.ShipCollisionCoordinator;
 import anon.def9a2a4.blockships.ship.ShipInstance;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -57,6 +58,11 @@ public class BlockShipsPlugin extends JavaPlugin {
             steeringListener = new ShipSteeringListener(this);
         }
 
+        // Initialize ship-to-ship collision coordinator
+        boolean shipCollisionEnabled = getConfig().getBoolean("collision.ship-to-ship-enabled", true);
+        int shipCollisionMaxCollisions = getConfig().getInt("collision.ship-to-ship-max-collisions", 20);
+        ShipCollisionCoordinator.init(this, shipCollisionEnabled, shipCollisionMaxCollisions);
+
         // Initialize and register DisplayShip
         displayShip = new DisplayShip(this);
         displayShip.initialize();
@@ -78,6 +84,9 @@ public class BlockShipsPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        // Shutdown ship-to-ship collision coordinator
+        ShipCollisionCoordinator.shutdown();
+
         // Save ship wheels before shutdown
         if (shipWheelManager != null) {
             shipWheelManager.saveAll();
@@ -201,6 +210,10 @@ public class BlockShipsPlugin extends JavaPlugin {
                 reloadConfig();
                 // Reload global physics config
                 ShipInstance.loadGlobalPhysicsConfig(this);
+                // Re-initialize ship-to-ship collision coordinator with new config
+                boolean reloadedEnabled = getConfig().getBoolean("collision.ship-to-ship-enabled", true);
+                int reloadedMaxCollisions = getConfig().getInt("collision.ship-to-ship-max-collisions", 20);
+                ShipCollisionCoordinator.init(this, reloadedEnabled, reloadedMaxCollisions);
                 if (displayShip != null) {
                     displayShip.reload();
                 }

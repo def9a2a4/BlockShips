@@ -117,6 +117,13 @@ sounds:
   # Volume multiplier for lead break sounds (0.0 = disabled, 1.0 = normal)
   lead-break-volume: 1.0
 
+# Ship-to-ship collision settings (global)
+collision:
+  # Enable/disable ship-to-ship collision detection (disable for performance on busy servers)
+  ship-to-ship-enabled: true
+  # Maximum number of collider overlaps to process per ship pair (early exit for performance)
+  ship-to-ship-max-collisions: 20
+
 # Entity masses for collision physics (global settings)
 entity-masses:
   boat: 10.0         # Boats, minecarts
