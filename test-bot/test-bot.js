@@ -205,6 +205,12 @@ async function testShipControls(shipType) {
 
   await clearInventory(bot)
 
+  // Nudge forward so the driver seat is the nearest shulker
+  if (isAirship) {
+    bot.chat(`/tp @s ~ ~ ~-1`)
+    await sleep(500)
+  }
+
   // Capture position BEFORE mounting (vehicle position doesn't update reliably in mineflayer)
   const startPos = bot.entity.position.clone()
 
