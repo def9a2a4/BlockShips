@@ -1141,6 +1141,24 @@ public class ShipInstance {
         // Shulker positions are already updated in the collision box loop above
     }
 
+    /**
+     * Forces all tracked players to discard and re-receive entity state for carriers.
+     * This mimics the entity refresh that happens on relog: the client gets fresh SPAWN_ENTITY
+     * packets with exact server-side positions, eliminating accumulated tracker drift that
+     * causes player-on-shulker collision jitter.
+     */
+    void refreshCarrierTracking() {
+        java.util.Collection<Player> tracked = vehicle.getTrackedPlayers();
+        if (tracked.isEmpty()) return;
+        for (CollisionBox cb : colliders) {
+            if (!cb.carrier.isValid()) continue;
+            for (Player player : tracked) {
+                player.hideEntity(plugin, cb.carrier);
+                player.showEntity(plugin, cb.carrier);
+            }
+        }
+    }
+
     void tick() {
         // Health regeneration (20 ticks per second)
         // Wrapped in try-catch to prevent tick crash if attribute lookup fails
@@ -1229,6 +1247,12 @@ public class ShipInstance {
             previousVehicleLocation = currentVehicleLoc.clone();
             previousYaw = yaw;
             previousPitch = pitch;
+            // On first idle tick after movement: refresh carrier entity tracking for all
+            // nearby players. This forces the client to discard stale entity state and
+            // receive fresh spawn packets with exact positions, fixing collision jitter.
+            if (ticksSinceLastMovement == 0) {
+                refreshCarrierTracking();
+            }
             ticksSinceLastMovement++;
             // Skip display updates but continue physics
             return;

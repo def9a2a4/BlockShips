@@ -31,6 +31,9 @@ public class ShipPhysics {
     public float currentRotationVelocity = 0.0f;
     public Vector3f collisionForce = new Vector3f(0, 0, 0);
 
+    // Track vertical movement state for carrier refresh on stop
+    private boolean wasVerticallyMoving = false;
+
     // Sound cooldown (ticks until next sound can play)
     private int soundCooldown = 0;
 
@@ -362,6 +365,12 @@ public class ShipPhysics {
 
         if (Math.abs(currentYVelocity) < 0.01f) {
             currentYVelocity = 0.0f;
+            if (wasVerticallyMoving) {
+                wasVerticallyMoving = false;
+                ship.refreshCarrierTracking();
+            }
+        } else {
+            wasVerticallyMoving = true;
         }
     }
 
