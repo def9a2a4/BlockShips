@@ -15,6 +15,9 @@ import org.joml.Vector3f;
 public class ShipCollision {
     private final ShipInstance ship;
 
+    // Parked ships (no driver) receive reduced ship-to-ship collision force
+    private static final float PARKED_SHIP_FORCE_DAMPING = 0.3f;
+
     // Reusable vectors for detect() and applyResponse() - reduces GC pressure
     private final Vector3f workTotalForce = new Vector3f();
     private final Vector3f workHorizontalForce = new Vector3f();
@@ -33,36 +36,39 @@ public class ShipCollision {
 
     /**
      * Detect all collisions and accumulate forces.
-     * Only runs if ship is moving or has collision force from previous tick.
+     * Terrain checks only run if ship is moving or has previous force.
+     * Ship-to-ship forces from the coordinator are always checked so that
+     * parked ships still react when hit.
      */
     public void detect() {
-        // Only check collisions if ship is moving or was recently bumped
         boolean isMoving = Math.abs(ship.physics.currentSpeed) > 0.001f ||
                           Math.abs(ship.physics.currentRotationVelocity) > 0.01f;
         boolean hasPreviousForce = ship.physics.collisionForce.lengthSquared() > 0.001f;
-
-        if (!isMoving && !hasPreviousForce) {
-            return; // Skip collision detection for stationary ships
-        }
 
         // Reuse work vector instead of allocating new one
         workTotalForce.set(0, 0, 0);
         int collisionCount = 0;
 
-        for (CollisionBox cb : ship.colliders) {
-            // Check terrain collisions
-            Vector3f terrainForce = calculateTerrainCollisionForce(cb);
-            if (terrainForce.lengthSquared() > 0.001f) {
-                workTotalForce.add(terrainForce);
-                collisionCount++;
+        // Terrain collisions: only check if ship is moving or was recently bumped
+        if (isMoving || hasPreviousForce) {
+            for (CollisionBox cb : ship.colliders) {
+                Vector3f terrainForce = calculateTerrainCollisionForce(cb);
+                if (terrainForce.lengthSquared() > 0.001f) {
+                    workTotalForce.add(terrainForce);
+                    collisionCount++;
+                }
             }
         }
 
-        // Ship-to-ship collision (resolved by global coordinator)
+        // Ship-to-ship collision (always checked - coordinator lookup is cheap)
         ShipCollisionCoordinator coordinator = ShipCollisionCoordinator.getInstance();
         if (coordinator != null) {
             Vector3f shipForce = coordinator.getShipCollisionForce(ship.id);
             if (shipForce.lengthSquared() > 0.001f) {
+                // Dampen force on parked ships (no driver) so they resist being pushed
+                if (!ship.hasDriver) {
+                    shipForce.mul(PARKED_SHIP_FORCE_DAMPING);
+                }
                 workTotalForce.add(shipForce);
                 collisionCount++;
             }
@@ -72,7 +78,7 @@ public class ShipCollision {
         if (collisionCount > 0) {
             // Average the forces and set as new collision force
             ship.physics.collisionForce.set(workTotalForce.div(collisionCount));
-        } else {
+        } else if (hasPreviousForce) {
             // No collisions - decay existing force
             ship.physics.collisionForce.mul(ship.config.collisionForceDecay);
 
