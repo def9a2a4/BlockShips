@@ -25,12 +25,16 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ startsWith(matrix.minecraft, '26.') && '25' || '21' }}
 
+      # TODO: remove 26.x skip conditions once minecraft-protocol supports 26.x
+      # tracking: https://github.com/PrismarineJS/minecraft-data/pull/1184
       - name: Set up Node.js
+        if: ${{ !startsWith(matrix.minecraft, '26.') }}
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Install bot dependencies
+        if: ${{ !startsWith(matrix.minecraft, '26.') }}
         run: make test-bot-install
 
       - name: Download plugin JAR
@@ -46,7 +50,12 @@ jobs:
         run: make test-server-setup
 
       - name: Run test server with bot
+        if: ${{ !startsWith(matrix.minecraft, '26.') }}
         run: make test-server-ci MINECRAFT_VERSION=${{ matrix.minecraft }}
+
+      - name: Server startup test (no bot)
+        if: ${{ startsWith(matrix.minecraft, '26.') }}
+        run: make test-server-startup-only MINECRAFT_VERSION=${{ matrix.minecraft }}
 
       - name: Check for errors
         if: always()

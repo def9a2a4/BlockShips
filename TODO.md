@@ -17,6 +17,9 @@
 
 ## LONG TERM
 
+- [ ] Re-enable bot tests for 26.x once `minecraft-protocol` supports it. Currently only server startup is tested.
+  - https://github.com/PrismarineJS/minecraft-data/pull/1184
+  - https://github.com/PrismarineJS/node-minecraft-protocol/pull/1481
 - [ ] ShipRegistry uses non-thread-safe HashMap but is accessed from multiple threads (chunk events, periodic saves). Use ConcurrentHashMap to prevent ConcurrentModificationException.
 - [ ] (pre-1.21.9) Rotation logic bug - delta rotation math in ShipInstance.java:1110-1130 has inconsistencies, displays may rotate incorrectly
 - [ ] (pre-1.21.9) Custom ship spawnYaw mismatch - initial spawn uses vehicle.getYaw() but recovery uses model.initialRotation.x, causing rotation snap after restart

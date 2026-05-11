@@ -142,6 +142,76 @@ test-bot-run: test-bot-enable-debug-glow test-bot-write-version
 test-chunk-bot-run: test-bot-write-version
 	cd test-bot && npm run test:chunk
 
+# Server startup test only (used by CI for versions where the bot doesn't work yet)
+# Starts server, verifies plugin loads, checks for errors, then shuts down
+.PHONY: test-server-startup-only
+test-server-startup-only:
+	@cd $(TEST_SERVER_DIR) && \
+	mkfifo server_input 2>/dev/null || true; \
+	tail -f server_input | java -Xmx1G -Xms1G -jar server.jar nogui > server.log 2>&1 & \
+	SERVER_PID=$$!; \
+	sleep 0.5; \
+	tail -f server.log & \
+	TAIL_PID=$$!; \
+	echo "Waiting for server to start..."; \
+	for i in $$(seq 1 600); do \
+		if grep -q "Done.*For help" server.log 2>/dev/null; then \
+			echo ""; \
+			echo "========== Server started successfully =========="; \
+			break; \
+		fi; \
+		if ! kill -0 $$SERVER_PID 2>/dev/null; then \
+			echo ""; \
+			echo "========== Server process died unexpectedly =========="; \
+			cat server.log; \
+			exit 1; \
+		fi; \
+		sleep 1; \
+	done; \
+	if ! grep -q "Done.*For help" server.log 2>/dev/null; then \
+		echo ""; \
+		echo "========== Server startup timed out =========="; \
+		cat server.log; \
+		kill $$TAIL_PID 2>/dev/null || true; \
+		kill $$SERVER_PID 2>/dev/null || true; \
+		rm -f server_input; \
+		exit 1; \
+	fi; \
+	if ! grep -q "BlockShips.*enabled" server.log; then \
+		echo "✗ BlockShips plugin failed to load"; \
+		cat server.log; \
+		kill $$TAIL_PID 2>/dev/null || true; \
+		kill $$SERVER_PID 2>/dev/null || true; \
+		rm -f server_input; \
+		exit 1; \
+	fi; \
+	echo "✓ BlockShips plugin loaded"; \
+	echo ""; \
+	echo "========== Shutting down server =========="; \
+	echo "stop" > server_input; \
+	for i in $$(seq 1 30); do \
+		if ! kill -0 $$SERVER_PID 2>/dev/null; then \
+			break; \
+		fi; \
+		sleep 1; \
+	done; \
+	kill $$TAIL_PID 2>/dev/null || true; \
+	kill $$SERVER_PID 2>/dev/null || true; \
+	rm -f server_input; \
+	rm -f errors.log; \
+	FAILED=0; \
+	if grep -qE "ERROR.*BlockShips|BlockShips.*Exception" server.log 2>/dev/null; then \
+		echo "=== SERVER ERRORS ===" | tee -a errors.log; \
+		grep -E "ERROR.*BlockShips|BlockShips.*Exception" server.log | tee -a errors.log; \
+		FAILED=1; \
+	fi; \
+	if [ $$FAILED -eq 1 ]; then \
+		echo "✗ Tests failed"; \
+		exit 1; \
+	else \
+		echo "✓ Server startup test passed"; \
+	fi
+
 # Full integration test with bot (used by CI)
 # Starts server, waits for ready, OPs the bot, runs bot tests, then shuts down
 .PHONY: test-server-ci
