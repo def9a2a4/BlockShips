@@ -171,7 +171,6 @@ public class ShipInstance {
 
     // Reusable Bukkit objects for updateCollisionPositions() - reduces GC pressure
     private Location workCarrierLoc;  // Lazily initialized (needs World reference from vehicle)
-    private final org.bukkit.util.Vector workBukkitVelocity = new org.bukkit.util.Vector();
 
     /**
      * Private constructor for creating ShipInstance without spawning entities.
@@ -1094,16 +1093,19 @@ public class ShipInstance {
                 cb.carrier.addPassenger(cb.entity);
             }
 
-            if (isFirstTick || velocityMagnitude > 0.005) {
+            if (isFirstTick || velocityMagnitude > 0.01) {
                 TeleportCompat.teleport(cb.carrier, workCarrierLoc);
                 // DO NOT teleport shulker directly - it causes block snapping
                 // Shulker should follow carrier as passenger
-
-                // Set carrier velocity for better client/server sync (skip on first tick)
-                if (!isFirstTick) {
-                    workBukkitVelocity.setX(workVelocity.x).setY(workVelocity.y).setZ(workVelocity.z);
-                    cb.carrier.setVelocity(workBukkitVelocity);
-                }
+                // NOTE: Do NOT set velocity on carriers — it causes client-side prediction
+                // to fight with teleport positioning, producing Y-axis jitter for players
+                // standing on the shulkers. Carriers move only via teleport.
+                cb.wasMoving = true;
+            } else if (cb.wasMoving) {
+                // Send one final teleport so client has a definitive resting position
+                // (clears any interpolation buffer from the movement period)
+                TeleportCompat.teleport(cb.carrier, workCarrierLoc);
+                cb.wasMoving = false;
             }
 
             // AFTER teleport: re-mount player if they were dismounted by teleport (pre-1.21.9 only)
@@ -1172,6 +1174,7 @@ public class ShipInstance {
         // Set vehicle velocity from actual displacement (after physics + collision response)
         // Must match carrier velocity computation (currentPos - previousPos) so client-side
         // prediction between tracker updates keeps vehicle and carriers in sync
+        boolean vehicleMovedThisTick = false;
         if (previousVehicleLocation != null) {
             org.bukkit.util.Vector vehicleVelocity = new org.bukkit.util.Vector(
                 cachedVehicleLoc.getX() - previousVehicleLocation.getX(),
@@ -1182,8 +1185,9 @@ public class ShipInstance {
             float yawDelta = java.lang.Math.abs(vehicle.getYaw() - previousYaw);
             boolean hasMovement = speedSq > POSITION_SYNC_THRESHOLD_SQ;
             boolean hasRotation = yawDelta > 0.1f;
+            vehicleMovedThisTick = hasMovement || hasRotation;
 
-            if (hasMovement || hasRotation) {
+            if (vehicleMovedThisTick) {
                 vehicle.setVelocity(vehicleVelocity);
                 // Send position sync packet every tick to bypass 3-tick tracker interval
                 // This keeps the vehicle (and its passenger display chain) in sync with carriers
@@ -1193,7 +1197,11 @@ public class ShipInstance {
             }
         }
 
-        updateCollisionPositions();  // Sync collision boxes with vehicle BEFORE movement check
+        // Always update collision positions when physics ran — carriers must stay
+        // in sync with the vehicle (and its passenger display chain) at all speeds.
+        // The per-carrier velocity threshold (0.01) inside updateCollisionPositions()
+        // already filters out micro-drift.
+        updateCollisionPositions();
 
         // Get current vehicle state (reuse cached location from tick runnable)
         Location currentVehicleLoc = cachedVehicleLoc;
@@ -1717,20 +1725,9 @@ public class ShipInstance {
             isRightPressed = false;
             isSpacePressed = false;
             isSprintPressed = false;
-            // Kill vertical velocity and stabilize position on driver exit
+            // Kill vertical velocity on driver exit — buoyancy deadzone (0.1 blocks)
+            // will catch whatever offset remains without producing jitter
             physics.currentYVelocity = 0.0f;
-            if (!isAirship) {
-                // For water ships, snap to neutral buoyancy if close
-                Double neutralY = physics.getNeutralBuoyancyY();
-                if (neutralY != null) {
-                    double currentY = vehicle.getLocation().getY();
-                    if (java.lang.Math.abs(currentY - neutralY) <= 0.5) {
-                        Location loc = vehicle.getLocation();
-                        loc.setY(neutralY);
-                        vehicle.teleport(loc);
-                    }
-                }
-            }
             // Snap position and rotation to reduce floating-point jitter
             physics.snapToFineGrid();
         }

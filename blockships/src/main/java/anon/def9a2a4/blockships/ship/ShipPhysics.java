@@ -224,17 +224,10 @@ public class ShipPhysics {
             double yDifference = targetY - currentY;
 
             // Proportional approach with damping
-            if (Math.abs(yDifference) < 0.02) {
+            if (Math.abs(yDifference) < 0.1) {
                 currentYVelocity = 0.0f;
-                // Snap to exact target Y to prevent oscillation at deadzone boundary.
-                // Without this, the ship micro-oscillates around the deadzone edge,
-                // causing per-tick carrier teleports that disrupt player walking.
-                if (yDifference != 0) {
-                    // Update vehicleLoc so the movement code later in update() uses the snapped Y
-                    vehicleLoc.setY(targetY);
-                    Location snapLoc = reuseLocation(vehicleLoc);
-                    TeleportCompat.teleport(ship.vehicle, snapLoc);
-                }
+                // Close enough — don't move or teleport. Prevents carrier jitter
+                // for players standing on deck after dismount.
             } else {
                 float targetVelocity = (float) (yDifference * config.buoyancyStrength);
                 currentYVelocity = currentYVelocity * (1.0f - config.buoyancyDamping) + targetVelocity * config.buoyancyDamping;

@@ -18,6 +18,7 @@ public class CollisionBox {
     public final ShipModel.CollisionConfig config;  // Collision configuration
     public final int blockIndex;           // Index of the block this collision box belongs to
     public Vector3f previousWorldPos;      // Track position for velocity calculation
+    public boolean wasMoving;              // Track movement state for final-teleport on stop
 
     public CollisionBox(Entity carrier, Shulker entity, Matrix4f base, ShipModel.CollisionConfig config, int blockIndex) {
         this.carrier = carrier;
