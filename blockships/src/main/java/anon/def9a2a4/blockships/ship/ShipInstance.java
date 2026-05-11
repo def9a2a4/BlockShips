@@ -1167,13 +1167,19 @@ public class ShipInstance {
         // Set vehicle velocity from actual displacement (after physics + collision response)
         // Must match carrier velocity computation (currentPos - previousPos) so client-side
         // prediction between tracker updates keeps vehicle and carriers in sync
+        org.bukkit.util.Vector vehicleVelocity = null;
         if (previousVehicleLocation != null) {
-            vehicle.setVelocity(new org.bukkit.util.Vector(
+            vehicleVelocity = new org.bukkit.util.Vector(
                 cachedVehicleLoc.getX() - previousVehicleLocation.getX(),
                 cachedVehicleLoc.getY() - previousVehicleLocation.getY(),
                 cachedVehicleLoc.getZ() - previousVehicleLocation.getZ()
-            ));
+            );
+            vehicle.setVelocity(vehicleVelocity);
         }
+
+        // Send position sync packet every tick to bypass 3-tick tracker interval
+        // This keeps the vehicle (and its passenger display chain) in sync with carriers
+        sendVehiclePositionSync(cachedVehicleLoc, vehicleVelocity);
 
         updateCollisionPositions();  // Sync collision boxes with vehicle BEFORE movement check
 
@@ -1265,6 +1271,75 @@ public class ShipInstance {
         for (DisplayInstance di : displays) {
             workWorldMatrix.set(workR).mul(workT_display).mul(di.base);
             di.entity.setTransformationMatrix(workWorldMatrix);
+        }
+    }
+
+    // Cached ProtocolLib + NMS reflection state for position sync packets
+    private static volatile boolean positionSyncInitialized = false;
+    private static volatile boolean positionSyncAvailable = false;
+    private static volatile java.lang.reflect.Constructor<?> posRotConstructor = null;
+    private static volatile java.lang.reflect.Constructor<?> vec3Constructor = null;
+
+    /**
+     * Sends an ENTITY_TELEPORT packet for the vehicle to all tracked players.
+     * Bypasses the default 3-tick entity tracker interval for ArmorStands, ensuring
+     * the client has up-to-date vehicle position every tick. This keeps the display
+     * entity passenger chain visually in sync with independently-tracked carriers.
+     *
+     * Packet structure (1.21.11):
+     *   [0] int entityId
+     *   [1] PositionMoveRotation(Vec3 position, Vec3 deltaMovement, float yRot, float xRot)
+     *   [2] Set relativeTo (empty = absolute)
+     *   [3] boolean onGround
+     */
+    private void sendVehiclePositionSync(Location loc, org.bukkit.util.Vector velocity) {
+        if (!positionSyncInitialized) {
+            positionSyncInitialized = true;
+            try {
+                Class.forName("com.comphenix.protocol.ProtocolLibrary");
+                // Find NMS PositionMoveRotation constructor: (Vec3, Vec3, float, float)
+                Class<?> pmrClass = Class.forName("net.minecraft.world.entity.PositionMoveRotation");
+                Class<?> vec3Class = Class.forName("net.minecraft.world.phys.Vec3");
+                vec3Constructor = vec3Class.getConstructor(double.class, double.class, double.class);
+                posRotConstructor = pmrClass.getConstructor(vec3Class, vec3Class, float.class, float.class);
+                positionSyncAvailable = true;
+                plugin.getLogger().info("[PositionSync] Vehicle position sync enabled");
+            } catch (Exception | NoClassDefFoundError e) {
+                positionSyncAvailable = false;
+                plugin.getLogger().warning("[PositionSync] Vehicle position sync unavailable: " + e.getMessage());
+            }
+        }
+        if (!positionSyncAvailable) return;
+
+        try {
+            com.comphenix.protocol.ProtocolManager pm = com.comphenix.protocol.ProtocolLibrary.getProtocolManager();
+            com.comphenix.protocol.events.PacketContainer packet = pm.createPacket(
+                com.comphenix.protocol.PacketType.Play.Server.ENTITY_TELEPORT);
+
+            com.comphenix.protocol.reflect.StructureModifier<Object> mod = packet.getModifier();
+
+            // [0] entity ID
+            mod.write(0, vehicle.getEntityId());
+
+            // [1] PositionMoveRotation — construct NMS object via cached reflection
+            Object pos = vec3Constructor.newInstance(loc.getX(), loc.getY(), loc.getZ());
+            double vx = velocity != null ? velocity.getX() : 0;
+            double vy = velocity != null ? velocity.getY() : 0;
+            double vz = velocity != null ? velocity.getZ() : 0;
+            Object vel = vec3Constructor.newInstance(vx, vy, vz);
+            Object posRot = posRotConstructor.newInstance(pos, vel, loc.getYaw(), loc.getPitch());
+            mod.write(1, posRot);
+
+            // [2] relative flags — leave as empty set (absolute positioning)
+            // [3] onGround
+            mod.write(3, false);
+
+            for (Player player : vehicle.getTrackedPlayers()) {
+                pm.sendServerPacket(player, packet);
+            }
+        } catch (NoClassDefFoundError | Exception e) {
+            positionSyncAvailable = false;
+            plugin.getLogger().warning("[PositionSync] Failed to send position packet, disabling: " + e.getMessage());
         }
     }
 
