@@ -243,7 +243,14 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   await steerShip(bot, -1.0, 0, false, 100)
   await steerShip(bot, 0.0, 0, false, 1000)
 
-  // Wait for ship to settle before dismounting
+  // Zero all control inputs and wait for ship to fully settle
+  bot.setControlState('forward', false)
+  bot.setControlState('back', false)
+  bot.setControlState('left', false)
+  bot.setControlState('right', false)
+  bot.setControlState('jump', false)
+  bot.setControlState('sneak', false)
+  bot.setControlState('sprint', false)
   await sleep(3000)
 
   // 2) Exit ship FIRST, then measure position (same approach as test-bot.js)
