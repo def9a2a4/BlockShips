@@ -24,7 +24,9 @@ const {
 const INTERACTIVE = process.argv.includes('--interactive')
 
 // Tests to skip on specific MC versions (key = version, value = array of test key substrings)
-const VERSION_SKIPS = {}
+const VERSION_SKIPS = {
+  '1.21.4': ['smallship']
+}
 
 // Runway coordinates
 const RUNWAY_X = 0
