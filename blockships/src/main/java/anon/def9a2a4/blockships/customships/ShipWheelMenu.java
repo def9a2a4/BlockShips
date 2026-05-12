@@ -44,11 +44,13 @@ public class ShipWheelMenu {
         public final int bannerCount;
         public final int sailPower;
         public final int engineCount;
-        public final float ratio;
+        public final float sailRatio;  // uncapped sail ratio (before sail cap applied)
+        public final float ratio;      // final ratio (with sail cap + engines)
 
         public ShipInfo(int blockCount, int totalWeight, float density, int maxHealth,
                         Integer currentHealth, float surfaceOffset, float airDensity, float waterDensity,
-                        int woolCount, int bannerCount, int sailPower, int engineCount, float ratio) {
+                        int woolCount, int bannerCount, int sailPower, int engineCount,
+                        float sailRatio, float ratio) {
             this.blockCount = blockCount;
             this.totalWeight = totalWeight;
             this.density = density;
@@ -61,6 +63,7 @@ public class ShipWheelMenu {
             this.bannerCount = bannerCount;
             this.sailPower = sailPower;
             this.engineCount = engineCount;
+            this.sailRatio = sailRatio;
             this.ratio = ratio;
         }
     }
@@ -111,6 +114,7 @@ public class ShipWheelMenu {
     private static final int DISASSEMBLE_SLOT = 16;
     private static final int FORCE_DISASSEMBLE_SLOT = 17;  // Right of disassemble button
     private static final int HIGHLIGHT_SEATS_SLOT = 19;    // Below detect slot (row 3)
+    private static final int STATS_SLOT = 20;              // Below info slot (row 3)
 
     /**
      * Opens the ship wheel menu for a player.
@@ -267,6 +271,7 @@ public class ShipWheelMenu {
 
         // Ship Info button - shows weight, density, and buoyancy info from last detection
         menu.setItem(INFO_SLOT, createInfoItem(wheelData));
+        menu.setItem(STATS_SLOT, createStatsItem(wheelData));
 
         // Highlight Seats button - always shown
         menu.setItem(HIGHLIGHT_SEATS_SLOT, createHighlightSeatsItem(wheelData));
@@ -382,7 +387,7 @@ public class ShipWheelMenu {
 
         return new ShipInfo(blockCount, totalWeight, density, maxHealth, currentHealth,
                             surfaceOffset, airDensity, waterDensity,
-                            woolCount, bannerCount, sailPower, engineCount, ratio);
+                            woolCount, bannerCount, sailPower, engineCount, sailRatio, ratio);
     }
 
     /**
@@ -423,22 +428,8 @@ public class ShipWheelMenu {
                     lore.add(ChatColor.RED + "Sits very low");
                 }
 
-                // Ship stats
+                // Ship stats (simplified — detailed breakdown in stats item below)
                 lore.add("");
-                if (info.woolCount > 0 || info.bannerCount > 0) {
-                    if (info.woolCount > 0) {
-                        lore.add(ChatColor.GRAY + "Wool: " + ChatColor.WHITE + info.woolCount + ChatColor.GRAY + " (" + (info.woolCount * 3) + " pts)");
-                    }
-                    if (info.bannerCount > 0) {
-                        lore.add(ChatColor.GRAY + "Banners: " + ChatColor.WHITE + info.bannerCount + ChatColor.GRAY + " (" + (info.bannerCount * 7) + " pts)");
-                    }
-                }
-                if (info.engineCount > 0) {
-                    lore.add(ChatColor.GRAY + "Engines: " + ChatColor.WHITE + info.engineCount);
-                }
-                lore.add(ChatColor.GRAY + "Power Ratio: " + ChatColor.YELLOW + String.format("%.2f", info.ratio) + ChatColor.GRAY + " / 1.00");
-
-                // Show effective speed as percentage of default
                 int speedPercent = Math.round(info.ratio / 0.8f * 100);
                 lore.add(ChatColor.GRAY + "Speed: " + ChatColor.GREEN + speedPercent + "%");
             } else {
@@ -460,6 +451,59 @@ public class ShipWheelMenu {
      */
     public static void updateInfoItem(Inventory inventory, ShipWheelData wheelData) {
         inventory.setItem(INFO_SLOT, createInfoItem(wheelData));
+        inventory.setItem(STATS_SLOT, createStatsItem(wheelData));
+    }
+
+    /**
+     * Creates the detailed Ship Stats item (banner) with full breakdown.
+     */
+    private static ItemStack createStatsItem(ShipWheelData wheelData) {
+        ItemStack statsItem = new ItemStack(Material.WHITE_BANNER);
+        ItemMeta statsMeta = statsItem.getItemMeta();
+        if (statsMeta != null) {
+            statsMeta.setDisplayName(ChatColor.GOLD + "Ship Stats");
+            List<String> lore = new ArrayList<>();
+
+            ShipInfo info = getShipInfo(wheelData);
+            if (info != null) {
+                // Sail breakdown
+                if (info.woolCount > 0) {
+                    lore.add(ChatColor.GRAY + "Wool: " + ChatColor.WHITE + info.woolCount
+                        + ChatColor.GRAY + " (" + (info.woolCount * 3) + " pts)");
+                }
+                if (info.bannerCount > 0) {
+                    lore.add(ChatColor.GRAY + "Banners: " + ChatColor.WHITE + info.bannerCount
+                        + ChatColor.GRAY + " (" + (info.bannerCount * 7) + " pts)");
+                }
+
+                // Sail power with cap indicator
+                if (info.sailRatio > 0.8f) {
+                    lore.add(ChatColor.GRAY + "Sail Power: " + ChatColor.WHITE + info.sailPower + " pts"
+                        + ChatColor.YELLOW + " (capped at 80%)");
+                } else if (info.sailPower > 0) {
+                    lore.add(ChatColor.GRAY + "Sail Power: " + ChatColor.WHITE + info.sailPower + " pts");
+                }
+
+                // Engines
+                if (info.engineCount > 0) {
+                    lore.add(ChatColor.GRAY + "Engines: " + ChatColor.WHITE + info.engineCount);
+                }
+
+                lore.add("");
+                lore.add(ChatColor.GRAY + "Mass: " + ChatColor.WHITE + Math.abs(info.totalWeight));
+                lore.add(ChatColor.GRAY + "Power Ratio: " + ChatColor.YELLOW
+                    + String.format("%.2f", info.ratio) + ChatColor.GRAY + " / 1.00");
+
+                int speedPercent = Math.round(info.ratio / 0.8f * 100);
+                lore.add(ChatColor.GRAY + "Speed: " + ChatColor.GREEN + speedPercent + "%");
+            } else {
+                lore.add(ChatColor.GRAY + "Detect ship first");
+            }
+
+            statsMeta.setLore(lore);
+            statsItem.setItemMeta(statsMeta);
+        }
+        return statsItem;
     }
 
     /**

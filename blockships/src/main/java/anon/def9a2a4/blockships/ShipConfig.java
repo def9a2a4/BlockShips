@@ -275,7 +275,7 @@ public class ShipConfig {
             .defaultRatio((float) cfg.getDouble("custom-ships.stats.default-ratio", 0.7))
             .maxRatioMultiplier((float) cfg.getDouble("custom-ships.stats.max-ratio-multiplier", 1.5))
             .floorMaxSpeed((float) cfg.getDouble("custom-ships.stats.floor-max-speed", 0.05))
-            .floorAcceleration((float) cfg.getDouble("custom-ships.stats.floor-acceleration", 0.005))
+            .floorAcceleration((float) cfg.getDouble("custom-ships.stats.floor-acceleration", 0.015))
             .floorRotationSpeed((float) cfg.getDouble("custom-ships.stats.floor-rotation-speed", 0.6))
             .floorRotationAcceleration((float) cfg.getDouble("custom-ships.stats.floor-rotation-acceleration", 0.05))
             .capMaxSpeed((float) cfg.getDouble("custom-ships.stats.cap-max-speed", -1))

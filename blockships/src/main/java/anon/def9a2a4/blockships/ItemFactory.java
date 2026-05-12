@@ -92,8 +92,9 @@ public class ItemFactory {
         Material baseMaterial = Material.valueOf(baseMaterialStr.toUpperCase());
         String textureSet = plugin.getConfig().getString(configPath + ".texture-set");
         String variantSource = plugin.getConfig().getString(configPath + ".variant-source");
+        boolean enchantGlint = plugin.getConfig().getBoolean(configPath + ".enchant-glint", false);
 
-        return new CustomItem(itemId, displayName, baseMaterial, textureSet, variantSource, plugin, textureManager);
+        return new CustomItem(itemId, displayName, baseMaterial, textureSet, variantSource, enchantGlint, plugin, textureManager);
     }
 
     /**

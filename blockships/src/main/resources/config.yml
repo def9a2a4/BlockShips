@@ -208,6 +208,7 @@ custom-items:
   ship_engine:
     display-name: "Ship Engine"
     base-material: BLAST_FURNACE
+    enchant-glint: true
     stackable: true
     recipe:
       pattern:

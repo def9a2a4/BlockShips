@@ -23,19 +23,21 @@ public class CustomItem {
     private final Material baseMaterial;
     private final String textureSet;
     private final String variantSource;
+    private final boolean enchantGlint;
     private final Plugin plugin;
     private final ItemTextureManager textureManager;
     private final NamespacedKey itemIdKey;
     private final NamespacedKey variantKey;
 
     public CustomItem(String id, String displayNameTemplate, Material baseMaterial,
-                     String textureSet, String variantSource,
+                     String textureSet, String variantSource, boolean enchantGlint,
                      Plugin plugin, ItemTextureManager textureManager) {
         this.id = id;
         this.displayNameTemplate = displayNameTemplate;
         this.baseMaterial = baseMaterial;
         this.textureSet = textureSet;
         this.variantSource = variantSource;
+        this.enchantGlint = enchantGlint;
         this.plugin = plugin;
         this.textureManager = textureManager;
         this.itemIdKey = new NamespacedKey(plugin, "custom_item_id");
@@ -87,6 +89,11 @@ public class CustomItem {
             } else {
                 plugin.getLogger().warning("No texture found for " + id + " variant " + variant);
             }
+        }
+
+        // Apply enchantment glint
+        if (enchantGlint) {
+            meta.setEnchantmentGlintOverride(true);
         }
 
         item.setItemMeta(meta);
