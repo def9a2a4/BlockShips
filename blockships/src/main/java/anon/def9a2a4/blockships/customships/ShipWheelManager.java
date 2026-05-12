@@ -679,7 +679,7 @@ public class ShipWheelManager {
                 org.bukkit.attribute.Attribute maxHealthAttr = anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth();
                 org.bukkit.attribute.AttributeInstance maxHealthInstance = maxHealthAttr != null ? ship.vehicle.getAttribute(maxHealthAttr) : null;
                 double maxHealth = maxHealthInstance != null ? maxHealthInstance.getBaseValue() : 100.0;
-                wheelData.setLastDetectedStats(blockCount, ship.model.totalWeight, (int)maxHealth,
+                wheelData.setLastDetectedStats(blockCount, ship.model.totalWeight, ship.model.totalPositiveWeight,
                     ship.model.woolCount, ship.model.bannerCount, ship.model.engineCount);
                 wheelData.setLastHealth(currentHealth, maxHealth);
                 // Store buoyancy data from ship model

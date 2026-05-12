@@ -303,10 +303,12 @@ public class ShipConfig {
             // Interpolate floor → default over ratio 0.0 → defaultRatio
             float t = defaultRatio > 0 ? ratio / defaultRatio : 0;
             stat = floor + t * (defaultVal - floor);
-        } else {
+        } else if (defaultRatio < 1.0f) {
             // Interpolate default → cap over ratio defaultRatio → 1.0
             float t = (ratio - defaultRatio) / (1.0f - defaultRatio);
             stat = defaultVal + t * (cap - defaultVal);
+        } else {
+            stat = cap;
         }
         return Math.max(floor, Math.min(cap, stat));
     }

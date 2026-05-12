@@ -38,6 +38,7 @@ public final class ShipModel {
 
     // Buoyancy system (for custom block ships)
     public final int totalWeight;               // Sum of all block weights (excluding null-weight blocks)
+    public final int totalPositiveWeight;       // Sum of max(0, weight) for each block (for health calculation)
     public final int blockCount;                // Number of blocks with weight (for density calculation)
     public final Vector3f centerOfVolume;       // Geometric center of all blocks (relative to wheel)
     public final float minY;                    // Bottom of ship (relative to origin)
@@ -61,7 +62,7 @@ public final class ShipModel {
     public ShipModel(List<ModelPart> parts, List<ItemPart> items, Vector3f initialRotation, Vector3f positionOffset,
                      Vector3f collisionOffset, Matrix3f rotationTransform, List<SeatInfo> seats, List<CannonInfo> cannons,
                      float waterFloatOffset, double maxHealth, double healthRegenPerSecond,
-                     int totalWeight, int blockCount, Vector3f centerOfVolume, float minY, float maxY, float assemblyYaw,
+                     int totalWeight, int totalPositiveWeight, int blockCount, Vector3f centerOfVolume, float minY, float maxY, float assemblyYaw,
                      int woolCount, int bannerCount, int engineCount,
                      Set<Integer> engineBlockIndices, List<Vector3f> engineLocalPositions) {
         this.parts = parts;
@@ -76,6 +77,7 @@ public final class ShipModel {
         this.maxHealth = maxHealth;
         this.healthRegenPerSecond = healthRegenPerSecond;
         this.totalWeight = totalWeight;
+        this.totalPositiveWeight = totalPositiveWeight;
         this.blockCount = blockCount;
         this.centerOfVolume = centerOfVolume;
         this.minY = minY;
@@ -410,7 +412,7 @@ public final class ShipModel {
         // Prefab ships have no cannons (empty list) and no sail counting (stats come from config)
         return new ShipModel(out, items, initialRotation, positionOffset, collisionOffset, rotationTransform,
                            seats, new ArrayList<>(), waterFloatOffset, maxHealth, healthRegenPerSecond,
-                           0, 0, new Vector3f(0, 0, 0), 0f, 0f, 0f,
+                           0, 0, 0, new Vector3f(0, 0, 0), 0f, 0f, 0f,
                            0, 0, 0, null, null);
     }
 
@@ -615,6 +617,7 @@ public final class ShipModel {
         // Buoyancy/physics data
         map.put("assembly_yaw", assemblyYaw);
         map.put("total_weight", totalWeight);
+        map.put("total_positive_weight", totalPositiveWeight);
         map.put("block_count", blockCount);
         map.put("min_y", minY);
         map.put("max_y", maxY);
@@ -781,6 +784,7 @@ public final class ShipModel {
         double healthRegenPerSecond = 2.0;
 
         // Ship stats
+        int totalPositiveWeight = map.containsKey("total_positive_weight") ? ((Number) map.get("total_positive_weight")).intValue() : 0;
         int woolCount = map.containsKey("wool_count") ? ((Number) map.get("wool_count")).intValue() : 0;
         int bannerCount = map.containsKey("banner_count") ? ((Number) map.get("banner_count")).intValue() : 0;
         int engineCount = map.containsKey("engine_count") ? ((Number) map.get("engine_count")).intValue() : 0;
@@ -804,7 +808,7 @@ public final class ShipModel {
 
         return new ShipModel(parts, new ArrayList<>(), initialRotation, positionOffset,
             collisionOffset, rotationTransform, seats, cannons, waterFloatOffset,
-            maxHealth, healthRegenPerSecond, totalWeight, blockCount,
+            maxHealth, healthRegenPerSecond, totalWeight, totalPositiveWeight, blockCount,
             centerOfVolume, minY, maxY, assemblyYaw,
             woolCount, bannerCount, engineCount, engineBlockIndices, engineLocalPositions);
     }

@@ -44,13 +44,14 @@ public class ShipWheelMenu {
         public final int bannerCount;
         public final int sailPower;
         public final int engineCount;
+        public final int enginePowerPerEngine; // power points per engine (from config)
         public final float sailRatio;  // uncapped sail ratio (before sail cap applied)
         public final float ratio;      // final ratio (with sail cap + engines)
 
         public ShipInfo(int blockCount, int totalWeight, float density, int maxHealth,
                         Integer currentHealth, float surfaceOffset, float airDensity, float waterDensity,
                         int woolCount, int bannerCount, int sailPower, int engineCount,
-                        float sailRatio, float ratio) {
+                        int enginePowerPerEngine, float sailRatio, float ratio) {
             this.blockCount = blockCount;
             this.totalWeight = totalWeight;
             this.density = density;
@@ -63,6 +64,7 @@ public class ShipWheelMenu {
             this.bannerCount = bannerCount;
             this.sailPower = sailPower;
             this.engineCount = engineCount;
+            this.enginePowerPerEngine = enginePowerPerEngine;
             this.sailRatio = sailRatio;
             this.ratio = ratio;
         }
@@ -387,7 +389,8 @@ public class ShipWheelMenu {
 
         return new ShipInfo(blockCount, totalWeight, density, maxHealth, currentHealth,
                             surfaceOffset, airDensity, waterDensity,
-                            woolCount, bannerCount, sailPower, engineCount, sailRatio, ratio);
+                            woolCount, bannerCount, sailPower, engineCount, config.enginePower,
+                            sailRatio, ratio);
     }
 
     /**
@@ -436,9 +439,10 @@ public class ShipWheelMenu {
                 // Ship stats (simplified — detailed breakdown in stats item below)
                 lore.add("");
                 int speedPercent = Math.round(info.ratio / 0.8f * 100);
-                lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%");
+                String maxTag = info.ratio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
+                lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%" + maxTag);
                 if (speedPercent < 50) {
-                    lore.add(ChatColor.DARK_GRAY + "(add banners or wool as sails!)");
+                    lore.add(ChatColor.DARK_PURPLE + "(add banners or wool as sails!)");
                 }
             } else {
                 lore.add(ChatColor.GRAY + "No ship detected yet");
@@ -494,16 +498,21 @@ public class ShipWheelMenu {
 
                 // Engines
                 if (info.engineCount > 0) {
-                    lore.add(ChatColor.GRAY + "Engines: " + ChatColor.WHITE + info.engineCount);
+                    int engineTotalPts = info.engineCount * info.enginePowerPerEngine;
+                    lore.add(ChatColor.GRAY + "Engines: " + ChatColor.WHITE + info.engineCount
+                        + ChatColor.GRAY + " (" + engineTotalPts + " pts)");
                 }
 
                 lore.add("");
                 lore.add(ChatColor.GRAY + "Mass: " + ChatColor.WHITE + Math.abs(info.totalWeight));
+                int totalPower = 2 + info.sailPower + info.engineCount * info.enginePowerPerEngine;
+                lore.add(ChatColor.GRAY + "Total Power: " + ChatColor.WHITE + totalPower + " pts");
                 lore.add(ChatColor.GRAY + "Power Ratio: " + ChatColor.YELLOW
                     + String.format("%.2f", info.ratio) + ChatColor.GRAY + " / 1.00");
 
                 int speedPercent = Math.round(info.ratio / 0.8f * 100);
-                lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%");
+                String maxTag = info.ratio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
+                lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%" + maxTag);
             } else {
                 lore.add(ChatColor.GRAY + "Detect ship first");
             }

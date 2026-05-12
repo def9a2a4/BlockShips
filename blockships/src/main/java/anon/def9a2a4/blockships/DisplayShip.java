@@ -2287,6 +2287,22 @@ public class DisplayShip implements Listener {
     }
 
     /**
+     * Drops the custom ship engine item when a player breaks an engine block.
+     * Without this, breaking drops a vanilla blast furnace (losing PDC tag and glint).
+     */
+    @EventHandler
+    public void onBreakShipEngine(BlockBreakEvent event) {
+        Block block = event.getBlock();
+        if (!isShipEngine(block)) return;
+
+        event.setCancelled(true);
+        block.setType(Material.AIR);
+        block.getWorld().dropItemNaturally(
+            block.getLocation().add(0.5, 0.5, 0.5),
+            itemFactory.createItem("ship_engine", "_DEFAULT", null));
+    }
+
+    /**
      * Checks if a block is a ship engine (blast furnace with engine PDC tag).
      */
     private boolean isShipEngine(Block block) {

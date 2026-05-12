@@ -381,12 +381,11 @@ public class BlockStructureScanner {
                 woolCount++;
             } else if (blockMaterial.name().contains("BANNER")) {
                 bannerCount++;
-            } else if (blockMaterial == Material.BLAST_FURNACE) {
+            } else if (blockMaterial == Material.BLAST_FURNACE && plugin != null) {
                 // Check PDC for ship engine tag
                 org.bukkit.block.BlockState blockState = block.getState();
                 if (blockState instanceof org.bukkit.block.TileState tileState) {
-                    NamespacedKey engineKey = new NamespacedKey(
-                        org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips"), "custom_item_id");
+                    NamespacedKey engineKey = new NamespacedKey(plugin, "custom_item_id");
                     String val = tileState.getPersistentDataContainer()
                         .get(engineKey, org.bukkit.persistence.PersistentDataType.STRING);
                     if ("ship_engine".equals(val)) {
@@ -610,6 +609,7 @@ public class BlockStructureScanner {
             maxHealth,
             healthRegenPerSecond,
             totalWeight,
+            totalPositiveWeight,
             weightedBlockCount,  // Only count blocks with weight for density
             centerOfVolume,
             minY,
