@@ -84,8 +84,8 @@ public class ShipPhysics {
         // Count fueled engines from wheel data (engines with active fuel)
         anon.def9a2a4.blockships.customships.ShipWheelData wd = ship.resolveWheelData();
         int fueledEngines = (wd != null)
-            ? wd.countFueledEngines()
-            : ship.model.engineCount;  // Fallback: assume all fueled if no wheel data
+            ? wd.countFueledEngines(ship.model.engineBlockIndices)
+            : 0;  // No wheel data = no fuel state = 0 fueled engines
         float enginePower = fueledEngines * config.enginePower;
         int mass = Math.max(1, ship.model.mass);
         float ratio = Math.min(nonEngineRatio + enginePower / mass, 1.0f);
@@ -140,7 +140,8 @@ public class ShipPhysics {
                 if (burnTicks - 1 == 0) fuelChanged = true;
             } else {
                 // Try to consume next fuel item from slots
-                org.bukkit.inventory.ItemStack[] slots = wd.getEngineFuelSlots(engineIdx);
+                org.bukkit.inventory.ItemStack[] slots = wd.getAllEngineFuelSlots().get(engineIdx);
+                if (slots == null) continue;
                 for (int i = 0; i < slots.length; i++) {
                     if (slots[i] != null && slots[i].getType() != org.bukkit.Material.AIR) {
                         int newBurnTicks = anon.def9a2a4.blockships.customships.EngineMenuGUI.getBurnTime(slots[i].getType());

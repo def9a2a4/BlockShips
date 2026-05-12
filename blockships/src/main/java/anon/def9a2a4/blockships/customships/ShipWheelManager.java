@@ -266,6 +266,14 @@ public class ShipWheelManager {
         wheelData.setAssembledShipUUID(ship.id);
         ship.wheelData = wheelData;
 
+        // Update detection stats so the ship wheel menu shows correct data immediately
+        wheelData.setLastDetectedStats(model.parts.size(), model.totalWeight, model.mass,
+            model.woolCount, model.bannerCount, model.engineCount);
+        wheelData.setLastHealth(ship.vehicle.getHealth(), model.maxHealth);
+        wheelData.lastCenterOfVolumeY = model.centerOfVolume.y();
+        wheelData.lastMinY = model.minY;
+        wheelData.lastSurfaceOffset = model.waterFloatOffset;
+
         // Tag the ship wheel collider (block at dx=0, dy=0, dz=0 relative to wheel origin)
         // This allows opening the menu by right-clicking the wheel collider
         tagShipWheelCollider(ship, wheelLoc);

@@ -162,7 +162,8 @@ public class ShipWheelData {
     // ===== Engine fuel state =====
 
     public ItemStack[] getEngineFuelSlots(int engineBlockIndex) {
-        return engineFuelSlots.computeIfAbsent(engineBlockIndex, k -> new ItemStack[3]);
+        ItemStack[] slots = engineFuelSlots.get(engineBlockIndex);
+        return slots != null ? slots : new ItemStack[3];
     }
 
     public void setEngineFuelSlots(int engineBlockIndex, ItemStack[] slots) {
@@ -187,19 +188,22 @@ public class ShipWheelData {
 
     /**
      * Returns the number of engines that currently have fuel (burn ticks > 0 or fuel items in slots).
+     * Takes the full list of engine block indices so engines without map entries are correctly counted as unfueled.
      */
-    public int countFueledEngines() {
+    public int countFueledEngines(List<Integer> engineBlockIndices) {
         int count = 0;
-        for (Map.Entry<Integer, ItemStack[]> entry : engineFuelSlots.entrySet()) {
-            int idx = entry.getKey();
+        for (int idx : engineBlockIndices) {
             if (engineBurnTicks.getOrDefault(idx, 0) > 0) {
                 count++;
                 continue;
             }
-            for (ItemStack item : entry.getValue()) {
-                if (item != null && item.getType() != Material.AIR) {
-                    count++;
-                    break;
+            ItemStack[] slots = engineFuelSlots.get(idx);
+            if (slots != null) {
+                for (ItemStack item : slots) {
+                    if (item != null && item.getType() != Material.AIR) {
+                        count++;
+                        break;
+                    }
                 }
             }
         }

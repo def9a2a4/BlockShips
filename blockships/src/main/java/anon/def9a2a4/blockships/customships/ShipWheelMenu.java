@@ -381,15 +381,39 @@ public class ShipWheelMenu {
             maxHealth = Math.max(1, shipMass);
         }
 
-        // Ship stats
-        int woolCount = wheelData.getLastDetectedWoolCount();
-        int bannerCount = wheelData.getLastDetectedBannerCount();
+        // Ship stats — use live ShipInstance data when assembled
+        int woolCount, bannerCount, engineCount, fueledEngines, mass;
+        if (wheelData.isAssembled()) {
+            ShipInstance ship = ShipRegistry.byId(wheelData.getAssembledShipUUID());
+            if (ship != null && ship.model != null) {
+                woolCount = ship.model.woolCount;
+                bannerCount = ship.model.bannerCount;
+                engineCount = ship.model.engineCount;
+                mass = Math.max(1, ship.model.mass);
+                anon.def9a2a4.blockships.customships.ShipWheelData wd = ship.resolveWheelData();
+                fueledEngines = (wd != null)
+                    ? wd.countFueledEngines(ship.model.engineBlockIndices)
+                    : 0;
+            } else {
+                // Ship not found (destroyed?) — use detection data
+                woolCount = wheelData.getLastDetectedWoolCount();
+                bannerCount = wheelData.getLastDetectedBannerCount();
+                engineCount = wheelData.getLastDetectedEngineCount();
+                mass = Math.max(1, wheelData.getLastDetectedPositiveWeight());
+                fueledEngines = 0;
+            }
+        } else {
+            // Unassembled — use detection data, all engines unfueled
+            woolCount = wheelData.getLastDetectedWoolCount();
+            bannerCount = wheelData.getLastDetectedBannerCount();
+            engineCount = wheelData.getLastDetectedEngineCount();
+            mass = Math.max(1, wheelData.getLastDetectedPositiveWeight());
+            fueledEngines = 0;
+        }
+
         int sailPower = woolCount * 3 + bannerCount * 7;
 
         // Compute power ratio
-        int engineCount = wheelData.getLastDetectedEngineCount();
-        int fueledEngines = wheelData.countFueledEngines();
-        int mass = Math.max(1, wheelData.getLastDetectedPositiveWeight());
         float sailRatio = (float) (config.basePower + sailPower) / mass;
         float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
         float engineBonus = (float) (fueledEngines * config.enginePower) / mass;
@@ -508,26 +532,18 @@ public class ShipWheelMenu {
                     }
                 }
 
-                // Engines (only show fuel status if ship is assembled)
+                // Engines — always show fueled/unfueled breakdown
                 if (info.engineCount > 0) {
-                    if (info.currentHealth != null) {
-                        // Assembled: show fueled/unfueled breakdown
-                        int unfueled = info.engineCount - info.fueledEngines;
-                        if (info.fueledEngines > 0) {
-                            int fueledPts = info.fueledEngines * info.enginePowerPerEngine;
-                            lore.add(ChatColor.GRAY + "Engines: " + ChatColor.GREEN + info.fueledEngines
-                                + ChatColor.GRAY + " (" + fueledPts + " pts)");
-                        }
-                        if (unfueled > 0) {
-                            lore.add(ChatColor.GRAY + "Engines " + ChatColor.RED + "(unfueled)"
-                                + ChatColor.GRAY + ": " + ChatColor.WHITE + unfueled
-                                + ChatColor.GRAY + " (0 pts)");
-                        }
-                    } else {
-                        // Not assembled: just show count
-                        int engineTotalPts = info.engineCount * info.enginePowerPerEngine;
-                        lore.add(ChatColor.GRAY + "Engines: " + ChatColor.WHITE + info.engineCount
-                            + ChatColor.GRAY + " (" + engineTotalPts + " pts when fueled)");
+                    int unfueled = info.engineCount - info.fueledEngines;
+                    if (info.fueledEngines > 0) {
+                        int fueledPts = info.fueledEngines * info.enginePowerPerEngine;
+                        lore.add(ChatColor.GRAY + "Engines: " + ChatColor.GREEN + info.fueledEngines
+                            + ChatColor.GRAY + " (" + fueledPts + " pts)");
+                    }
+                    if (unfueled > 0) {
+                        lore.add(ChatColor.GRAY + "Engines " + ChatColor.RED + "(unfueled)"
+                            + ChatColor.GRAY + ": " + ChatColor.WHITE + unfueled
+                            + ChatColor.GRAY + " (0 pts)");
                     }
                 }
 

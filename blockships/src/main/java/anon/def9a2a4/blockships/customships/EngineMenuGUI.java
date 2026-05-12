@@ -112,25 +112,54 @@ public class EngineMenuGUI {
      */
     private static ItemStack createStatusItem(ShipInstance ship, int engineBlockIndex) {
         int burnTicks = ship.wheelData != null ? ship.wheelData.getEngineBurnTicks(engineBlockIndex) : 0;
-        boolean hasFuel = burnTicks > 0;
+        boolean isBurning = burnTicks > 0;
 
-        ItemStack status = new ItemStack(hasFuel ? Material.FURNACE : Material.BLAST_FURNACE);
-        ItemMeta meta = status.getItemMeta();
-        if (meta != null) {
-            meta.setDisplayName(hasFuel
-                ? ChatColor.GREEN + "Engine Running"
-                : ChatColor.GRAY + "Engine Idle");
-            if (hasFuel) {
+        // Check if fuel items are present in slots (even if not burning yet)
+        boolean hasFuelItems = false;
+        if (ship.wheelData != null) {
+            ItemStack[] slots = ship.wheelData.getAllEngineFuelSlots().get(engineBlockIndex);
+            if (slots != null) {
+                for (ItemStack item : slots) {
+                    if (item != null && item.getType() != Material.AIR) {
+                        hasFuelItems = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        ItemStack status;
+        if (isBurning) {
+            status = new ItemStack(Material.FURNACE);
+            ItemMeta meta = status.getItemMeta();
+            if (meta != null) {
                 int seconds = burnTicks / 20;
+                meta.setDisplayName(ChatColor.GREEN + "Engine Running");
                 meta.setLore(Arrays.asList(
                     ChatColor.GRAY + "Fuel remaining: " + ChatColor.WHITE + seconds + "s"
                 ));
-            } else {
+                status.setItemMeta(meta);
+            }
+        } else if (hasFuelItems) {
+            status = new ItemStack(Material.FURNACE);
+            ItemMeta meta = status.getItemMeta();
+            if (meta != null) {
+                meta.setDisplayName(ChatColor.YELLOW + "Engine Ready");
+                meta.setLore(Arrays.asList(
+                    ChatColor.GRAY + "Fuel loaded — will burn when sailing"
+                ));
+                status.setItemMeta(meta);
+            }
+        } else {
+            status = new ItemStack(Material.BLAST_FURNACE);
+            ItemMeta meta = status.getItemMeta();
+            if (meta != null) {
+                meta.setDisplayName(ChatColor.GRAY + "Engine Idle");
                 meta.setLore(Arrays.asList(
                     ChatColor.GRAY + "Add fuel to the left slots"
                 ));
+                status.setItemMeta(meta);
             }
-            status.setItemMeta(meta);
         }
         return status;
     }
