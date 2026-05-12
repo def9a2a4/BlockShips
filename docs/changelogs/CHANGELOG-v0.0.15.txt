@@ -99,6 +99,26 @@ Bot-based integration tests for airships intermittently failed because mountShip
 
 Solution: Teleport the bot 1 block in -Z before mounting so the driver seat is the closest shulker. Applied to both smallairship and chunk-test airship test suites.
 
+### Collision Coordinator Bugs (e646b27, 3c3900d)
+
+Post-launch review caught several issues in ShipCollisionCoordinator:
+
+1. **Force mutation**: `getShipCollisionForce()` returned a direct reference to the pooled vector in the force map. When ShipCollision.detect() called `.mul(PARKED_SHIP_FORCE_DAMPING)` on a parked ship, it permanently corrupted the stored force. Now returns a defensive copy.
+
+2. **Sound cooldown off-by-one**: `Map.Entry.setValue()` returns the old value, not the new one. The removeIf lambda compared the pre-decrement value, making every cooldown last 16 ticks instead of 15.
+
+3. **Zero mass NaN**: If both ships had `shipMass: 0` in config, `totalMass` would be 0, producing NaN forces that propagate through the physics system. Both masses now clamped to minimum 1.0.
+
+4. **Allocation reduction**: `shipsByWorld` lists are now cleared in-place instead of dropped and re-created every tick. Removed a shared mutable `ZERO_FORCE` static constant that could be corrupted by future callers.
+
+5. **Midpoint origin precision**: `(float)(a + b) * 0.5f` cast to float before multiplying, losing precision on the sum. Now `(float)((a + b) * 0.5)` keeps the multiply in double precision.
+
 ### CI Test: Version-Based Test Skips (8dffcff, 8aab3ec)
 
 Added VERSION_SKIPS map to skip tests on specific Minecraft versions where protocol differences cause false failures (e.g. mineflayer hardcodes jump:0x01 in steer_vehicle packets on pre-1.21.3, causing airship drift). Both test-bot.js and chunk-test.js now support `--only=<substring>` to run specific tests.
+
+### CI Test: Bot Facing Direction (3c0af42)
+
+On 1.21.4, `/tp` without explicit yaw leaves the bot facing south instead of west. The smallship test spawns a ship that inherits the bot's yaw, so it moved in -Z instead of -X, failing the westward movement assertion. Bigship passed by luck because the bot's yaw happened to end up pointing west after the prior test's control sequence.
+
+Solution: Add `yaw=90 pitch=0` to all `/tp` commands in test-bot.js and chunk-test.js so the bot always faces west regardless of server version.

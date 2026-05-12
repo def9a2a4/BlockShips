@@ -140,8 +140,16 @@ Standard Minecraft furnace fuels:
 - **Hopper-compatible** if feasible (auto-fuel from adjacent hoppers)
 
 ### Engine Detection
-- Custom crafting recipe produces a tagged blast furnace
-- Placed block tagged via NBT or custom model data (details TBD)
+- Custom crafting recipe produces a blast furnace with PDC tag (`blockships:custom_item_id` = `"ship_engine"`)
+- `BlockPlaceEvent` listener transfers PDC from item to placed block's TileState
+- During ship scan, check each blast furnace's TileState PDC for the engine tag
+- Suppress vanilla smelting on tagged blast furnaces (`FurnaceBurnEvent`/`FurnaceSmeltEvent` cancel)
+- Need to verify/add PDC serialization in `BlockStructureScanner` so the tag survives assembly/disassembly
+
+### Hopper Integration
+- **Pre-assembly only:** hoppers feed fuel into engine blast furnaces using vanilla mechanics
+- If engines run out of fuel mid-voyage, player must stop/disassemble and let hoppers refuel
+- No custom hopper simulation on assembled ships
 
 ### Visual Feedback
 - Running engines emit smoke particles
@@ -240,8 +248,6 @@ Vertical Accel: 85%
 
 ## Open Questions
 
-1. **Engine detection specifics:** Exact NBT/tag approach for custom blast furnace
-2. **Vertical tuning:** `DENSITY_SCALE` and `ENGINE_VERTICAL_SCALE` values
-3. **Acceleration floor:** Exact value (configurable, will tune in-game)
-4. **Engine points:** ~30 confirmed, exact value may need tuning
-5. **Hopper integration:** Feasibility of auto-fueling engines from hoppers on assembled ships
+1. **Vertical tuning:** `DENSITY_SCALE` and `ENGINE_VERTICAL_SCALE` values
+2. **Acceleration floor:** Exact value (configurable, will tune in-game)
+3. **Engine points:** ~30 confirmed, exact value may need tuning
