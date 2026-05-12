@@ -2212,7 +2212,8 @@ public class DisplayShip implements Listener {
 
     @EventHandler
     public void onEngineMenuClick(InventoryClickEvent event) {
-        if (!(event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder)) return;
+        if (!(event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder)
+            && !(event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineBlockMenuHolder)) return;
 
         int slot = event.getRawSlot();
         // Allow fuel slot interactions, block everything else in the top inventory
@@ -2242,10 +2243,26 @@ public class DisplayShip implements Listener {
     public void onEngineMenuClose(InventoryCloseEvent event) {
         if (event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder holder) {
             anon.def9a2a4.blockships.customships.EngineMenuGUI.saveFuelState(holder);
+        } else if (event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineBlockMenuHolder blockHolder) {
+            anon.def9a2a4.blockships.customships.EngineMenuGUI.saveBlockFuelState(blockHolder);
         }
     }
 
     // ===== Ship Engine event handlers =====
+
+    /**
+     * Opens custom fuel GUI instead of vanilla blast furnace UI on placed ship engines.
+     */
+    @EventHandler
+    public void onRightClickPlacedEngine(PlayerInteractEvent event) {
+        if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+        if (event.getClickedBlock() == null) return;
+        if (event.getClickedBlock().getType() != Material.BLAST_FURNACE) return;
+        if (!isShipEngine(event.getClickedBlock())) return;
+
+        event.setCancelled(true);
+        anon.def9a2a4.blockships.customships.EngineMenuGUI.openForBlock(event.getPlayer(), event.getClickedBlock());
+    }
 
     private static final String ENGINE_PDC_VALUE = "ship_engine";
 

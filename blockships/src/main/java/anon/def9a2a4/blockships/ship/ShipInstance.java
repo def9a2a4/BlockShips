@@ -1379,37 +1379,22 @@ public class ShipInstance {
      * Spawns smoke particles at fueled engine positions. Throttled to every 5 ticks.
      */
     private void spawnEngineSmoke() {
-        if (!"custom".equals(shipType) || model.engineLocalPositions.isEmpty()) return;
+        if (!"custom".equals(shipType) || model.engineBlockIndices.isEmpty()) return;
         if (resolveWheelData() == null || !hasDriver) return;
         if (++engineSmokeTick % 5 != 0) return;
 
-        // Check if any engine is actually burning
-        boolean anyFueled = false;
-        for (int idx : model.engineBlockIndices) {
-            if (wheelData.getEngineBurnTicks(idx) > 0) {
-                anyFueled = true;
-                break;
-            }
-        }
-        if (!anyFueled) return;
-
-        Location vLoc = vehicle.getLocation();
-        float yawRad = (float) java.lang.Math.toRadians(-vLoc.getYaw());
-        float cosYaw = (float) java.lang.Math.cos(yawRad);
-        float sinYaw = (float) java.lang.Math.sin(yawRad);
-
-        for (int i = 0; i < model.engineLocalPositions.size(); i++) {
-            int engineIdx = model.engineBlockIndices.get(i);
+        for (int engineIdx : model.engineBlockIndices) {
             if (wheelData.getEngineBurnTicks(engineIdx) <= 0) continue;
 
-            org.joml.Vector3f local = model.engineLocalPositions.get(i);
-            // Rotate local position by ship yaw
-            double wx = vLoc.getX() + local.x * cosYaw - local.z * sinYaw;
-            double wy = vLoc.getY() + local.y + 1.0; // offset up slightly
-            double wz = vLoc.getZ() + local.x * sinYaw + local.z * cosYaw;
-
-            vLoc.getWorld().spawnParticle(org.bukkit.Particle.CAMPFIRE_SIGNAL_SMOKE,
-                wx, wy, wz, 1, 0.1, 0.2, 0.1, 0.01);
+            // Find the engine's collision shulker by block index
+            for (CollisionBox box : colliders) {
+                if (box.blockIndex == engineIdx && box.entity != null && box.entity.isValid()) {
+                    Location loc = box.entity.getLocation();
+                    loc.getWorld().spawnParticle(org.bukkit.Particle.CAMPFIRE_COSY_SMOKE,
+                        loc.getX(), loc.getY() + 1.0, loc.getZ(), 0, 0.0, 0.05, 0.0, 1.0);
+                    break;
+                }
+            }
         }
     }
 

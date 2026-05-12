@@ -45,14 +45,16 @@ public class ShipWheelMenu {
         public final int bannerCount;
         public final int sailPower;
         public final int engineCount;
+        public final int fueledEngines;
         public final int enginePowerPerEngine; // power points per engine (from config)
+        public final float sailCapRatio; // sail cap threshold (from config, e.g. 0.8)
         public final float sailRatio;  // uncapped sail ratio (before sail cap applied)
         public final float ratio;      // final ratio (with sail cap + engines)
 
         public ShipInfo(int blockCount, int totalWeight, int mass, float density, int maxHealth,
                         Integer currentHealth, float surfaceOffset, float airDensity, float waterDensity,
-                        int woolCount, int bannerCount, int sailPower, int engineCount,
-                        int enginePowerPerEngine, float sailRatio, float ratio) {
+                        int woolCount, int bannerCount, int sailPower, int engineCount, int fueledEngines,
+                        int enginePowerPerEngine, float sailCapRatio, float sailRatio, float ratio) {
             this.blockCount = blockCount;
             this.totalWeight = totalWeight;
             this.mass = mass;
@@ -66,7 +68,9 @@ public class ShipWheelMenu {
             this.bannerCount = bannerCount;
             this.sailPower = sailPower;
             this.engineCount = engineCount;
+            this.fueledEngines = fueledEngines;
             this.enginePowerPerEngine = enginePowerPerEngine;
+            this.sailCapRatio = sailCapRatio;
             this.sailRatio = sailRatio;
             this.ratio = ratio;
         }
@@ -336,6 +340,8 @@ public class ShipWheelMenu {
             return MenuAction.CAMERA_DISTANCE_DECREASE;
         } else if (slot == CAMERA_PLUS_SLOT) {
             return MenuAction.CAMERA_DISTANCE_INCREASE;
+        } else if (slot == STATS_SLOT) {
+            return MenuAction.INFO;  // Clicking stats banner also refreshes ship info
         }
         return MenuAction.NONE;
     }
@@ -382,17 +388,17 @@ public class ShipWheelMenu {
 
         // Compute power ratio
         int engineCount = wheelData.getLastDetectedEngineCount();
+        int fueledEngines = wheelData.countFueledEngines();
         int mass = Math.max(1, wheelData.getLastDetectedPositiveWeight());
         float sailRatio = (float) (config.basePower + sailPower) / mass;
         float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
-        // TODO: only count fueled engines once fuel system is implemented
-        float engineBonus = (float) (engineCount * config.enginePower) / mass;
+        float engineBonus = (float) (fueledEngines * config.enginePower) / mass;
         float ratio = Math.min(nonEngineRatio + engineBonus, 1.0f);
 
         return new ShipInfo(blockCount, totalWeight, mass, density, maxHealth, currentHealth,
                             surfaceOffset, airDensity, waterDensity,
-                            woolCount, bannerCount, sailPower, engineCount, config.enginePower,
-                            sailRatio, ratio);
+                            woolCount, bannerCount, sailPower, engineCount, fueledEngines,
+                            config.enginePower, config.sailCapRatio, sailRatio, ratio);
     }
 
     /**
@@ -440,7 +446,7 @@ public class ShipWheelMenu {
 
                 // Ship stats (simplified — detailed breakdown in stats item below)
                 lore.add("");
-                int speedPercent = Math.round(info.ratio / 0.8f * 100);
+                int speedPercent = Math.round(info.ratio / info.sailCapRatio * 100);
                 String maxTag = info.ratio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
                 lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%" + maxTag);
                 if (speedPercent < 50) {
@@ -491,28 +497,55 @@ public class ShipWheelMenu {
                 }
 
                 // Sail power with cap indicator
-                if (info.sailRatio > 0.8f) {
-                    lore.add(ChatColor.GRAY + "Sail Power: " + ChatColor.WHITE + info.sailPower + " pts"
-                        + ChatColor.YELLOW + " (capped at 80%)");
-                } else if (info.sailPower > 0) {
-                    lore.add(ChatColor.GRAY + "Sail Power: " + ChatColor.WHITE + info.sailPower + " pts");
+                if (info.sailPower > 0) {
+                    int sailCapPoints = Math.round(0.8f * info.mass);
+                    int effectiveSailPts = 2 + info.sailPower;  // base + sail
+                    if (effectiveSailPts > sailCapPoints) {
+                        lore.add(ChatColor.GRAY + "Sail Power: " + ChatColor.WHITE + info.sailPower + " pts"
+                            + ChatColor.YELLOW + " (capped at " + sailCapPoints + " pts)");
+                    } else {
+                        lore.add(ChatColor.GRAY + "Sail Power: " + ChatColor.WHITE + info.sailPower + " pts");
+                    }
                 }
 
-                // Engines
+                // Engines (only show fuel status if ship is assembled)
                 if (info.engineCount > 0) {
-                    int engineTotalPts = info.engineCount * info.enginePowerPerEngine;
-                    lore.add(ChatColor.GRAY + "Engines: " + ChatColor.WHITE + info.engineCount
-                        + ChatColor.GRAY + " (" + engineTotalPts + " pts)");
+                    if (info.currentHealth != null) {
+                        // Assembled: show fueled/unfueled breakdown
+                        int unfueled = info.engineCount - info.fueledEngines;
+                        if (info.fueledEngines > 0) {
+                            int fueledPts = info.fueledEngines * info.enginePowerPerEngine;
+                            lore.add(ChatColor.GRAY + "Engines: " + ChatColor.GREEN + info.fueledEngines
+                                + ChatColor.GRAY + " (" + fueledPts + " pts)");
+                        }
+                        if (unfueled > 0) {
+                            lore.add(ChatColor.GRAY + "Engines " + ChatColor.RED + "(unfueled)"
+                                + ChatColor.GRAY + ": " + ChatColor.WHITE + unfueled
+                                + ChatColor.GRAY + " (0 pts)");
+                        }
+                    } else {
+                        // Not assembled: just show count
+                        int engineTotalPts = info.engineCount * info.enginePowerPerEngine;
+                        lore.add(ChatColor.GRAY + "Engines: " + ChatColor.WHITE + info.engineCount
+                            + ChatColor.GRAY + " (" + engineTotalPts + " pts when fueled)");
+                    }
                 }
 
                 lore.add("");
                 lore.add(ChatColor.GRAY + "Mass: " + ChatColor.WHITE + info.mass);
-                int totalPower = 2 + info.sailPower + info.engineCount * info.enginePowerPerEngine;
-                lore.add(ChatColor.GRAY + "Total Power: " + ChatColor.WHITE + totalPower + " pts");
+                // Effective power after caps (matches physics formula):
+                // cappedSailPower = min(basePower + sailPower, 0.8 * mass)
+                // + enginePower, capped at 1.0 * mass total
+                int rawSailPower = 2 + info.sailPower;
+                int cappedSailPower = Math.min(rawSailPower, Math.round(0.8f * info.mass));
+                int enginePts = info.fueledEngines * info.enginePowerPerEngine;
+                int effectivePower = Math.min(cappedSailPower + enginePts, info.mass);
+                lore.add(ChatColor.GRAY + "Effective Power: " + ChatColor.WHITE + effectivePower
+                    + ChatColor.GRAY + " / " + info.mass + " pts");
                 lore.add(ChatColor.GRAY + "Power Ratio: " + ChatColor.YELLOW
                     + String.format("%.2f", info.ratio) + ChatColor.GRAY + " / 1.00");
 
-                int speedPercent = Math.round(info.ratio / 0.8f * 100);
+                int speedPercent = Math.round(info.ratio / info.sailCapRatio * 100);
                 String maxTag = info.ratio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
                 lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%" + maxTag);
             } else {

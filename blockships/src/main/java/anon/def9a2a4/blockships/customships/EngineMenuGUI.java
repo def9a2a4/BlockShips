@@ -195,4 +195,87 @@ public class EngineMenuGUI {
         }
         ship.wheelData.setEngineFuelSlots(holder.getEngineBlockIndex(), slots);
     }
+
+    // ===== Placed (unassembled) engine block GUI =====
+
+    /**
+     * Holder for a placed engine block's fuel GUI (no ShipInstance).
+     */
+    public static class EngineBlockMenuHolder implements org.bukkit.inventory.InventoryHolder {
+        private final org.bukkit.block.Block block;
+        private Inventory inventory;
+
+        public EngineBlockMenuHolder(org.bukkit.block.Block block) {
+            this.block = block;
+        }
+
+        public org.bukkit.block.Block getBlock() { return block; }
+
+        @Override
+        public Inventory getInventory() { return inventory; }
+        public void setInventory(Inventory inv) { this.inventory = inv; }
+    }
+
+    /**
+     * Opens the custom fuel GUI for a placed (unassembled) engine block.
+     * Reads fuel from the blast furnace's container inventory, writes back on close.
+     */
+    public static void openForBlock(org.bukkit.entity.Player player, org.bukkit.block.Block block) {
+        EngineBlockMenuHolder holder = new EngineBlockMenuHolder(block);
+        Inventory gui = Bukkit.createInventory(holder, 9, ChatColor.DARK_GRAY + "Ship Engine");
+        holder.setInventory(gui);
+
+        // Fill with glass panes
+        ItemStack filler = new ItemStack(Material.GRAY_STAINED_GLASS_PANE);
+        ItemMeta fillerMeta = filler.getItemMeta();
+        if (fillerMeta != null) {
+            fillerMeta.setDisplayName(" ");
+            filler.setItemMeta(fillerMeta);
+        }
+        for (int i = 0; i < 9; i++) {
+            gui.setItem(i, filler);
+        }
+
+        // Load fuel from the blast furnace's container inventory
+        if (block.getState() instanceof org.bukkit.block.Container container) {
+            org.bukkit.inventory.Inventory blockInv = container.getSnapshotInventory();
+            for (int i = 0; i < FUEL_SLOTS.length && i < blockInv.getSize(); i++) {
+                gui.setItem(FUEL_SLOTS[i], blockInv.getItem(i));
+            }
+        }
+
+        // Status item (always idle for placed blocks — no burn ticks)
+        ItemStack status = new ItemStack(Material.BLAST_FURNACE);
+        ItemMeta meta = status.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(ChatColor.GRAY + "Engine Idle");
+            meta.setLore(Arrays.asList(
+                ChatColor.GRAY + "Add fuel, then assemble ship"
+            ));
+            status.setItemMeta(meta);
+        }
+        gui.setItem(STATUS_SLOT, status);
+
+        player.openInventory(gui);
+    }
+
+    /**
+     * Saves fuel from the GUI back to the placed blast furnace container.
+     */
+    public static void saveBlockFuelState(EngineBlockMenuHolder holder) {
+        org.bukkit.block.Block block = holder.getBlock();
+        if (!(block.getState() instanceof org.bukkit.block.Container)) return;
+
+        org.bukkit.block.Container container = (org.bukkit.block.Container) block.getState();
+        org.bukkit.inventory.Inventory blockInv = container.getSnapshotInventory();
+
+        // Clear existing contents and write fuel slots
+        blockInv.clear();
+        Inventory gui = holder.getInventory();
+        for (int i = 0; i < FUEL_SLOTS.length && i < blockInv.getSize(); i++) {
+            ItemStack item = gui.getItem(FUEL_SLOTS[i]);
+            blockInv.setItem(i, (item != null && item.getType() != Material.AIR) ? item.clone() : null);
+        }
+        container.update();
+    }
 }

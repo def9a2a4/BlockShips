@@ -789,7 +789,8 @@ public class ShipWheelManager {
         int speedPercent = Math.round(ratio / config.sailCapRatio * 100);
         player.sendMessage("§7Sails: §f" + woolCount + " wool, " + bannerCount + " banners §7(" + sailPower + " power)");
         if (engineCount > 0) {
-            player.sendMessage("§7Engines: §f" + engineCount);
+            // Detection is pre-assembly, so engines aren't fueled yet — show as unfueled
+            player.sendMessage("§7Engines §c(unfueled)§7: §f" + engineCount + " §7(0 pts — fuel to activate)");
         }
         String speedColor = speedPercent >= 125 ? "§b" : speedPercent >= 100 ? "§a" : speedPercent >= 75 ? "§e" : speedPercent >= 50 ? "§6" : "§c";
         player.sendMessage("§7Speed: " + speedColor + speedPercent + "%" + (speedPercent < 50 ? " §8(add banners or wool as sails!)" : ""));

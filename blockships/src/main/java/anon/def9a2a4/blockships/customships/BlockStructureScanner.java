@@ -376,6 +376,7 @@ public class BlockStructureScanner {
             }
 
             // Count sail blocks and engines for ship stats
+            boolean isEngine = false;
             Material blockMaterial = block.getType();
             if (Tag.WOOL.isTagged(blockMaterial)) {
                 woolCount++;
@@ -389,6 +390,7 @@ public class BlockStructureScanner {
                     String val = tileState.getPersistentDataContainer()
                         .get(engineKey, org.bukkit.persistence.PersistentDataType.STRING);
                     if ("ship_engine".equals(val)) {
+                        isEngine = true;
                         engineCount++;
                         engineBlockIndices.add(blockIndex);
                         engineLocalPositions.add(new Vector3f((float) dx, (float) dy, (float) dz));
@@ -420,6 +422,9 @@ public class BlockStructureScanner {
 
             // Create raw YAML map (for compatibility)
             Map<String, Object> rawYaml = new HashMap<>();
+            if (isEngine) {
+                rawYaml.put("is_engine", true);
+            }
 
             // Check for storage blocks (chests, furnaces, hoppers, etc.)
             ShipModel.StorageConfig storage = null;
@@ -806,6 +811,20 @@ public class BlockStructureScanner {
 
                     banner.setPatterns(patterns);
                     banner.update();
+                }
+            }
+
+            // Restore engine PDC tag on blast furnaces
+            if (Boolean.TRUE.equals(part.rawYaml.get("is_engine"))) {
+                org.bukkit.block.BlockState state = block.getState();
+                if (state instanceof org.bukkit.block.TileState tileState) {
+                    BlockShipsPlugin bsPlugin = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
+                    if (bsPlugin != null) {
+                        NamespacedKey engineKey = new NamespacedKey(bsPlugin, "custom_item_id");
+                        tileState.getPersistentDataContainer().set(engineKey,
+                            org.bukkit.persistence.PersistentDataType.STRING, "ship_engine");
+                        tileState.update();
+                    }
                 }
             }
 
