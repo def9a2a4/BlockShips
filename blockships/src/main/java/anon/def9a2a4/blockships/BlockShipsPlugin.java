@@ -222,6 +222,8 @@ public class BlockShipsPlugin extends JavaPlugin {
                 }
                 // Reload block configuration
                 BlockConfigManager.getInstance().reloadConfig();
+                // Reload help book content
+                HelpBookContent.load(this);
                 // Reload special drowned config
                 if (specialDrownedListener != null) {
                     specialDrownedListener.reloadConfig();

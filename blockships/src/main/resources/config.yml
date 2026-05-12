@@ -71,7 +71,7 @@ custom-ships:
     max-ratio-multiplier: 1.5
     # Absolute floors (minimum stat values regardless of ratio)
     floor-max-speed: 0.05           # 1 block/sec
-    floor-acceleration: 0.005
+    floor-acceleration: 0.015
     floor-rotation-speed: 0.6       # 30s per full revolution
     floor-rotation-acceleration: 0.05
     # Absolute caps (-1 = auto: default * max-ratio-multiplier)

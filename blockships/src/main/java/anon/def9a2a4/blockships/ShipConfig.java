@@ -344,7 +344,7 @@ public class ShipConfig {
         float defaultRatio = 0.7f;
         float maxRatioMultiplier = 1.5f;
         float floorMaxSpeed = 0.05f;           // 1 block/sec
-        float floorAcceleration = 0.005f;
+        float floorAcceleration = 0.015f;
         float floorRotationSpeed = 0.6f;       // 30s per revolution
         float floorRotationAcceleration = 0.05f;
         float capMaxSpeed = -1f;               // -1 = auto (maxRatioMultiplier * default)

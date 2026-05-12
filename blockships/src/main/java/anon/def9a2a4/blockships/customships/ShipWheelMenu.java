@@ -98,10 +98,6 @@ public class ShipWheelMenu {
     // Help icon texture (question mark)
     private static final String HELP_TEXTURE = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZGE5OWIwNWI5YTFkYjRkMjliNWU2NzNkNzdhZTU0YTc3ZWFiNjY4MTg1ODYwMzVjOGEyMDA1YWViODEwNjAyYSJ9fX0=";
 
-    // Help content loaded from help_book.yml via HelpBookContent
-    private static String[][] getHelpSections() {
-        return HelpBookContent.getSections();
-    }
 
     // Menu item slots - Left group: detect/info, Right group: assemble/align/disassemble
     private static final int HELP_SLOT = 0;
@@ -443,7 +439,7 @@ public class ShipWheelMenu {
                 lore.add(ChatColor.GRAY + "Power Ratio: " + ChatColor.YELLOW + String.format("%.2f", info.ratio) + ChatColor.GRAY + " / 1.00");
 
                 // Show effective speed as percentage of default
-                int speedPercent = Math.round(info.ratio / 0.7f * 100);
+                int speedPercent = Math.round(info.ratio / 0.8f * 100);
                 lore.add(ChatColor.GRAY + "Speed: " + ChatColor.GREEN + speedPercent + "%");
             } else {
                 lore.add(ChatColor.GRAY + "No ship detected yet");
@@ -591,12 +587,14 @@ public class ShipWheelMenu {
      */
     private static List<String> createHelpLore() {
         List<String> lore = new ArrayList<>();
-        for (String[] section : getHelpSections()) {
-            lore.add(ChatColor.YELLOW + section[0]);
-            lore.add(ChatColor.GRAY + section[1]);
-        }
+        lore.add(ChatColor.GRAY + "WASD to move, Space is up, Sprint is down");
+        lore.add(ChatColor.GRAY + "Place ship's wheel on ship and click 'Assemble' (boat)");
+        lore.add(ChatColor.GRAY + "Right-click ship to board, Sneak to dismount");
+        lore.add(ChatColor.GRAY + "Sails and engines make you go faster,");
+        lore.add(ChatColor.GRAY + "glowstone and other glowing blocks make you float.");
+        lore.add(ChatColor.GRAY + "Enough floating blocks -> airship");
         lore.add("");
-        lore.add(ChatColor.DARK_GRAY + "Click to open help book");
+        lore.add(ChatColor.DARK_GRAY + "Click for more info -- Captain's Manual");
         return lore;
     }
 

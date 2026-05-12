@@ -786,7 +786,7 @@ public class ShipWheelManager {
         int mass = Math.max(1, Math.abs(totalWeight));
         float sailRatio = (float) (config.basePower + sailPower) / mass;
         float ratio = Math.min(sailRatio, config.sailCapRatio);
-        int speedPercent = Math.round(ratio / config.defaultRatio * 100);
+        int speedPercent = Math.round(ratio / config.sailCapRatio * 100);
         player.sendMessage("§7Sails: §f" + woolCount + " wool, " + bannerCount + " banners §7(" + sailPower + " power)");
         if (engineCount > 0) {
             player.sendMessage("§7Engines: §f" + engineCount);
