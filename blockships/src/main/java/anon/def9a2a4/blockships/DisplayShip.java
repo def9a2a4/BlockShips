@@ -1604,8 +1604,8 @@ public class DisplayShip implements Listener {
         World world = loc.getWorld();
         if (world == null) return;
 
-        world.spawnParticle(Particle.SMOKE, loc, 8, 0.3, 0.3, 0.3, 0.02);
-        world.spawnParticle(Particle.CAMPFIRE_COSY_SMOKE, loc, 2, 0.1, 0.1, 0.1, 0.01);
+        world.spawnParticle(Particle.SMOKE, loc, 15, 0.5, 0.5, 0.5, 0.02);
+        world.spawnParticle(Particle.CAMPFIRE_COSY_SMOKE, loc, 4, 0.25, 0.25, 0.25, 0.01);
     }
 
     /**

@@ -378,9 +378,9 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
         World world = shipA.vehicle.getWorld();
         Location contact = new Location(world, cx, cy, cz);
 
-        // Grey dust particles scaled by penetration (3-6 particles)
-        int count = Math.min(3 + (int) (totalPenetration * 2), 6);
-        world.spawnParticle(Particle.DUST, contact, count, 0.3, 0.3, 0.3, 0, COLLISION_DUST);
+        // Grey dust particles scaled by penetration (5-12 particles)
+        int count = Math.min(5 + (int) (totalPenetration * 3), 12);
+        world.spawnParticle(Particle.DUST, contact, count, 0.6, 0.6, 0.6, 0, COLLISION_DUST);
 
         // Sound with per-pair cooldown
         long pairKey = pairKey(shipA.id, shipB.id);
