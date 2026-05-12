@@ -1759,6 +1759,30 @@ public class ShipInstance {
     }
 
     /**
+     * Dismounts a player from any ship, with fallback scan if getVehicle() fails.
+     * Used during disconnect when Bukkit may have already cleared the vehicle reference.
+     * Bypasses VehicleExitEvent to avoid teleport/velocity logic on a disconnecting player.
+     */
+    public static boolean dismountPlayerFromAnyShip(Player player) {
+        // Fast path: vehicle reference is still valid
+        if (dismountPlayer(player)) return true;
+
+        // Fallback: scan all ships' seat shulkers for this player
+        for (ShipInstance ship : ShipRegistry.getAllShips()) {
+            for (int i = 0; i < ship.seatShulkers.size(); i++) {
+                Shulker seat = ship.seatShulkers.get(i);
+                if (seat == null) continue;
+                if (seat.getPassengers().contains(player)) {
+                    seat.removePassenger(player);
+                    ship.freeSeat(i);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * Marks a seat as free.
      */
     public void freeSeat(int seatIndex) {

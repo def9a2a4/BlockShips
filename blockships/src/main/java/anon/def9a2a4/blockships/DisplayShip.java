@@ -1421,7 +1421,7 @@ public class DisplayShip implements Listener {
      */
     private void handlePlayerDisconnectOnShip(Player player) {
         try {
-            ShipInstance.dismountPlayer(player);
+            ShipInstance.dismountPlayerFromAnyShip(player);
         } catch (Exception e) {
             plugin.getLogger().warning("Error handling player disconnect from ship: " + e.getMessage());
         }
