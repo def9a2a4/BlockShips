@@ -46,6 +46,9 @@ public class BlockShipsPlugin extends JavaPlugin {
         BlockConfigManager.initialize(this);
         BlockConfigManager.getInstance().loadConfig();
 
+        // Load help book content from bundled YAML
+        HelpBookContent.load(this);
+
         // Check for ProtocolLib for WASD input detection
         if (Bukkit.getPluginManager().getPlugin("ProtocolLib") == null) {
             getLogger().warning("==================================================");

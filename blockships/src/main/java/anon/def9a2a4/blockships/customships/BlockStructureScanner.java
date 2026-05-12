@@ -312,9 +312,10 @@ public class BlockStructureScanner {
         int weightedBlockCount = 0;
         float sumX = 0, sumY = 0, sumZ = 0;
 
-        // Track sail blocks for ship stats (power-to-mass ratio)
+        // Track sail blocks and engines for ship stats (power-to-mass ratio)
         int woolCount = 0;
         int bannerCount = 0;
+        int engineCount = 0;
 
         // Track ship bounds (for all blocks)
         float minY = Float.MAX_VALUE;
@@ -372,12 +373,24 @@ public class BlockStructureScanner {
                 sumZ += (float) dz;
             }
 
-            // Count sail blocks for ship stats
+            // Count sail blocks and engines for ship stats
             Material blockMaterial = block.getType();
             if (Tag.WOOL.isTagged(blockMaterial)) {
                 woolCount++;
             } else if (blockMaterial.name().contains("BANNER")) {
                 bannerCount++;
+            } else if (blockMaterial == Material.BLAST_FURNACE) {
+                // Check PDC for ship engine tag
+                org.bukkit.block.BlockState blockState = block.getState();
+                if (blockState instanceof org.bukkit.block.TileState tileState) {
+                    NamespacedKey engineKey = new NamespacedKey(
+                        org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips"), "custom_item_id");
+                    String val = tileState.getPersistentDataContainer()
+                        .get(engineKey, org.bukkit.persistence.PersistentDataType.STRING);
+                    if ("ship_engine".equals(val)) {
+                        engineCount++;
+                    }
+                }
             }
 
             // Store position to block index mapping (for finding driver seat block)
@@ -599,7 +612,8 @@ public class BlockStructureScanner {
             maxY,
             assemblyYaw,  // Store for disassembly rotation calculation
             woolCount,
-            bannerCount
+            bannerCount,
+            engineCount
         );
     }
 

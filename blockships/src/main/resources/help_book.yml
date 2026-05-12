@@ -1,0 +1,29 @@
+# Captain's Manual - Help book content
+# Bundled in the jar, NOT copied to the user's data folder.
+# Used for both the ship wheel menu help button and the craftable Captain's Manual.
+# Set content to null for dynamic content (filled at runtime).
+
+title: "Captain's Manual"
+author: "BlockShips"
+
+sections:
+  - title: "Controls"
+    content: null  # Filled at runtime via SteerPacketCompat
+
+  - title: "Getting Started"
+    content: "Place wheel on your build, open this menu by right-clicking the wheel, click the boat to assemble."
+
+  - title: "Riding"
+    content: "Right-click ship or seat to board. Sneak to exit."
+
+  - title: "Menu & Disassembly"
+    content: "Right-click the ship's wheel, or sneak + right-click anywhere on the ship. Click the pickaxe to disassemble."
+
+  - title: "Cannons"
+    content: "Dispenser + obsidian behind it. Right-click the obsidian to fire, or use the fireball in the menu."
+
+  - title: "Functionality"
+    content: "Chests, barrels, and other containers work on ships. Attach leads to fences to bring mobs or boats along. Stairs work as extra seats for players."
+
+  - title: "Weight & Buoyancy"
+    content: "Wood/wool = light, metals = heavy. Glowstone/end rods = lighter than air (airship!). Click the book to detect your ship and see more info."

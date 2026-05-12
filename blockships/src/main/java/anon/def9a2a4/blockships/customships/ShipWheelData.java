@@ -43,6 +43,7 @@ public class ShipWheelData {
     private int lastDetectedPositiveWeight;  // Positive weight sum (for health calculation)
     private int lastDetectedWoolCount;   // Wool blocks (for ship stats)
     private int lastDetectedBannerCount; // Banner blocks (for ship stats)
+    private int lastDetectedEngineCount; // Ship engine blocks
 
     // Categorized blocks for colored particle visualization
     private Set<Location> lastDetectedRegularBlocks;  // Non-seat blocks (white particles)
@@ -132,12 +133,13 @@ public class ShipWheelData {
     }
 
     public void setLastDetectedStats(int blockCount, int totalWeight, int positiveWeight,
-                                     int woolCount, int bannerCount) {
+                                     int woolCount, int bannerCount, int engineCount) {
         this.lastDetectedBlockCount = blockCount;
         this.lastDetectedWeight = totalWeight;
         this.lastDetectedPositiveWeight = positiveWeight;
         this.lastDetectedWoolCount = woolCount;
         this.lastDetectedBannerCount = bannerCount;
+        this.lastDetectedEngineCount = engineCount;
     }
 
     public int getLastDetectedWoolCount() {
@@ -146,6 +148,10 @@ public class ShipWheelData {
 
     public int getLastDetectedBannerCount() {
         return lastDetectedBannerCount;
+    }
+
+    public int getLastDetectedEngineCount() {
+        return lastDetectedEngineCount;
     }
 
     public Set<Location> getLastDetectedRegularBlocks() {

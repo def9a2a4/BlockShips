@@ -80,10 +80,12 @@ public class ShipPhysics {
         // Custom ships: compute ratio from sail power and mass
         float sailRatio = ship.model.getSailRatio(config.basePower);
         // Apply sail cap: non-engine contribution capped at sailCapRatio
-        float ratio = Math.min(sailRatio, config.sailCapRatio);
-        // TODO: add engine power when engine system is implemented
-        // ratio = Math.min(ratio + enginePower / mass, 1.0f)
-        ratio = Math.min(ratio, 1.0f);
+        float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
+        // Add engine power (TODO: only count fueled engines once fuel system is implemented)
+        int fueledEngines = ship.model.engineCount;
+        float enginePower = fueledEngines * config.enginePower;
+        int mass = Math.max(1, Math.abs(ship.model.totalWeight));
+        float ratio = Math.min(nonEngineRatio + enginePower / mass, 1.0f);
 
         // Compute horizontal stats
         effectiveMaxSpeed = config.computeStat(ratio, config.maxSpeed,
@@ -99,8 +101,8 @@ public class ShipPhysics {
         if (ship.isAirship) {
             float density = ship.model.getDensity();
             float densityMag = Math.abs(density);
-            float verticalRatio = Math.min(densityMag * config.verticalDensityScale, 1.0f);
-            // TODO: add engine vertical bonus when engine system is implemented
+            float engineVerticalBonus = (mass > 0) ? (enginePower / mass) * config.verticalEngineScale : 0;
+            float verticalRatio = Math.min(densityMag * config.verticalDensityScale + engineVerticalBonus, 1.0f);
 
             effectiveMaxVerticalSpeed = config.computeStat(verticalRatio, config.maxVerticalSpeed,
                 config.floorMaxVerticalSpeed, config.capMaxVerticalSpeed);

@@ -46,6 +46,7 @@ public class ShipConfig {
 
     // Ship stats (power-to-mass ratio system, custom ships only)
     public final int basePower;              // Free power points every ship gets (default: 2)
+    public final int enginePower;            // Power points per fueled engine (default: 30)
     public final float sailCapRatio;         // Sail contribution capped at this ratio (default: 0.8)
     public final float defaultRatio;         // Ratio that maps to current default stats (default: 0.7)
     public final float maxRatioMultiplier;   // Stats multiplier at ratio 1.0, relative to default (default: 1.5)
@@ -129,6 +130,7 @@ public class ShipConfig {
         this.verticalDrag = b.verticalDrag;
         this.verticalForwardNudge = b.verticalForwardNudge;
         this.basePower = b.basePower;
+        this.enginePower = b.enginePower;
         this.sailCapRatio = b.sailCapRatio;
         this.defaultRatio = b.defaultRatio;
         this.maxRatioMultiplier = b.maxRatioMultiplier;
@@ -268,6 +270,7 @@ public class ShipConfig {
             .assemblyNudgeHeight((float) cfg.getDouble("custom-ships.assembly-nudge-height", 0.2))
             // Ship stats (power-to-mass ratio system)
             .basePower(cfg.getInt("custom-ships.stats.base-power", 2))
+            .enginePower(cfg.getInt("custom-ships.stats.engine-power", 30))
             .sailCapRatio((float) cfg.getDouble("custom-ships.stats.sail-cap-ratio", 0.8))
             .defaultRatio((float) cfg.getDouble("custom-ships.stats.default-ratio", 0.7))
             .maxRatioMultiplier((float) cfg.getDouble("custom-ships.stats.max-ratio-multiplier", 1.5))
@@ -336,6 +339,7 @@ public class ShipConfig {
         float verticalForwardNudge = 0.011f;
         // Ship stats defaults
         int basePower = 2;
+        int enginePower = 30;
         float sailCapRatio = 0.8f;
         float defaultRatio = 0.7f;
         float maxRatioMultiplier = 1.5f;
@@ -404,6 +408,7 @@ public class ShipConfig {
         Builder verticalDrag(float v) { verticalDrag = v; return this; }
         Builder verticalForwardNudge(float v) { verticalForwardNudge = v; return this; }
         Builder basePower(int v) { basePower = v; return this; }
+        Builder enginePower(int v) { enginePower = v; return this; }
         Builder sailCapRatio(float v) { sailCapRatio = v; return this; }
         Builder defaultRatio(float v) { defaultRatio = v; return this; }
         Builder maxRatioMultiplier(float v) { maxRatioMultiplier = v; return this; }

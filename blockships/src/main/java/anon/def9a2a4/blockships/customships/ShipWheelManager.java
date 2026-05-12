@@ -16,6 +16,7 @@ import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
+import org.bukkit.NamespacedKey;
 import org.bukkit.Tag;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
@@ -678,7 +679,7 @@ public class ShipWheelManager {
                 org.bukkit.attribute.AttributeInstance maxHealthInstance = maxHealthAttr != null ? ship.vehicle.getAttribute(maxHealthAttr) : null;
                 double maxHealth = maxHealthInstance != null ? maxHealthInstance.getBaseValue() : 100.0;
                 wheelData.setLastDetectedStats(blockCount, ship.model.totalWeight, (int)maxHealth,
-                    ship.model.woolCount, ship.model.bannerCount);
+                    ship.model.woolCount, ship.model.bannerCount, ship.model.engineCount);
                 wheelData.setLastHealth(currentHealth, maxHealth);
                 // Store buoyancy data from ship model
                 wheelData.lastCenterOfVolumeY = ship.model.centerOfVolume.y();
@@ -722,6 +723,8 @@ public class ShipWheelManager {
 
         int woolCount = 0;
         int bannerCount = 0;
+        int engineCount = 0;
+        NamespacedKey engineKey = new NamespacedKey(plugin, "custom_item_id");
         for (Location loc : shipBlocks) {
             Block block = loc.getBlock();
             BlockProperties props = configManager.getProperties(block.getType(), block.getBlockData());
@@ -733,12 +736,21 @@ public class ShipWheelManager {
                 regularBlocks.add(loc);
             }
 
-            // Count sail blocks for ship stats
+            // Count sail blocks and engines for ship stats
             Material blockMaterial = block.getType();
             if (Tag.WOOL.isTagged(blockMaterial)) {
                 woolCount++;
             } else if (blockMaterial.name().contains("BANNER")) {
                 bannerCount++;
+            } else if (blockMaterial == Material.BLAST_FURNACE) {
+                org.bukkit.block.BlockState blockState = block.getState();
+                if (blockState instanceof org.bukkit.block.TileState tileState) {
+                    String val = tileState.getPersistentDataContainer()
+                        .get(engineKey, org.bukkit.persistence.PersistentDataType.STRING);
+                    if ("ship_engine".equals(val)) {
+                        engineCount++;
+                    }
+                }
             }
         }
 
@@ -775,12 +787,15 @@ public class ShipWheelManager {
         float ratio = Math.min(sailRatio, config.sailCapRatio);
         int speedPercent = Math.round(ratio / config.defaultRatio * 100);
         player.sendMessage("§7Sails: §f" + woolCount + " wool, " + bannerCount + " banners §7(" + sailPower + " power)");
+        if (engineCount > 0) {
+            player.sendMessage("§7Engines: §f" + engineCount);
+        }
         player.sendMessage("§7Power Ratio: §e" + String.format("%.2f", ratio) + " §7/ 1.00 §7(Speed: §a" + speedPercent + "%§7)");
 
         // Store detected blocks and stats for Ship Info display
         int positiveWeight = calculatePositiveWeight(shipBlocks);
         wheelData.setLastDetectedBlocks(shipBlocks);
-        wheelData.setLastDetectedStats(blockCount, totalWeight, positiveWeight, woolCount, bannerCount);
+        wheelData.setLastDetectedStats(blockCount, totalWeight, positiveWeight, woolCount, bannerCount, engineCount);
         wheelData.setLastDetectedBlockCategories(regularBlocks, seatBlocks, driverSeat);
 
         // Calculate and store buoyancy data for Ship Info display

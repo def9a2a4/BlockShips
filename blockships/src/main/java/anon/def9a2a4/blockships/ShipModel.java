@@ -51,7 +51,7 @@ public final class ShipModel {
     public final int woolCount;                 // Number of wool blocks
     public final int bannerCount;               // Number of banner blocks
     public final int sailPower;                 // Sail power points (wool*3 + banner*7)
-    // Engine data is not stored in ShipModel (fuel state is dynamic, tracked in ShipWheelData)
+    public final int engineCount;               // Number of ship engine blocks detected
 
     // Assembly rotation (for custom block ships disassembly)
     public final float assemblyYaw;             // Yaw angle when assembled (0=S, 90=W, 180=N, 270=E), 0 for prefab ships
@@ -60,7 +60,7 @@ public final class ShipModel {
                      Vector3f collisionOffset, Matrix3f rotationTransform, List<SeatInfo> seats, List<CannonInfo> cannons,
                      float waterFloatOffset, double maxHealth, double healthRegenPerSecond,
                      int totalWeight, int blockCount, Vector3f centerOfVolume, float minY, float maxY, float assemblyYaw,
-                     int woolCount, int bannerCount) {
+                     int woolCount, int bannerCount, int engineCount) {
         this.parts = parts;
         this.items = items;
         this.initialRotation = initialRotation;
@@ -81,6 +81,7 @@ public final class ShipModel {
         this.woolCount = woolCount;
         this.bannerCount = bannerCount;
         this.sailPower = woolCount * 3 + bannerCount * 7;
+        this.engineCount = engineCount;
     }
 
     /**
@@ -405,7 +406,7 @@ public final class ShipModel {
         return new ShipModel(out, items, initialRotation, positionOffset, collisionOffset, rotationTransform,
                            seats, new ArrayList<>(), waterFloatOffset, maxHealth, healthRegenPerSecond,
                            0, 0, new Vector3f(0, 0, 0), 0f, 0f, 0f,
-                           0, 0);
+                           0, 0, 0);
     }
 
     private static Matrix4f matrixFromMinecraftNbt(final float[] a) {
@@ -614,6 +615,7 @@ public final class ShipModel {
         map.put("max_y", maxY);
         map.put("wool_count", woolCount);
         map.put("banner_count", bannerCount);
+        map.put("engine_count", engineCount);
         map.put("center_of_volume", Arrays.asList(centerOfVolume.x, centerOfVolume.y, centerOfVolume.z));
 
         // Serialize parts - include transformation matrix (not in rawYaml for custom ships)
@@ -768,12 +770,13 @@ public final class ShipModel {
         // Ship stats
         int woolCount = map.containsKey("wool_count") ? ((Number) map.get("wool_count")).intValue() : 0;
         int bannerCount = map.containsKey("banner_count") ? ((Number) map.get("banner_count")).intValue() : 0;
+        int engineCount = map.containsKey("engine_count") ? ((Number) map.get("engine_count")).intValue() : 0;
 
         return new ShipModel(parts, new ArrayList<>(), initialRotation, positionOffset,
             collisionOffset, rotationTransform, seats, cannons, waterFloatOffset,
             maxHealth, healthRegenPerSecond, totalWeight, blockCount,
             centerOfVolume, minY, maxY, assemblyYaw,
-            woolCount, bannerCount);
+            woolCount, bannerCount, engineCount);
     }
 }
 

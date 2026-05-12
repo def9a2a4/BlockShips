@@ -1,6 +1,7 @@
 package anon.def9a2a4.blockships.customships;
 
 import anon.def9a2a4.blockships.BlockShipsPlugin;
+import anon.def9a2a4.blockships.HelpBookContent;
 import anon.def9a2a4.blockships.ShipConfig;
 import anon.def9a2a4.blockships.ShipRegistry;
 import anon.def9a2a4.blockships.ship.ShipInstance;
@@ -14,8 +15,6 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 
 import anon.def9a2a4.blockships.ItemUtil;
-import anon.def9a2a4.blockships.util.SteerPacketCompat;
-import org.bukkit.inventory.meta.BookMeta;
 import org.bukkit.inventory.meta.SkullMeta;
 
 import java.util.ArrayList;
@@ -44,11 +43,12 @@ public class ShipWheelMenu {
         public final int woolCount;
         public final int bannerCount;
         public final int sailPower;
+        public final int engineCount;
         public final float ratio;
 
         public ShipInfo(int blockCount, int totalWeight, float density, int maxHealth,
                         Integer currentHealth, float surfaceOffset, float airDensity, float waterDensity,
-                        int woolCount, int bannerCount, int sailPower, float ratio) {
+                        int woolCount, int bannerCount, int sailPower, int engineCount, float ratio) {
             this.blockCount = blockCount;
             this.totalWeight = totalWeight;
             this.density = density;
@@ -60,6 +60,7 @@ public class ShipWheelMenu {
             this.woolCount = woolCount;
             this.bannerCount = bannerCount;
             this.sailPower = sailPower;
+            this.engineCount = engineCount;
             this.ratio = ratio;
         }
     }
@@ -97,18 +98,9 @@ public class ShipWheelMenu {
     // Help icon texture (question mark)
     private static final String HELP_TEXTURE = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZGE5OWIwNWI5YTFkYjRkMjliNWU2NzNkNzdhZTU0YTc3ZWFiNjY4MTg1ODYwMzVjOGEyMDA1YWViODEwNjAyYSJ9fX0=";
 
-    // Help content - used for both lore and book
-    // Controls text is dynamic based on server version (sprint vs S+Space for descent)
+    // Help content loaded from help_book.yml via HelpBookContent
     private static String[][] getHelpSections() {
-        return new String[][] {
-            {"Controls", SteerPacketCompat.getAirshipControlsHelp()},
-            {"Getting Started", "Place wheel on your build, open this menu by right-clicking the wheel, click the boat to assemble."},
-            {"Riding", "Right-click ship or seat to board. Sneak to exit."},
-            {"Menu & Disassembly", "Right-click the ship's wheel, or sneak + right-click anywhere on the ship. Click the pickaxe to disassemble."},
-            {"Cannons", "Dispenser + obsidian behind it. Right-click the obsidian to fire, or use the fireball in the menu."},
-            {"Functionality", "Chests, barrels, and other containers work on ships. Attach leads to fences to bring mobs or boats along. Stairs work as extra seats for players."},
-            {"Weight & Buoyancy", "Wood/wool = light, metals = heavy. Glowstone/end rods = lighter than air (airship!). Click the book to detect your ship and see more info."}
-        };
+        return HelpBookContent.getSections();
     }
 
     // Menu item slots - Left group: detect/info, Right group: assemble/align/disassemble
@@ -384,16 +376,17 @@ public class ShipWheelMenu {
         int sailPower = woolCount * 3 + bannerCount * 7;
 
         // Compute power ratio
-        int basePower = config.basePower;
-        int weightedBlockCount = blockCount > 0 ? blockCount : 1;
+        int engineCount = wheelData.getLastDetectedEngineCount();
         int mass = Math.max(1, Math.abs(totalWeight));
-        float sailRatio = (float) (basePower + sailPower) / mass;
-        float ratio = Math.min(sailRatio, config.sailCapRatio);
-        // TODO: add engine power when engine system is implemented
+        float sailRatio = (float) (config.basePower + sailPower) / mass;
+        float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
+        // TODO: only count fueled engines once fuel system is implemented
+        float engineBonus = (float) (engineCount * config.enginePower) / mass;
+        float ratio = Math.min(nonEngineRatio + engineBonus, 1.0f);
 
         return new ShipInfo(blockCount, totalWeight, density, maxHealth, currentHealth,
                             surfaceOffset, airDensity, waterDensity,
-                            woolCount, bannerCount, sailPower, ratio);
+                            woolCount, bannerCount, sailPower, engineCount, ratio);
     }
 
     /**
@@ -443,6 +436,9 @@ public class ShipWheelMenu {
                     if (info.bannerCount > 0) {
                         lore.add(ChatColor.GRAY + "Banners: " + ChatColor.WHITE + info.bannerCount + ChatColor.GRAY + " (" + (info.bannerCount * 7) + " pts)");
                     }
+                }
+                if (info.engineCount > 0) {
+                    lore.add(ChatColor.GRAY + "Engines: " + ChatColor.WHITE + info.engineCount);
                 }
                 lore.add(ChatColor.GRAY + "Power Ratio: " + ChatColor.YELLOW + String.format("%.2f", info.ratio) + ChatColor.GRAY + " / 1.00");
 
@@ -604,61 +600,12 @@ public class ShipWheelMenu {
         return lore;
     }
 
-    private static final int BOOK_LINES_PER_PAGE = 12;
-    private static final int BOOK_CHARS_PER_LINE = 20;
-
-    /**
-     * Estimates the number of lines a section will take in the book.
-     */
-    private static int estimateSectionLines(String title, String content) {
-        // Title takes 1 line, content wraps based on chars per line, plus 1 blank line after
-        int contentLines = (int) Math.ceil((double) content.length() / BOOK_CHARS_PER_LINE);
-        return 1 + contentLines + 1;
-    }
-
     /**
      * Opens a help book for the player with detailed ship information.
      *
      * @param player The player to show the book to
      */
     public static void openHelpBook(Player player) {
-        ItemStack book = new ItemStack(Material.WRITTEN_BOOK);
-        BookMeta bookMeta = (BookMeta) book.getItemMeta();
-        if (bookMeta != null) {
-            bookMeta.setTitle("Ship Wheel Help");
-            bookMeta.setAuthor("BlockShips");
-
-            StringBuilder currentPage = new StringBuilder();
-            int currentLines = 0;
-            String[][] helpSections = getHelpSections();
-
-            for (int i = 0; i < helpSections.length; i++) {
-                String title = helpSections[i][0];
-                String content = helpSections[i][1];
-                int sectionLines = estimateSectionLines(title, content);
-
-                // Check if this section fits on current page
-                if (currentLines > 0 && currentLines + sectionLines > BOOK_LINES_PER_PAGE) {
-                    // Add "next page" hint and start new page
-                    currentPage.append(ChatColor.GRAY).append(ChatColor.ITALIC).append("(next page >>>)");
-                    bookMeta.addPage(currentPage.toString());
-                    currentPage = new StringBuilder();
-                    currentLines = 0;
-                }
-
-                // Add section to current page
-                currentPage.append(ChatColor.DARK_BLUE).append(ChatColor.BOLD).append(title).append("\n");
-                currentPage.append(ChatColor.BLACK).append(content).append("\n\n");
-                currentLines += sectionLines;
-            }
-
-            // Add final page if it has content
-            if (currentPage.length() > 0) {
-                bookMeta.addPage(currentPage.toString());
-            }
-
-            book.setItemMeta(bookMeta);
-        }
-        player.openBook(book);
+        HelpBookContent.openBook(player);
     }
 }

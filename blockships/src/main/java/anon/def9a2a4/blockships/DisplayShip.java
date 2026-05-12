@@ -15,6 +15,9 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.inventory.FurnaceBurnEvent;
+import org.bukkit.event.inventory.FurnaceSmeltEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
@@ -978,7 +981,10 @@ public class DisplayShip implements Listener {
 
         // Create item using unified ItemFactory
         ItemStack result;
-        if (plugin.getConfig().contains("custom-items." + shipType)) {
+        if ("captains_manual".equals(shipType)) {
+            // Captain's Manual: create a written book with help content
+            result = HelpBookContent.createWrittenBook();
+        } else if (plugin.getConfig().contains("custom-items." + shipType)) {
             // Custom items
             result = itemFactory.createItem(shipType, variant, banner);
         } else {
@@ -2162,6 +2168,65 @@ public class DisplayShip implements Listener {
             ItemStack wheelItem = createShipWheelItem();
             world.dropItemNaturally(block.getLocation(), wheelItem);
         }
+    }
+
+    // ===== Ship Engine event handlers =====
+
+    private static final String ENGINE_PDC_VALUE = "ship_engine";
+
+    /**
+     * Transfers PDC tag from a ship engine item to the placed block's TileState.
+     * Bukkit doesn't auto-transfer item PDC to blocks, so we do it manually.
+     */
+    @EventHandler
+    public void onPlaceShipEngine(BlockPlaceEvent event) {
+        ItemStack item = event.getItemInHand();
+        if (item.getType() != Material.BLAST_FURNACE || !item.hasItemMeta()) return;
+
+        PersistentDataContainer itemPdc = item.getItemMeta().getPersistentDataContainer();
+        NamespacedKey itemIdKey = new NamespacedKey(plugin, "custom_item_id");
+        String itemId = itemPdc.get(itemIdKey, PersistentDataType.STRING);
+        if (!ENGINE_PDC_VALUE.equals(itemId)) return;
+
+        // Transfer PDC to block TileState
+        Block block = event.getBlockPlaced();
+        org.bukkit.block.BlockState state = block.getState();
+        if (state instanceof org.bukkit.block.TileState tileState) {
+            tileState.getPersistentDataContainer().set(itemIdKey, PersistentDataType.STRING, ENGINE_PDC_VALUE);
+            tileState.update();
+        }
+    }
+
+    /**
+     * Prevents ship engines from burning fuel via vanilla smelting mechanics.
+     */
+    @EventHandler
+    public void onEngineFurnaceBurn(FurnaceBurnEvent event) {
+        if (isShipEngine(event.getBlock())) {
+            event.setCancelled(true);
+        }
+    }
+
+    /**
+     * Prevents ship engines from smelting items via vanilla mechanics.
+     */
+    @EventHandler
+    public void onEngineFurnaceSmelt(FurnaceSmeltEvent event) {
+        if (isShipEngine(event.getBlock())) {
+            event.setCancelled(true);
+        }
+    }
+
+    /**
+     * Checks if a block is a ship engine (blast furnace with engine PDC tag).
+     */
+    private boolean isShipEngine(Block block) {
+        if (block.getType() != Material.BLAST_FURNACE) return false;
+        org.bukkit.block.BlockState state = block.getState();
+        if (!(state instanceof org.bukkit.block.TileState tileState)) return false;
+        NamespacedKey itemIdKey = new NamespacedKey(plugin, "custom_item_id");
+        return ENGINE_PDC_VALUE.equals(
+            tileState.getPersistentDataContainer().get(itemIdKey, PersistentDataType.STRING));
     }
 
     /**

@@ -61,6 +61,8 @@ custom-ships:
   stats:
     # Free power points every ship gets (ensures even tiny ships have some base ratio)
     base-power: 2
+    # Power points per fueled engine (unfueled engines contribute 0)
+    engine-power: 30
     # Sail contribution capped at this ratio (engines needed to push past it)
     sail-cap-ratio: 0.8
     # Ratio that maps to current default stats (0.55 max speed, 1.5 rotation, etc.)
@@ -217,6 +219,21 @@ custom-items:
         B: [BLAST_FURNACE]
       result-name: "Ship Engine"
       result-item: BLAST_FURNACE
+
+  captains_manual:
+    display-name: "Captain's Manual"
+    base-material: WRITTEN_BOOK
+    stackable: false
+    recipe:
+      pattern:
+        - "   "
+        - " WB"
+        - "   "
+      ingredients:
+        W: ["blockships:ship_wheel"]
+        B: [BOOK]
+      result-name: "Captain's Manual"
+      result-item: WRITTEN_BOOK
 
 # list of ships
 ships:
