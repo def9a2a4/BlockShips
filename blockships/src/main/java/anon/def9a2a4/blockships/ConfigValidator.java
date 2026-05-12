@@ -1,5 +1,7 @@
 package anon.def9a2a4.blockships;
 
+import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.*;
@@ -73,5 +75,41 @@ public class ConfigValidator {
             }
         }
         return result.toString(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Adds missing config keys from the bundled JAR config into the user's config.
+     * Only adds keys that don't exist — never overwrites existing values.
+     * Controlled by the "auto-migrate-config" setting (default: true).
+     */
+    public static void migrateConfig(JavaPlugin plugin) {
+        if (!plugin.getConfig().getBoolean("auto-migrate-config", true)) {
+            return;
+        }
+
+        try (InputStream jarStream = plugin.getResource("config.yml")) {
+            if (jarStream == null) return;
+
+            YamlConfiguration jarConfig = YamlConfiguration.loadConfiguration(
+                new InputStreamReader(jarStream, StandardCharsets.UTF_8));
+
+            var diskConfig = plugin.getConfig();
+            int added = 0;
+
+            for (String key : jarConfig.getKeys(true)) {
+                if (!jarConfig.isConfigurationSection(key) && !diskConfig.contains(key)) {
+                    diskConfig.set(key, jarConfig.get(key));
+                    added++;
+                }
+            }
+
+            if (added > 0) {
+                plugin.saveConfig();
+                plugin.reloadConfig();
+                plugin.getLogger().info("Config migration: added " + added + " new config key(s)");
+            }
+        } catch (IOException e) {
+            plugin.getLogger().warning("Config migration failed: " + e.getMessage());
+        }
     }
 }

@@ -36,6 +36,9 @@ public class BlockShipsPlugin extends JavaPlugin {
 
         saveDefaultConfig();
 
+        // Auto-add missing config keys from new plugin versions
+        ConfigValidator.migrateConfig(this);
+
         // Check for config mismatches
         ConfigValidator.checkConfigMismatches(this);
 

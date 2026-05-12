@@ -2,6 +2,8 @@
 
 # Set to false to disable config mismatch warnings on startup
 warn-config-mismatch: true
+# Automatically add missing config keys from new plugin versions (preserves existing values)
+auto-migrate-config: true
 
 # Whether ship blocks emit dynamic light (requires DynLight plugin)
 # https://github.com/def9a2a4/DynLight
