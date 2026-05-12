@@ -55,6 +55,36 @@ custom-ships:
     # Buoyancy damping: velocity damping to prevent oscillation (0.5 = stable)
     damping: 0.5
 
+  # Ship stats (power-to-mass ratio system)
+  # Sails and engines provide power points; block weights provide mass.
+  # ratio = power / mass determines ship performance.
+  stats:
+    # Free power points every ship gets (ensures even tiny ships have some base ratio)
+    base-power: 2
+    # Sail contribution capped at this ratio (engines needed to push past it)
+    sail-cap-ratio: 0.8
+    # Ratio that maps to current default stats (0.55 max speed, 1.5 rotation, etc.)
+    default-ratio: 0.7
+    # Stats multiplier at ratio 1.0 relative to default (1.5 = 50% faster than default)
+    max-ratio-multiplier: 1.5
+    # Absolute floors (minimum stat values regardless of ratio)
+    floor-max-speed: 0.05           # 1 block/sec
+    floor-acceleration: 0.005
+    floor-rotation-speed: 0.6       # 30s per full revolution
+    floor-rotation-acceleration: 0.05
+    # Absolute caps (-1 = auto: default * max-ratio-multiplier)
+    cap-max-speed: -1
+    cap-acceleration: -1
+    cap-rotation-speed: -1
+    cap-rotation-acceleration: -1
+    # Airship vertical stat scaling (density magnitude + engines)
+    vertical-density-scale: 0.3
+    vertical-engine-scale: 0.01
+    floor-max-vertical-speed: 0.03
+    floor-vertical-acceleration: 0.01
+    cap-max-vertical-speed: 0.5
+    cap-vertical-acceleration: 0.1
+
   # Airship controls (for custom ships lighter than air)
   # Ships with density < air-density automatically become airships
   airship-controls:
@@ -172,6 +202,21 @@ custom-items:
       result-name: "Ship Wheel"
       result-item: PLAYER_HEAD
       result-texture-set: SHIP_WHEEL_SET
+
+  ship_engine:
+    display-name: "Ship Engine"
+    base-material: BLAST_FURNACE
+    stackable: true
+    recipe:
+      pattern:
+        - "CCC"
+        - "CBC"
+        - "CCC"
+      ingredients:
+        C: [COPPER_INGOT]
+        B: [BLAST_FURNACE]
+      result-name: "Ship Engine"
+      result-item: BLAST_FURNACE
 
 # list of ships
 ships:

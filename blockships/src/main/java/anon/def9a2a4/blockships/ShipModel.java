@@ -47,13 +47,20 @@ public final class ShipModel {
     public final double maxHealth;              // Maximum health points for the ship
     public final double healthRegenPerSecond;   // Health regeneration rate per second
 
+    // Ship stats (power-to-mass ratio system)
+    public final int woolCount;                 // Number of wool blocks
+    public final int bannerCount;               // Number of banner blocks
+    public final int sailPower;                 // Sail power points (wool*3 + banner*7)
+    // Engine data is not stored in ShipModel (fuel state is dynamic, tracked in ShipWheelData)
+
     // Assembly rotation (for custom block ships disassembly)
     public final float assemblyYaw;             // Yaw angle when assembled (0=S, 90=W, 180=N, 270=E), 0 for prefab ships
 
     public ShipModel(List<ModelPart> parts, List<ItemPart> items, Vector3f initialRotation, Vector3f positionOffset,
                      Vector3f collisionOffset, Matrix3f rotationTransform, List<SeatInfo> seats, List<CannonInfo> cannons,
                      float waterFloatOffset, double maxHealth, double healthRegenPerSecond,
-                     int totalWeight, int blockCount, Vector3f centerOfVolume, float minY, float maxY, float assemblyYaw) {
+                     int totalWeight, int blockCount, Vector3f centerOfVolume, float minY, float maxY, float assemblyYaw,
+                     int woolCount, int bannerCount) {
         this.parts = parts;
         this.items = items;
         this.initialRotation = initialRotation;
@@ -71,6 +78,9 @@ public final class ShipModel {
         this.minY = minY;
         this.maxY = maxY;
         this.assemblyYaw = assemblyYaw;
+        this.woolCount = woolCount;
+        this.bannerCount = bannerCount;
+        this.sailPower = woolCount * 3 + bannerCount * 7;
     }
 
     /**
@@ -79,6 +89,20 @@ public final class ShipModel {
     public float getDensity() {
         if (blockCount == 0) return 0;
         return (float) totalWeight / blockCount;
+    }
+
+    /**
+     * Calculates the ship's power-to-mass ratio for stat scaling.
+     * Uses sail power only (engines are dynamic and added at runtime).
+     * @param basePower Free power points every ship gets
+     * @return The ratio (0.0 to ~1.0+), before sail cap is applied
+     */
+    public float getSailRatio(int basePower) {
+        if (totalWeight <= 0) return 0;
+        // Use totalWeight as mass (sum of all block weights, can be negative for airships)
+        // For ratio purposes, use absolute value to avoid negative ratios
+        int mass = java.lang.Math.max(1, java.lang.Math.abs(totalWeight));
+        return (float) (basePower + sailPower) / mass;
     }
 
     /**
@@ -377,10 +401,11 @@ public final class ShipModel {
 
         // Prefab ships don't use weight-based buoyancy - they use waterFloatOffset from YAML
         // Set weight/blockCount to 0, centerOfVolume to origin, minY/maxY to 0, and assemblyYaw to 0 (prefab ships don't rotate on assembly)
-        // Prefab ships have no cannons (empty list)
+        // Prefab ships have no cannons (empty list) and no sail counting (stats come from config)
         return new ShipModel(out, items, initialRotation, positionOffset, collisionOffset, rotationTransform,
                            seats, new ArrayList<>(), waterFloatOffset, maxHealth, healthRegenPerSecond,
-                           0, 0, new Vector3f(0, 0, 0), 0f, 0f, 0f);
+                           0, 0, new Vector3f(0, 0, 0), 0f, 0f, 0f,
+                           0, 0);
     }
 
     private static Matrix4f matrixFromMinecraftNbt(final float[] a) {
@@ -587,6 +612,8 @@ public final class ShipModel {
         map.put("block_count", blockCount);
         map.put("min_y", minY);
         map.put("max_y", maxY);
+        map.put("wool_count", woolCount);
+        map.put("banner_count", bannerCount);
         map.put("center_of_volume", Arrays.asList(centerOfVolume.x, centerOfVolume.y, centerOfVolume.z));
 
         // Serialize parts - include transformation matrix (not in rawYaml for custom ships)
@@ -738,10 +765,15 @@ public final class ShipModel {
         double maxHealth = 40.0;
         double healthRegenPerSecond = 2.0;
 
+        // Ship stats
+        int woolCount = map.containsKey("wool_count") ? ((Number) map.get("wool_count")).intValue() : 0;
+        int bannerCount = map.containsKey("banner_count") ? ((Number) map.get("banner_count")).intValue() : 0;
+
         return new ShipModel(parts, new ArrayList<>(), initialRotation, positionOffset,
             collisionOffset, rotationTransform, seats, cannons, waterFloatOffset,
             maxHealth, healthRegenPerSecond, totalWeight, blockCount,
-            centerOfVolume, minY, maxY, assemblyYaw);
+            centerOfVolume, minY, maxY, assemblyYaw,
+            woolCount, bannerCount);
     }
 }
 

@@ -10,6 +10,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Registry;
+import org.bukkit.Tag;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
@@ -311,6 +312,10 @@ public class BlockStructureScanner {
         int weightedBlockCount = 0;
         float sumX = 0, sumY = 0, sumZ = 0;
 
+        // Track sail blocks for ship stats (power-to-mass ratio)
+        int woolCount = 0;
+        int bannerCount = 0;
+
         // Track ship bounds (for all blocks)
         float minY = Float.MAX_VALUE;
         float maxY = Float.MIN_VALUE;
@@ -365,6 +370,14 @@ public class BlockStructureScanner {
                 sumX += (float) dx;
                 sumY += (float) dy;
                 sumZ += (float) dz;
+            }
+
+            // Count sail blocks for ship stats
+            Material blockMaterial = block.getType();
+            if (Tag.WOOL.isTagged(blockMaterial)) {
+                woolCount++;
+            } else if (blockMaterial.name().contains("BANNER")) {
+                bannerCount++;
             }
 
             // Store position to block index mapping (for finding driver seat block)
@@ -584,7 +597,9 @@ public class BlockStructureScanner {
             centerOfVolume,
             minY,
             maxY,
-            assemblyYaw  // Store for disassembly rotation calculation
+            assemblyYaw,  // Store for disassembly rotation calculation
+            woolCount,
+            bannerCount
         );
     }
 

@@ -34,6 +34,16 @@ public class ShipPhysics {
     // Track vertical movement state for carrier refresh on stop
     private boolean wasVerticallyMoving = false;
 
+    // Effective stats (computed from power-to-mass ratio for custom ships, or config defaults for prefab)
+    private float effectiveMaxSpeed;
+    private float effectiveAcceleration;
+    private float effectiveRotationSpeed;
+    private float effectiveRotationAcceleration;
+    private float effectiveMaxVerticalSpeed;
+    private float effectiveLiftAcceleration;
+    private float effectiveDescendAcceleration;
+    private boolean statsComputed = false;
+
     // Sound cooldown (ticks until next sound can play)
     private int soundCooldown = 0;
 
@@ -43,6 +53,68 @@ public class ShipPhysics {
 
     public ShipPhysics(ShipInstance ship) {
         this.ship = ship;
+        computeEffectiveStats();
+    }
+
+    /**
+     * Computes effective stats from the ship's power-to-mass ratio.
+     * For custom ships, uses linear interpolation between floor/default/cap.
+     * For prefab ships, uses config values directly.
+     */
+    private void computeEffectiveStats() {
+        ShipConfig config = ship.config;
+
+        if (!"custom".equals(ship.shipType)) {
+            // Prefab ships: use config values directly, no ratio system
+            effectiveMaxSpeed = config.maxSpeed;
+            effectiveAcceleration = config.acceleration;
+            effectiveRotationSpeed = config.rotationSpeed;
+            effectiveRotationAcceleration = config.rotationAcceleration;
+            effectiveMaxVerticalSpeed = config.maxVerticalSpeed;
+            effectiveLiftAcceleration = config.liftAcceleration;
+            effectiveDescendAcceleration = config.descendAcceleration;
+            statsComputed = true;
+            return;
+        }
+
+        // Custom ships: compute ratio from sail power and mass
+        float sailRatio = ship.model.getSailRatio(config.basePower);
+        // Apply sail cap: non-engine contribution capped at sailCapRatio
+        float ratio = Math.min(sailRatio, config.sailCapRatio);
+        // TODO: add engine power when engine system is implemented
+        // ratio = Math.min(ratio + enginePower / mass, 1.0f)
+        ratio = Math.min(ratio, 1.0f);
+
+        // Compute horizontal stats
+        effectiveMaxSpeed = config.computeStat(ratio, config.maxSpeed,
+            config.floorMaxSpeed, config.capMaxSpeed);
+        effectiveAcceleration = config.computeStat(ratio, config.acceleration,
+            config.floorAcceleration, config.capAcceleration);
+        effectiveRotationSpeed = config.computeStat(ratio, config.rotationSpeed,
+            config.floorRotationSpeed, config.capRotationSpeed);
+        effectiveRotationAcceleration = config.computeStat(ratio, config.rotationAcceleration,
+            config.floorRotationAcceleration, config.capRotationAcceleration);
+
+        // Compute vertical stats (airships only, density-based)
+        if (ship.isAirship) {
+            float density = ship.model.getDensity();
+            float densityMag = Math.abs(density);
+            float verticalRatio = Math.min(densityMag * config.verticalDensityScale, 1.0f);
+            // TODO: add engine vertical bonus when engine system is implemented
+
+            effectiveMaxVerticalSpeed = config.computeStat(verticalRatio, config.maxVerticalSpeed,
+                config.floorMaxVerticalSpeed, config.capMaxVerticalSpeed);
+            effectiveLiftAcceleration = config.computeStat(verticalRatio, config.liftAcceleration,
+                config.floorVerticalAcceleration, config.capVerticalAcceleration);
+            effectiveDescendAcceleration = config.computeStat(verticalRatio, config.descendAcceleration,
+                config.floorVerticalAcceleration, config.capVerticalAcceleration);
+        } else {
+            effectiveMaxVerticalSpeed = config.maxVerticalSpeed;
+            effectiveLiftAcceleration = config.liftAcceleration;
+            effectiveDescendAcceleration = config.descendAcceleration;
+        }
+
+        statsComputed = true;
     }
 
     /**
@@ -84,12 +156,12 @@ public class ShipPhysics {
 
         // Apply acceleration/deceleration based on input state
         if (ship.isForwardPressed) {
-            currentSpeed = Math.min(currentSpeed + config.acceleration, config.maxSpeed);
+            currentSpeed = Math.min(currentSpeed + effectiveAcceleration, effectiveMaxSpeed);
         } else if (ship.isBackwardPressed) {
             if (currentSpeed > 0) {
                 currentSpeed = Math.max(currentSpeed - config.activeDeceleration, 0.0f);
             } else {
-                currentSpeed = Math.max(currentSpeed - config.acceleration, -config.maxSpeed);
+                currentSpeed = Math.max(currentSpeed - effectiveAcceleration, -effectiveMaxSpeed);
             }
         }
 
@@ -150,13 +222,13 @@ public class ShipPhysics {
         // Update rotation based on input state
         if (ship.isLeftPressed) {
             currentRotationVelocity = Math.max(
-                currentRotationVelocity - config.rotationAcceleration,
-                -config.rotationSpeed
+                currentRotationVelocity - effectiveRotationAcceleration,
+                -effectiveRotationSpeed
             );
         } else if (ship.isRightPressed) {
             currentRotationVelocity = Math.min(
-                currentRotationVelocity + config.rotationAcceleration,
-                config.rotationSpeed
+                currentRotationVelocity + effectiveRotationAcceleration,
+                effectiveRotationSpeed
             );
         } else {
             // No input - apply momentum decay
@@ -346,12 +418,12 @@ public class ShipPhysics {
         ShipConfig config = ship.config;
 
         if (ship.isSpacePressed) {
-            currentYVelocity = Math.min(currentYVelocity + config.liftAcceleration, config.maxVerticalSpeed);
+            currentYVelocity = Math.min(currentYVelocity + effectiveLiftAcceleration, effectiveMaxVerticalSpeed);
             if (Math.abs(currentSpeed) < config.verticalForwardNudge) {
                 currentSpeed = config.verticalForwardNudge;
             }
         } else if (ship.isSprintPressed) {
-            currentYVelocity = Math.max(currentYVelocity - config.descendAcceleration, -config.maxVerticalSpeed);
+            currentYVelocity = Math.max(currentYVelocity - effectiveDescendAcceleration, -effectiveMaxVerticalSpeed);
             if (Math.abs(currentSpeed) < config.verticalForwardNudge) {
                 currentSpeed = config.verticalForwardNudge;
             }

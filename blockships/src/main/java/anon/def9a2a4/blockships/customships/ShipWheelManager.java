@@ -16,6 +16,7 @@ import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
+import org.bukkit.Tag;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.entity.Player;
@@ -676,7 +677,8 @@ public class ShipWheelManager {
                 org.bukkit.attribute.Attribute maxHealthAttr = anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth();
                 org.bukkit.attribute.AttributeInstance maxHealthInstance = maxHealthAttr != null ? ship.vehicle.getAttribute(maxHealthAttr) : null;
                 double maxHealth = maxHealthInstance != null ? maxHealthInstance.getBaseValue() : 100.0;
-                wheelData.setLastDetectedStats(blockCount, ship.model.totalWeight, (int)maxHealth);
+                wheelData.setLastDetectedStats(blockCount, ship.model.totalWeight, (int)maxHealth,
+                    ship.model.woolCount, ship.model.bannerCount);
                 wheelData.setLastHealth(currentHealth, maxHealth);
                 // Store buoyancy data from ship model
                 wheelData.lastCenterOfVolumeY = ship.model.centerOfVolume.y();
@@ -718,6 +720,8 @@ public class ShipWheelManager {
         // Move one block behind the wheel (opposite of facing direction)
         driverSeat.add(facing.getOppositeFace().getModX(), 0, facing.getOppositeFace().getModZ());
 
+        int woolCount = 0;
+        int bannerCount = 0;
         for (Location loc : shipBlocks) {
             Block block = loc.getBlock();
             BlockProperties props = configManager.getProperties(block.getType(), block.getBlockData());
@@ -727,6 +731,14 @@ public class ShipWheelManager {
                 seatBlocks.add(loc);
             } else {
                 regularBlocks.add(loc);
+            }
+
+            // Count sail blocks for ship stats
+            Material blockMaterial = block.getType();
+            if (Tag.WOOL.isTagged(blockMaterial)) {
+                woolCount++;
+            } else if (blockMaterial.name().contains("BANNER")) {
+                bannerCount++;
             }
         }
 
@@ -756,11 +768,19 @@ public class ShipWheelManager {
         } else {
             player.sendMessage("§7Seats: §c0 §7(default seat at wheel will be used)");
         }
+        // Ship stats
+        int sailPower = woolCount * 3 + bannerCount * 7;
+        int mass = Math.max(1, Math.abs(totalWeight));
+        float sailRatio = (float) (config.basePower + sailPower) / mass;
+        float ratio = Math.min(sailRatio, config.sailCapRatio);
+        int speedPercent = Math.round(ratio / config.defaultRatio * 100);
+        player.sendMessage("§7Sails: §f" + woolCount + " wool, " + bannerCount + " banners §7(" + sailPower + " power)");
+        player.sendMessage("§7Power Ratio: §e" + String.format("%.2f", ratio) + " §7/ 1.00 §7(Speed: §a" + speedPercent + "%§7)");
 
         // Store detected blocks and stats for Ship Info display
         int positiveWeight = calculatePositiveWeight(shipBlocks);
         wheelData.setLastDetectedBlocks(shipBlocks);
-        wheelData.setLastDetectedStats(blockCount, totalWeight, positiveWeight);
+        wheelData.setLastDetectedStats(blockCount, totalWeight, positiveWeight, woolCount, bannerCount);
         wheelData.setLastDetectedBlockCategories(regularBlocks, seatBlocks, driverSeat);
 
         // Calculate and store buoyancy data for Ship Info display

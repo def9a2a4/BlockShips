@@ -40,9 +40,15 @@ public class ShipWheelMenu {
         public final float surfaceOffset;
         public final float airDensity;
         public final float waterDensity;
+        // Ship stats
+        public final int woolCount;
+        public final int bannerCount;
+        public final int sailPower;
+        public final float ratio;
 
         public ShipInfo(int blockCount, int totalWeight, float density, int maxHealth,
-                        Integer currentHealth, float surfaceOffset, float airDensity, float waterDensity) {
+                        Integer currentHealth, float surfaceOffset, float airDensity, float waterDensity,
+                        int woolCount, int bannerCount, int sailPower, float ratio) {
             this.blockCount = blockCount;
             this.totalWeight = totalWeight;
             this.density = density;
@@ -51,6 +57,10 @@ public class ShipWheelMenu {
             this.surfaceOffset = surfaceOffset;
             this.airDensity = airDensity;
             this.waterDensity = waterDensity;
+            this.woolCount = woolCount;
+            this.bannerCount = bannerCount;
+            this.sailPower = sailPower;
+            this.ratio = ratio;
         }
     }
 
@@ -368,8 +378,22 @@ public class ShipWheelMenu {
             maxHealth = Math.max(1, positiveWeight);
         }
 
+        // Ship stats
+        int woolCount = wheelData.getLastDetectedWoolCount();
+        int bannerCount = wheelData.getLastDetectedBannerCount();
+        int sailPower = woolCount * 3 + bannerCount * 7;
+
+        // Compute power ratio
+        int basePower = config.basePower;
+        int weightedBlockCount = blockCount > 0 ? blockCount : 1;
+        int mass = Math.max(1, Math.abs(totalWeight));
+        float sailRatio = (float) (basePower + sailPower) / mass;
+        float ratio = Math.min(sailRatio, config.sailCapRatio);
+        // TODO: add engine power when engine system is implemented
+
         return new ShipInfo(blockCount, totalWeight, density, maxHealth, currentHealth,
-                            surfaceOffset, airDensity, waterDensity);
+                            surfaceOffset, airDensity, waterDensity,
+                            woolCount, bannerCount, sailPower, ratio);
     }
 
     /**
@@ -409,6 +433,22 @@ public class ShipWheelMenu {
                 } else {
                     lore.add(ChatColor.RED + "Sits very low");
                 }
+
+                // Ship stats
+                lore.add("");
+                if (info.woolCount > 0 || info.bannerCount > 0) {
+                    if (info.woolCount > 0) {
+                        lore.add(ChatColor.GRAY + "Wool: " + ChatColor.WHITE + info.woolCount + ChatColor.GRAY + " (" + (info.woolCount * 3) + " pts)");
+                    }
+                    if (info.bannerCount > 0) {
+                        lore.add(ChatColor.GRAY + "Banners: " + ChatColor.WHITE + info.bannerCount + ChatColor.GRAY + " (" + (info.bannerCount * 7) + " pts)");
+                    }
+                }
+                lore.add(ChatColor.GRAY + "Power Ratio: " + ChatColor.YELLOW + String.format("%.2f", info.ratio) + ChatColor.GRAY + " / 1.00");
+
+                // Show effective speed as percentage of default
+                int speedPercent = Math.round(info.ratio / 0.7f * 100);
+                lore.add(ChatColor.GRAY + "Speed: " + ChatColor.GREEN + speedPercent + "%");
             } else {
                 lore.add(ChatColor.GRAY + "No ship detected yet");
                 lore.add(ChatColor.GRAY + "Click to detect ship");
