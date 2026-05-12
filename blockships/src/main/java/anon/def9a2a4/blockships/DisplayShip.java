@@ -931,52 +931,58 @@ public class DisplayShip implements Listener {
         String configPath = plugin.getConfig().contains("ships." + shipType) ? "ships." : "custom-items.";
         String recipePath = configPath + shipType + ".recipe";
 
-        // Load recipe pattern and ingredients
-        List<String> pattern = plugin.getConfig().getStringList(recipePath + ".pattern");
-        if (pattern.isEmpty() || pattern.size() != 3) {
-            e.getInventory().setResult(null);
-            return;
-        }
+        boolean shapeless = plugin.getConfig().getBoolean(recipePath + ".shapeless", false);
 
-        // Build ingredient map
-        Map<Character, List<RecipeIngredient>> ingredientMap = new HashMap<>();
-        var ingredientsSection = plugin.getConfig().getConfigurationSection(recipePath + ".ingredients");
-        if (ingredientsSection != null) {
-            for (String key : ingredientsSection.getKeys(false)) {
-                List<String> ingredientStrings = plugin.getConfig().getStringList(recipePath + ".ingredients." + key);
-                try {
-                    List<RecipeIngredient> ingredients = RecipeIngredient.parseList(ingredientStrings, plugin, this.textureManager);
-                    ingredientMap.put(key.charAt(0), ingredients);
-                } catch (IllegalArgumentException ex) {
-                    plugin.getLogger().warning("Failed to parse ingredient for " + shipType + ": " + ex.getMessage());
-                    e.getInventory().setResult(null);
-                    return;
+        // For shapeless recipes, Bukkit already validated ingredient matching
+        // For shaped recipes, use RecipeValidator for variant extraction
+        String variant = null;
+        ItemStack banner = null;
+        String balloonColor = null;
+
+        if (shapeless) {
+            // Shapeless: Bukkit handles validation. Extract banner if present.
+            banner = RecipeValidator.extractBanner(e.getInventory());
+        } else {
+            // Shaped: full pattern-based validation
+            List<String> pattern = plugin.getConfig().getStringList(recipePath + ".pattern");
+            if (pattern.isEmpty() || pattern.size() != 3) {
+                e.getInventory().setResult(null);
+                return;
+            }
+
+            Map<Character, List<RecipeIngredient>> ingredientMap = new HashMap<>();
+            var ingredientsSection = plugin.getConfig().getConfigurationSection(recipePath + ".ingredients");
+            if (ingredientsSection != null) {
+                for (String key : ingredientsSection.getKeys(false)) {
+                    List<String> ingredientStrings = plugin.getConfig().getStringList(recipePath + ".ingredients." + key);
+                    try {
+                        List<RecipeIngredient> ingredients = RecipeIngredient.parseList(ingredientStrings, plugin, this.textureManager);
+                        ingredientMap.put(key.charAt(0), ingredients);
+                    } catch (IllegalArgumentException ex) {
+                        plugin.getLogger().warning("Failed to parse ingredient for " + shipType + ": " + ex.getMessage());
+                        e.getInventory().setResult(null);
+                        return;
+                    }
                 }
             }
-        }
 
-        // Validate crafting with RecipeValidator
-        RecipeValidator.ValidationResult validation = RecipeValidator.validateCrafting(
-                e.getInventory(),
-                pattern,
-                ingredientMap
-        );
+            RecipeValidator.ValidationResult validation = RecipeValidator.validateCrafting(
+                    e.getInventory(),
+                    pattern,
+                    ingredientMap
+            );
 
-        if (!validation.isValid()) {
-            e.getInventory().setResult(null);
-            return;
-        }
+            if (!validation.isValid()) {
+                e.getInventory().setResult(null);
+                return;
+            }
 
-        // Extract banner (for ship customization)
-        ItemStack banner = RecipeValidator.extractBanner(e.getInventory());
+            banner = RecipeValidator.extractBanner(e.getInventory());
+            variant = validation.getPrimaryVariant();
 
-        // Get primary variant (wood type, wool color, etc.)
-        String variant = validation.getPrimaryVariant();
-
-        // For airships, extract balloon color from the crafting matrix
-        String balloonColor = null;
-        if (plugin.getConfig().getString("ships." + shipType + ".type", "").equals("airship")) {
-            balloonColor = extractBalloonColor(e.getInventory());
+            if (plugin.getConfig().getString("ships." + shipType + ".type", "").equals("airship")) {
+                balloonColor = extractBalloonColor(e.getInventory());
+            }
         }
 
         // Create item using unified ItemFactory
@@ -992,6 +998,27 @@ public class DisplayShip implements Listener {
             result = createShipKitWithBalloon(shipType, banner, variant, balloonColor);
         }
         e.getInventory().setResult(result);
+    }
+
+    @EventHandler
+    public void onCraftNonConsumable(org.bukkit.event.inventory.CraftItemEvent event) {
+        if (!(event.getRecipe() instanceof Keyed keyed)) return;
+        if (!keyed.getKey().getNamespace().equals(plugin.getName().toLowerCase())) return;
+        String recipeKey = keyed.getKey().getKey();
+        if (!recipeKey.equals("captains_manual_kit_recipe")) return;
+
+        // Return the ship wheel to the player after crafting
+        for (ItemStack item : event.getInventory().getMatrix()) {
+            if (item != null && isShipWheel(item)) {
+                ItemStack wheelCopy = item.clone();
+                wheelCopy.setAmount(1);
+                org.bukkit.entity.HumanEntity crafter = event.getWhoClicked();
+                Bukkit.getScheduler().runTask(plugin, () -> {
+                    crafter.getInventory().addItem(wheelCopy);
+                });
+                break;
+            }
+        }
     }
 
     @EventHandler
@@ -1281,6 +1308,13 @@ public class DisplayShip implements Listener {
                 e.setCancelled(true);
                 return;
             }
+        }
+
+        // Check if this shulker is a ship engine - open fuel GUI
+        if (storageBlockIndex >= 0 && inst.model.engineBlockIndices.contains(storageBlockIndex)) {
+            anon.def9a2a4.blockships.customships.EngineMenuGUI.open(player, inst, storageBlockIndex);
+            e.setCancelled(true);
+            return;
         }
 
         // Check if this shulker has storage
@@ -2167,6 +2201,37 @@ public class DisplayShip implements Listener {
             World world = block.getWorld();
             ItemStack wheelItem = createShipWheelItem();
             world.dropItemNaturally(block.getLocation(), wheelItem);
+        }
+    }
+
+    // ===== Engine Menu GUI event handlers =====
+
+    @EventHandler
+    public void onEngineMenuClick(InventoryClickEvent event) {
+        if (!(event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder)) return;
+
+        int slot = event.getRawSlot();
+        // Allow fuel slot interactions, block everything else in the top inventory
+        if (slot >= 0 && slot < 9) {
+            if (!anon.def9a2a4.blockships.customships.EngineMenuGUI.isFuelSlot(slot)) {
+                event.setCancelled(true);
+                return;
+            }
+            // Validate fuel: if placing an item, check it's valid fuel
+            ItemStack cursor = event.getCursor();
+            if (cursor != null && cursor.getType() != Material.AIR) {
+                if (!anon.def9a2a4.blockships.customships.EngineMenuGUI.isValidFuel(cursor.getType())) {
+                    event.setCancelled(true);
+                }
+            }
+        }
+        // Allow bottom inventory (player inventory) interactions freely
+    }
+
+    @EventHandler
+    public void onEngineMenuClose(InventoryCloseEvent event) {
+        if (event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder holder) {
+            anon.def9a2a4.blockships.customships.EngineMenuGUI.saveFuelState(holder);
         }
     }
 

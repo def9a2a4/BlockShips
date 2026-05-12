@@ -3,15 +3,14 @@ package anon.def9a2a4.blockships.customships;
 import anon.def9a2a4.blockships.ShipTags;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.BlockFace;
 import org.bukkit.entity.Shulker;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.scheduler.BukkitTask;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;;
 
 /**
  * Tracks data for a placed ship wheel block.
@@ -44,6 +43,12 @@ public class ShipWheelData {
     private int lastDetectedWoolCount;   // Wool blocks (for ship stats)
     private int lastDetectedBannerCount; // Banner blocks (for ship stats)
     private int lastDetectedEngineCount; // Ship engine blocks
+
+    // Engine fuel state (persisted across sessions)
+    // Key = engine block index, Value = array of 3 fuel ItemStacks (null = empty slot)
+    private final Map<Integer, ItemStack[]> engineFuelSlots = new HashMap<>();
+    // Key = engine block index, Value = remaining burn ticks on current fuel item
+    private final Map<Integer, Integer> engineBurnTicks = new HashMap<>();
 
     // Categorized blocks for colored particle visualization
     private Set<Location> lastDetectedRegularBlocks;  // Non-seat blocks (white particles)
@@ -152,6 +157,53 @@ public class ShipWheelData {
 
     public int getLastDetectedEngineCount() {
         return lastDetectedEngineCount;
+    }
+
+    // ===== Engine fuel state =====
+
+    public ItemStack[] getEngineFuelSlots(int engineBlockIndex) {
+        return engineFuelSlots.computeIfAbsent(engineBlockIndex, k -> new ItemStack[3]);
+    }
+
+    public void setEngineFuelSlots(int engineBlockIndex, ItemStack[] slots) {
+        engineFuelSlots.put(engineBlockIndex, slots);
+    }
+
+    public int getEngineBurnTicks(int engineBlockIndex) {
+        return engineBurnTicks.getOrDefault(engineBlockIndex, 0);
+    }
+
+    public void setEngineBurnTicks(int engineBlockIndex, int ticks) {
+        engineBurnTicks.put(engineBlockIndex, ticks);
+    }
+
+    public Map<Integer, ItemStack[]> getAllEngineFuelSlots() {
+        return engineFuelSlots;
+    }
+
+    public Map<Integer, Integer> getAllEngineBurnTicks() {
+        return engineBurnTicks;
+    }
+
+    /**
+     * Returns the number of engines that currently have fuel (burn ticks > 0 or fuel items in slots).
+     */
+    public int countFueledEngines() {
+        int count = 0;
+        for (Map.Entry<Integer, ItemStack[]> entry : engineFuelSlots.entrySet()) {
+            int idx = entry.getKey();
+            if (engineBurnTicks.getOrDefault(idx, 0) > 0) {
+                count++;
+                continue;
+            }
+            for (ItemStack item : entry.getValue()) {
+                if (item != null && item.getType() != Material.AIR) {
+                    count++;
+                    break;
+                }
+            }
+        }
+        return count;
     }
 
     public Set<Location> getLastDetectedRegularBlocks() {
@@ -348,6 +400,28 @@ public class ShipWheelData {
         if (cameraDistance >= 0) {
             map.put("camera_distance", cameraDistance);
         }
+        // Serialize engine fuel state
+        if (!engineFuelSlots.isEmpty()) {
+            List<Map<String, Object>> enginesList = new ArrayList<>();
+            for (Map.Entry<Integer, ItemStack[]> entry : engineFuelSlots.entrySet()) {
+                int idx = entry.getKey();
+                ItemStack[] slots = entry.getValue();
+                Map<String, Object> engineMap = new HashMap<>();
+                engineMap.put("block_index", idx);
+                engineMap.put("burn_ticks", engineBurnTicks.getOrDefault(idx, 0));
+                List<String> serializedSlots = new ArrayList<>();
+                for (ItemStack item : slots) {
+                    if (item != null && item.getType() != Material.AIR) {
+                        serializedSlots.add(Base64.getEncoder().encodeToString(item.serializeAsBytes()));
+                    } else {
+                        serializedSlots.add("");
+                    }
+                }
+                engineMap.put("fuel_slots", serializedSlots);
+                enginesList.add(engineMap);
+            }
+            map.put("engines", enginesList);
+        }
         return map;
     }
 
@@ -378,6 +452,28 @@ public class ShipWheelData {
         // Load camera distance if present (backwards compatible - defaults to -1 if missing)
         if (map.containsKey("camera_distance")) {
             data.setCameraDistance(((Number) map.get("camera_distance")).floatValue());
+        }
+
+        // Load engine fuel state
+        if (map.containsKey("engines")) {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> enginesList = (List<Map<String, Object>>) map.get("engines");
+            for (Map<String, Object> engineMap : enginesList) {
+                int idx = ((Number) engineMap.get("block_index")).intValue();
+                int burnTicks = ((Number) engineMap.get("burn_ticks")).intValue();
+                data.engineBurnTicks.put(idx, burnTicks);
+
+                @SuppressWarnings("unchecked")
+                List<String> serializedSlots = (List<String>) engineMap.get("fuel_slots");
+                ItemStack[] slots = new ItemStack[3];
+                for (int i = 0; i < Math.min(serializedSlots.size(), 3); i++) {
+                    String encoded = serializedSlots.get(i);
+                    if (encoded != null && !encoded.isEmpty()) {
+                        slots[i] = ItemStack.deserializeBytes(Base64.getDecoder().decode(encoded));
+                    }
+                }
+                data.engineFuelSlots.put(idx, slots);
+            }
         }
 
         return data;

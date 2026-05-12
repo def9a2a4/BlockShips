@@ -225,10 +225,7 @@ custom-items:
     base-material: WRITTEN_BOOK
     stackable: false
     recipe:
-      pattern:
-        - "   "
-        - " WB"
-        - "   "
+      shapeless: true
       ingredients:
         W: ["blockships:ship_wheel"]
         B: [BOOK]

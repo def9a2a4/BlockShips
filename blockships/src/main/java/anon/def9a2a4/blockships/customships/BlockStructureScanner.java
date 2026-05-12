@@ -316,6 +316,8 @@ public class BlockStructureScanner {
         int woolCount = 0;
         int bannerCount = 0;
         int engineCount = 0;
+        Set<Integer> engineBlockIndices = new HashSet<>();
+        List<Vector3f> engineLocalPositions = new ArrayList<>();
 
         // Track ship bounds (for all blocks)
         float minY = Float.MAX_VALUE;
@@ -389,6 +391,8 @@ public class BlockStructureScanner {
                         .get(engineKey, org.bukkit.persistence.PersistentDataType.STRING);
                     if ("ship_engine".equals(val)) {
                         engineCount++;
+                        engineBlockIndices.add(blockIndex);
+                        engineLocalPositions.add(new Vector3f((float) dx, (float) dy, (float) dz));
                     }
                 }
             }
@@ -613,7 +617,9 @@ public class BlockStructureScanner {
             assemblyYaw,  // Store for disassembly rotation calculation
             woolCount,
             bannerCount,
-            engineCount
+            engineCount,
+            engineBlockIndices,
+            engineLocalPositions
         );
     }
 

@@ -82,6 +82,7 @@ public class ShipInstance {
     public final List<Shulker> seatShulkers = new ArrayList<>();  // Seat shulkers in order (index 0 = driver)
     private final Set<Integer> occupiedSeatIndices = new HashSet<>();  // Track which seats are occupied
     public Shulker leadableShulker;  // Designated lead attachment point (for prefab ships)
+    public anon.def9a2a4.blockships.customships.ShipWheelData wheelData;  // Reference to wheel data (for engine fuel state, set during assembly)
     private BukkitRunnable task;
     private BukkitRunnable idleCheckTask;
 
@@ -91,6 +92,7 @@ public class ShipInstance {
     private float previousPitch;
     private float spawnYaw;  // Track spawn yaw for pre-1.21.9 display rotation fix
     private int ticksSinceLastMovement = 0;
+    private int engineSmokeTick = 0;  // Counter for throttling engine smoke particles
     private boolean taskStopped = false;
     private boolean firstTick = true; // Force first tick to update positions
 
@@ -1214,6 +1216,7 @@ public class ShipInstance {
         collision.detect();  // Detect collisions and accumulate forces
         physics.update();    // Apply physics (movement, rotation, buoyancy)
         collision.applyResponse();  // Apply collision response
+        spawnEngineSmoke();  // Visual feedback for running engines
         cachedVehicleLoc = vehicle.getLocation();  // Refresh after physics moved the vehicle
 
         // Set vehicle velocity from actual displacement (after physics + collision response)
@@ -1359,6 +1362,44 @@ public class ShipInstance {
      *   [2] Set relativeTo (empty = absolute)
      *   [3] boolean onGround
      */
+    /**
+     * Spawns smoke particles at fueled engine positions. Throttled to every 5 ticks.
+     */
+    private void spawnEngineSmoke() {
+        if (!"custom".equals(shipType) || model.engineLocalPositions.isEmpty()) return;
+        if (wheelData == null || !hasDriver) return;
+        if (++engineSmokeTick % 5 != 0) return;
+
+        // Check if any engine is actually burning
+        boolean anyFueled = false;
+        for (int idx : model.engineBlockIndices) {
+            if (wheelData.getEngineBurnTicks(idx) > 0) {
+                anyFueled = true;
+                break;
+            }
+        }
+        if (!anyFueled) return;
+
+        Location vLoc = vehicle.getLocation();
+        float yawRad = (float) java.lang.Math.toRadians(-vLoc.getYaw());
+        float cosYaw = (float) java.lang.Math.cos(yawRad);
+        float sinYaw = (float) java.lang.Math.sin(yawRad);
+
+        for (int i = 0; i < model.engineLocalPositions.size(); i++) {
+            int engineIdx = new java.util.ArrayList<>(model.engineBlockIndices).get(i);
+            if (wheelData.getEngineBurnTicks(engineIdx) <= 0) continue;
+
+            org.joml.Vector3f local = model.engineLocalPositions.get(i);
+            // Rotate local position by ship yaw
+            double wx = vLoc.getX() + local.x * cosYaw - local.z * sinYaw;
+            double wy = vLoc.getY() + local.y + 1.0; // offset up slightly
+            double wz = vLoc.getZ() + local.x * sinYaw + local.z * cosYaw;
+
+            vLoc.getWorld().spawnParticle(org.bukkit.Particle.CAMPFIRE_SIGNAL_SMOKE,
+                wx, wy, wz, 1, 0.1, 0.2, 0.1, 0.01);
+        }
+    }
+
     private void sendVehiclePositionSync(Location loc, org.bukkit.util.Vector velocity) {
         if (!positionSyncInitialized) {
             positionSyncInitialized = true;

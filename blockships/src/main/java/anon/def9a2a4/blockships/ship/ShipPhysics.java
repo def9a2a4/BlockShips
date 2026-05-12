@@ -81,8 +81,10 @@ public class ShipPhysics {
         float sailRatio = ship.model.getSailRatio(config.basePower);
         // Apply sail cap: non-engine contribution capped at sailCapRatio
         float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
-        // Add engine power (TODO: only count fueled engines once fuel system is implemented)
-        int fueledEngines = ship.model.engineCount;
+        // Count fueled engines from wheel data (engines with active fuel)
+        int fueledEngines = (ship.wheelData != null)
+            ? ship.wheelData.countFueledEngines()
+            : ship.model.engineCount;  // Fallback: assume all fueled if no wheel data
         float enginePower = fueledEngines * config.enginePower;
         int mass = Math.max(1, Math.abs(ship.model.totalWeight));
         float ratio = Math.min(nonEngineRatio + enginePower / mass, 1.0f);
@@ -117,6 +119,47 @@ public class ShipPhysics {
         }
 
         statsComputed = true;
+    }
+
+    /**
+     * Ticks fuel consumption for all engines. Called once per tick while W is held.
+     * When an engine's burn ticks reach 0, the next fuel item is consumed.
+     * Recomputes effective stats when fuel state changes.
+     */
+    private void tickEngineFuel() {
+        boolean fuelChanged = false;
+        anon.def9a2a4.blockships.customships.ShipWheelData wd = ship.wheelData;
+
+        for (int engineIdx : ship.model.engineBlockIndices) {
+            int burnTicks = wd.getEngineBurnTicks(engineIdx);
+
+            if (burnTicks > 0) {
+                // Burn existing fuel
+                wd.setEngineBurnTicks(engineIdx, burnTicks - 1);
+                if (burnTicks - 1 == 0) fuelChanged = true;
+            } else {
+                // Try to consume next fuel item from slots
+                org.bukkit.inventory.ItemStack[] slots = wd.getEngineFuelSlots(engineIdx);
+                for (int i = 0; i < slots.length; i++) {
+                    if (slots[i] != null && slots[i].getType() != org.bukkit.Material.AIR) {
+                        int newBurnTicks = anon.def9a2a4.blockships.customships.EngineMenuGUI.getBurnTime(slots[i].getType());
+                        if (newBurnTicks > 0) {
+                            wd.setEngineBurnTicks(engineIdx, newBurnTicks);
+                            slots[i].setAmount(slots[i].getAmount() - 1);
+                            if (slots[i].getAmount() <= 0) {
+                                slots[i] = null;
+                            }
+                            fuelChanged = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (fuelChanged) {
+            computeEffectiveStats();
+        }
     }
 
     /**
@@ -155,6 +198,12 @@ public class ShipPhysics {
 
         Location vehicleLoc = ship.vehicle.getLocation();
         ShipConfig config = ship.config;
+
+        // Tick engine fuel (only for custom ships with engines, while W held)
+        if ("custom".equals(ship.shipType) && ship.isForwardPressed
+                && ship.model.engineCount > 0 && ship.wheelData != null) {
+            tickEngineFuel();
+        }
 
         // Apply acceleration/deceleration based on input state
         if (ship.isForwardPressed) {

@@ -264,6 +264,7 @@ public class ShipWheelManager {
 
         // Link the wheel to the ship
         wheelData.setAssembledShipUUID(ship.id);
+        ship.wheelData = wheelData;
 
         // Tag the ship wheel collider (block at dx=0, dy=0, dz=0 relative to wheel origin)
         // This allows opening the menu by right-clicking the wheel collider
