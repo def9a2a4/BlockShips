@@ -245,20 +245,13 @@ public class BlockShipsPlugin extends JavaPlugin {
 
                 if (args.length < 2) {
                     sender.sendMessage("Usage: /blockships give <item>");
-                    sender.sendMessage("Available items:");
-                    sender.sendMessage("  - ship_wheel");
-                    var shipsSection = getConfig().getConfigurationSection("ships");
-                    if (shipsSection != null) {
-                        for (String shipType : shipsSection.getKeys(false)) {
-                            sender.sendMessage("  - " + shipType);
-                        }
-                    }
+                    sendGiveableItems(sender);
                     return true;
                 }
 
                 String itemType = args[1].toLowerCase();
 
-                // Handle ship_wheel specially
+                // Ship wheel
                 if (itemType.equals("ship_wheel")) {
                     ItemStack wheel = displayShip.createShipWheelItem();
                     player.getInventory().addItem(wheel);
@@ -266,27 +259,33 @@ public class BlockShipsPlugin extends JavaPlugin {
                     return true;
                 }
 
-                // Verify ship type exists in config
-                if (!getConfig().contains("ships." + itemType)) {
-                    sender.sendMessage("Unknown item: " + itemType);
-                    sender.sendMessage("Available items:");
-                    sender.sendMessage("  - ship_wheel");
-                    var shipsSection = getConfig().getConfigurationSection("ships");
-                    if (shipsSection != null) {
-                        for (String type : shipsSection.getKeys(false)) {
-                            sender.sendMessage("  - " + type);
-                        }
-                    }
+                // Captain's Manual (written book)
+                if (itemType.equals("captains_manual")) {
+                    ItemStack manual = HelpBookContent.createWrittenBook();
+                    player.getInventory().addItem(manual);
+                    sender.sendMessage("Gave you a Captain's Manual!");
                     return true;
                 }
 
-                // Create ship kit with default wood (SPRUCE) and banner (WHITE)
-                ItemStack defaultBanner = new ItemStack(Material.WHITE_BANNER);
-                ItemStack shipKit = DisplayShip.createShipKit(itemType, defaultBanner, "SPRUCE", this);
+                // Custom items (ship_engine, balloon, etc.)
+                if (getConfig().contains("custom-items." + itemType)) {
+                    ItemStack item = displayShip.getItemFactory().createItem(itemType, "_DEFAULT", null);
+                    player.getInventory().addItem(item);
+                    sender.sendMessage("Gave you a " + itemType + "!");
+                    return true;
+                }
 
-                // Give to player
-                player.getInventory().addItem(shipKit);
-                sender.sendMessage("Gave you a " + itemType + " ship kit!");
+                // Ship kits
+                if (getConfig().contains("ships." + itemType)) {
+                    ItemStack defaultBanner = new ItemStack(Material.WHITE_BANNER);
+                    ItemStack shipKit = DisplayShip.createShipKit(itemType, defaultBanner, "SPRUCE", this);
+                    player.getInventory().addItem(shipKit);
+                    sender.sendMessage("Gave you a " + itemType + " ship kit!");
+                    return true;
+                }
+
+                sender.sendMessage("Unknown item: " + itemType);
+                sendGiveableItems(sender);
                 return true;
             }
 
@@ -491,6 +490,39 @@ public class BlockShipsPlugin extends JavaPlugin {
         return false;
     }
 
+    private void sendGiveableItems(CommandSender sender) {
+        sender.sendMessage("Available items:");
+        sender.sendMessage("  - ship_wheel");
+        sender.sendMessage("  - captains_manual");
+        var customItemsSection = getConfig().getConfigurationSection("custom-items");
+        if (customItemsSection != null) {
+            for (String key : customItemsSection.getKeys(false)) {
+                sender.sendMessage("  - " + key);
+            }
+        }
+        var shipsSection = getConfig().getConfigurationSection("ships");
+        if (shipsSection != null) {
+            for (String key : shipsSection.getKeys(false)) {
+                sender.sendMessage("  - " + key);
+            }
+        }
+    }
+
+    private List<String> getGiveableItemNames() {
+        List<String> items = new ArrayList<>();
+        items.add("ship_wheel");
+        items.add("captains_manual");
+        var customItemsSection = getConfig().getConfigurationSection("custom-items");
+        if (customItemsSection != null) {
+            items.addAll(customItemsSection.getKeys(false));
+        }
+        var shipsSection = getConfig().getConfigurationSection("ships");
+        if (shipsSection != null) {
+            items.addAll(shipsSection.getKeys(false));
+        }
+        return items;
+    }
+
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!command.getName().equalsIgnoreCase("blockships")) {
@@ -527,15 +559,7 @@ public class BlockShipsPlugin extends JavaPlugin {
             String subcommand = args[0].toLowerCase();
 
             if (subcommand.equals("give") && sender.hasPermission("blockships.give")) {
-                // Complete with ship_wheel and ship types from config
-                List<String> types = new ArrayList<>();
-                types.add("ship_wheel");
-                var shipsSection = getConfig().getConfigurationSection("ships");
-                if (shipsSection != null) {
-                    types.addAll(shipsSection.getKeys(false));
-                }
-
-                for (String type : types) {
+                for (String type : getGiveableItemNames()) {
                     if (type.toLowerCase().startsWith(args[1].toLowerCase())) {
                         completions.add(type);
                     }

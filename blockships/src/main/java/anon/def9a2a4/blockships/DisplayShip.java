@@ -359,6 +359,10 @@ public class DisplayShip implements Listener {
         ShipRegistry.clear();
     }
 
+    public ItemFactory getItemFactory() {
+        return itemFactory;
+    }
+
     public ItemTextureManager getTextureManager() {
         return textureManager;
     }
