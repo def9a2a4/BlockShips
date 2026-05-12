@@ -156,7 +156,7 @@ public class EngineMenuGUI {
             case OAK_SLAB, SPRUCE_SLAB, BIRCH_SLAB, JUNGLE_SLAB, ACACIA_SLAB, DARK_OAK_SLAB, MANGROVE_SLAB, CHERRY_SLAB, BAMBOO_SLAB -> 150;
             case STICK -> 100;
             case BAMBOO -> 50;
-            case DRIED_KELP_BLOCK -> 4001;
+            case DRIED_KELP_BLOCK -> 4000;
             case BOOKSHELF, LECTERN -> 300;
             case CHEST, TRAPPED_CHEST, BARREL -> 300;
             case CRAFTING_TABLE, NOTE_BLOCK, JUKEBOX -> 300;

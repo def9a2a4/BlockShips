@@ -82,11 +82,12 @@ public class ShipPhysics {
         // Apply sail cap: non-engine contribution capped at sailCapRatio
         float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
         // Count fueled engines from wheel data (engines with active fuel)
-        int fueledEngines = (ship.wheelData != null)
-            ? ship.wheelData.countFueledEngines()
+        anon.def9a2a4.blockships.customships.ShipWheelData wd = ship.resolveWheelData();
+        int fueledEngines = (wd != null)
+            ? wd.countFueledEngines()
             : ship.model.engineCount;  // Fallback: assume all fueled if no wheel data
         float enginePower = fueledEngines * config.enginePower;
-        int mass = Math.max(1, Math.abs(ship.model.totalWeight));
+        int mass = Math.max(1, ship.model.mass);
         float ratio = Math.min(nonEngineRatio + enginePower / mass, 1.0f);
 
         // Compute horizontal stats
@@ -201,7 +202,7 @@ public class ShipPhysics {
 
         // Tick engine fuel (only for custom ships with engines, while W held)
         if ("custom".equals(ship.shipType) && ship.isForwardPressed
-                && ship.model.engineCount > 0 && ship.wheelData != null) {
+                && ship.model.engineCount > 0 && ship.resolveWheelData() != null) {
             tickEngineFuel();
         }
 

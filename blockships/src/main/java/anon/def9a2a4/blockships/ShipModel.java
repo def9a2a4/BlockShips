@@ -37,8 +37,8 @@ public final class ShipModel {
     public final float waterFloatOffset;   // Y-position offset from water surface where ship floats (for prefab ships)
 
     // Buoyancy system (for custom block ships)
-    public final int totalWeight;               // Sum of all block weights (excluding null-weight blocks)
-    public final int totalPositiveWeight;       // Sum of max(0, weight) for each block (for health calculation)
+    public final int totalWeight;               // Sum of all block weights, including negative (for density/buoyancy)
+    public final int mass;                      // Sum of max(0, weight) per block (for health and power ratio)
     public final int blockCount;                // Number of blocks with weight (for density calculation)
     public final Vector3f centerOfVolume;       // Geometric center of all blocks (relative to wheel)
     public final float minY;                    // Bottom of ship (relative to origin)
@@ -53,7 +53,7 @@ public final class ShipModel {
     public final int bannerCount;               // Number of banner blocks
     public final int sailPower;                 // Sail power points (wool*3 + banner*7)
     public final int engineCount;               // Number of ship engine blocks detected
-    public final Set<Integer> engineBlockIndices;   // Block indices that are engines (for click detection)
+    public final List<Integer> engineBlockIndices;   // Block indices that are engines (for click detection + fuel)
     public final List<Vector3f> engineLocalPositions; // Local positions of engines (for particles)
 
     // Assembly rotation (for custom block ships disassembly)
@@ -62,9 +62,9 @@ public final class ShipModel {
     public ShipModel(List<ModelPart> parts, List<ItemPart> items, Vector3f initialRotation, Vector3f positionOffset,
                      Vector3f collisionOffset, Matrix3f rotationTransform, List<SeatInfo> seats, List<CannonInfo> cannons,
                      float waterFloatOffset, double maxHealth, double healthRegenPerSecond,
-                     int totalWeight, int totalPositiveWeight, int blockCount, Vector3f centerOfVolume, float minY, float maxY, float assemblyYaw,
+                     int totalWeight, int mass, int blockCount, Vector3f centerOfVolume, float minY, float maxY, float assemblyYaw,
                      int woolCount, int bannerCount, int engineCount,
-                     Set<Integer> engineBlockIndices, List<Vector3f> engineLocalPositions) {
+                     List<Integer> engineBlockIndices, List<Vector3f> engineLocalPositions) {
         this.parts = parts;
         this.items = items;
         this.initialRotation = initialRotation;
@@ -77,7 +77,7 @@ public final class ShipModel {
         this.maxHealth = maxHealth;
         this.healthRegenPerSecond = healthRegenPerSecond;
         this.totalWeight = totalWeight;
-        this.totalPositiveWeight = totalPositiveWeight;
+        this.mass = mass;
         this.blockCount = blockCount;
         this.centerOfVolume = centerOfVolume;
         this.minY = minY;
@@ -87,7 +87,7 @@ public final class ShipModel {
         this.bannerCount = bannerCount;
         this.sailPower = woolCount * 3 + bannerCount * 7;
         this.engineCount = engineCount;
-        this.engineBlockIndices = engineBlockIndices != null ? engineBlockIndices : Collections.emptySet();
+        this.engineBlockIndices = engineBlockIndices != null ? engineBlockIndices : Collections.emptyList();
         this.engineLocalPositions = engineLocalPositions != null ? engineLocalPositions : Collections.emptyList();
     }
 
@@ -106,10 +106,7 @@ public final class ShipModel {
      * @return The ratio (0.0 to ~1.0+), before sail cap is applied
      */
     public float getSailRatio(int basePower) {
-        if (totalWeight <= 0) return 0;
-        // Use totalWeight as mass (sum of all block weights, can be negative for airships)
-        // For ratio purposes, use absolute value to avoid negative ratios
-        int mass = java.lang.Math.max(1, java.lang.Math.abs(totalWeight));
+        if (mass <= 0) return 0;
         return (float) (basePower + sailPower) / mass;
     }
 
@@ -617,7 +614,7 @@ public final class ShipModel {
         // Buoyancy/physics data
         map.put("assembly_yaw", assemblyYaw);
         map.put("total_weight", totalWeight);
-        map.put("total_positive_weight", totalPositiveWeight);
+        map.put("mass", mass);
         map.put("block_count", blockCount);
         map.put("min_y", minY);
         map.put("max_y", maxY);
@@ -784,13 +781,14 @@ public final class ShipModel {
         double healthRegenPerSecond = 2.0;
 
         // Ship stats
-        int totalPositiveWeight = map.containsKey("total_positive_weight") ? ((Number) map.get("total_positive_weight")).intValue() : 0;
+        int mass = map.containsKey("mass") ? ((Number) map.get("mass")).intValue()
+            : map.containsKey("total_positive_weight") ? ((Number) map.get("total_positive_weight")).intValue() : 0;
         int woolCount = map.containsKey("wool_count") ? ((Number) map.get("wool_count")).intValue() : 0;
         int bannerCount = map.containsKey("banner_count") ? ((Number) map.get("banner_count")).intValue() : 0;
         int engineCount = map.containsKey("engine_count") ? ((Number) map.get("engine_count")).intValue() : 0;
 
         // Deserialize engine block indices and positions
-        Set<Integer> engineBlockIndices = new HashSet<>();
+        List<Integer> engineBlockIndices = new ArrayList<>();
         List<Vector3f> engineLocalPositions = new ArrayList<>();
         if (map.containsKey("engine_block_indices")) {
             @SuppressWarnings("unchecked")
@@ -808,7 +806,7 @@ public final class ShipModel {
 
         return new ShipModel(parts, new ArrayList<>(), initialRotation, positionOffset,
             collisionOffset, rotationTransform, seats, cannons, waterFloatOffset,
-            maxHealth, healthRegenPerSecond, totalWeight, totalPositiveWeight, blockCount,
+            maxHealth, healthRegenPerSecond, totalWeight, mass, blockCount,
             centerOfVolume, minY, maxY, assemblyYaw,
             woolCount, bannerCount, engineCount, engineBlockIndices, engineLocalPositions);
     }

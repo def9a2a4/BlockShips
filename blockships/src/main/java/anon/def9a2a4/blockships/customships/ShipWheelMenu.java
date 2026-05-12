@@ -33,6 +33,7 @@ public class ShipWheelMenu {
     public static class ShipInfo {
         public final int blockCount;
         public final int totalWeight;
+        public final int mass;  // sum of positive block weights (for display + ratio)
         public final float density;
         public final int maxHealth;
         public final Integer currentHealth;  // null if not assembled
@@ -48,12 +49,13 @@ public class ShipWheelMenu {
         public final float sailRatio;  // uncapped sail ratio (before sail cap applied)
         public final float ratio;      // final ratio (with sail cap + engines)
 
-        public ShipInfo(int blockCount, int totalWeight, float density, int maxHealth,
+        public ShipInfo(int blockCount, int totalWeight, int mass, float density, int maxHealth,
                         Integer currentHealth, float surfaceOffset, float airDensity, float waterDensity,
                         int woolCount, int bannerCount, int sailPower, int engineCount,
                         int enginePowerPerEngine, float sailRatio, float ratio) {
             this.blockCount = blockCount;
             this.totalWeight = totalWeight;
+            this.mass = mass;
             this.density = density;
             this.maxHealth = maxHealth;
             this.currentHealth = currentHealth;
@@ -369,8 +371,8 @@ public class ShipWheelMenu {
             currentHealth = (int) Math.ceil(wheelData.getLastCurrentHealth());
             maxHealth = (int) wheelData.getLastMaxHealth();
         } else {
-            int positiveWeight = wheelData.getLastDetectedPositiveWeight();
-            maxHealth = Math.max(1, positiveWeight);
+            int shipMass = wheelData.getLastDetectedPositiveWeight();
+            maxHealth = Math.max(1, shipMass);
         }
 
         // Ship stats
@@ -380,14 +382,14 @@ public class ShipWheelMenu {
 
         // Compute power ratio
         int engineCount = wheelData.getLastDetectedEngineCount();
-        int mass = Math.max(1, Math.abs(totalWeight));
+        int mass = Math.max(1, wheelData.getLastDetectedPositiveWeight());
         float sailRatio = (float) (config.basePower + sailPower) / mass;
         float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
         // TODO: only count fueled engines once fuel system is implemented
         float engineBonus = (float) (engineCount * config.enginePower) / mass;
         float ratio = Math.min(nonEngineRatio + engineBonus, 1.0f);
 
-        return new ShipInfo(blockCount, totalWeight, density, maxHealth, currentHealth,
+        return new ShipInfo(blockCount, totalWeight, mass, density, maxHealth, currentHealth,
                             surfaceOffset, airDensity, waterDensity,
                             woolCount, bannerCount, sailPower, engineCount, config.enginePower,
                             sailRatio, ratio);
@@ -504,7 +506,7 @@ public class ShipWheelMenu {
                 }
 
                 lore.add("");
-                lore.add(ChatColor.GRAY + "Mass: " + ChatColor.WHITE + Math.abs(info.totalWeight));
+                lore.add(ChatColor.GRAY + "Mass: " + ChatColor.WHITE + info.mass);
                 int totalPower = 2 + info.sailPower + info.engineCount * info.enginePowerPerEngine;
                 lore.add(ChatColor.GRAY + "Total Power: " + ChatColor.WHITE + totalPower + " pts");
                 lore.add(ChatColor.GRAY + "Power Ratio: " + ChatColor.YELLOW

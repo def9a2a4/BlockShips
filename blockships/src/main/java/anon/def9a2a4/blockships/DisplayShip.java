@@ -2229,7 +2229,13 @@ public class DisplayShip implements Listener {
                 }
             }
         }
-        // Allow bottom inventory (player inventory) interactions freely
+        // Block shift-clicks from player inventory that would move non-fuel items into engine GUI
+        if (event.isShiftClick() && slot >= 9) {
+            ItemStack clicked = event.getCurrentItem();
+            if (clicked != null && !anon.def9a2a4.blockships.customships.EngineMenuGUI.isValidFuel(clicked.getType())) {
+                event.setCancelled(true);
+            }
+        }
     }
 
     @EventHandler

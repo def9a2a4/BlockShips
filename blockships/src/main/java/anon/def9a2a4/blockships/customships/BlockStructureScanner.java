@@ -308,7 +308,7 @@ public class BlockStructureScanner {
 
         // Track weight and center of volume (only for blocks with weight)
         int totalWeight = 0;
-        int totalPositiveWeight = 0;  // For health calculation: sum of max(0, weight)
+        int totalMass = 0;  // Sum of max(0, weight) per block — used for health and power ratio
         int weightedBlockCount = 0;
         float sumX = 0, sumY = 0, sumZ = 0;
 
@@ -316,7 +316,7 @@ public class BlockStructureScanner {
         int woolCount = 0;
         int bannerCount = 0;
         int engineCount = 0;
-        Set<Integer> engineBlockIndices = new HashSet<>();
+        List<Integer> engineBlockIndices = new ArrayList<>();
         List<Vector3f> engineLocalPositions = new ArrayList<>();
 
         // Track ship bounds (for all blocks)
@@ -367,7 +367,7 @@ public class BlockStructureScanner {
                 int weight = props.getWeight();
                 totalWeight += weight;
                 if (weight > 0) {
-                    totalPositiveWeight += weight;
+                    totalMass += weight;
                 }
                 weightedBlockCount++;
                 sumX += (float) dx;
@@ -565,7 +565,7 @@ public class BlockStructureScanner {
 
         // Calculate health from positive block weights (heavier blocks = more health)
         // Blocks with negative/zero weight don't reduce health, just contribute nothing
-        double maxHealth = Math.min(1024.0, Math.max(1.0, totalPositiveWeight));
+        double maxHealth = Math.min(1024.0, Math.max(1.0, totalMass));
         // TODO: healthRegenPerSecond may be modified in the future by properties of the ship
         double healthRegenPerSecond = 1.0;
 
@@ -609,7 +609,7 @@ public class BlockStructureScanner {
             maxHealth,
             healthRegenPerSecond,
             totalWeight,
-            totalPositiveWeight,
+            totalMass,
             weightedBlockCount,  // Only count blocks with weight for density
             centerOfVolume,
             minY,

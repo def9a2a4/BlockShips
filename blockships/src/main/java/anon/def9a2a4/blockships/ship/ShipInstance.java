@@ -83,6 +83,19 @@ public class ShipInstance {
     private final Set<Integer> occupiedSeatIndices = new HashSet<>();  // Track which seats are occupied
     public Shulker leadableShulker;  // Designated lead attachment point (for prefab ships)
     public anon.def9a2a4.blockships.customships.ShipWheelData wheelData;  // Reference to wheel data (for engine fuel state, set during assembly)
+
+    /**
+     * Lazily resolves wheelData if not set (e.g., after chunk recovery).
+     * Looks up via ShipWheelManager by ship UUID.
+     */
+    public anon.def9a2a4.blockships.customships.ShipWheelData resolveWheelData() {
+        if (wheelData != null) return wheelData;
+        if (plugin instanceof anon.def9a2a4.blockships.BlockShipsPlugin bsp) {
+            wheelData = bsp.getShipWheelManager().getWheelByShipUUID(id);
+        }
+        return wheelData;
+    }
+
     private BukkitRunnable task;
     private BukkitRunnable idleCheckTask;
 
@@ -1367,7 +1380,7 @@ public class ShipInstance {
      */
     private void spawnEngineSmoke() {
         if (!"custom".equals(shipType) || model.engineLocalPositions.isEmpty()) return;
-        if (wheelData == null || !hasDriver) return;
+        if (resolveWheelData() == null || !hasDriver) return;
         if (++engineSmokeTick % 5 != 0) return;
 
         // Check if any engine is actually burning
@@ -1386,7 +1399,7 @@ public class ShipInstance {
         float sinYaw = (float) java.lang.Math.sin(yawRad);
 
         for (int i = 0; i < model.engineLocalPositions.size(); i++) {
-            int engineIdx = new java.util.ArrayList<>(model.engineBlockIndices).get(i);
+            int engineIdx = model.engineBlockIndices.get(i);
             if (wheelData.getEngineBurnTicks(engineIdx) <= 0) continue;
 
             org.joml.Vector3f local = model.engineLocalPositions.get(i);

@@ -679,7 +679,7 @@ public class ShipWheelManager {
                 org.bukkit.attribute.Attribute maxHealthAttr = anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth();
                 org.bukkit.attribute.AttributeInstance maxHealthInstance = maxHealthAttr != null ? ship.vehicle.getAttribute(maxHealthAttr) : null;
                 double maxHealth = maxHealthInstance != null ? maxHealthInstance.getBaseValue() : 100.0;
-                wheelData.setLastDetectedStats(blockCount, ship.model.totalWeight, ship.model.totalPositiveWeight,
+                wheelData.setLastDetectedStats(blockCount, ship.model.totalWeight, ship.model.mass,
                     ship.model.woolCount, ship.model.bannerCount, ship.model.engineCount);
                 wheelData.setLastHealth(currentHealth, maxHealth);
                 // Store buoyancy data from ship model
@@ -783,8 +783,8 @@ public class ShipWheelManager {
         }
         // Ship stats
         int sailPower = woolCount * 3 + bannerCount * 7;
-        int mass = Math.max(1, Math.abs(totalWeight));
-        float sailRatio = (float) (config.basePower + sailPower) / mass;
+        int shipMass = Math.max(1, calculateMass(shipBlocks));
+        float sailRatio = (float) (config.basePower + sailPower) / shipMass;
         float ratio = Math.min(sailRatio, config.sailCapRatio);
         int speedPercent = Math.round(ratio / config.sailCapRatio * 100);
         player.sendMessage("§7Sails: §f" + woolCount + " wool, " + bannerCount + " banners §7(" + sailPower + " power)");
@@ -795,7 +795,7 @@ public class ShipWheelManager {
         player.sendMessage("§7Speed: " + speedColor + speedPercent + "%" + (speedPercent < 50 ? " §8(add banners or wool as sails!)" : ""));
 
         // Store detected blocks and stats for Ship Info display
-        int positiveWeight = calculatePositiveWeight(shipBlocks);
+        int positiveWeight = calculateMass(shipBlocks);
         wheelData.setLastDetectedBlocks(shipBlocks);
         wheelData.setLastDetectedStats(blockCount, totalWeight, positiveWeight, woolCount, bannerCount, engineCount);
         wheelData.setLastDetectedBlockCategories(regularBlocks, seatBlocks, driverSeat);
@@ -854,7 +854,7 @@ public class ShipWheelManager {
      * Calculate the sum of positive weights (used for health calculation).
      * Blocks with negative or zero weight contribute nothing to health.
      */
-    private int calculatePositiveWeight(Set<Location> blocks) {
+    private int calculateMass(Set<Location> blocks) {
         BlockConfigManager configManager = BlockConfigManager.getInstance();
         int positiveWeight = 0;
 
