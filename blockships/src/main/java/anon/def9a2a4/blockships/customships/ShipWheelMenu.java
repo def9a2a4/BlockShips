@@ -414,24 +414,32 @@ public class ShipWheelMenu {
                     lore.add(ChatColor.GRAY + "Max Health: " + ChatColor.RED + "❤ " + info.maxHealth);
                 }
 
-                lore.add(ChatColor.GRAY + "Density: " + ChatColor.WHITE + String.format("%.2f", info.density));
-                lore.add(ChatColor.GRAY + "Surface Offset: " + ChatColor.AQUA + String.format("%.2f", info.surfaceOffset) + " blocks");
-
-                // Float status
+                // Density with colored float status
+                ChatColor densityColor;
+                String floatStatus;
                 if (info.density < info.airDensity) {
-                    lore.add(ChatColor.BLUE + "Airship");
+                    densityColor = ChatColor.AQUA;
+                    floatStatus = "Airship";
                 } else if (info.density < info.waterDensity) {
-                    lore.add(ChatColor.GREEN + "Floats well");
+                    densityColor = ChatColor.GREEN;
+                    floatStatus = "Floats well";
                 } else if (info.density < info.waterDensity + 0.5f) {
-                    lore.add(ChatColor.YELLOW + "Sits low in water");
+                    densityColor = ChatColor.YELLOW;
+                    floatStatus = "Sits low";
                 } else {
-                    lore.add(ChatColor.RED + "Sits very low");
+                    densityColor = ChatColor.RED;
+                    floatStatus = "Sits very low";
                 }
+                lore.add(ChatColor.GRAY + "Density: " + densityColor + String.format("%.2f", info.density)
+                    + ChatColor.GRAY + " (" + densityColor + floatStatus + ChatColor.GRAY + ")");
 
                 // Ship stats (simplified — detailed breakdown in stats item below)
                 lore.add("");
                 int speedPercent = Math.round(info.ratio / 0.8f * 100);
-                lore.add(ChatColor.GRAY + "Speed: " + ChatColor.GREEN + speedPercent + "%");
+                lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%");
+                if (speedPercent < 50) {
+                    lore.add(ChatColor.DARK_GRAY + "(add banners or wool as sails!)");
+                }
             } else {
                 lore.add(ChatColor.GRAY + "No ship detected yet");
                 lore.add(ChatColor.GRAY + "Click to detect ship");
@@ -495,7 +503,7 @@ public class ShipWheelMenu {
                     + String.format("%.2f", info.ratio) + ChatColor.GRAY + " / 1.00");
 
                 int speedPercent = Math.round(info.ratio / 0.8f * 100);
-                lore.add(ChatColor.GRAY + "Speed: " + ChatColor.GREEN + speedPercent + "%");
+                lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%");
             } else {
                 lore.add(ChatColor.GRAY + "Detect ship first");
             }
@@ -649,5 +657,17 @@ public class ShipWheelMenu {
      */
     public static void openHelpBook(Player player) {
         HelpBookContent.openBook(player);
+    }
+
+    /**
+     * Returns a ChatColor for speed percentage display.
+     * Red (<50%) → Gold (50-74%) → Yellow (75-99%) → Green (100-124%) → Blue (125%+)
+     */
+    private static ChatColor speedColor(int speedPercent) {
+        if (speedPercent >= 125) return ChatColor.AQUA;
+        if (speedPercent >= 100) return ChatColor.GREEN;
+        if (speedPercent >= 75) return ChatColor.YELLOW;
+        if (speedPercent >= 50) return ChatColor.GOLD;
+        return ChatColor.RED;
     }
 }

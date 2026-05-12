@@ -791,7 +791,8 @@ public class ShipWheelManager {
         if (engineCount > 0) {
             player.sendMessage("§7Engines: §f" + engineCount);
         }
-        player.sendMessage("§7Power Ratio: §e" + String.format("%.2f", ratio) + " §7/ 1.00 §7(Speed: §a" + speedPercent + "%§7)");
+        String speedColor = speedPercent >= 125 ? "§b" : speedPercent >= 100 ? "§a" : speedPercent >= 75 ? "§e" : speedPercent >= 50 ? "§6" : "§c";
+        player.sendMessage("§7Speed: " + speedColor + speedPercent + "%" + (speedPercent < 50 ? " §8(add banners or wool as sails!)" : ""));
 
         // Store detected blocks and stats for Ship Info display
         int positiveWeight = calculatePositiveWeight(shipBlocks);
