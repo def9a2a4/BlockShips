@@ -124,6 +124,8 @@ This plugin is inspired by mods which also implement rideable ships, as well as 
 - [Archimedes Ships mod](https://www.curseforge.com/minecraft/mc-mods/archimedes-ships)
 - [Eureka Ships / Valkyrian Skies mods](https://www.valkyrienskies.org/)
 
+Although this plugin predates them, you should also check out the extremely cool Create Aeronautics Mod, as well as the similar [SimpleShips](https://github.com/jemcdevitt/SimpleShips) plugin!
+
 
 # License
 
