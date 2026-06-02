@@ -35,6 +35,11 @@
 
 
 
+
+# REFACTORING
+
+- use `PlayerInput` event on newer versions where available, fall back to ProtocolLib if not. clear error in console and chat if neither is present
+
 # FEATURES
 
 ## HARDER
