@@ -93,7 +93,9 @@ public class ShipPhysics {
         // Apply sail cap: non-engine contribution capped at sailCapRatio
         float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
         // Count fueled engines from wheel data (engines with active fuel)
-        anon.def9a2a4.blockships.customships.ShipWheelData wd = ship.resolveWheelData();
+        // Use ship.wheelData directly — all callers guarantee it's set before reaching here.
+        // Avoids circular call: resolveWheelData() → recomputeStats() → computeEffectiveStats().
+        anon.def9a2a4.blockships.customships.ShipWheelData wd = ship.wheelData;
         int fueledEngines = (wd != null)
             ? wd.countFueledEngines(ship.model.engineBlockIndices)
             : 0;  // No wheel data = no fuel state = 0 fueled engines
