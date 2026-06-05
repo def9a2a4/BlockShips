@@ -1,3 +1,10 @@
+# SOON
+
+- use `PlayerInput` event on newer versions where available, fall back to ProtocolLib if not. clear error in console and chat if neither is present
+- Towny compat, see https://github.com/def9a2a4/BlockShips/issues/17
+- destruction -- allow ships to just be fully destroyed, configurable. see https://github.com/def9a2a4/BlockShips/issues/27
+
+
 # BUGS
 
 ## SEMI-COMPLETE
@@ -38,7 +45,7 @@
 
 # REFACTORING
 
-- use `PlayerInput` event on newer versions where available, fall back to ProtocolLib if not. clear error in console and chat if neither is present
+- clean up code and use a unified "mechanism" class
 
 # FEATURES
 
