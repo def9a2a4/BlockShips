@@ -92,6 +92,9 @@ public class ShipInstance {
         if (wheelData != null) return wheelData;
         if (plugin instanceof anon.def9a2a4.blockships.BlockShipsPlugin bsp) {
             wheelData = bsp.getShipWheelManager().getWheelByShipUUID(id);
+            if (wheelData != null && physics != null) {
+                physics.recomputeStats();  // Recompute now that fuel state is available
+            }
         }
         return wheelData;
     }

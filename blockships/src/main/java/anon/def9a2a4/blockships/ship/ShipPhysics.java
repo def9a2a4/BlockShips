@@ -39,6 +39,7 @@ public class ShipPhysics {
     private float effectiveAcceleration;
     private float effectiveRotationSpeed;
     private float effectiveRotationAcceleration;
+    private float effectiveRotationDeceleration;
     private float effectiveMaxVerticalSpeed;
     private float effectiveLiftAcceleration;
     private float effectiveDescendAcceleration;
@@ -53,6 +54,15 @@ public class ShipPhysics {
 
     public ShipPhysics(ShipInstance ship) {
         this.ship = ship;
+        // Stats are NOT computed here — wheelData is not yet linked.
+        // Call recomputeStats() after wheelData is assigned.
+    }
+
+    /**
+     * Public wrapper to recompute effective stats after wheelData is linked.
+     * Must be called after ship.wheelData is assigned (assembly or recovery).
+     */
+    public void recomputeStats() {
         computeEffectiveStats();
     }
 
@@ -70,6 +80,7 @@ public class ShipPhysics {
             effectiveAcceleration = config.acceleration;
             effectiveRotationSpeed = config.rotationSpeed;
             effectiveRotationAcceleration = config.rotationAcceleration;
+            effectiveRotationDeceleration = config.rotationDeceleration;
             effectiveMaxVerticalSpeed = config.maxVerticalSpeed;
             effectiveLiftAcceleration = config.liftAcceleration;
             effectiveDescendAcceleration = config.descendAcceleration;
@@ -99,6 +110,8 @@ public class ShipPhysics {
             config.floorRotationSpeed, config.capRotationSpeed);
         effectiveRotationAcceleration = config.computeStat(ratio, config.rotationAcceleration,
             config.floorRotationAcceleration, config.capRotationAcceleration);
+        effectiveRotationDeceleration = config.computeStat(ratio, config.rotationDeceleration,
+            config.floorRotationDeceleration, config.capRotationDeceleration);
 
         // Compute vertical stats (airships only, density-based)
         if (ship.isAirship) {
@@ -144,12 +157,17 @@ public class ShipPhysics {
                 if (slots == null) continue;
                 for (int i = 0; i < slots.length; i++) {
                     if (slots[i] != null && slots[i].getType() != org.bukkit.Material.AIR) {
-                        int newBurnTicks = anon.def9a2a4.blockships.customships.EngineMenuGUI.getBurnTime(slots[i].getType());
+                        int baseBurnTicks = anon.def9a2a4.blockships.customships.EngineMenuGUI.getBurnTime(slots[i].getType());
+                        int newBurnTicks = Math.round(baseBurnTicks * ship.config.fuelBurnMultiplier);
                         if (newBurnTicks > 0) {
                             wd.setEngineBurnTicks(engineIdx, newBurnTicks);
+                            Material fuelMat = slots[i].getType();
                             slots[i].setAmount(slots[i].getAmount() - 1);
                             if (slots[i].getAmount() <= 0) {
-                                slots[i] = null;
+                                // Return empty bucket for lava buckets (vanilla behavior)
+                                slots[i] = (fuelMat == org.bukkit.Material.LAVA_BUCKET)
+                                    ? new org.bukkit.inventory.ItemStack(org.bukkit.Material.BUCKET)
+                                    : null;
                             }
                             fuelChanged = true;
                             break;
@@ -201,8 +219,11 @@ public class ShipPhysics {
         Location vehicleLoc = ship.vehicle.getLocation();
         ShipConfig config = ship.config;
 
-        // Tick engine fuel (only for custom ships with engines, while W held)
-        if ("custom".equals(ship.shipType) && ship.isForwardPressed
+        // Tick engine fuel (only for custom ships with engines, while any movement key held)
+        boolean anyMovementPressed = ship.isForwardPressed || ship.isBackwardPressed
+                || ship.isLeftPressed || ship.isRightPressed
+                || ship.isSpacePressed || ship.isSprintPressed;
+        if ("custom".equals(ship.shipType) && anyMovementPressed
                 && ship.model.engineCount > 0 && ship.resolveWheelData() != null) {
             tickEngineFuel();
         }
@@ -237,8 +258,9 @@ public class ShipPhysics {
             currentSpeed *= dragMultiplier;
         }
 
-        // Stop if speed is very small
-        if (Math.abs(currentSpeed) < config.minMovementThreshold) {
+        // Stop if speed is very small (only when not actively accelerating)
+        if (!ship.isForwardPressed && !ship.isBackwardPressed
+                && Math.abs(currentSpeed) < config.minMovementThreshold) {
             currentSpeed = 0.0f;
         }
 
@@ -287,12 +309,12 @@ public class ShipPhysics {
             // No input - apply momentum decay
             if (currentRotationVelocity > 0) {
                 currentRotationVelocity = Math.max(
-                    currentRotationVelocity - config.rotationDeceleration,
+                    currentRotationVelocity - effectiveRotationDeceleration,
                     0.0f
                 );
             } else if (currentRotationVelocity < 0) {
                 currentRotationVelocity = Math.min(
-                    currentRotationVelocity + config.rotationDeceleration,
+                    currentRotationVelocity + effectiveRotationDeceleration,
                     0.0f
                 );
             }
