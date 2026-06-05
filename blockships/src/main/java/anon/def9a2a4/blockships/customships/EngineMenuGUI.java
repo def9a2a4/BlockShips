@@ -44,10 +44,14 @@ public class EngineMenuGUI {
         Material.ACACIA_FENCE_GATE, Material.DARK_OAK_FENCE_GATE, Material.MANGROVE_FENCE_GATE, Material.CHERRY_FENCE_GATE
     );
 
-    /** Fuel slot indices in the 9-slot GUI. */
-    public static final int[] FUEL_SLOTS = {1, 2, 3};
+    /**
+     * Fuel slot indices in the 9-slot GUI (maps 1:1 to blast furnace container indices).
+     * Note: vanilla hoppers only feed blast furnace slot 1 (fuel). Slots 0 and 2 must be
+     * loaded manually via this GUI. This is a known limitation.
+     */
+    public static final int[] FUEL_SLOTS = {0, 1, 2};
     /** Status display item slot. */
-    public static final int STATUS_SLOT = 5;
+    public static final int STATUS_SLOT = 4;
 
     /**
      * Custom holder to store engine context.
@@ -136,7 +140,8 @@ public class EngineMenuGUI {
                 int seconds = burnTicks / 20;
                 meta.setDisplayName(ChatColor.GREEN + "Engine Running");
                 meta.setLore(Arrays.asList(
-                    ChatColor.GRAY + "Fuel remaining: " + ChatColor.WHITE + seconds + "s"
+                    ChatColor.GRAY + "Fuel remaining: " + ChatColor.WHITE + seconds + "s",
+                    ChatColor.DARK_GRAY + "Click to refresh"
                 ));
                 status.setItemMeta(meta);
             }
@@ -146,7 +151,8 @@ public class EngineMenuGUI {
             if (meta != null) {
                 meta.setDisplayName(ChatColor.YELLOW + "Engine Ready");
                 meta.setLore(Arrays.asList(
-                    ChatColor.GRAY + "Fuel loaded — will burn when sailing"
+                    ChatColor.GRAY + "Fuel loaded — will burn when sailing",
+                    ChatColor.DARK_GRAY + "Click to refresh"
                 ));
                 status.setItemMeta(meta);
             }
@@ -206,6 +212,14 @@ public class EngineMenuGUI {
             if (s == slot) return true;
         }
         return false;
+    }
+
+    /**
+     * Refreshes the status item in an open engine GUI (click-to-refresh).
+     */
+    public static void refreshStatus(EngineMenuHolder holder) {
+        Inventory inv = holder.getInventory();
+        inv.setItem(STATUS_SLOT, createStatusItem(holder.getShip(), holder.getEngineBlockIndex()));
     }
 
     /**
@@ -298,8 +312,7 @@ public class EngineMenuGUI {
         org.bukkit.block.Container container = (org.bukkit.block.Container) block.getState();
         org.bukkit.inventory.Inventory blockInv = container.getSnapshotInventory();
 
-        // Clear existing contents and write fuel slots
-        blockInv.clear();
+        // Write fuel slots back (targeted, not full clear — preserves other container state)
         Inventory gui = holder.getInventory();
         for (int i = 0; i < FUEL_SLOTS.length && i < blockInv.getSize(); i++) {
             ItemStack item = gui.getItem(FUEL_SLOTS[i]);

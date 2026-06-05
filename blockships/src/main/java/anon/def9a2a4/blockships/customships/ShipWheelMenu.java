@@ -358,8 +358,10 @@ public class ShipWheelMenu {
         }
 
         int blockCount = wheelData.getLastDetectedBlockCount();
+        int weightedBlockCount = wheelData.getLastDetectedWeightedBlockCount();
         int totalWeight = wheelData.getLastDetectedWeight();
-        float density = blockCount > 0 ? (float) totalWeight / blockCount : 0;
+        // Use weighted block count for density (matches ShipModel.getDensity() and physics)
+        float density = weightedBlockCount > 0 ? (float) totalWeight / weightedBlockCount : 0;
 
         // Get config values for float status thresholds
         BlockShipsPlugin plugin = (BlockShipsPlugin) Bukkit.getPluginManager().getPlugin("BlockShips");
@@ -411,7 +413,7 @@ public class ShipWheelMenu {
             fueledEngines = 0;
         }
 
-        int sailPower = woolCount * 3 + bannerCount * 7;
+        int sailPower = woolCount * config.woolPower + bannerCount * config.bannerPower;
 
         // Compute power ratio
         float sailRatio = (float) (config.basePower + sailPower) / mass;
@@ -510,20 +512,22 @@ public class ShipWheelMenu {
 
             ShipInfo info = getShipInfo(wheelData);
             if (info != null) {
+                BlockShipsPlugin plugin = (BlockShipsPlugin) Bukkit.getPluginManager().getPlugin("BlockShips");
+                ShipConfig config = ShipConfig.load(plugin, "custom");
                 // Sail breakdown
                 if (info.woolCount > 0) {
                     lore.add(ChatColor.GRAY + "Wool: " + ChatColor.WHITE + info.woolCount
-                        + ChatColor.GRAY + " (" + (info.woolCount * 3) + " pts)");
+                        + ChatColor.GRAY + " (" + (info.woolCount * config.woolPower) + " pts)");
                 }
                 if (info.bannerCount > 0) {
                     lore.add(ChatColor.GRAY + "Banners: " + ChatColor.WHITE + info.bannerCount
-                        + ChatColor.GRAY + " (" + (info.bannerCount * 7) + " pts)");
+                        + ChatColor.GRAY + " (" + (info.bannerCount * config.bannerPower) + " pts)");
                 }
 
                 // Sail power with cap indicator
                 if (info.sailPower > 0) {
-                    int sailCapPoints = Math.round(0.8f * info.mass);
-                    int effectiveSailPts = 2 + info.sailPower;  // base + sail
+                    int sailCapPoints = Math.round(info.sailCapRatio * info.mass);
+                    int effectiveSailPts = config.basePower + info.sailPower;  // base + sail
                     if (effectiveSailPts > sailCapPoints) {
                         lore.add(ChatColor.GRAY + "Sail Power: " + ChatColor.WHITE + info.sailPower + " pts"
                             + ChatColor.YELLOW + " (capped at " + sailCapPoints + " pts)");
@@ -550,10 +554,10 @@ public class ShipWheelMenu {
                 lore.add("");
                 lore.add(ChatColor.GRAY + "Mass: " + ChatColor.WHITE + info.mass);
                 // Effective power after caps (matches physics formula):
-                // cappedSailPower = min(basePower + sailPower, 0.8 * mass)
+                // cappedSailPower = min(basePower + sailPower, sailCapRatio * mass)
                 // + enginePower, capped at 1.0 * mass total
-                int rawSailPower = 2 + info.sailPower;
-                int cappedSailPower = Math.min(rawSailPower, Math.round(0.8f * info.mass));
+                int rawSailPower = config.basePower + info.sailPower;
+                int cappedSailPower = Math.min(rawSailPower, Math.round(info.sailCapRatio * info.mass));
                 int enginePts = info.fueledEngines * info.enginePowerPerEngine;
                 int effectivePower = Math.min(cappedSailPower + enginePts, info.mass);
                 lore.add(ChatColor.GRAY + "Effective Power: " + ChatColor.WHITE + effectivePower

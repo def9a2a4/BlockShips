@@ -266,9 +266,38 @@ public class ShipWheelManager {
         wheelData.setAssembledShipUUID(ship.id);
         ship.wheelData = wheelData;
 
+        // Transfer pre-assembly fuel from scanned engine containers into wheelData
+        for (int engineIdx : model.engineBlockIndices) {
+            if (engineIdx >= 0 && engineIdx < model.parts.size()) {
+                ShipModel.ModelPart part = model.parts.get(engineIdx);
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> yaml = (java.util.Map<String, Object>) part.rawYaml;
+                if (yaml.containsKey("container_items")) {
+                    @SuppressWarnings("unchecked")
+                    java.util.List<java.util.Map<String, Object>> itemsData =
+                        (java.util.List<java.util.Map<String, Object>>) yaml.get("container_items");
+                    org.bukkit.inventory.ItemStack[] fuelSlots = new org.bukkit.inventory.ItemStack[3];
+                    for (java.util.Map<String, Object> itemData : itemsData) {
+                        int slot = ((Number) itemData.get("slot")).intValue();
+                        if (slot >= 0 && slot < 3) {
+                            try {
+                                fuelSlots[slot] = org.bukkit.inventory.ItemStack.deserializeBytes(
+                                    (byte[]) itemData.get("item"));
+                            } catch (Exception e) {
+                                // Skip corrupted items
+                            }
+                        }
+                    }
+                    wheelData.setEngineFuelSlots(engineIdx, fuelSlots);
+                }
+            }
+        }
+
+        ship.physics.recomputeStats();  // Must recompute after wheelData is linked (fuel state now available)
+
         // Update detection stats so the ship wheel menu shows correct data immediately
-        wheelData.setLastDetectedStats(model.parts.size(), model.totalWeight, model.mass,
-            model.woolCount, model.bannerCount, model.engineCount);
+        wheelData.setLastDetectedStats(model.parts.size(), model.blockCount, model.totalWeight,
+            model.mass, model.woolCount, model.bannerCount, model.engineCount);
         wheelData.setLastHealth(ship.vehicle.getHealth(), model.maxHealth);
         wheelData.lastCenterOfVolumeY = model.centerOfVolume.y();
         wheelData.lastMinY = model.minY;
@@ -396,6 +425,31 @@ public class ShipWheelManager {
                 Map<String, Object> yaml = (Map<String, Object>) part.rawYaml;
                 yaml.put("container_items", itemsData);
             }
+        }
+
+        // Sync engine fuel from wheelData back to model container_items before placing
+        if (ship.wheelData != null) {
+            for (int engineIdx : model.engineBlockIndices) {
+                if (engineIdx >= 0 && engineIdx < model.parts.size()) {
+                    ItemStack[] fuelSlots = ship.wheelData.getEngineFuelSlots(engineIdx);
+                    ShipModel.ModelPart part = model.parts.get(engineIdx);
+                    List<Map<String, Object>> itemsData = new ArrayList<>();
+                    for (int slot = 0; slot < fuelSlots.length; slot++) {
+                        if (fuelSlots[slot] != null && fuelSlots[slot].getType() != Material.AIR) {
+                            Map<String, Object> itemData = new HashMap<>();
+                            itemData.put("slot", slot);
+                            itemData.put("item", fuelSlots[slot].serializeAsBytes());
+                            itemsData.add(itemData);
+                        }
+                    }
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> yaml = (Map<String, Object>) part.rawYaml;
+                    yaml.put("container_items", itemsData);
+                }
+            }
+            // Clear stale fuel entries (ship may be rebuilt with different engine layout)
+            ship.wheelData.getAllEngineFuelSlots().clear();
+            ship.wheelData.getAllEngineBurnTicks().clear();
         }
 
         // Place the blocks back (with rotation)
@@ -687,13 +741,43 @@ public class ShipWheelManager {
                 org.bukkit.attribute.Attribute maxHealthAttr = anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth();
                 org.bukkit.attribute.AttributeInstance maxHealthInstance = maxHealthAttr != null ? ship.vehicle.getAttribute(maxHealthAttr) : null;
                 double maxHealth = maxHealthInstance != null ? maxHealthInstance.getBaseValue() : 100.0;
-                wheelData.setLastDetectedStats(blockCount, ship.model.totalWeight, ship.model.mass,
-                    ship.model.woolCount, ship.model.bannerCount, ship.model.engineCount);
+                wheelData.setLastDetectedStats(blockCount, ship.model.blockCount, ship.model.totalWeight,
+                    ship.model.mass, ship.model.woolCount, ship.model.bannerCount, ship.model.engineCount);
                 wheelData.setLastHealth(currentHealth, maxHealth);
                 // Store buoyancy data from ship model
                 wheelData.lastCenterOfVolumeY = ship.model.centerOfVolume.y();
                 wheelData.lastMinY = ship.model.minY;
                 wheelData.lastSurfaceOffset = ship.model.waterFloatOffset;
+
+                // Send detection chat for assembled ship
+                ShipConfig config = ShipConfig.load(plugin, "custom");
+                int mass = Math.max(1, ship.model.mass);
+                int sailPower = ship.model.woolCount * config.woolPower + ship.model.bannerCount * config.bannerPower;
+                ShipWheelData wd = ship.resolveWheelData();
+                int fueledEngines = (wd != null) ? wd.countFueledEngines(ship.model.engineBlockIndices) : 0;
+                float sailRatio = (float) (config.basePower + sailPower) / mass;
+                float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
+                float engineBonus = (float) (fueledEngines * config.enginePower) / mass;
+                float ratio = Math.min(nonEngineRatio + engineBonus, 1.0f);
+                int speedPercent = Math.round(ratio / config.sailCapRatio * 100);
+
+                player.sendMessage("§aShip detected (assembled)");
+                player.sendMessage("§7Blocks: §f" + blockCount);
+                player.sendMessage("§7Health: §f" + (int) Math.ceil(currentHealth) + " §7/ §f" + (int) maxHealth);
+                player.sendMessage("§7Sails: §f" + ship.model.woolCount + " wool, " + ship.model.bannerCount + " banners §7(" + sailPower + " pts)");
+                if (ship.model.engineCount > 0) {
+                    int unfueled = ship.model.engineCount - fueledEngines;
+                    if (fueledEngines > 0) {
+                        int fueledPts = fueledEngines * config.enginePower;
+                        player.sendMessage("§7Engines §a(fueled)§7: §f" + fueledEngines + " §7(" + fueledPts + " pts)");
+                    }
+                    if (unfueled > 0) {
+                        player.sendMessage("§7Engines §c(unfueled)§7: §f" + unfueled + " §7(0 pts)");
+                    }
+                }
+                String speedColor = speedPercent >= 125 ? "§b" : speedPercent >= 100 ? "§a" : speedPercent >= 75 ? "§e" : speedPercent >= 50 ? "§6" : "§c";
+                player.sendMessage("§7Speed: " + speedColor + speedPercent + "%");
+
                 return true;
             }
         }
@@ -790,12 +874,12 @@ public class ShipWheelManager {
             player.sendMessage("§7Seats: §c0 §7(default seat at wheel will be used)");
         }
         // Ship stats
-        int sailPower = woolCount * 3 + bannerCount * 7;
+        int sailPower = woolCount * config.woolPower + bannerCount * config.bannerPower;
         int shipMass = Math.max(1, calculateMass(shipBlocks));
         float sailRatio = (float) (config.basePower + sailPower) / shipMass;
         float ratio = Math.min(sailRatio, config.sailCapRatio);
         int speedPercent = Math.round(ratio / config.sailCapRatio * 100);
-        player.sendMessage("§7Sails: §f" + woolCount + " wool, " + bannerCount + " banners §7(" + sailPower + " power)");
+        player.sendMessage("§7Sails: §f" + woolCount + " wool, " + bannerCount + " banners §7(" + sailPower + " pts)");
         if (engineCount > 0) {
             // Detection is pre-assembly, so engines aren't fueled yet — show as unfueled
             player.sendMessage("§7Engines §c(unfueled)§7: §f" + engineCount + " §7(0 pts — fuel to activate)");
@@ -806,7 +890,7 @@ public class ShipWheelManager {
         // Store detected blocks and stats for Ship Info display
         int positiveWeight = calculateMass(shipBlocks);
         wheelData.setLastDetectedBlocks(shipBlocks);
-        wheelData.setLastDetectedStats(blockCount, totalWeight, positiveWeight, woolCount, bannerCount, engineCount);
+        wheelData.setLastDetectedStats(blockCount, weightedBlockCount, totalWeight, positiveWeight, woolCount, bannerCount, engineCount);
         wheelData.setLastDetectedBlockCategories(regularBlocks, seatBlocks, driverSeat);
 
         // Calculate and store buoyancy data for Ship Info display

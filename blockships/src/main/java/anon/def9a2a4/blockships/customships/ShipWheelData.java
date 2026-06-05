@@ -38,6 +38,7 @@ public class ShipWheelData {
     private Set<Location> lastDetectedBlocks;  // Blocks from last detection preview
     private BukkitTask particleTask;  // Active particle visualization task
     private int lastDetectedBlockCount;  // Block count from last detection
+    private int lastDetectedWeightedBlockCount;  // Blocks with assigned weight (for density)
     private int lastDetectedWeight;  // Total weight from last detection
     private int lastDetectedPositiveWeight;  // Positive weight sum (for health calculation)
     private int lastDetectedWoolCount;   // Wool blocks (for ship stats)
@@ -137,14 +138,20 @@ public class ShipWheelData {
         return lastDetectedPositiveWeight;
     }
 
-    public void setLastDetectedStats(int blockCount, int totalWeight, int positiveWeight,
-                                     int woolCount, int bannerCount, int engineCount) {
+    public void setLastDetectedStats(int blockCount, int weightedBlockCount, int totalWeight,
+                                     int positiveWeight, int woolCount, int bannerCount,
+                                     int engineCount) {
         this.lastDetectedBlockCount = blockCount;
+        this.lastDetectedWeightedBlockCount = weightedBlockCount;
         this.lastDetectedWeight = totalWeight;
         this.lastDetectedPositiveWeight = positiveWeight;
         this.lastDetectedWoolCount = woolCount;
         this.lastDetectedBannerCount = bannerCount;
         this.lastDetectedEngineCount = engineCount;
+    }
+
+    public int getLastDetectedWeightedBlockCount() {
+        return lastDetectedWeightedBlockCount;
     }
 
     public int getLastDetectedWoolCount() {
@@ -473,7 +480,12 @@ public class ShipWheelData {
                 for (int i = 0; i < Math.min(serializedSlots.size(), 3); i++) {
                     String encoded = serializedSlots.get(i);
                     if (encoded != null && !encoded.isEmpty()) {
-                        slots[i] = ItemStack.deserializeBytes(Base64.getDecoder().decode(encoded));
+                        try {
+                            slots[i] = ItemStack.deserializeBytes(Base64.getDecoder().decode(encoded));
+                        } catch (Exception e) {
+                            org.bukkit.Bukkit.getLogger().warning("[BlockShips] Failed to deserialize fuel in engine " + idx + " slot " + i + ": " + e.getMessage());
+                            slots[i] = null;
+                        }
                     }
                 }
                 data.engineFuelSlots.put(idx, slots);
