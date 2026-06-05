@@ -2123,7 +2123,9 @@ public class DisplayShip implements Listener {
 
         // Update all seat shulkers immediately (so change takes effect if player is riding)
         for (Shulker shulker : ship.seatShulkers) {
-            setCameraDistanceOnShulker(shulker, newValue);
+            if (shulker != null && shulker.isValid()) {
+                setCameraDistanceOnShulker(shulker, newValue);
+            }
         }
 
         // Update menu items in place (no close/reopen)
@@ -2215,14 +2217,39 @@ public class DisplayShip implements Listener {
         if (!(event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder)
             && !(event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineBlockMenuHolder)) return;
 
+        // Block double-click collect (could pull non-fuel items from player inventory)
+        if (event.getClick() == org.bukkit.event.inventory.ClickType.DOUBLE_CLICK) {
+            event.setCancelled(true);
+            return;
+        }
+
         int slot = event.getRawSlot();
         // Allow fuel slot interactions, block everything else in the top inventory
         if (slot >= 0 && slot < 9) {
             if (!anon.def9a2a4.blockships.customships.EngineMenuGUI.isFuelSlot(slot)) {
                 event.setCancelled(true);
+                // Click-to-refresh on status slot
+                if (slot == anon.def9a2a4.blockships.customships.EngineMenuGUI.STATUS_SLOT) {
+                    if (event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder holder) {
+                        anon.def9a2a4.blockships.customships.EngineMenuGUI.saveFuelState(holder);
+                        anon.def9a2a4.blockships.customships.EngineMenuGUI.refreshStatus(holder);
+                    }
+                }
                 return;
             }
-            // Validate fuel: if placing an item, check it's valid fuel
+
+            // Block number-key hotbar swaps with non-fuel items
+            if (event.getClick() == org.bukkit.event.inventory.ClickType.NUMBER_KEY) {
+                org.bukkit.entity.Player player = (org.bukkit.entity.Player) event.getWhoClicked();
+                ItemStack hotbarItem = player.getInventory().getItem(event.getHotbarButton());
+                if (hotbarItem != null && hotbarItem.getType() != Material.AIR
+                        && !anon.def9a2a4.blockships.customships.EngineMenuGUI.isValidFuel(hotbarItem.getType())) {
+                    event.setCancelled(true);
+                    return;
+                }
+            }
+
+            // Validate fuel: if placing an item via cursor, check it's valid fuel
             ItemStack cursor = event.getCursor();
             if (cursor != null && cursor.getType() != Material.AIR) {
                 if (!anon.def9a2a4.blockships.customships.EngineMenuGUI.isValidFuel(cursor.getType())) {
@@ -2240,9 +2267,29 @@ public class DisplayShip implements Listener {
     }
 
     @EventHandler
+    public void onEngineMenuDrag(org.bukkit.event.inventory.InventoryDragEvent event) {
+        if (!(event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder)
+            && !(event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineBlockMenuHolder)) return;
+
+        // Check if any dragged slots are in the top inventory (engine GUI)
+        for (int rawSlot : event.getRawSlots()) {
+            if (rawSlot >= 0 && rawSlot < 9) {
+                // If dragging into a non-fuel slot, or dragging a non-fuel item, cancel
+                if (!anon.def9a2a4.blockships.customships.EngineMenuGUI.isFuelSlot(rawSlot)
+                        || !anon.def9a2a4.blockships.customships.EngineMenuGUI.isValidFuel(event.getOldCursor().getType())) {
+                    event.setCancelled(true);
+                    return;
+                }
+            }
+        }
+    }
+
+    @EventHandler
     public void onEngineMenuClose(InventoryCloseEvent event) {
         if (event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder holder) {
             anon.def9a2a4.blockships.customships.EngineMenuGUI.saveFuelState(holder);
+            // Recompute stats immediately so fuel changes take effect without waiting for movement
+            holder.getShip().physics.recomputeStats();
         } else if (event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineBlockMenuHolder blockHolder) {
             anon.def9a2a4.blockships.customships.EngineMenuGUI.saveBlockFuelState(blockHolder);
         }
@@ -2323,6 +2370,33 @@ public class DisplayShip implements Listener {
         block.getWorld().dropItemNaturally(
             block.getLocation().add(0.5, 0.5, 0.5),
             itemFactory.createItem("ship_engine", "_DEFAULT", null));
+    }
+
+    /**
+     * Handles explosions destroying ship engine blocks — drops custom item instead of vanilla.
+     */
+    @EventHandler
+    public void onEngineExplode(org.bukkit.event.entity.EntityExplodeEvent event) {
+        handleExplosionEngineDrops(event.blockList());
+    }
+
+    @EventHandler
+    public void onEngineBlockExplode(org.bukkit.event.block.BlockExplodeEvent event) {
+        handleExplosionEngineDrops(event.blockList());
+    }
+
+    private void handleExplosionEngineDrops(java.util.List<Block> blockList) {
+        java.util.Iterator<Block> it = blockList.iterator();
+        while (it.hasNext()) {
+            Block block = it.next();
+            if (isShipEngine(block)) {
+                it.remove();  // Prevent vanilla blast furnace drop
+                block.setType(Material.AIR);
+                block.getWorld().dropItemNaturally(
+                    block.getLocation().add(0.5, 0.5, 0.5),
+                    itemFactory.createItem("ship_engine", "_DEFAULT", null));
+            }
+        }
     }
 
     /**

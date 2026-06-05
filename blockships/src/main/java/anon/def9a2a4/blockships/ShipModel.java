@@ -54,7 +54,6 @@ public final class ShipModel {
     public final int sailPower;                 // Sail power points (wool*3 + banner*7)
     public final int engineCount;               // Number of ship engine blocks detected
     public final List<Integer> engineBlockIndices;   // Block indices that are engines (for click detection + fuel)
-    public final List<Vector3f> engineLocalPositions; // Local positions of engines (for particles)
 
     // Assembly rotation (for custom block ships disassembly)
     public final float assemblyYaw;             // Yaw angle when assembled (0=S, 90=W, 180=N, 270=E), 0 for prefab ships
@@ -63,8 +62,8 @@ public final class ShipModel {
                      Vector3f collisionOffset, Matrix3f rotationTransform, List<SeatInfo> seats, List<CannonInfo> cannons,
                      float waterFloatOffset, double maxHealth, double healthRegenPerSecond,
                      int totalWeight, int mass, int blockCount, Vector3f centerOfVolume, float minY, float maxY, float assemblyYaw,
-                     int woolCount, int bannerCount, int engineCount,
-                     List<Integer> engineBlockIndices, List<Vector3f> engineLocalPositions) {
+                     int woolCount, int bannerCount, int woolPower, int bannerPower, int engineCount,
+                     List<Integer> engineBlockIndices) {
         this.parts = parts;
         this.items = items;
         this.initialRotation = initialRotation;
@@ -85,10 +84,9 @@ public final class ShipModel {
         this.assemblyYaw = assemblyYaw;
         this.woolCount = woolCount;
         this.bannerCount = bannerCount;
-        this.sailPower = woolCount * 3 + bannerCount * 7;
+        this.sailPower = woolCount * woolPower + bannerCount * bannerPower;
         this.engineCount = engineCount;
         this.engineBlockIndices = engineBlockIndices != null ? engineBlockIndices : Collections.emptyList();
-        this.engineLocalPositions = engineLocalPositions != null ? engineLocalPositions : Collections.emptyList();
     }
 
     /**
@@ -410,7 +408,7 @@ public final class ShipModel {
         return new ShipModel(out, items, initialRotation, positionOffset, collisionOffset, rotationTransform,
                            seats, new ArrayList<>(), waterFloatOffset, maxHealth, healthRegenPerSecond,
                            0, 0, 0, new Vector3f(0, 0, 0), 0f, 0f, 0f,
-                           0, 0, 0, null, null);
+                           0, 0, 3, 7, 0, null);
     }
 
     private static Matrix4f matrixFromMinecraftNbt(final float[] a) {
@@ -623,11 +621,6 @@ public final class ShipModel {
         map.put("engine_count", engineCount);
         if (!engineBlockIndices.isEmpty()) {
             map.put("engine_block_indices", new ArrayList<>(engineBlockIndices));
-            List<List<Float>> positions = new ArrayList<>();
-            for (Vector3f pos : engineLocalPositions) {
-                positions.add(Arrays.asList(pos.x, pos.y, pos.z));
-            }
-            map.put("engine_local_positions", positions);
         }
         map.put("center_of_volume", Arrays.asList(centerOfVolume.x, centerOfVolume.y, centerOfVolume.z));
 
@@ -787,28 +780,26 @@ public final class ShipModel {
         int bannerCount = map.containsKey("banner_count") ? ((Number) map.get("banner_count")).intValue() : 0;
         int engineCount = map.containsKey("engine_count") ? ((Number) map.get("engine_count")).intValue() : 0;
 
-        // Deserialize engine block indices and positions
+        // Deserialize engine block indices
         List<Integer> engineBlockIndices = new ArrayList<>();
-        List<Vector3f> engineLocalPositions = new ArrayList<>();
         if (map.containsKey("engine_block_indices")) {
             @SuppressWarnings("unchecked")
             List<Number> indices = (List<Number>) map.get("engine_block_indices");
             for (Number idx : indices) engineBlockIndices.add(idx.intValue());
         }
-        if (map.containsKey("engine_local_positions")) {
-            @SuppressWarnings("unchecked")
-            List<List<Number>> positions = (List<List<Number>>) map.get("engine_local_positions");
-            for (List<Number> pos : positions) {
-                engineLocalPositions.add(new Vector3f(
-                    pos.get(0).floatValue(), pos.get(1).floatValue(), pos.get(2).floatValue()));
-            }
-        }
+        // Old YAML files may contain "engine_local_positions" — ignored (dead data, removed)
+
+        // Load wool/banner power from config for sail power calculation
+        org.bukkit.plugin.Plugin plugin = org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
+        ShipConfig config = (plugin != null) ? ShipConfig.load(plugin, "custom") : null;
+        int woolPower = config != null ? config.woolPower : 3;
+        int bannerPower = config != null ? config.bannerPower : 7;
 
         return new ShipModel(parts, new ArrayList<>(), initialRotation, positionOffset,
             collisionOffset, rotationTransform, seats, cannons, waterFloatOffset,
             maxHealth, healthRegenPerSecond, totalWeight, mass, blockCount,
             centerOfVolume, minY, maxY, assemblyYaw,
-            woolCount, bannerCount, engineCount, engineBlockIndices, engineLocalPositions);
+            woolCount, bannerCount, woolPower, bannerPower, engineCount, engineBlockIndices);
     }
 }
 

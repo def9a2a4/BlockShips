@@ -317,7 +317,6 @@ public class BlockStructureScanner {
         int bannerCount = 0;
         int engineCount = 0;
         List<Integer> engineBlockIndices = new ArrayList<>();
-        List<Vector3f> engineLocalPositions = new ArrayList<>();
 
         // Track ship bounds (for all blocks)
         float minY = Float.MAX_VALUE;
@@ -393,7 +392,6 @@ public class BlockStructureScanner {
                         isEngine = true;
                         engineCount++;
                         engineBlockIndices.add(blockIndex);
-                        engineLocalPositions.add(new Vector3f((float) dx, (float) dy, (float) dz));
                     }
                 }
             }
@@ -601,6 +599,10 @@ public class BlockStructureScanner {
         // Detect cannons (dispenser + obsidian behind)
         List<ShipModel.CannonInfo> cannons = detectCannons(parts);
 
+        // Load configurable sail power values
+        int woolPower = plugin.getConfig().getInt("custom-ships.stats.wool-power", 3);
+        int bannerPower = plugin.getConfig().getInt("custom-ships.stats.banner-power", 7);
+
         return new ShipModel(
             parts,
             Collections.emptyList(),  // No items for MVP
@@ -622,9 +624,10 @@ public class BlockStructureScanner {
             assemblyYaw,  // Store for disassembly rotation calculation
             woolCount,
             bannerCount,
+            woolPower,
+            bannerPower,
             engineCount,
-            engineBlockIndices,
-            engineLocalPositions
+            engineBlockIndices
         );
     }
 
