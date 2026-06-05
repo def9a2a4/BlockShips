@@ -47,6 +47,9 @@ public class ShipConfig {
     // Ship stats (power-to-mass ratio system, custom ships only)
     public final int basePower;              // Free power points every ship gets (default: 2)
     public final int enginePower;            // Power points per fueled engine (default: 30)
+    public final int woolPower;              // Power points per wool block (default: 3)
+    public final int bannerPower;            // Power points per banner block (default: 7)
+    public final float fuelBurnMultiplier;   // Multiplier for fuel burn times (default: 1.0)
     public final float sailCapRatio;         // Sail contribution capped at this ratio (default: 0.8)
     public final float defaultRatio;         // Ratio that maps to current default stats (default: 0.7)
     public final float maxRatioMultiplier;   // Stats multiplier at ratio 1.0, relative to default (default: 1.5)
@@ -55,6 +58,8 @@ public class ShipConfig {
     public final float floorAcceleration;
     public final float floorRotationSpeed;   // 0.6 deg/tick = 30s per revolution
     public final float floorRotationAcceleration;
+    public final float floorRotationDeceleration;
+    public final float capRotationDeceleration;
     // Absolute caps (maximum stat values regardless of ratio)
     public final float capMaxSpeed;
     public final float capAcceleration;
@@ -131,6 +136,9 @@ public class ShipConfig {
         this.verticalForwardNudge = b.verticalForwardNudge;
         this.basePower = b.basePower;
         this.enginePower = b.enginePower;
+        this.woolPower = b.woolPower;
+        this.bannerPower = b.bannerPower;
+        this.fuelBurnMultiplier = b.fuelBurnMultiplier;
         this.sailCapRatio = b.sailCapRatio;
         this.defaultRatio = b.defaultRatio;
         this.maxRatioMultiplier = b.maxRatioMultiplier;
@@ -138,6 +146,8 @@ public class ShipConfig {
         this.floorAcceleration = b.floorAcceleration;
         this.floorRotationSpeed = b.floorRotationSpeed;
         this.floorRotationAcceleration = b.floorRotationAcceleration;
+        this.floorRotationDeceleration = b.floorRotationDeceleration;
+        this.capRotationDeceleration = b.capRotationDeceleration;
         this.capMaxSpeed = b.capMaxSpeed;
         this.capAcceleration = b.capAcceleration;
         this.capRotationSpeed = b.capRotationSpeed;
@@ -271,6 +281,9 @@ public class ShipConfig {
             // Ship stats (power-to-mass ratio system)
             .basePower(cfg.getInt("custom-ships.stats.base-power", 2))
             .enginePower(cfg.getInt("custom-ships.stats.engine-power", 30))
+            .woolPower(cfg.getInt("custom-ships.stats.wool-power", 3))
+            .bannerPower(cfg.getInt("custom-ships.stats.banner-power", 7))
+            .fuelBurnMultiplier((float) cfg.getDouble("custom-ships.stats.fuel-burn-multiplier", 1.0))
             .sailCapRatio((float) cfg.getDouble("custom-ships.stats.sail-cap-ratio", 0.8))
             .defaultRatio((float) cfg.getDouble("custom-ships.stats.default-ratio", 0.7))
             .maxRatioMultiplier((float) cfg.getDouble("custom-ships.stats.max-ratio-multiplier", 1.5))
@@ -278,6 +291,8 @@ public class ShipConfig {
             .floorAcceleration((float) cfg.getDouble("custom-ships.stats.floor-acceleration", 0.015))
             .floorRotationSpeed((float) cfg.getDouble("custom-ships.stats.floor-rotation-speed", 0.6))
             .floorRotationAcceleration((float) cfg.getDouble("custom-ships.stats.floor-rotation-acceleration", 0.05))
+            .floorRotationDeceleration((float) cfg.getDouble("custom-ships.stats.floor-rotation-deceleration", 0.05))
+            .capRotationDeceleration((float) cfg.getDouble("custom-ships.stats.cap-rotation-deceleration", -1))
             .capMaxSpeed((float) cfg.getDouble("custom-ships.stats.cap-max-speed", -1))
             .capAcceleration((float) cfg.getDouble("custom-ships.stats.cap-acceleration", -1))
             .capRotationSpeed((float) cfg.getDouble("custom-ships.stats.cap-rotation-speed", -1))
@@ -342,6 +357,9 @@ public class ShipConfig {
         // Ship stats defaults
         int basePower = 2;
         int enginePower = 30;
+        int woolPower = 3;
+        int bannerPower = 7;
+        float fuelBurnMultiplier = 1.0f;
         float sailCapRatio = 0.8f;
         float defaultRatio = 0.7f;
         float maxRatioMultiplier = 1.5f;
@@ -349,6 +367,8 @@ public class ShipConfig {
         float floorAcceleration = 0.015f;
         float floorRotationSpeed = 0.6f;       // 30s per revolution
         float floorRotationAcceleration = 0.05f;
+        float floorRotationDeceleration = 0.05f;
+        float capRotationDeceleration = -1f;
         float capMaxSpeed = -1f;               // -1 = auto (maxRatioMultiplier * default)
         float capAcceleration = -1f;
         float capRotationSpeed = -1f;
@@ -411,6 +431,9 @@ public class ShipConfig {
         Builder verticalForwardNudge(float v) { verticalForwardNudge = v; return this; }
         Builder basePower(int v) { basePower = v; return this; }
         Builder enginePower(int v) { enginePower = v; return this; }
+        Builder woolPower(int v) { woolPower = v; return this; }
+        Builder bannerPower(int v) { bannerPower = v; return this; }
+        Builder fuelBurnMultiplier(float v) { fuelBurnMultiplier = v; return this; }
         Builder sailCapRatio(float v) { sailCapRatio = v; return this; }
         Builder defaultRatio(float v) { defaultRatio = v; return this; }
         Builder maxRatioMultiplier(float v) { maxRatioMultiplier = v; return this; }
@@ -418,6 +441,8 @@ public class ShipConfig {
         Builder floorAcceleration(float v) { floorAcceleration = v; return this; }
         Builder floorRotationSpeed(float v) { floorRotationSpeed = v; return this; }
         Builder floorRotationAcceleration(float v) { floorRotationAcceleration = v; return this; }
+        Builder floorRotationDeceleration(float v) { floorRotationDeceleration = v; return this; }
+        Builder capRotationDeceleration(float v) { capRotationDeceleration = v; return this; }
         Builder capMaxSpeed(float v) { capMaxSpeed = v; return this; }
         Builder capAcceleration(float v) { capAcceleration = v; return this; }
         Builder capRotationSpeed(float v) { capRotationSpeed = v; return this; }

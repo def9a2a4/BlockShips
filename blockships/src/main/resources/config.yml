@@ -65,6 +65,12 @@ custom-ships:
     base-power: 2
     # Power points per fueled engine (unfueled engines contribute 0)
     engine-power: 30
+    # Power points per wool block used as sail
+    wool-power: 3
+    # Power points per banner block used as sail
+    banner-power: 7
+    # Multiplier for fuel burn duration (2.0 = fuel lasts twice as long)
+    fuel-burn-multiplier: 1.0
     # Sail contribution capped at this ratio (engines needed to push past it)
     sail-cap-ratio: 0.8
     # Ratio that maps to current default stats (0.55 max speed, 1.5 rotation, etc.)
@@ -76,11 +82,13 @@ custom-ships:
     floor-acceleration: 0.015
     floor-rotation-speed: 0.6       # 30s per full revolution
     floor-rotation-acceleration: 0.05
+    floor-rotation-deceleration: 0.05
     # Absolute caps (-1 = auto: default * max-ratio-multiplier)
     cap-max-speed: -1
     cap-acceleration: -1
     cap-rotation-speed: -1
     cap-rotation-acceleration: -1
+    cap-rotation-deceleration: -1
     # Airship vertical stat scaling (density magnitude + engines)
     vertical-density-scale: 0.3
     vertical-engine-scale: 0.01
