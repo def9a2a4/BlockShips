@@ -40,6 +40,11 @@ custom-ships:
   max-ship-size: 1000  # Maximum number of blocks in a custom ship
   max-scan-size: 5000  # Maximum blocks to scan when ship exceeds limit (for reporting actual size)
 
+  # What happens when a custom ship is destroyed (health reaches 0)
+  # "disassemble" - blocks are placed back into the world (default)
+  # "destroy" - blocks are lost, stored items are dropped
+  destruction-mode: disassemble
+
   # Buoyancy system - weight-based floating
   # Ships float based on their density (total weight / block count) compared to water density
   # - Density < water: floats higher (surface offset increases)

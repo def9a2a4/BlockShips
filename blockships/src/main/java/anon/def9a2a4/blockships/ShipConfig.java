@@ -108,6 +108,9 @@ public class ShipConfig {
     // Assembly/disassembly settings
     public final float assemblyNudgeHeight;  // Teleport players up by this amount during assembly/disassembly (0 to disable)
 
+    // Destruction settings
+    public final boolean destroyOnDeath;  // true = blocks lost on death, false = disassemble back into world
+
     private ShipConfig(Builder b) {
         this.collisionDebugGlow = b.collisionDebugGlow;
         this.maxSpeed = b.maxSpeed;
@@ -181,6 +184,7 @@ public class ShipConfig {
         this.displayInterpolationDuration = b.displayInterpolationDuration;
         this.cameraDistance = b.cameraDistance;
         this.assemblyNudgeHeight = b.assemblyNudgeHeight;
+        this.destroyOnDeath = b.destroyOnDeath;
     }
 
     /**
@@ -278,6 +282,7 @@ public class ShipConfig {
             // Camera distance (for prefab ships; custom ships use per-ship value from ShipWheelData)
             .cameraDistance((float) cfg.getDouble(p + "camera-distance", 4.0))
             .assemblyNudgeHeight((float) cfg.getDouble("custom-ships.assembly-nudge-height", 0.2))
+            .destroyOnDeath("destroy".equalsIgnoreCase(cfg.getString("custom-ships.destruction-mode", "disassemble")))
             // Ship stats (power-to-mass ratio system)
             .basePower(cfg.getInt("custom-ships.stats.base-power", 2))
             .enginePower(cfg.getInt("custom-ships.stats.engine-power", 30))
@@ -403,6 +408,7 @@ public class ShipConfig {
         int displayInterpolationDuration = 2;  // Ticks for display entity interpolation (1-4)
         float cameraDistance = 4.0f;  // Default matches Minecraft default
         float assemblyNudgeHeight = 0.2f;
+        boolean destroyOnDeath = false;
 
         Builder collisionDebugGlow(boolean v) { collisionDebugGlow = v; return this; }
         Builder maxSpeed(float v) { maxSpeed = v; return this; }
@@ -476,6 +482,7 @@ public class ShipConfig {
         Builder displayInterpolationDuration(int v) { displayInterpolationDuration = Math.max(1, Math.min(4, v)); return this; }
         Builder cameraDistance(float v) { cameraDistance = v; return this; }
         Builder assemblyNudgeHeight(float v) { assemblyNudgeHeight = v; return this; }
+        Builder destroyOnDeath(boolean v) { destroyOnDeath = v; return this; }
 
         ShipConfig build() { return new ShipConfig(this); }
     }

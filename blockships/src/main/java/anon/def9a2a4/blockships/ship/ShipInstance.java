@@ -1933,6 +1933,33 @@ public class ShipInstance {
                     }
                 }
 
+                if (config.destroyOnDeath) {
+                    // Full destruction: blocks are lost, only stored items drop
+                    // Drop inventory contents (chests, barrels, etc.)
+                    for (Inventory storage : storages.values()) {
+                        for (ItemStack item : storage.getContents()) {
+                            if (item != null && !item.getType().isAir()) {
+                                world.dropItemNaturally(dropLocation, item);
+                            }
+                        }
+                        storage.clear();
+                    }
+                    // Drop engine fuel items
+                    for (ItemStack[] fuelSlots : wheelData.getAllEngineFuelSlots().values()) {
+                        for (ItemStack item : fuelSlots) {
+                            if (item != null && !item.getType().isAir()) {
+                                world.dropItemNaturally(dropLocation, item);
+                            }
+                        }
+                    }
+                    // Destroy entities and clean up persistence
+                    destroyWithCleanup(bsp.getDisplayShip().getShipWorldData());
+                    wheelData.setAssembledShipUUID(null);
+                    // Spawn explosions
+                    spawnDestructionExplosions(world, explosionLocations);
+                    return;
+                }
+
                 // 3. Force disassemble - this calls ship.destroy() internally
                 boolean disassembled = manager.disassembleShip(null, wheelData, true);
 
