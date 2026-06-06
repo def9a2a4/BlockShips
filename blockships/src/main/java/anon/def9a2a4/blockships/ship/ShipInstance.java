@@ -359,7 +359,7 @@ public class ShipInstance {
         this.previousVehicleLocation = vehicle.getLocation().clone();
         this.previousYaw = vehicle.getYaw();
         this.previousPitch = vehicle.getPitch();
-        this.spawnYaw = vehicle.getYaw();
+        this.spawnYaw = ShipTags.normalizeYaw(vehicle.getYaw());
         this.physics.currentYaw = this.spawnYaw;
 
         // Initialize chunk tracking for persistence
@@ -1243,7 +1243,7 @@ public class ShipInstance {
                 .setY(cachedVehicleLoc.getY() - previousVehicleLocation.getY())
                 .setZ(cachedVehicleLoc.getZ() - previousVehicleLocation.getZ());
             double speedSq = workVehicleVelocity.lengthSquared();
-            float yawDelta = java.lang.Math.abs(physics.currentYaw - previousYaw);
+            float yawDelta = java.lang.Math.abs(normalizeAngle(physics.currentYaw - previousYaw));
             boolean hasMovement = speedSq > POSITION_SYNC_THRESHOLD_SQ;
             boolean hasRotation = yawDelta > 0.1f;
             vehicleMovedThisTick = hasMovement || hasRotation;
@@ -1282,6 +1282,18 @@ public class ShipInstance {
             // nearby players. This forces the client to discard stale entity state and
             // receive fresh spawn packets with exact positions, fixing collision jitter.
             if (ticksSinceLastMovement == 0) {
+                // Sync vehicle yaw with internal yaw so the entity's NBT has the
+                // correct rotation for chunk unload/reload recovery. Reset spawnYaw
+                // so deltaYaw=0 (prevents double rotation from stale transformation
+                // + new inherited vehicle yaw). Update display transforms immediately
+                // so the visual matches the synced state.
+                if (physics.currentYaw != vehicle.getYaw()) {
+                    Location syncLoc = vehicle.getLocation();
+                    syncLoc.setYaw(physics.currentYaw);
+                    TeleportCompat.teleport(vehicle, syncLoc);
+                    spawnYaw = physics.currentYaw;
+                    updateDisplayTransforms();
+                }
                 refreshCarrierTracking();
             }
             ticksSinceLastMovement++;
@@ -1315,10 +1327,19 @@ public class ShipInstance {
         previousYaw = yaw;
         previousPitch = pitch;
 
-        // Build rotation matrix for display entities (reusing work matrices to avoid allocations)
-        // Vehicle yaw is frozen at spawnYaw — all visual rotation is applied here via the
-        // display transformation matrix, using the internal yaw tracked by ShipPhysics.
-        // This avoids the entity tracker's byte-precision (~1.4°) rotation packets.
+        updateDisplayTransforms();
+    }
+
+    /**
+     * Updates display entity transformations based on the current rotation delta.
+     * Vehicle yaw is frozen at spawnYaw — all visual rotation is applied here via the
+     * display transformation matrix, using the internal yaw tracked by ShipPhysics.
+     * This avoids the entity tracker's byte-precision (~1.4°) rotation packets.
+     *
+     * Called from tick() on every active tick, and from the idle yaw sync (to reset
+     * the transformation after spawnYaw is re-anchored to currentYaw).
+     */
+    private void updateDisplayTransforms() {
         workR_initial.set(cachedR_initial);
 
         float deltaYaw = physics.currentYaw - spawnYaw;
@@ -2168,16 +2189,11 @@ public class ShipInstance {
         // 6. Restore state and start ticking
         previousVehicleLocation = vehicle.getLocation().clone();
         previousPitch = vehicle.getPitch();
-        // Track spawn yaw for display rotation delta calculation
-        // Custom ships: use assemblyYaw (initialRotation.x) to match initial spawn state
-        // Prefab ships: use current vehicle yaw (initialRotation.x is 0 anyway)
-        if ("custom".equals(shipType)) {
-            spawnYaw = model.initialRotation.x;
-        } else {
-            spawnYaw = vehicle.getYaw();
-        }
-        // Initialize internal yaw from vehicle's current yaw (may differ from spawnYaw after rotation)
-        physics.currentYaw = vehicle.getYaw();
+        // Set spawnYaw = currentYaw on recovery, matching what the idle yaw sync does.
+        // This ensures deltaYaw=0, so the display transformation is just R(initial).
+        // The vehicle yaw (inherited by display passengers) provides the actual rotation.
+        spawnYaw = ShipTags.normalizeYaw(vehicle.getYaw());
+        physics.currentYaw = spawnYaw;
         previousYaw = physics.currentYaw;
         firstTick = true;
 

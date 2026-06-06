@@ -332,6 +332,8 @@ public class ShipPhysics {
         // visual rotation is handled by display entity transformations)
         if (Math.abs(currentRotationVelocity) > 0.01f) {
             currentYaw += currentRotationVelocity;
+            if (currentYaw >= 360f) currentYaw -= 360f;
+            else if (currentYaw < 0f) currentYaw += 360f;
         }
 
         // Play movement sounds
