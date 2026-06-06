@@ -2181,14 +2181,12 @@ public class ShipInstance {
         // 6. Restore state and start ticking
         previousVehicleLocation = vehicle.getLocation().clone();
         previousPitch = vehicle.getPitch();
-        // Use metadata yaw if available (more reliable than vehicle NBT after chunk
-        // unload, since vehicle yaw is frozen at spawnYaw during active rotation).
-        // Fall back to vehicle NBT yaw for legacy metadata without current_yaw field.
-        float recoveredYaw = !Float.isNaN(metadataYaw)
+        // spawnYaw must match vehicle.getYaw() (the frozen NBT yaw the client inherits
+        // for display passengers on 1.21.9+). currentYaw from metadata provides the delta.
+        spawnYaw = ShipTags.normalizeYaw(vehicle.getYaw());
+        physics.currentYaw = !Float.isNaN(metadataYaw)
             ? ShipTags.normalizeYaw(metadataYaw)
-            : ShipTags.normalizeYaw(vehicle.getYaw());
-        spawnYaw = recoveredYaw;
-        physics.currentYaw = spawnYaw;
+            : spawnYaw;
         previousYaw = physics.currentYaw;
         firstTick = true;
 
@@ -2222,24 +2220,9 @@ public class ShipInstance {
         // Position collision boxes immediately before starting tick task
         updateCollisionPositions();
 
-        // Update display transforms to match current vehicle orientation
-        // At init time, use R_initial only - the display's frozen local coordinate system
-        // already has the spawn yaw (on pre-1.21.9), or vehicle rotation is inherited (on 1.21.9+)
-        Matrix4f R_initial = new Matrix4f()
-            .rotateY((float) java.lang.Math.toRadians(model.initialRotation.x))
-            .rotateX((float) java.lang.Math.toRadians(model.initialRotation.y))
-            .rotateZ((float) java.lang.Math.toRadians(model.initialRotation.z));
-
-        Matrix4f T = new Matrix4f().translation(model.positionOffset);
-        Matrix4f T_display = new Matrix4f(T);
-        if ("custom".equals(shipType)) {
-            T_display.translate(config.customDisplayOffset);
-        }
-
-        for (DisplayInstance di : displays) {
-            Matrix4f world = new Matrix4f(R_initial).mul(T_display).mul(di.base);
-            di.entity.setTransformationMatrix(world);
-        }
+        // Apply display transforms with correct deltaYaw (may be non-zero if
+        // metadata restored a different currentYaw than the vehicle's frozen spawnYaw)
+        updateDisplayTransforms();
 
         // Start tick task
         task = new BukkitRunnable() {
