@@ -1438,7 +1438,7 @@ public class DisplayShip implements Listener {
                 float currentSpeed = inst.physics.currentSpeed;
                 float currentYVelocity = inst.physics.currentYVelocity;
 
-                float yawRad = (float) Math.toRadians(-inst.vehicle.getYaw());
+                float yawRad = (float) Math.toRadians(-inst.physics.currentYaw);
                 double forwardX = Math.sin(yawRad) * currentSpeed;
                 double forwardZ = Math.cos(yawRad) * currentSpeed;
                 boolean shipIsMoving = Math.abs(currentSpeed) > 0.01 || Math.abs(currentYVelocity) > 0.01;

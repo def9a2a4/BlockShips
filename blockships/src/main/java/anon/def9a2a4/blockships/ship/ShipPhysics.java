@@ -547,7 +547,8 @@ public class ShipPhysics {
 
         float pitch = loc.getPitch();
 
-        Location snapped = new Location(loc.getWorld(), x, y, z, snappedYaw, pitch);
+        // Keep vehicle yaw frozen — only snap position (visual rotation is via display transforms)
+        Location snapped = new Location(loc.getWorld(), x, y, z, loc.getYaw(), pitch);
         TeleportCompat.teleport(ship.vehicle, snapped);
 
         // Update collision positions to sync with new location

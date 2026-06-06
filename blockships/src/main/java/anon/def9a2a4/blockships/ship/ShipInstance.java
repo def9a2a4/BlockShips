@@ -1282,13 +1282,6 @@ public class ShipInstance {
             // nearby players. This forces the client to discard stale entity state and
             // receive fresh spawn packets with exact positions, fixing collision jitter.
             if (ticksSinceLastMovement == 0) {
-                // Sync vehicle yaw with internal yaw for persistence (vehicle yaw is
-                // frozen during active rotation to avoid entity tracker byte-precision jitter)
-                if (physics.currentYaw != vehicle.getYaw()) {
-                    Location syncLoc = vehicle.getLocation();
-                    syncLoc.setYaw(physics.currentYaw);
-                    TeleportCompat.teleport(vehicle, syncLoc);
-                }
                 refreshCarrierTracking();
             }
             ticksSinceLastMovement++;
@@ -1353,12 +1346,9 @@ public class ShipInstance {
         }
 
         // Update each child's transformation: R * T_display * display.base
-        // setInterpolationDelay(0) triggers smooth client-side interpolation over
-        // interpolation_duration ticks, giving float-precision rotation at 20 Hz.
         for (DisplayInstance di : displays) {
             workWorldMatrix.set(workR).mul(workT_display).mul(di.base);
             di.entity.setTransformationMatrix(workWorldMatrix);
-            di.entity.setInterpolationDelay(0);
         }
     }
 
