@@ -373,9 +373,10 @@ public class ShipWheelManager {
         // Align to grid first
         ship.alignToGrid();
 
-        // Get the ship's current location and rotation
+        // Get the ship's current location and rotation (vehicle yaw is frozen,
+        // so read the internal yaw which was just snapped by alignToGrid)
         Location shipLoc = ship.vehicle.getLocation();
-        float currentYaw = shipLoc.getYaw();
+        float currentYaw = ship.physics.currentYaw;
 
         // Validate placement area (with rotation)
         BlockStructureScanner.PlacementConflicts conflicts =

@@ -619,8 +619,9 @@ public class ShipPhysics {
         // Find players standing on deck BEFORE moving
         Map<Player, Shulker> playersOnDeck = findPlayersOnDeck();
 
-        // Set the new aligned location
-        Location aligned = new Location(loc.getWorld(), x, y, z, snappedYaw, snappedPitch);
+        // Set the new aligned location (keep vehicle yaw frozen — visual rotation
+        // is via display transforms, and currentYaw is persisted via metadata)
+        Location aligned = new Location(loc.getWorld(), x, y, z, loc.getYaw(), snappedPitch);
         TeleportCompat.teleport(ship.vehicle, aligned);
 
         // Update collision positions immediately

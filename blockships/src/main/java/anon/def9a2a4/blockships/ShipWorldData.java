@@ -219,6 +219,9 @@ public class ShipWorldData {
             config.set("inventories", inventories);
         }
 
+        // Internal yaw for chunk recovery (vehicle yaw is frozen at spawnYaw)
+        config.set("current_yaw", ship.physics.currentYaw);
+
         return config;
     }
 
@@ -323,14 +326,18 @@ public class ShipWorldData {
         // Entity count for recovery validation (default 0 for legacy data)
         int entityCount = config.getInt("entity_count", 0);
 
+        // Internal yaw for chunk recovery (absent in legacy metadata → NaN → fall back to vehicle NBT)
+        float currentYaw = config.contains("current_yaw")
+            ? (float) config.getDouble("current_yaw") : Float.NaN;
+
         // Create ShipState without position (position comes from recovered vehicle)
         return new ShipPersistence.ShipState(
             UUID.fromString(id),
             shipType,
             modelPath,
             worldName,
-            0, 0, 0,  // Position will come from vehicle
-            0, 0,     // Rotation will come from vehicle
+            0, 0, 0,      // Position will come from vehicle
+            currentYaw, 0, // Yaw from metadata; pitch will come from vehicle
             bannerData,
             woodType,
             balloonColor,
