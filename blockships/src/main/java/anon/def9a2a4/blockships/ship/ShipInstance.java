@@ -106,7 +106,7 @@ public class ShipInstance {
     private Location previousVehicleLocation;
     private float previousYaw;
     private float previousPitch;
-    private float spawnYaw;  // Track spawn yaw for pre-1.21.9 display rotation fix
+    float spawnYaw;  // Track spawn yaw for display rotation delta calculation
     private int ticksSinceLastMovement = 0;
     private int engineSmokeTick = 0;  // Counter for throttling engine smoke particles
     private boolean taskStopped = false;
@@ -359,7 +359,8 @@ public class ShipInstance {
         this.previousVehicleLocation = vehicle.getLocation().clone();
         this.previousYaw = vehicle.getYaw();
         this.previousPitch = vehicle.getPitch();
-        this.spawnYaw = vehicle.getYaw();  // Track spawn yaw for pre-1.21.9 display rotation
+        this.spawnYaw = vehicle.getYaw();
+        this.physics.currentYaw = this.spawnYaw;
 
         // Initialize chunk tracking for persistence
         this.currentChunkX = vehicle.getLocation().getBlockX() >> 4;
@@ -988,14 +989,12 @@ public class ShipInstance {
     }
 
     /**
-     * Builds a rotation matrix that combines the vehicle's current orientation with the model's initial rotation.
-     * This matrix should be used for positioning both collision boxes AND display entities.
-     *
-     * Note: Display entities do NOT inherit yaw rotation from their parent vehicle - only position is inherited.
-     * Therefore, we must explicitly apply the vehicle's rotation to display transforms.
+     * Builds a rotation matrix that combines the ship's current orientation with the model's initial rotation.
+     * Uses the internal yaw tracked by ShipPhysics (vehicle yaw is frozen at spawnYaw).
+     * Used for positioning collision boxes; display entities use a separate delta rotation path.
      */
     private Matrix4f buildRotationMatrix() {
-        float yaw = vehicle.getYaw();
+        float yaw = physics.currentYaw;
         float pitch = vehicle.getPitch();
 
         // Reuse work vectors instead of allocating new ones
@@ -1244,7 +1243,7 @@ public class ShipInstance {
                 .setY(cachedVehicleLoc.getY() - previousVehicleLocation.getY())
                 .setZ(cachedVehicleLoc.getZ() - previousVehicleLocation.getZ());
             double speedSq = workVehicleVelocity.lengthSquared();
-            float yawDelta = java.lang.Math.abs(vehicle.getYaw() - previousYaw);
+            float yawDelta = java.lang.Math.abs(physics.currentYaw - previousYaw);
             boolean hasMovement = speedSq > POSITION_SYNC_THRESHOLD_SQ;
             boolean hasRotation = yawDelta > 0.1f;
             vehicleMovedThisTick = hasMovement || hasRotation;
@@ -1267,7 +1266,7 @@ public class ShipInstance {
 
         // Get current vehicle state (reuse cached location from tick runnable)
         Location currentVehicleLoc = cachedVehicleLoc;
-        float yaw = vehicle.getYaw();
+        float yaw = physics.currentYaw;
         float pitch = vehicle.getPitch();
 
         // Check if ship has moved or rotated
@@ -1283,6 +1282,13 @@ public class ShipInstance {
             // nearby players. This forces the client to discard stale entity state and
             // receive fresh spawn packets with exact positions, fixing collision jitter.
             if (ticksSinceLastMovement == 0) {
+                // Sync vehicle yaw with internal yaw for persistence (vehicle yaw is
+                // frozen during active rotation to avoid entity tracker byte-precision jitter)
+                if (physics.currentYaw != vehicle.getYaw()) {
+                    Location syncLoc = vehicle.getLocation();
+                    syncLoc.setYaw(physics.currentYaw);
+                    TeleportCompat.teleport(vehicle, syncLoc);
+                }
                 refreshCarrierTracking();
             }
             ticksSinceLastMovement++;
@@ -1317,32 +1323,25 @@ public class ShipInstance {
         previousPitch = pitch;
 
         // Build rotation matrix for display entities (reusing work matrices to avoid allocations)
-        // On 1.21.9+: Vehicle rotation is inherited since displays are passengers of the vehicle
-        // On pre-1.21.9: Display's local coordinate system is "frozen" at spawn yaw, so we only
-        //                apply the DELTA rotation from spawn (not absolute yaw, which causes doubling)
+        // Vehicle yaw is frozen at spawnYaw — all visual rotation is applied here via the
+        // display transformation matrix, using the internal yaw tracked by ShipPhysics.
+        // This avoids the entity tracker's byte-precision (~1.4°) rotation packets.
         workR_initial.set(cachedR_initial);
 
-        if (TeleportCompat.needsPassengerEject()) {
-            // Pre-1.21.9: Apply only the DELTA rotation from spawn
-            // The display's frozen local coordinate system already has spawn_yaw
-            float deltaYaw = vehicle.getYaw() - spawnYaw;
-            float deltaPitch = vehicle.getPitch();  // Pitch starts at 0, so no spawn offset needed
+        float deltaYaw = physics.currentYaw - spawnYaw;
+        float deltaPitch = vehicle.getPitch();  // Pitch starts at 0, so no spawn offset needed
 
-            workDisplayRot.set(
-                (float) java.lang.Math.toRadians(-deltaYaw),
-                (float) java.lang.Math.toRadians(-deltaPitch),
-                0f
-            );
-            model.rotationTransform.transform(workDisplayRot, workDisplayTransformedRot);
-            workDisplayDelta.identity()
-                .rotateY(workDisplayTransformedRot.x)
-                .rotateX(workDisplayTransformedRot.y)
-                .rotateZ(workDisplayTransformedRot.z);
-            workR.set(workDisplayDelta).mul(workR_initial);
-        } else {
-            // 1.21.9+: Only initial rotation, vehicle rotation is inherited from passenger
-            workR.set(workR_initial);
-        }
+        workDisplayRot.set(
+            (float) java.lang.Math.toRadians(-deltaYaw),
+            (float) java.lang.Math.toRadians(-deltaPitch),
+            0f
+        );
+        model.rotationTransform.transform(workDisplayRot, workDisplayTransformedRot);
+        workDisplayDelta.identity()
+            .rotateY(workDisplayTransformedRot.x)
+            .rotateX(workDisplayTransformedRot.y)
+            .rotateZ(workDisplayTransformedRot.z);
+        workR.set(workDisplayDelta).mul(workR_initial);
 
         // Build translation matrix for position offset (in local space)
         workT.identity().translation(model.positionOffset);
@@ -1354,9 +1353,12 @@ public class ShipInstance {
         }
 
         // Update each child's transformation: R * T_display * display.base
+        // setInterpolationDelay(0) triggers smooth client-side interpolation over
+        // interpolation_duration ticks, giving float-precision rotation at 20 Hz.
         for (DisplayInstance di : displays) {
             workWorldMatrix.set(workR).mul(workT_display).mul(di.base);
             di.entity.setTransformationMatrix(workWorldMatrix);
+            di.entity.setInterpolationDelay(0);
         }
     }
 
@@ -1611,7 +1613,7 @@ public class ShipInstance {
 
                 // Check if vehicle has moved
                 Location currentLoc = vehicle.getLocation();
-                float currentYaw = vehicle.getYaw();
+                float currentYaw = physics.currentYaw;
                 float currentPitch = vehicle.getPitch();
 
                 if (hasMovedSinceLastTick(currentLoc, currentYaw, currentPitch)) {
@@ -2175,9 +2177,8 @@ public class ShipInstance {
 
         // 6. Restore state and start ticking
         previousVehicleLocation = vehicle.getLocation().clone();
-        previousYaw = vehicle.getYaw();
         previousPitch = vehicle.getPitch();
-        // Track spawn yaw for pre-1.21.9 display rotation fix
+        // Track spawn yaw for display rotation delta calculation
         // Custom ships: use assemblyYaw (initialRotation.x) to match initial spawn state
         // Prefab ships: use current vehicle yaw (initialRotation.x is 0 anyway)
         if ("custom".equals(shipType)) {
@@ -2185,6 +2186,9 @@ public class ShipInstance {
         } else {
             spawnYaw = vehicle.getYaw();
         }
+        // Initialize internal yaw from vehicle's current yaw (may differ from spawnYaw after rotation)
+        physics.currentYaw = vehicle.getYaw();
+        previousYaw = physics.currentYaw;
         firstTick = true;
 
         // Initialize chunk tracking for persistence

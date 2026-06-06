@@ -106,8 +106,8 @@ public class ShipCollision {
         workHorizontalForce.set(collisionForce.x, 0, collisionForce.z);
         float verticalForce = collisionForce.y;
 
-        // Get forward direction vector (reuse work vector)
-        float yawRad = (float) Math.toRadians(-ship.vehicle.getYaw());
+        // Get forward direction vector from internal yaw (reuse work vector)
+        float yawRad = (float) Math.toRadians(-ship.physics.currentYaw);
         workForwardDir.set(
             (float) Math.sin(yawRad),
             0,

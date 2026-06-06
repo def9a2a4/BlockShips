@@ -31,6 +31,12 @@ public class ShipPhysics {
     public float currentRotationVelocity = 0.0f;
     public Vector3f collisionForce = new Vector3f(0, 0, 0);
 
+    // Internal yaw tracking — vehicle yaw is frozen at spawnYaw to avoid the entity
+    // tracker's byte-precision (~1.4°) rotation packets conflicting with our float-precision
+    // position sync packets, which causes periodic jitter every 3 ticks.
+    // All rotation is applied via display entity transformations + interpolation instead.
+    public float currentYaw;
+
     // Track vertical movement state for carrier refresh on stop
     private boolean wasVerticallyMoving = false;
 
@@ -266,8 +272,8 @@ public class ShipPhysics {
             currentSpeed = 0.0f;
         }
 
-        // Calculate forward direction vector from vehicle yaw
-        float yawRad = (float) Math.toRadians(-ship.vehicle.getYaw());
+        // Calculate forward direction vector from internal yaw
+        float yawRad = (float) Math.toRadians(-currentYaw);
         double forwardX = Math.sin(yawRad);
         double forwardZ = Math.cos(yawRad);
 
@@ -322,12 +328,10 @@ public class ShipPhysics {
             }
         }
 
-        // Apply rotation
+        // Apply rotation to internal yaw (vehicle yaw stays frozen at spawnYaw;
+        // visual rotation is handled by display entity transformations)
         if (Math.abs(currentRotationVelocity) > 0.01f) {
-            float newYaw = ship.vehicle.getYaw() + currentRotationVelocity;
-            Location newLoc = ship.vehicle.getLocation();
-            newLoc.setYaw(newYaw);
-            TeleportCompat.teleport(ship.vehicle, newLoc);
+            currentYaw += currentRotationVelocity;
         }
 
         // Play movement sounds
@@ -535,10 +539,11 @@ public class ShipPhysics {
         double y = Math.round(loc.getY() * FINE_GRID_RESOLUTION) / FINE_GRID_RESOLUTION;
         double z = Math.round(loc.getZ() * FINE_GRID_RESOLUTION) / FINE_GRID_RESOLUTION;
 
-        // Snap yaw to nearest 5 degrees
-        float yaw = ShipTags.normalizeYaw(loc.getYaw());
+        // Snap internal yaw to nearest 5 degrees
+        float yaw = ShipTags.normalizeYaw(currentYaw);
         float snappedYaw = Math.round(yaw / 5.0f) * 5.0f;
         if (snappedYaw >= 360) snappedYaw = 0;
+        currentYaw = snappedYaw;
 
         float pitch = loc.getPitch();
 
@@ -601,10 +606,11 @@ public class ShipPhysics {
         double y = Math.round(loc.getY());
         double z = Math.round(loc.getZ());
 
-        // Snap yaw to nearest 90 degrees
-        float yaw = ShipTags.normalizeYaw(loc.getYaw());
+        // Snap internal yaw to nearest 90 degrees
+        float yaw = ShipTags.normalizeYaw(currentYaw);
         int cardinal = Math.round(yaw / 90.0f) * 90;
         float snappedYaw = cardinal % 360;
+        currentYaw = snappedYaw;
         float snappedPitch = 0.0f;
 
         // Find players standing on deck BEFORE moving
