@@ -359,6 +359,11 @@ public class ShipInstance {
         this.physics = new ShipPhysics(this);
         this.collision = new ShipCollision(this);
 
+        // Compute initial effective stats. For prefab ships this is the final value
+        // (config-based, no ratio). For custom ships this is a preliminary computation
+        // with 0 fueled engines; recomputed after wheelData is linked in ShipWheelManager.
+        this.physics.recomputeStats();
+
         // Initialize previous state
         this.previousVehicleLocation = vehicle.getLocation().clone();
         this.previousYaw = vehicle.getYaw();

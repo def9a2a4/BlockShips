@@ -60,8 +60,8 @@ public class ShipPhysics {
 
     public ShipPhysics(ShipInstance ship) {
         this.ship = ship;
-        // Stats are NOT computed here — wheelData is not yet linked.
-        // Call recomputeStats() after wheelData is assigned.
+        // Stats are computed by caller after construction.
+        // For custom ships, recomputeStats() is called again after wheelData is linked.
     }
 
     /**
