@@ -1965,11 +1965,14 @@ public class ShipInstance {
                         if (cb.entity == null || !cb.entity.isValid()) continue;
                         for (org.bukkit.entity.Entity nearby : cb.entity.getWorld().getNearbyEntities(
                                 cb.entity.getLocation(), 12, 12, 12,
-                                e -> e instanceof org.bukkit.entity.Mob m
-                                        && m.isLeashed()
-                                        && cb.entity.equals(m.getLeashHolder()))) {
+                                e -> e instanceof io.papermc.paper.entity.Leashable l
+                                        && l.isLeashed()
+                                        && cb.entity.equals(l.getLeashHolder()))) {
                             world.dropItemNaturally(cb.entity.getLocation(),
                                     new ItemStack(org.bukkit.Material.LEAD));
+                            // Detach the leash to prevent Paper's tickLeash from dropping a second lead
+                            // when the shulker holder is removed by destroy()
+                            ((io.papermc.paper.entity.Leashable) nearby).setLeashHolder(null);
                         }
                     }
                     // Capture wheel location before entities are removed
