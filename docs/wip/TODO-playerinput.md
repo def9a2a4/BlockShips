@@ -129,9 +129,51 @@ Also update the "ProtocolLib not found" warning check (~line 164 in `onCommand`)
 
 ## Testing
 
+### Local
 1. Build with `make build`
-2. Test on 1.21.2+ server WITHOUT ProtocolLib — verify WASD, rotation, airship vertical
-3. Test on pre-1.21.2 server WITH ProtocolLib — verify fallback
-4. Test dismount (shift) — PaperInputListener calls dismountPlayer() explicitly
-5. Verify no double-dismount issues (dismountPlayer is idempotent, safe if PlayerToggleSneakEvent also fires)
-6. Test passenger (non-driver) dismount — isSneak() should still trigger dismount for passengers
+2. Test on 1.21.11 server WITHOUT ProtocolLib — verify WASD, rotation, airship vertical, dismount
+3. Test on 1.21.1 server WITH ProtocolLib — verify fallback still works
+
+### CI — skip ProtocolLib for 1.21.2+ versions
+
+The CI matrix in `.github/workflows/server-test.yml` tests: `1.21.1`, `1.21.4`, `1.21.8`, `1.21.10`, `1.21.11`, `26.1.2`.
+
+- **1.21.1** → pre-1.21.2, needs ProtocolLib (keep as-is)
+- **1.21.4, 1.21.8, 1.21.10, 1.21.11, 26.1.2** → all ≥1.21.2, should use PaperInputListener WITHOUT ProtocolLib
+
+**Makefile change**: Add a `test-server-plugin-copy` variant that conditionally includes ProtocolLib:
+
+```makefile
+# Only include ProtocolLib for pre-1.21.2 servers
+NEEDS_PROTOCOLLIB := $(shell echo "$(MINECRAFT_VERSION)" | awk -F. '{ \
+    if ($$1 > 1) print "no"; \
+    else if ($$2 > 21) print "no"; \
+    else if ($$2 == 21 && $$3 >= 2) print "no"; \
+    else print "yes" }')
+
+.PHONY: test-server-plugin-copy
+test-server-plugin-copy:
+	rm -rf $(TEST_SERVER_DIR)/plugins/
+	mkdir -p $(TEST_SERVER_DIR)/plugins
+	cp bin/*.jar $(TEST_SERVER_DIR)/plugins/
+ifeq ($(NEEDS_PROTOCOLLIB),yes)
+	cp $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar $(TEST_SERVER_DIR)/plugins/
+endif
+	cp $(DOWNLOAD_CACHE)/plugins/ViaVersion.jar $(TEST_SERVER_DIR)/plugins/
+	cp $(DOWNLOAD_CACHE)/plugins/ViaBackwards.jar $(TEST_SERVER_DIR)/plugins/
+```
+
+This means:
+- 1.21.1 CI run: ProtocolLib included → tests ProtocolLib path
+- 1.21.4+ CI runs: ProtocolLib NOT included → tests PaperInputListener path
+- If PaperInputListener is broken, the bot tests will fail (ship won't move without working input)
+
+### What the bot tests verify
+The existing bot tests (`test-bot.js`) already exercise WASD controls:
+- Forward movement (W key)
+- Left/right rotation (A/D keys)  
+- Backward movement (S key)
+- Jump/sprint for airships (Space/Ctrl)
+- Dismount (shift) — implicitly, since the bot must exit the ship at end of test
+
+If the PaperInputListener fails to register or has bugs, the ship won't move and all movement assertions will fail. No new bot test code is needed — the existing tests are sufficient.
