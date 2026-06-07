@@ -326,6 +326,8 @@ public class ShipInstance {
             as.setGravity(false);
             as.setSilent(true);
             as.setPersistent(true);
+            as.customName(net.kyori.adventure.text.Component.empty());
+            as.setCustomNameVisible(false);
             as.addScoreboardTag(ShipTags.shipRootTag(id));
 
             // Root vehicle has health system for ship damage
@@ -751,6 +753,8 @@ public class ShipInstance {
                             as.setSilent(true);
                             as.setPersistent(true);
                             as.setMarker(true);
+                            as.customName(net.kyori.adventure.text.Component.empty());
+                            as.setCustomNameVisible(false);
                             as.addScoreboardTag(ShipTags.shipTag(this.id));
                             as.addScoreboardTag(ShipTags.CARRIER_TAG);
                             as.addScoreboardTag(ShipTags.blockIndexTag(currentBlockIndex));
@@ -773,6 +777,8 @@ public class ShipInstance {
                                 s.setGravity(false);
                                 s.setSilent(true);
                                 s.setPersistent(true);
+                                s.customName(net.kyori.adventure.text.Component.empty());
+                                s.setCustomNameVisible(false);
                                 s.setCollidable(true);
                                 s.setInvisible(true);
                                 s.setGlowing(config.collisionDebugGlow);  // Glow if debug mode enabled

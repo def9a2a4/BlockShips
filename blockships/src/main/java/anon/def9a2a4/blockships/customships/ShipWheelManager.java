@@ -1096,6 +1096,8 @@ public class ShipWheelManager {
             s.setAI(false);
             s.setGravity(false);
             s.setGlowing(true);
+            s.customName(net.kyori.adventure.text.Component.empty());
+            s.setCustomNameVisible(false);
             s.setSilent(true);
             s.setPersistent(false);  // Don't save to world
             s.setCollidable(false);
