@@ -141,27 +141,22 @@ The CI matrix in `.github/workflows/server-test.yml` tests: `1.21.1`, `1.21.4`, 
 - **1.21.1** → pre-1.21.2, needs ProtocolLib (keep as-is)
 - **1.21.4, 1.21.8, 1.21.10, 1.21.11, 26.1.2** → all ≥1.21.2, should use PaperInputListener WITHOUT ProtocolLib
 
-**Makefile change**: Add a `test-server-plugin-copy` variant that conditionally includes ProtocolLib:
+**Makefile change**: Replace the wildcard `cp $(DOWNLOAD_CACHE)/plugins/*.jar` in `test-server-plugin-copy` with explicit copies, conditionally including ProtocolLib only for 1.21.1:
 
 ```makefile
-# Only include ProtocolLib for pre-1.21.2 servers
-NEEDS_PROTOCOLLIB := $(shell echo "$(MINECRAFT_VERSION)" | awk -F. '{ \
-    if ($$1 > 1) print "no"; \
-    else if ($$2 > 21) print "no"; \
-    else if ($$2 == 21 && $$3 >= 2) print "no"; \
-    else print "yes" }')
-
 .PHONY: test-server-plugin-copy
 test-server-plugin-copy:
 	rm -rf $(TEST_SERVER_DIR)/plugins/
 	mkdir -p $(TEST_SERVER_DIR)/plugins
 	cp bin/*.jar $(TEST_SERVER_DIR)/plugins/
-ifeq ($(NEEDS_PROTOCOLLIB),yes)
+ifeq ($(MINECRAFT_VERSION),1.21.1)
 	cp $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar $(TEST_SERVER_DIR)/plugins/
 endif
 	cp $(DOWNLOAD_CACHE)/plugins/ViaVersion.jar $(TEST_SERVER_DIR)/plugins/
 	cp $(DOWNLOAD_CACHE)/plugins/ViaBackwards.jar $(TEST_SERVER_DIR)/plugins/
 ```
+
+Simple literal match — 1.21.1 is the only pre-1.21.2 version in the CI matrix. The `ifeq` + command-line `MINECRAFT_VERSION` pattern works in GNU Make (both evaluate at parse time). ProtocolLib is still downloaded to the cache unconditionally (harmless, cached across runs), just not copied to plugins/ for newer versions.
 
 This means:
 - 1.21.1 CI run: ProtocolLib included → tests ProtocolLib path
