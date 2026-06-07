@@ -442,6 +442,37 @@ public class BlockStructureScanner {
                 }
             }
 
+            // Check for TileStateInventoryHolder blocks (shelves, chiseled bookshelves)
+            // These implement InventoryHolder but NOT Container, so need separate handling
+            if (block.getState() instanceof io.papermc.paper.block.TileStateInventoryHolder tileInv) {
+                java.util.List<Map<String, Object>> tileItems = serializeInventory(tileInv.getSnapshotInventory());
+                if (!tileItems.isEmpty()) {
+                    rawYaml.put("container_items", tileItems);
+                }
+                // Clear inventory before block removal to prevent item duplication
+                tileInv.getInventory().clear();
+                tileInv.update();
+            }
+
+            // Capture sign text for restoration on disassembly
+            if (block.getState() instanceof org.bukkit.block.Sign sign) {
+                Map<String, Object> signData = new HashMap<>();
+                for (org.bukkit.block.sign.Side side : org.bukkit.block.sign.Side.values()) {
+                    org.bukkit.block.sign.SignSide signSide = sign.getSide(side);
+                    java.util.List<String> lines = new java.util.ArrayList<>();
+                    for (net.kyori.adventure.text.Component line : signSide.lines()) {
+                        lines.add(net.kyori.adventure.text.serializer.gson.GsonComponentSerializer
+                            .gson().serialize(line));
+                    }
+                    String key = side.name().toLowerCase();
+                    signData.put(key + "_lines", lines);
+                    signData.put(key + "_color", signSide.getColor().name());
+                    signData.put(key + "_glowing", signSide.isGlowingText());
+                }
+                signData.put("waxed", sign.isWaxed());
+                rawYaml.put("sign_data", signData);
+            }
+
             // Check if this block is a seat (all detected seats are passenger seats)
             // Driver seat is always at the wheel location (added after scanning)
             if (props.isSeat()) {
@@ -845,6 +876,44 @@ public class BlockStructureScanner {
                 // Set items on the snapshot's inventory, then update to persist
                 container.getSnapshotInventory().setContents(items);
                 container.update();
+            }
+
+            // Restore TileStateInventoryHolder blocks (shelves, chiseled bookshelves)
+            // These are NOT Containers, so need separate restoration
+            if (part.rawYaml.containsKey("container_items")
+                    && block.getState() instanceof io.papermc.paper.block.TileStateInventoryHolder tileInv) {
+                @SuppressWarnings("unchecked")
+                java.util.List<Map<String, Object>> itemsData =
+                    (java.util.List<Map<String, Object>>) part.rawYaml.get("container_items");
+
+                org.bukkit.inventory.ItemStack[] items = deserializeInventory(itemsData, tileInv.getSnapshotInventory().getSize());
+                tileInv.getSnapshotInventory().setContents(items);
+                tileInv.update();
+            }
+
+            // Restore sign text
+            if (part.rawYaml.containsKey("sign_data") && block.getState() instanceof org.bukkit.block.Sign sign) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> signData = (Map<String, Object>) part.rawYaml.get("sign_data");
+                for (org.bukkit.block.sign.Side side : org.bukkit.block.sign.Side.values()) {
+                    org.bukkit.block.sign.SignSide signSide = sign.getSide(side);
+                    String key = side.name().toLowerCase();
+                    @SuppressWarnings("unchecked")
+                    java.util.List<String> lines = (java.util.List<String>) signData.get(key + "_lines");
+                    if (lines != null) {
+                        for (int i = 0; i < lines.size() && i < 4; i++) {
+                            signSide.line(i, net.kyori.adventure.text.serializer.gson.GsonComponentSerializer
+                                .gson().deserialize(lines.get(i)));
+                        }
+                    }
+                    String color = (String) signData.get(key + "_color");
+                    if (color != null) signSide.setColor(org.bukkit.DyeColor.valueOf(color));
+                    Boolean glowing = (Boolean) signData.get(key + "_glowing");
+                    if (glowing != null) signSide.setGlowingText(glowing);
+                }
+                Boolean waxed = (Boolean) signData.get("waxed");
+                if (waxed != null) sign.setWaxed(waxed);
+                sign.update();
             }
         }
 

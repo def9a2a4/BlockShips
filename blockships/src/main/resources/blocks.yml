@@ -591,6 +591,16 @@ bookshelf:
   weight: 1
   collider: true
 
+chiseled_bookshelf:
+  allowed: true
+  weight: 1
+  collider: true
+
+"*_shelf":
+  allowed: true
+  weight: 1
+  collider: true
+
 "#signs":
   allowed: true
   weight: 1

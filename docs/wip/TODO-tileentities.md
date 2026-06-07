@@ -7,6 +7,7 @@ Relates to: https://github.com/def9a2a4/BlockShips/issues/23
 Several block types with tile entity data don't work properly and/or are disabled:
 - Signs (work, but text lost on assembly/disassembly)
 - Chiseled bookshelves (forbidden — not in blocks.yml)
+- Shelves (1.21.9+, forbidden — not in blocks.yml)
 
 ## Reference
 
@@ -27,22 +28,23 @@ Several block types with tile entity data don't work properly and/or are disable
 
 | Block Type | Implements | Inventory Access | Special Data |
 |---|---|---|---|
-| ChiseledBookshelf | `TileStateInventoryHolder` (extends `BlockInventoryHolder` → `InventoryHolder`) | `getInventory()` / `getSnapshotInventory()` | slot occupancy in blockdata |
+| Shelf (12 wood variants, 1.21.9+) | `TileStateInventoryHolder` | `getInventory()` / `getSnapshotInventory()` | 3 slots. Items in tile entity, NOT blockdata. BlockDisplay shows empty shelf during flight. |
+| ChiseledBookshelf | `TileStateInventoryHolder` | `getInventory()` / `getSnapshotInventory()` | 6 slots. `slot_X_occupied` booleans in blockdata show filled/empty. |
 | Sign | `TileState` + `Colorable` | N/A | `getSide(Side)` → `SignSide.lines()`, `.getColor()`, `.isGlowingText()`, `.isWaxed()` |
 
+- Both `Shelf` and `ChiseledBookshelf` implement `TileStateInventoryHolder` (NOT `Container`). One `instanceof TileStateInventoryHolder` check handles both.
 - `GsonComponentSerializer` is available at runtime via Adventure transitive dependency (not in Paper sources jar directly)
-- `ChiseledBookshelf` does NOT implement `Container` — the existing `instanceof Container` restoration path will NOT match it. Needs its own serialization and restoration blocks.
 
 ## Plan
 
 ### Priority Order
 
-1. Chiseled bookshelves (most requested per #23, inventory preservation)
+1. Shelves + chiseled bookshelves (inventory preservation via unified `TileStateInventoryHolder` check)
 2. Sign text preservation on disassembly (data integrity, no visual change)
 
 ---
 
-### A. Chiseled Bookshelves
+### A. Shelves + Chiseled Bookshelves (unified via TileStateInventoryHolder)
 
 **blocks.yml:**
 ```yaml
@@ -50,28 +52,42 @@ chiseled_bookshelf:
   allowed: true
   weight: 1
   collider: true
+
+"*_shelf":
+  allowed: true
+  weight: 1
+  collider: true
 ```
 
 **BlockStructureScanner — serialization** (add after existing `instanceof Container` check):
 ```java
-// Chiseled bookshelves (TileStateInventoryHolder, not Container)
-if (blockState instanceof org.bukkit.block.ChiseledBookshelf shelf) {
-    serializeInventory(shelf.getSnapshotInventory(), blockYaml);
-    shelf.getInventory().clear();
-    shelf.update();
+// Shelves and chiseled bookshelves (TileStateInventoryHolder, not Container)
+if (blockState instanceof io.papermc.paper.block.TileStateInventoryHolder tileInv) {
+    List<Map<String, Object>> tileItems = serializeInventory(tileInv.getSnapshotInventory());
+    if (!tileItems.isEmpty()) {
+        rawYaml.put("container_items", tileItems);
+    }
+    tileInv.getInventory().clear();
+    tileInv.update();
 }
 ```
 
 **BlockStructureScanner — restoration** (add in `placeBlocks()` after Container restoration):
 ```java
-if (blockState instanceof org.bukkit.block.ChiseledBookshelf shelf
-        && blockYaml.containsKey("container_items")) {
-    restoreInventory(shelf.getSnapshotInventory(), blockYaml);
-    shelf.update();
+if (part.rawYaml.containsKey("container_items")
+        && block.getState() instanceof io.papermc.paper.block.TileStateInventoryHolder tileInv) {
+    List<Map<String, Object>> itemsData = (List<Map<String, Object>>) part.rawYaml.get("container_items");
+    ItemStack[] items = deserializeInventory(itemsData, tileInv.getSnapshotInventory().getSize());
+    tileInv.getSnapshotInventory().setContents(items);
+    tileInv.update();
 }
 ```
 
-Note: `ChiseledBookshelf` implements `TileStateInventoryHolder` (extends `BlockInventoryHolder` → `InventoryHolder`), NOT `Container`. The existing `instanceof Container` restoration path will NOT match it — needs its own restoration block.
+Notes:
+- One `instanceof TileStateInventoryHolder` check handles both `Shelf` (3 slots) and `ChiseledBookshelf` (6 slots)
+- Shelves show empty during flight (items in tile entity, not blockdata). Items restored on disassembly.
+- Chiseled bookshelves show filled/empty slot visuals from blockdata during flight.
+- Inventory cleared before block removal to prevent item duplication.
 
 ---
 
@@ -153,11 +169,12 @@ The pseudocode above uses simplified function names. Actual codebase patterns di
 
 ## Files to Modify
 
-- `blockships/src/main/resources/blocks.yml` — add chiseled_bookshelf entry
+- `blockships/src/main/resources/blocks.yml` — add chiseled_bookshelf + `*_shelf` wildcard entries
 - `blockships/src/main/java/anon/def9a2a4/blockships/customships/BlockStructureScanner.java` — tile entity serialization + restoration
 
 ## Future Work (not in this PR)
 
+- **Shelf item display during flight**: Spawn ItemDisplays for each of the 3 shelf slots so items are visible during movement. Requires extending the display index/tagging/recovery system to support multiple display entities per block (currently 1:1). SimpleShips reference: `Ship.java:1078-1150` — items at 0.25 scale, spaced 20/64 apart perpendicular to facing, different rotation for block vs non-block items.
 - **Sign text display**: TextDisplay overlay on sign face — has rendering/transparency issues per SimpleShips dev. Revisit if Minecraft fixes display entity layering.
 - **Decorated pots**: Sherd data is in BlockEntity NBT (not blockdata). Need `DecoratedPot.getSherds()`/`setSherd(Side, Material)` for preservation. Single-item inventory via `TileStateInventoryHolder`. BlockDisplay shows blank pot (no sherds) during flight.
 - **Campfires**: 4 cooking slots via direct `getItem(int)`/`setItem(int, ItemStack)` (NOT InventoryHolder). Partial hitbox (7/16 = 0.4375 blocks tall). Cooking progress lost on disassembly.
@@ -167,11 +184,14 @@ The pseudocode above uses simplified function names. Actual codebase patterns di
 
 ## Testing
 
-1. Chiseled bookshelf: place with books → assemble → move ship → disassemble → verify books restored
-2. Chiseled bookshelf: verify BlockDisplay shows filled slots correctly during movement
-3. Chiseled bookshelf: verify no item duplication (inventory cleared before block removal)
-4. Chiseled bookshelf: test empty bookshelf (no books) — should work as plain block
-5. Signs: place with text → assemble → disassemble → verify text, color, glow state preserved
-6. Signs: test hanging signs, wall signs, standing signs
-7. Signs: test blank sign (no text) — no crash on empty lines
-8. Verify existing containers (chests, hoppers) still work after the duplication bugfix
+1. Shelf: place with items → assemble → move ship → disassemble → verify items restored
+2. Shelf: verify no item duplication (inventory cleared before block removal)
+3. Shelf: test empty shelf — should work as plain block
+4. Chiseled bookshelf: place with books → assemble → move ship → disassemble → verify books restored
+5. Chiseled bookshelf: verify BlockDisplay shows filled slots correctly during movement
+6. Chiseled bookshelf: verify no item duplication
+7. Chiseled bookshelf: test empty bookshelf — should work as plain block
+8. Signs: place with text → assemble → disassemble → verify text, color, glow state preserved
+9. Signs: test hanging signs, wall signs, standing signs
+10. Signs: test blank sign (no text) — no crash on empty lines
+11. Verify existing containers (chests, hoppers) still work
