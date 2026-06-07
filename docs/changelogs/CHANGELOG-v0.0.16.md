@@ -1,28 +1,22 @@
-# v0.0.16 - Ship Stats, Engines & Smooth Rotation
+# v0.0.16 - Ship Stats, Sails & Engines, better visuals, bugfixes
 
-- Ships now have a power-to-mass ratio system that scales speed and rotation based on block composition ([#18](https://github.com/def9a2a4/BlockShips/issues/18))
+- **You probably want to reset your configs!**
+- **Ship speed now dependent on engines and sails:** Ships now have a power-to-mass ratio system that scales speed and rotation based on block composition ([#18](https://github.com/def9a2a4/BlockShips/issues/18))
   - Wool blocks act as sails (3 power), banners as upgraded sails (7 power), engines provide 30 power when fueled
   - Heavier ships are slower unless you add more power sources
   - Sail-only power is capped — engines required to push ships past 80% of max ratio
+  - Engines use fuel, emit smoke when working
   - Ship info UI shows power ratio, effective speed percentage, and color-coded stats
-- New custom item: Ship Engine
-  - Crafted from 8 copper + 1 blast furnace
-  - Right-click on an assembled ship to open fuel GUI (3 fuel slots per engine)
-  - Accepts any vanilla furnace fuel (coal, logs, planks, blaze rods, lava buckets, etc.)
-  - Fuel consumed while W key held; smoke particles emitted from fueled engines
-  - Fuel state persisted across server restarts
-- Ship rotation is now smooth and jitter-free
-  - Previously, entity tracker quantization (~1.4° byte precision) caused visible jitter every 3 ticks
-  - Rotation now tracked internally at float precision and applied via display entity transforms with client-side interpolation
-- Ships can be configured to permanently destroy on death instead of disassembling ([#27](https://github.com/def9a2a4/BlockShips/issues/27))
+- **Ship rotation is now smooth and jitter-free!**
+  - a recent performance update made this worse, now it's fixed!
+- **Alternate destruction mode:** Ships can be configured to permanently destroy on death instead of disassembling ([#27](https://github.com/def9a2a4/BlockShips/issues/27))
   - Set `custom-ships.destruction-mode: destroy` in config.yml
   - Blocks are lost, but inventory contents, engine fuel, and mob leads are dropped
-- New config keys are automatically available on plugin update via Bukkit's defaults system — no need to delete config.yml
-- `/blockships give` now supports all custom items (captains_manual, ship_engine, balloon, etc.) with tab completion
-- Captain's manual content extracted to YAML — server admins can customize help text without recompiling
-- Towny compatibility: ship entities now set an empty custom name to prevent Towny's mob removal timer from deleting them ([#17](https://github.com/def9a2a4/BlockShips/issues/17))
+  - default is still to disassemble them into blocks on destruction
+- **Towny compatibility:** ship entities now set an empty custom name to prevent Towny's mob removal timer from deleting them ([#17](https://github.com/def9a2a4/BlockShips/issues/17))
   - Previously, Towny would remove ship shulkers (collision/seat entities) in town chunks, ejecting players and ghosting the ship
   - Workaround config options for Towny are documented in the issue thread
+- other various bugfixes and improvements
 
 ---
 
