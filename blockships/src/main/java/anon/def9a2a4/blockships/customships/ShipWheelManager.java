@@ -170,6 +170,19 @@ public class ShipWheelManager {
     }
 
     /**
+     * Removes a ship wheel block without dropping the wheel item.
+     * Used when a ship is fully destroyed so the wheel is lost along with the ship.
+     */
+    public void destroyWheelBlock(Location location) {
+        ShipWheelData wd = placedWheels.remove(locationKey(location));
+        if (wd == null) return;
+        if (location.getWorld() != null) {
+            location.getBlock().setType(Material.AIR);
+        }
+        saveAll();
+    }
+
+    /**
      * Gets wheel data at a location, if it exists.
      */
     public ShipWheelData getWheelAt(Location location) {

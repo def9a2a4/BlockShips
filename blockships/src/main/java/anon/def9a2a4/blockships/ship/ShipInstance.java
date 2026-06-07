@@ -1952,9 +1952,31 @@ public class ShipInstance {
                             }
                         }
                     }
+                    // Drop lead items for any entities leashed to ship shulkers.
+                    // In disassemble mode, transferLeadsFromShip() preserves leads by moving them to
+                    // fence posts. Here we just drop the lead items so players don't lose them silently.
+                    for (CollisionBox cb : colliders) {
+                        if (cb.entity == null || !cb.entity.isValid()) continue;
+                        for (org.bukkit.entity.Entity nearby : cb.entity.getWorld().getNearbyEntities(
+                                cb.entity.getLocation(), 12, 12, 12,
+                                e -> e instanceof org.bukkit.entity.Mob m
+                                        && m.isLeashed()
+                                        && cb.entity.equals(m.getLeashHolder()))) {
+                            world.dropItemNaturally(cb.entity.getLocation(),
+                                    new ItemStack(org.bukkit.Material.LEAD));
+                        }
+                    }
+                    // Capture wheel location before entities are removed
+                    Location wheelLoc = wheelData.getBlockLocation();
                     // Destroy entities and clean up persistence
-                    destroyWithCleanup(bsp.getDisplayShip().getShipWorldData());
+                    if (bsp.getDisplayShip() != null) {
+                        destroyWithCleanup(bsp.getDisplayShip().getShipWorldData());
+                    } else {
+                        destroy();
+                    }
                     wheelData.setAssembledShipUUID(null);
+                    // Remove wheel block from world and tracking (without dropping wheel item)
+                    manager.destroyWheelBlock(wheelLoc);
                     // Spawn explosions
                     spawnDestructionExplosions(world, explosionLocations);
                     return;
