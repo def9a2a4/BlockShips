@@ -59,8 +59,8 @@ public class BlockShipsPlugin extends JavaPlugin {
             steeringListener = new ShipSteeringListener(this);
         } else {
             getLogger().warning("==================================================");
-            getLogger().warning("ProtocolLib not found and server is pre-1.21.2!");
-            getLogger().warning("WASD ship controls will not work.");
+            getLogger().warning("WASD ship controls will not work!");
+            getLogger().warning("Paper PlayerInputEvent not available, ProtocolLib not found.");
             getLogger().warning("Install ProtocolLib or upgrade to Paper 1.21.2+ for ship controls.");
             getLogger().warning("==================================================");
         }
