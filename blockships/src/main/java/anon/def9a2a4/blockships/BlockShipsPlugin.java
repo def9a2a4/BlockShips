@@ -36,11 +36,8 @@ public class BlockShipsPlugin extends JavaPlugin {
 
         saveDefaultConfig();
 
-        // Auto-add missing config keys from new plugin versions
-        ConfigValidator.migrateConfig(this);
-
-        // Check for config mismatches
-        ConfigValidator.checkConfigMismatches(this);
+        // Warn if bundled resource files (blocks, items, prefab ships) are outdated
+        ConfigValidator.checkForOutdatedResources(this);
 
         // Load global physics config
         ShipInstance.loadGlobalPhysicsConfig(this);

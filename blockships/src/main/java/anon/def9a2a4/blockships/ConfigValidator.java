@@ -1,7 +1,5 @@
 package anon.def9a2a4.blockships;
 
-import org.bukkit.configuration.file.FileConfiguration;
-import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.*;
@@ -10,12 +8,12 @@ import java.util.List;
 import java.util.logging.Logger;
 
 /**
- * Validates config files against bundled JAR versions and warns on mismatches.
+ * Checks bundled resource files (blocks, items, prefab ships) against disk versions
+ * and warns if they are outdated from a plugin update.
  */
 public class ConfigValidator {
 
-    private static final List<String> CONFIG_FILES = List.of(
-        "config.yml",
+    private static final List<String> RESOURCE_FILES = List.of(
         "blocks.yml",
         "items.yml",
         "prefab_ships/ship_small.yml",
@@ -23,21 +21,21 @@ public class ConfigValidator {
         "prefab_ships/airship_small.yml"
     );
 
-    public static void checkConfigMismatches(JavaPlugin plugin) {
+    public static void checkForOutdatedResources(JavaPlugin plugin) {
         if (!plugin.getConfig().getBoolean("warn-config-mismatch", true)) {
             return;
         }
 
         Logger logger = plugin.getLogger();
 
-        for (String configPath : CONFIG_FILES) {
-            File diskFile = new File(plugin.getDataFolder(), configPath);
+        for (String resourcePath : RESOURCE_FILES) {
+            File diskFile = new File(plugin.getDataFolder(), resourcePath);
 
             if (!diskFile.exists()) {
                 continue;
             }
 
-            try (InputStream jarStream = plugin.getResource(configPath)) {
+            try (InputStream jarStream = plugin.getResource(resourcePath)) {
                 if (jarStream == null) {
                     continue;
                 }
@@ -46,8 +44,8 @@ public class ConfigValidator {
                 String diskContent = readFile(diskFile);
 
                 if (!jarContent.equals(diskContent)) {
-                    logger.warning("Config mismatch: " + configPath + " (probably due to a recent plugin update)");
-                    logger.warning("Unless you know what you're doing, you should delete plugins/BlockShips/" + configPath + " and restart. Set 'warn-config-mismatch: false' in config.yml to disable.");
+                    logger.warning("Outdated file: " + resourcePath + " differs from the bundled version (probably from a plugin update).");
+                    logger.warning("To get new defaults, delete plugins/BlockShips/" + resourcePath + " and restart. Your changes (if any) will be lost.");
                 }
             } catch (IOException e) {
                 // Silently ignore read errors
@@ -75,41 +73,5 @@ public class ConfigValidator {
             }
         }
         return result.toString(StandardCharsets.UTF_8);
-    }
-
-    /**
-     * Adds missing config keys from the bundled JAR config into the user's config.
-     * Only adds keys that don't exist — never overwrites existing values.
-     * Controlled by the "auto-migrate-config" setting (default: true).
-     */
-    public static void migrateConfig(JavaPlugin plugin) {
-        if (!plugin.getConfig().getBoolean("auto-migrate-config", true)) {
-            return;
-        }
-
-        try (InputStream jarStream = plugin.getResource("config.yml")) {
-            if (jarStream == null) return;
-
-            YamlConfiguration jarConfig = YamlConfiguration.loadConfiguration(
-                new InputStreamReader(jarStream, StandardCharsets.UTF_8));
-
-            var diskConfig = plugin.getConfig();
-            int added = 0;
-
-            for (String key : jarConfig.getKeys(true)) {
-                if (!jarConfig.isConfigurationSection(key) && !diskConfig.contains(key)) {
-                    diskConfig.set(key, jarConfig.get(key));
-                    added++;
-                }
-            }
-
-            if (added > 0) {
-                plugin.saveConfig();
-                plugin.reloadConfig();
-                plugin.getLogger().info("Config migration: added " + added + " new config key(s)");
-            }
-        } catch (IOException e) {
-            plugin.getLogger().warning("Config migration failed: " + e.getMessage());
-        }
     }
 }

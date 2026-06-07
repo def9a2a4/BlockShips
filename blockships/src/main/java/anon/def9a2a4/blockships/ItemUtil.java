@@ -111,37 +111,63 @@ public class ItemUtil {
                         recipe.addIngredient(ingredients.get(0).getRecipeChoice());
                     }
                 } catch (IllegalArgumentException e) {
-                    plugin.getLogger().warning("Failed to parse ingredient '" + key + "' for " + itemType + ": " + e.getMessage());
+                    plugin.getLogger().warning("Recipe '" + itemType + "': failed to parse ingredient '" + key + "': " + e.getMessage());
+                    return false;
                 }
             }
-            Bukkit.addRecipe(recipe, true);
+            try {
+                Bukkit.addRecipe(recipe, true);
+            } catch (Exception e) {
+                plugin.getLogger().warning("Recipe '" + itemType + "': failed to register: " + e.getMessage());
+                return false;
+            }
         } else {
             // Shaped recipe: needs pattern
             List<String> pattern = plugin.getConfig().getStringList(recipePath + ".pattern");
             if (pattern.isEmpty() || pattern.size() != 3) {
-                plugin.getLogger().warning("Invalid recipe pattern for " + itemType);
+                plugin.getLogger().warning("Recipe '" + itemType + "': invalid pattern (need exactly 3 rows)");
                 return false;
             }
 
             ShapedRecipe recipe = new ShapedRecipe(recipeKey, kit);
             recipe.shape(pattern.get(0), pattern.get(1), pattern.get(2));
 
+            // Collect which pattern characters get ingredients assigned
+            Set<Character> definedChars = new HashSet<>();
             for (String key : ingredientsSection.getKeys(false)) {
                 List<String> ingredientStrings = plugin.getConfig().getStringList(recipePath + ".ingredients." + key);
                 if (ingredientStrings.isEmpty()) {
-                    plugin.getLogger().warning("No ingredients specified for key '" + key + "' in " + itemType);
-                    continue;
+                    plugin.getLogger().warning("Recipe '" + itemType + "': no ingredients specified for key '" + key + "'");
+                    return false;
                 }
                 try {
                     List<RecipeIngredient> ingredients = RecipeIngredient.parseList(ingredientStrings, plugin, textureManager);
                     if (!ingredients.isEmpty()) {
                         recipe.setIngredient(key.charAt(0), ingredients.get(0).getRecipeChoice());
+                        definedChars.add(key.charAt(0));
                     }
                 } catch (IllegalArgumentException e) {
-                    plugin.getLogger().warning("Failed to parse ingredient '" + key + "' for " + itemType + ": " + e.getMessage());
+                    plugin.getLogger().warning("Recipe '" + itemType + "': failed to parse ingredient '" + key + "': " + e.getMessage());
+                    return false;
                 }
             }
-            Bukkit.addRecipe(recipe, true);
+
+            // Validate all pattern characters have a corresponding ingredient
+            for (String row : pattern) {
+                for (char c : row.toCharArray()) {
+                    if (c != ' ' && !definedChars.contains(c)) {
+                        plugin.getLogger().warning("Recipe '" + itemType + "': pattern uses '" + c + "' but no ingredient is defined for it");
+                        return false;
+                    }
+                }
+            }
+
+            try {
+                Bukkit.addRecipe(recipe, true);
+            } catch (Exception e) {
+                plugin.getLogger().warning("Recipe '" + itemType + "': failed to register: " + e.getMessage());
+                return false;
+            }
         }
 
         registeredRecipes.add(recipeKey);
