@@ -26,6 +26,7 @@ public class BlockShipsPlugin extends JavaPlugin {
 
     private DisplayShip displayShip;
     private ShipSteeringListener steeringListener;
+    private PaperInputListener paperInputListener;
     private ShipWheelManager shipWheelManager;
     private SpecialDrownedListener specialDrownedListener;
 
@@ -49,16 +50,19 @@ public class BlockShipsPlugin extends JavaPlugin {
         // Load help book content from bundled YAML
         HelpBookContent.load(this);
 
-        // Check for ProtocolLib for WASD input detection
-        if (Bukkit.getPluginManager().getPlugin("ProtocolLib") == null) {
-            getLogger().warning("==================================================");
-            getLogger().warning("ProtocolLib not found! WASD ship controls will not work.");
-            getLogger().warning("Download it from: https://www.spigotmc.org/resources/protocollib.1997/");
-            getLogger().warning("The plugin will continue to load but ships won't be controllable.");
-            getLogger().warning("==================================================");
-        } else {
-            // Initialize steering listener (ProtocolLib WASD detection)
+        // Initialize ship input detection (Paper PlayerInputEvent on 1.21.2+, ProtocolLib fallback)
+        if (anon.def9a2a4.blockships.util.ServerVersion.isAtLeast(1, 21, 2) && hasPaperInputEvent()) {
+            paperInputListener = new PaperInputListener(this);
+            getServer().getPluginManager().registerEvents(paperInputListener, this);
+            getLogger().info("Using Paper PlayerInputEvent for ship controls (ProtocolLib not required)");
+        } else if (Bukkit.getPluginManager().getPlugin("ProtocolLib") != null) {
             steeringListener = new ShipSteeringListener(this);
+        } else {
+            getLogger().warning("==================================================");
+            getLogger().warning("ProtocolLib not found and server is pre-1.21.2!");
+            getLogger().warning("WASD ship controls will not work.");
+            getLogger().warning("Install ProtocolLib or upgrade to Paper 1.21.2+ for ship controls.");
+            getLogger().warning("==================================================");
         }
 
         // Initialize ship-to-ship collision coordinator
@@ -106,6 +110,15 @@ public class BlockShipsPlugin extends JavaPlugin {
 
     public ShipWheelManager getShipWheelManager() {
         return shipWheelManager;
+    }
+
+    private boolean hasPaperInputEvent() {
+        try {
+            Class.forName("org.bukkit.event.player.PlayerInputEvent");
+            return true;
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
     }
 
     private void sendHelp(CommandSender sender) {
@@ -161,11 +174,11 @@ public class BlockShipsPlugin extends JavaPlugin {
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (command.getName().equalsIgnoreCase("blockships")) {
             // Warn if ProtocolLib is missing
-            if (steeringListener == null) {
+            if (steeringListener == null && paperInputListener == null) {
                 sender.sendMessage("");
-                sender.sendMessage("§c§l⚠ WARNING: ProtocolLib not found! ⚠");
-                sender.sendMessage("§cWASD ship controls will not work without it.");
-                sender.sendMessage("§7Download: §bhttps://www.spigotmc.org/resources/protocollib.1997/");
+                sender.sendMessage("§c§l⚠ WARNING: No ship input handler active! ⚠");
+                sender.sendMessage("§cWASD ship controls will not work.");
+                sender.sendMessage("§7Install ProtocolLib or upgrade to Paper 1.21.2+");
                 sender.sendMessage("");
             }
 
