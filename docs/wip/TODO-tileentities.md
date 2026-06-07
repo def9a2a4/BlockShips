@@ -7,8 +7,6 @@ Relates to: https://github.com/def9a2a4/BlockShips/issues/23
 Several block types with tile entity data don't work properly and/or are disabled:
 - Signs (work, but text lost on assembly/disassembly)
 - Chiseled bookshelves (forbidden — not in blocks.yml)
-- Decorated pots (forbidden — not in blocks.yml)
-- Campfires (forbidden — not in blocks.yml)
 
 ## Reference
 
@@ -21,22 +19,26 @@ Several block types with tile entity data don't work properly and/or are disable
 
 1. **Chiseled bookshelves**: BlockData encodes `slot_0_occupied` through `slot_5_occupied` — the BlockDisplay already shows correct filled/empty slot visuals. NO extra ItemDisplays needed. Just serialize inventory for restoration on disassembly.
 
-2. **Decorated pots**: Sherd appearance is stored in the blockdata string (already preserved by our scanner). On 1.21+ they have a single-item inventory. Just add to blocks.yml + serialize that one item.
+2. **Signs**: Text CANNOT be displayed on BlockDisplay entities (Minecraft limitation). SimpleShips dev confirmed: attempted TextDisplay overlay but got transparency/rendering issues where the text became transparent and showed water behind it instead of the sign. For now, just serialize text and restore on disassembly.
 
-3. **Campfires**: Cooking items visible on the campfire. Need to serialize 4 item slots. Cooking progress (per-slot tick timers) will be lost on disassembly — acceptable tradeoff.
+3. **Item duplication prevention**: Must clear inventory from block BEFORE removing it with `setType(AIR)`. Some blocks may drop items when set to air. NOTE: the existing Container serialization code also has this bug — containers are serialized but never cleared before block removal. Should fix for all containers.
 
-4. **Signs**: Text CANNOT be displayed on BlockDisplay entities (Minecraft limitation). SimpleShips dev confirmed: attempted TextDisplay overlay but got transparency/rendering issues where the text became transparent and showed water behind it instead of the sign. For now, just serialize text and restore on disassembly.
+## Paper API Notes (verified against 1.21.11)
 
-5. **Item duplication prevention**: Must clear inventory from block BEFORE removing it with `setType(AIR)`. Some blocks may drop items when set to air.
+| Block Type | Implements | Inventory Access | Special Data |
+|---|---|---|---|
+| ChiseledBookshelf | `TileStateInventoryHolder` (extends `BlockInventoryHolder` → `InventoryHolder`) | `getInventory()` / `getSnapshotInventory()` | slot occupancy in blockdata |
+| Sign | `TileState` + `Colorable` | N/A | `getSide(Side)` → `SignSide.lines()`, `.getColor()`, `.isGlowingText()`, `.isWaxed()` |
+
+- `GsonComponentSerializer` is available at runtime via Adventure transitive dependency (not in Paper sources jar directly)
+- `ChiseledBookshelf` does NOT implement `Container` — the existing `instanceof Container` restoration path will NOT match it. Needs its own serialization and restoration blocks.
 
 ## Plan
 
 ### Priority Order
 
-1. Chiseled bookshelves (most requested, straightforward)
-2. Decorated pots (blockdata handles visuals, just needs blocks.yml + inventory)
-3. Campfires (cooking items)
-4. Sign text preservation on disassembly (data integrity, no visual change)
+1. Chiseled bookshelves (most requested per #23, inventory preservation)
+2. Sign text preservation on disassembly (data integrity, no visual change)
 
 ---
 
@@ -50,91 +52,32 @@ chiseled_bookshelf:
   collider: true
 ```
 
-**BlockStructureScanner** — add after existing `instanceof Container` check (~line 443):
+**BlockStructureScanner — serialization** (add after existing `instanceof Container` check):
 ```java
-// Chiseled bookshelves (InventoryHolder but not Container)
+// Chiseled bookshelves (TileStateInventoryHolder, not Container)
 if (blockState instanceof org.bukkit.block.ChiseledBookshelf shelf) {
-    serializeInventory(shelf.getInventory(), blockYaml);
+    serializeInventory(shelf.getSnapshotInventory(), blockYaml);
     shelf.getInventory().clear();
     shelf.update();
 }
 ```
 
-**Disassembly** — restore inventory to placed block after `setBlockData()`.
-
-Note: `ChiseledBookshelf` implements `InventoryHolder` but NOT `Container`. Must use explicit type check, not broad `instanceof InventoryHolder` (which would match custom menu holders).
-
----
-
-### B. Decorated Pots
-
-**blocks.yml:**
-```yaml
-decorated_pot:
-  allowed: true
-  weight: 1
-  collider:
-    size: [0.75, 0.75, 0.75]
-    offset: [0.125, 0.0, 0.125]
-```
-
-**BlockStructureScanner:**
+**BlockStructureScanner — restoration** (add in `placeBlocks()` after Container restoration):
 ```java
-// Decorated pots (single item inventory on 1.21+)
-if (blockState instanceof org.bukkit.block.DecoratedPot pot) {
-    if (pot instanceof InventoryHolder ih) {
-        serializeInventory(ih.getInventory(), blockYaml);
-        ih.getInventory().clear();
-        pot.update();
-    }
+if (blockState instanceof org.bukkit.block.ChiseledBookshelf shelf
+        && blockYaml.containsKey("container_items")) {
+    restoreInventory(shelf.getSnapshotInventory(), blockYaml);
+    shelf.update();
 }
 ```
 
-Sherd appearance is already in the blockdata string — no extra visual work needed. The BlockDisplay will show the correct sherds.
+Note: `ChiseledBookshelf` implements `TileStateInventoryHolder` (extends `BlockInventoryHolder` → `InventoryHolder`), NOT `Container`. The existing `instanceof Container` restoration path will NOT match it — needs its own restoration block.
 
 ---
 
-### C. Campfires
+### B. Sign Text Preservation
 
-**blocks.yml:**
-```yaml
-campfire:
-  allowed: true
-  weight: 2
-  collider: true
-
-soul_campfire:
-  allowed: true
-  weight: 2
-  collider: true
-```
-
-**BlockStructureScanner:**
-```java
-// Campfires (4 cooking item slots)
-if (blockState instanceof org.bukkit.block.Campfire campfire) {
-    List<Map<String, Object>> items = new ArrayList<>();
-    for (int i = 0; i < campfire.getSize(); i++) {
-        ItemStack item = campfire.getItem(i);
-        if (item != null) {
-            items.add(Map.of("slot", i, "data", serializeItemStack(item)));
-            campfire.setItem(i, null);
-        }
-    }
-    if (!items.isEmpty()) {
-        blockYaml.put("campfire_items", items);
-    }
-    campfire.update();
-}
-```
-
-Note: Campfire uses `org.bukkit.block.Campfire` interface (not InventoryHolder). Has `getItem(int)` / `setItem(int, ItemStack)` for 4 slots. Cooking tick progress is NOT serialized (acceptable loss).
-
----
-
-### D. Sign Text Preservation
-
-**BlockStructureScanner:**
+**BlockStructureScanner — serialization:**
 ```java
 // Signs (preserve text for disassembly restoration)
 if (blockState instanceof org.bukkit.block.Sign sign) {
@@ -156,7 +99,7 @@ if (blockState instanceof org.bukkit.block.Sign sign) {
 }
 ```
 
-**Disassembly restoration:**
+**BlockStructureScanner — restoration:**
 ```java
 if (blockState instanceof org.bukkit.block.Sign sign && blockYaml.containsKey("sign_data")) {
     Map<String, Object> signData = (Map<String, Object>) blockYaml.get("sign_data");
@@ -180,27 +123,55 @@ if (blockState instanceof org.bukkit.block.Sign sign && blockYaml.containsKey("s
 }
 ```
 
-Note: Uses 1.20+ Sign API (`getSide(Side.FRONT/BACK)`, `lines()`). Adventure component serialized as JSON string for YAML storage.
+Note: Uses 1.20+ Sign API (`getSide(Side.FRONT/BACK)`, `lines()`). Adventure component serialized as JSON string for YAML storage. Hanging signs use the same `Sign` interface — no special handling needed.
 
 ---
+
+## API Corrections (from code review)
+
+The pseudocode above uses simplified function names. Actual codebase patterns differ:
+
+1. **`serializeInventory()`** — existing function takes ONE arg (`Inventory`) and returns `List<Map<String, Object>>`. NOT two args. Correct usage:
+   ```java
+   List<Map<String, Object>> items = serializeInventory(shelf.getSnapshotInventory());
+   blockYaml.put("container_items", items);
+   ```
+
+2. **`restoreInventory()` does not exist** — the actual pattern (BlockStructureScanner.java ~line 842):
+   ```java
+   Container container = (Container) block.getState();
+   ItemStack[] items = deserializeInventory(itemsData, container.getSnapshotInventory().getSize());
+   container.getSnapshotInventory().setContents(items);
+   container.update();
+   ```
+
+3. **BlockData capture ordering** — `block.getBlockData()` is called at line 328 (before serialization code runs). This captured `blockData` is stored as a string at line 471. Clearing inventory later does NOT affect the captured blockdata — so chiseled bookshelf `slot_X_occupied` fields in the stored blockdata correctly reflect the pre-clear state.
+
+4. **Existing container duplication bug** — `removeBlocks()` (line 866) never clears inventories before `setType(AIR)`. The serialization path also never clears. Fix this for ALL containers in the same PR.
+
+5. **No ShipModel changes needed** — all data goes through `rawYaml` (`Map<String, Object>`) which is freeform.
+
+## Files to Modify
+
+- `blockships/src/main/resources/blocks.yml` — add chiseled_bookshelf entry
+- `blockships/src/main/java/anon/def9a2a4/blockships/customships/BlockStructureScanner.java` — tile entity serialization + restoration
 
 ## Future Work (not in this PR)
 
 - **Sign text display**: TextDisplay overlay on sign face — has rendering/transparency issues per SimpleShips dev. Revisit if Minecraft fixes display entity layering.
+- **Decorated pots**: Sherd data is in BlockEntity NBT (not blockdata). Need `DecoratedPot.getSherds()`/`setSherd(Side, Material)` for preservation. Single-item inventory via `TileStateInventoryHolder`. BlockDisplay shows blank pot (no sherds) during flight.
+- **Campfires**: 4 cooking slots via direct `getItem(int)`/`setItem(int, ItemStack)` (NOT InventoryHolder). Partial hitbox (7/16 = 0.4375 blocks tall). Cooking progress lost on disassembly.
 - **Item frames**: Could use birch plank + terracotta + ItemDisplay approach from SimpleShips. Complex entity handling (not a block).
 - **Beds**: Multi-block support needed. Low priority.
 - **Lecterns**: Book + page state preservation.
 
-## Files to Modify
-
-- `blockships/src/main/resources/blocks.yml` — add new block entries
-- `blockships/src/main/java/anon/def9a2a4/blockships/customships/BlockStructureScanner.java` — tile entity serialization
-- `blockships/src/main/java/anon/def9a2a4/blockships/customships/ShipWheelManager.java` — disassembly restoration
-- `blockships/src/main/java/anon/def9a2a4/blockships/ShipModel.java` — possibly extend model for new data types
-
 ## Testing
 
-1. Each block: place with content → assemble → move ship → disassemble → verify content restored
-2. Verify no item duplication (critical — check inventories cleared before block removal)
-3. Verify BlockDisplay renders correctly (chiseled bookshelf slots, pot sherds, campfire items)
-4. Test with empty variants (empty bookshelf, empty pot, unlit campfire, blank sign)
+1. Chiseled bookshelf: place with books → assemble → move ship → disassemble → verify books restored
+2. Chiseled bookshelf: verify BlockDisplay shows filled slots correctly during movement
+3. Chiseled bookshelf: verify no item duplication (inventory cleared before block removal)
+4. Chiseled bookshelf: test empty bookshelf (no books) — should work as plain block
+5. Signs: place with text → assemble → disassemble → verify text, color, glow state preserved
+6. Signs: test hanging signs, wall signs, standing signs
+7. Signs: test blank sign (no text) — no crash on empty lines
+8. Verify existing containers (chests, hoppers) still work after the duplication bugfix

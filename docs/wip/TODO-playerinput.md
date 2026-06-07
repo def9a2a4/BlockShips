@@ -47,9 +47,14 @@ public class PaperInputListener implements Listener {
 
         Input input = event.getInput();
 
-        // If sneaking, don't process steering — dismount is handled by
-        // PlayerToggleSneakEvent in DisplayShip.java already
-        if (input.isSneak()) return;
+        // Handle dismount explicitly — PlayerToggleSneakEvent is NOT guaranteed
+        // to fire when player is in a vehicle on all Paper versions. The ProtocolLib
+        // handler exists for this reason. dismountPlayer() is idempotent (checks
+        // getVehicle() first), so double-call if PlayerToggleSneakEvent also fires is safe.
+        if (input.isSneak()) {
+            ShipInstance.dismountPlayer(player);
+            return;
+        }
 
         // Only process steering for driver seat
         int seatIndex = ShipTags.extractSeatIndex(tags);
@@ -64,8 +69,14 @@ public class PaperInputListener implements Listener {
 }
 ```
 
-### Modify: `BlockShipsPlugin.java` — registration logic
+### Modify: `BlockShipsPlugin.java` — registration logic (~line 52-62)
 
+Add field declaration (after existing `private ShipSteeringListener steeringListener;`):
+```java
+private PaperInputListener paperInputListener;
+```
+
+Replace the ProtocolLib check block:
 ```java
 boolean usePaperInput = ServerVersion.isAtLeast(1, 21, 2) && hasPaperInputEvent();
 if (usePaperInput) {
@@ -80,6 +91,7 @@ if (usePaperInput) {
 }
 ```
 
+Add helper method:
 ```java
 private boolean hasPaperInputEvent() {
     try {
@@ -91,13 +103,19 @@ private boolean hasPaperInputEvent() {
 }
 ```
 
+Also update the "ProtocolLib not found" warning check (~line 164 in `onCommand`):
+```java
+// Old: if (steeringListener == null) { warn... }
+// New: if (steeringListener == null && paperInputListener == null) { warn... }
+```
+
 ## Design Decisions
 
-1. **No dismount handling in PaperInputListener** — `DisplayShip.java:1115` already handles dismount via `PlayerToggleSneakEvent`. Just return early on `isSneak()` to avoid processing stale input during the dismount frame. Adding dismount here would cause double-dismount calls.
+1. **Explicit dismount handling in PaperInputListener** — `PlayerToggleSneakEvent` is NOT guaranteed to fire when a player is in a vehicle on all Paper versions. The ProtocolLib packet handler exists precisely for this reason. `PaperInputListener` must call `ShipInstance.dismountPlayer(player)` on `isSneak()`. This is safe because `dismountPlayer()` is idempotent — it checks `getVehicle()` first, so if `PlayerToggleSneakEvent` also fires and triggers dismount, the second call just returns false.
 
 2. **`ignoreCancelled = false`** — other plugins cancelling movement input shouldn't stop ship steering. Use this or `EventPriority.MONITOR`.
 
-3. **Threading improvement** — `PlayerInputEvent` fires on the main thread, so `setInputState()` is called from the same thread as the physics tick. The existing ProtocolLib path calls `setInputState` from async netty threads, which is a latent race condition on the boolean fields (works by luck since individual boolean writes are atomic on most JVMs, but not guaranteed by JMM).
+3. **Threading improvement** — `PlayerInputEvent` fires on the main thread, so `setInputState()` is called from the same thread as the physics tick (`BukkitRunnable.runTaskTimer` at 1 tick). The existing ProtocolLib path calls `setInputState` from async netty threads (ProtocolLib's `PacketAdapter.onPacketReceiving` runs on the netty I/O thread by default). The input fields (`isForwardPressed` etc) in `ShipInstance.java:132-139` are plain non-volatile booleans — no synchronization. This is a latent JMM visibility bug: the main thread may read stale values. Works in practice because x86 cache coherency makes boolean writes visible quickly, but is not guaranteed. Switching to main-thread `PlayerInputEvent` eliminates this entirely.
 
 4. **Performance** — event fires every tick for ALL online players (~20 calls/sec/player). The `getVehicle()` check is a cheap field access; non-ship players exit immediately. Acceptable for 50-100 player servers.
 
@@ -114,5 +132,6 @@ private boolean hasPaperInputEvent() {
 1. Build with `make build`
 2. Test on 1.21.2+ server WITHOUT ProtocolLib — verify WASD, rotation, airship vertical
 3. Test on pre-1.21.2 server WITH ProtocolLib — verify fallback
-4. Test dismount (shift) — should work via existing PlayerToggleSneakEvent
-5. Verify no double-dismount (check logs for duplicate dismount calls)
+4. Test dismount (shift) — PaperInputListener calls dismountPlayer() explicitly
+5. Verify no double-dismount issues (dismountPlayer is idempotent, safe if PlayerToggleSneakEvent also fires)
+6. Test passenger (non-driver) dismount — isSneak() should still trigger dismount for passengers
