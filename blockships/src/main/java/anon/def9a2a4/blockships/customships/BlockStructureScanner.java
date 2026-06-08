@@ -434,6 +434,12 @@ public class BlockStructureScanner {
                     org.bukkit.inventory.Inventory inv = container.getSnapshotInventory();
                     rawYaml.put("container_items", serializeInventory(inv));
 
+                    // Clear snapshot inventory, then push to world to prevent item drops
+                    // when removeBlocks() calls setType(AIR). Must clear the SNAPSHOT (not
+                    // live via getInventory()), because update() writes snapshot state to world.
+                    container.getSnapshotInventory().clear();
+                    container.update();
+
                     // Serialize storage config for persistence
                     Map<String, Object> storageMap = new HashMap<>();
                     storageMap.put("type", storage.type.name());
@@ -449,8 +455,9 @@ public class BlockStructureScanner {
                 if (!tileItems.isEmpty()) {
                     rawYaml.put("container_items", tileItems);
                 }
-                // Clear inventory before block removal to prevent item duplication
-                tileInv.getInventory().clear();
+                // Clear snapshot inventory, then push to world to prevent item drops
+                // when removeBlocks() calls setType(AIR).
+                tileInv.getSnapshotInventory().clear();
                 tileInv.update();
             }
 
