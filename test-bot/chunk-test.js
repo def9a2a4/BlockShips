@@ -259,11 +259,17 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   bot.setControlState('jump', false)
   bot.setControlState('sneak', false)
   bot.setControlState('sprint', false)
-  await sleep(5000)
+  // Send explicit all-false player_input packet to guarantee the plugin clears
+  // input state. setControlState only sends when state changes — if already false,
+  // no packet is sent and stale input from the last steerShip tick may persist.
+  bot._client.write('player_input', {
+    inputs: { forward: false, backward: false, left: false, right: false, jump: false }
+  })
+  await sleep(10000)
 
   // 2) Exit ship FIRST, then measure position (same approach as test-bot.js)
   await customDismount(bot, log)
-  await sleep(2000)  // Wait for entities to settle after dismount
+  await sleep(5000)  // Wait for entities to settle after dismount
 
   // Record position after dismounting - use this for teleport back
   const movedPos = bot.entity.position.clone()
