@@ -60,7 +60,7 @@
   - stats (fuel, number of "engines") displayed in ship info
 
 - [ ] implement furnaces (normal furnaces) on ships
-- [ ] add TileEntity serialization for campfires, chiseled bookshelves, decorated pots, signs, etc?
+- [ ] add TileEntity serialization for campfires, decorated pots, etc? (chiseled bookshelves, shelves, and signs done)
 
 - [ ] allow setting extra colliders in a model. have this just be another list at the end, separate from blocks and items
   - this is useful for large balloons. the balloon might be a giant item display entity and we might want to have one or more large colliders for it
@@ -85,6 +85,9 @@
 - Silent health regen failures after first tick in ShipInstance.java - only logs once, subsequent failures silent
 - Player disconnect handler in DisplayShip.java missing logging - hard to debug seat issues
 - SteerPacketCompat.logged field should be volatile for thread safety
+- BlockStructureScanner: Container/TileStateInventoryHolder double-match — Container extends TileStateInventoryHolder in Paper API, so both instanceof checks fire for every Container block. Harmless (isEmpty guard prevents data loss, double-restore is idempotent) but wasteful. Fix: restructure Container path to always serialize/clear regardless of StorageConfig, then use `else if` on TileStateInventoryHolder. Must handle brewing stand (Container with null StorageConfig).
+- BlockStructureScanner: cache `block.getState()` in serialization loop — currently 6+ calls each creating a new snapshot. Cache into a local variable and use pattern matching for Container/TileStateInventoryHolder/Sign/Skull/Banner checks.
+- PaperInputListener: constructor takes unused `JavaPlugin plugin` param — remove it and update call site in BlockShipsPlugin
 
 
 # RECENTLY DONE
