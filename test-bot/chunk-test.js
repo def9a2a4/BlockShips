@@ -251,6 +251,7 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   await steerShip(bot, 0.0, 0, false, 1000)
 
   // Zero all control inputs and wait for ship to fully settle
+  // Airships need extra time to decelerate vertically after chunk recovery
   bot.setControlState('forward', false)
   bot.setControlState('back', false)
   bot.setControlState('left', false)
@@ -258,11 +259,11 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   bot.setControlState('jump', false)
   bot.setControlState('sneak', false)
   bot.setControlState('sprint', false)
-  await sleep(3000)
+  await sleep(5000)
 
   // 2) Exit ship FIRST, then measure position (same approach as test-bot.js)
   await customDismount(bot, log)
-  await sleep(1000)  // Wait for entities to load after dismount
+  await sleep(2000)  // Wait for entities to settle after dismount
 
   // Record position after dismounting - use this for teleport back
   const movedPos = bot.entity.position.clone()
