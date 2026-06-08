@@ -244,9 +244,9 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   }
   log(`Counted ${beforeCount} shulkers before movement`)
 
-  // 1) Move ship
+  // 1) Move ship (short duration for airships — less vertical velocity to shed)
   say('Moving ship...')
-  await steerShip(bot, 1.0, 0, isAirship, 2000)
+  await steerShip(bot, 1.0, 0, isAirship, isAirship ? 500 : 2000)
   await steerShip(bot, -1.0, 0, false, 100)
   await steerShip(bot, 0.0, 0, false, 1000)
 
