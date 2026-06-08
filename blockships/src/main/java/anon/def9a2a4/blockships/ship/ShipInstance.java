@@ -1955,6 +1955,28 @@ public class ShipInstance {
                         }
                         storage.clear();
                     }
+                    // Drop TileStateInventoryHolder items (shelves, chiseled bookshelves)
+                    // These aren't in the storages map — their items are serialized in rawYaml
+                    for (ShipModel.ModelPart part : sourceModel.parts) {
+                        if (part.storage == null && part.rawYaml.containsKey("container_items")) {
+                            @SuppressWarnings("unchecked")
+                            java.util.List<java.util.Map<String, Object>> itemsData =
+                                (java.util.List<java.util.Map<String, Object>>) part.rawYaml.get("container_items");
+                            for (java.util.Map<String, Object> itemData : itemsData) {
+                                byte[] serialized = (byte[]) itemData.get("item");
+                                if (serialized != null) {
+                                    try {
+                                        ItemStack item = ItemStack.deserializeBytes(serialized);
+                                        if (item != null && !item.getType().isAir()) {
+                                            world.dropItemNaturally(dropLocation, item);
+                                        }
+                                    } catch (Exception e) {
+                                        // Skip corrupted items
+                                    }
+                                }
+                            }
+                        }
+                    }
                     // Drop engine fuel items
                     for (ItemStack[] fuelSlots : wheelData.getAllEngineFuelSlots().values()) {
                         for (ItemStack item : fuelSlots) {

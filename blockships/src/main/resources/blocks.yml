@@ -595,11 +595,13 @@ chiseled_bookshelf:
   allowed: true
   weight: 1
   collider: true
+  display_rotation: true
 
 "*_shelf":
   allowed: true
   weight: 1
   collider: true
+  display_rotation: true
 
 "#signs":
   allowed: true
