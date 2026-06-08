@@ -269,7 +269,12 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
 
   // 2) Exit ship FIRST, then measure position (same approach as test-bot.js)
   await customDismount(bot, log)
-  await sleep(5000)  // Wait for entities to settle after dismount
+  await sleep(2000)  // Wait for entities to settle after dismount
+
+  // Force position sync — mineflayer's bot.entity.position may be stale after
+  // dismount teleport, especially for airships that moved vertically
+  bot.chat('/tp @s ~ ~ ~')
+  await sleep(500)
 
   // Record position after dismounting - use this for teleport back
   const movedPos = bot.entity.position.clone()
