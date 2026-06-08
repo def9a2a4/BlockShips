@@ -550,19 +550,25 @@ function steerShip(bot, forward, sideways, jump, durationMs) {
     const TICK_MS = 50
     let elapsed = 0
 
-    // 1.21.8 has issues with mineflayer's player_input packet for jump
-    const useRawPlayerInput = bot.version === '1.21.8'
+    // On 1.21.2+, mineflayer's bot.moveVehicle() sends player_input without jump,
+    // and bot.setControlState('jump') only sets a local physics flag (no packet).
+    // Send raw player_input with all fields to ensure the server receives jump/sprint.
+    const [, minor, patch] = bot.version.split('.').map(Number)
+    const useRawPlayerInput = minor > 21 || (minor === 21 && patch >= 2)
 
     const sendInput = () => {
       if (useRawPlayerInput) {
-        // 1.21.8: Send player_input directly with jump field included
+        // Send player_input directly with all fields including jump/sprint.
+        // mineflayer's bot.moveVehicle() omits jump, and bot.setControlState('jump')
+        // only sets a local physics flag without sending a packet.
         bot._client.write('player_input', {
           inputs: {
             forward: forward > 0,
             backward: forward < 0,
             left: sideways > 0,
             right: sideways < 0,
-            jump: jump
+            jump: jump,
+            sprint: false
           }
         })
       } else {
