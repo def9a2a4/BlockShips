@@ -269,24 +269,45 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
 
   // 2) Exit ship FIRST, then measure position (same approach as test-bot.js)
   await customDismount(bot, log)
-  await sleep(2000)  // Wait for entities to settle after dismount
 
-  // Force position sync — mineflayer's bot.entity.position may be stale after
-  // dismount teleport, especially for airships that moved vertically
+  // Diagnostic: log shulker positions 3 times to detect drift
+  const logShulkers = (label) => {
+    const s = findShulkers(bot, 100)
+    const sample = s.slice(0, 3).map(sh => `(${sh.position.x.toFixed(1)},${sh.position.y.toFixed(1)},${sh.position.z.toFixed(1)})`)
+    say(`${label}: ${s.length} shulkers, first 3: ${sample.join(', ')}`)
+    return s
+  }
+  await sleep(200)
+  logShulkers('Right after dismount')
+  await sleep(1000)
+  const preCycleShulkers = logShulkers('1s after dismount')
+  await sleep(1000)
+
+  // Force position sync
   bot.chat('/tp @s ~ ~ ~')
   await sleep(500)
 
-  // Record position after dismounting - use this for teleport back
+  // Record bot's dismount position
   const movedPos = bot.entity.position.clone()
   const moveDistance = movedPos.distanceTo(startPos)
-  say(`Moved ${moveDistance.toFixed(1)} blocks`)
+  say(`Bot position: (${movedPos.x.toFixed(1)}, ${movedPos.y.toFixed(1)}, ${movedPos.z.toFixed(1)}), moved ${moveDistance.toFixed(1)} blocks`)
 
-  // 3) Teleport away, wait, teleport back to recorded position
-  await forceChunkCycle(movedPos)
+  // Use ship's actual position (avg shulker) as reference, not bot position.
+  // For airships, the bot gets teleported to ground level on dismount but the
+  // ship stays at altitude — bot.entity.position would be 50+ blocks below.
+  const avgShulkerPos = preCycleShulkers.reduce(
+    (acc, s) => ({ x: acc.x + s.position.x / preCycleShulkers.length,
+                   y: acc.y + s.position.y / preCycleShulkers.length,
+                   z: acc.z + s.position.z / preCycleShulkers.length }),
+    { x: 0, y: 0, z: 0 }
+  )
+  say(`Ship center: (${avgShulkerPos.x.toFixed(1)}, ${avgShulkerPos.y.toFixed(1)}, ${avgShulkerPos.z.toFixed(1)})`)
+
+  // 3) Teleport away, wait, teleport back near SHIP (not bot dismount pos)
+  await forceChunkCycle(avgShulkerPos)
 
   // 5) Check ship after chunk cycle
-  const afterShulkers = findShulkers(bot, 100)
-  say(`Found ${afterShulkers.length} shulkers after chunk cycle`)
+  const afterShulkers = logShulkers('After teleport back (post chunk cycle)')
 
   if (afterShulkers.length === 0) {
     fail(testName, 'Ship not found after cycle')
@@ -299,17 +320,18 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
     return
   }
 
-  // Verify ALL shulkers are within 10 blocks of player dismount position
+  // Verify ALL shulkers are within 10 blocks of pre-cycle ship position
   const afterPositions = afterShulkers.map(s => s.position)
-  say(`After positions: ${afterPositions.map(p => `(${p.x.toFixed(1)},${p.z.toFixed(1)})`).join(', ')}`)
-
-  const farthestDist = Math.max(...afterPositions.map(p => p.distanceTo(movedPos)))
-  say(`Farthest shulker from dismount point: ${farthestDist.toFixed(2)} blocks`)
+  const farthestDist = Math.max(...afterPositions.map(p => {
+    const dx = p.x - avgShulkerPos.x, dy = p.y - avgShulkerPos.y, dz = p.z - avgShulkerPos.z
+    return Math.sqrt(dx * dx + dy * dy + dz * dz)
+  }))
+  say(`Farthest shulker from pre-cycle ship center: ${farthestDist.toFixed(2)} blocks`)
 
   if (farthestDist < 10) {
     pass(testName)
   } else {
-    fail(testName, `Shulker ${farthestDist.toFixed(2)} blocks from dismount point (need <10)`)
+    fail(testName, `Shulker ${farthestDist.toFixed(2)} blocks from pre-cycle position (need <10)`)
   }
 }
 
