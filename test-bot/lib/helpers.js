@@ -335,6 +335,18 @@ function findShulkers(bot, maxDist = 30) {
   return shulkers
 }
 
+/**
+ * Gets the server-accurate position of a shulker by reading its carrier's position.
+ * Shulkers are passengers of carrier ArmorStands — the MC server does not send position
+ * update packets for passengers, so shulker.position can be stale after ship movement.
+ * Carrier positions update normally as standalone entities.
+ * Falls back to shulker.position if no vehicle reference (e.g. after chunk reload when
+ * SET_PASSENGERS hasn't arrived yet — spawn packets give fresh positions anyway).
+ */
+function getShipEntityPos(shulker) {
+  return shulker.vehicle?.position ?? shulker.position
+}
+
 async function mountShip(bot, log) {
   const shulkers = findShulkers(bot)
   if (shulkers.length === 0) {
@@ -805,6 +817,7 @@ module.exports = {
 
   // Ship helpers
   findShulkers,
+  getShipEntityPos,
   findWheelBlock,
   placeWheelAtPosition,
   mountShip,

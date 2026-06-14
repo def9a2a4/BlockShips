@@ -12,6 +12,7 @@ const {
   CUSTOM_AIRSHIP,
   buildCustomShipWithWheel,
   findShulkers,
+  getShipEntityPos,
   mountShip,
   customDismount,
   steerShip,
@@ -236,7 +237,6 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
     return
   }
 
-  // Count shulkers before moving (positions are accurate here, stale after movement)
   const beforeCount = findShulkers(bot, 50).length
   if (beforeCount === 0) {
     fail(testName, 'No shulkers found after mounting')
@@ -270,10 +270,15 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   // 2) Exit ship FIRST, then measure position (same approach as test-bot.js)
   await customDismount(bot, log)
 
-  // Diagnostic: log shulker positions 3 times to detect drift
+  // Diagnostic: log ship entity positions to detect drift.
+  // Uses carrier (vehicle) positions via getShipEntityPos() — shulker positions are
+  // stale because the MC server doesn't send position packets for passenger entities.
   const logShulkers = (label) => {
     const s = findShulkers(bot, 100)
-    const sample = s.slice(0, 3).map(sh => `(${sh.position.x.toFixed(1)},${sh.position.y.toFixed(1)},${sh.position.z.toFixed(1)})`)
+    const sample = s.slice(0, 3).map(sh => {
+      const p = getShipEntityPos(sh)
+      return `(${p.x.toFixed(1)},${p.y.toFixed(1)},${p.z.toFixed(1)})`
+    })
     say(`${label}: ${s.length} shulkers, first 3: ${sample.join(', ')}`)
     return s
   }
@@ -292,19 +297,22 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   const moveDistance = movedPos.distanceTo(startPos)
   say(`Bot position: (${movedPos.x.toFixed(1)}, ${movedPos.y.toFixed(1)}, ${movedPos.z.toFixed(1)}), moved ${moveDistance.toFixed(1)} blocks`)
 
-  // Use ship's actual position (avg shulker) as reference, not bot position.
-  // For airships, the bot gets teleported to ground level on dismount but the
-  // ship stays at altitude — bot.entity.position would be 50+ blocks below.
-  const avgShulkerPos = preCycleShulkers.reduce(
-    (acc, s) => ({ x: acc.x + s.position.x / preCycleShulkers.length,
-                   y: acc.y + s.position.y / preCycleShulkers.length,
-                   z: acc.z + s.position.z / preCycleShulkers.length }),
+  // Use carrier positions for ship center — carrier ArmorStands are standalone entities
+  // whose positions update normally, unlike passenger shulkers which are stale.
+  // For airships this also avoids the Y-offset from bot dismount (ground vs altitude).
+  const avgShipPos = preCycleShulkers.reduce(
+    (acc, s) => {
+      const p = getShipEntityPos(s)
+      return { x: acc.x + p.x / preCycleShulkers.length,
+               y: acc.y + p.y / preCycleShulkers.length,
+               z: acc.z + p.z / preCycleShulkers.length }
+    },
     { x: 0, y: 0, z: 0 }
   )
-  say(`Ship center: (${avgShulkerPos.x.toFixed(1)}, ${avgShulkerPos.y.toFixed(1)}, ${avgShulkerPos.z.toFixed(1)})`)
+  say(`Ship center: (${avgShipPos.x.toFixed(1)}, ${avgShipPos.y.toFixed(1)}, ${avgShipPos.z.toFixed(1)})`)
 
   // 3) Teleport away, wait, teleport back near SHIP (not bot dismount pos)
-  await forceChunkCycle(avgShulkerPos)
+  await forceChunkCycle(avgShipPos)
 
   // 5) Check ship after chunk cycle
   const afterShulkers = logShulkers('After teleport back (post chunk cycle)')
@@ -321,9 +329,9 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   }
 
   // Verify ALL shulkers are within 10 blocks of pre-cycle ship position
-  const afterPositions = afterShulkers.map(s => s.position)
+  const afterPositions = afterShulkers.map(s => getShipEntityPos(s))
   const farthestDist = Math.max(...afterPositions.map(p => {
-    const dx = p.x - avgShulkerPos.x, dy = p.y - avgShulkerPos.y, dz = p.z - avgShulkerPos.z
+    const dx = p.x - avgShipPos.x, dy = p.y - avgShipPos.y, dz = p.z - avgShipPos.z
     return Math.sqrt(dx * dx + dy * dy + dz * dz)
   }))
   say(`Farthest shulker from pre-cycle ship center: ${farthestDist.toFixed(2)} blocks`)
