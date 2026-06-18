@@ -23,10 +23,9 @@ const {
 } = require('./lib/helpers')
 
 // Tests to skip on specific MC versions (key = version, value = array of test key substrings)
-// mineflayer hardcodes jump:0x01 in steer_vehicle on pre-1.21.3, causing airship drift after dismount
+// 1.21.1: steer_vehicle path (pre-1.21.3) has separate dismount/jump flag issues
 const VERSION_SKIPS = {
   '1.21.1': ['persistence_airship'],
-  '1.21.4': ['persistence_airship'],
 }
 
 // Test results file (written incrementally for CI visibility)
@@ -244,6 +243,24 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   }
   log(`Counted ${beforeCount} shulkers before movement`)
 
+  // Count all ship entity types before chunk cycle
+  const countEntitiesByType = (center, radius) => {
+    const counts = { armor_stand: 0, shulker: 0, block_display: 0, item_display: 0 }
+    for (const entity of Object.values(bot.entities)) {
+      if (!counts.hasOwnProperty(entity.name)) continue
+      const dx = entity.position.x - center.x
+      const dy = entity.position.y - center.y
+      const dz = entity.position.z - center.z
+      if (Math.sqrt(dx * dx + dy * dy + dz * dz) <= radius) {
+        counts[entity.name]++
+      }
+    }
+    return counts
+  }
+  const shipCenter = bot.entity.position.clone()
+  const beforeEntityCounts = countEntitiesByType(shipCenter, 50)
+  log(`Entity counts before: ${JSON.stringify(beforeEntityCounts)}`)
+
   // 1) Move ship (short duration for airships — less vertical velocity to shed)
   say('Moving ship...')
   await steerShip(bot, 1.0, 0, isAirship, isAirship ? 500 : 2000)
@@ -320,6 +337,16 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   if (afterShulkers.length === 0) {
     fail(testName, 'Ship not found after cycle')
     return
+  }
+
+  // Verify entity counts by type stayed constant
+  const afterEntityCounts = countEntitiesByType(avgShipPos, 50)
+  log(`Entity counts after: ${JSON.stringify(afterEntityCounts)}`)
+  for (const type of Object.keys(beforeEntityCounts)) {
+    if (afterEntityCounts[type] !== beforeEntityCounts[type]) {
+      fail(testName, `${type} count changed: ${beforeEntityCounts[type]} -> ${afterEntityCounts[type]}`)
+      return
+    }
   }
 
   // Verify shulker count stayed constant

@@ -437,33 +437,45 @@ async function customDismount(bot, log, originalStartPos = null) {
            Math.abs(posCheckRef.z - currentPos.z) > threshold
   }
 
-  // Try dismount methods (200ms between each)
-  const methods = [
-    { name: 'bot.dismount()', fn: () => bot.dismount() },
-    { name: 'sneak control', fn: () => {
-      bot.setControlState('sneak', true)
-      setTimeout(() => bot.setControlState('sneak', false), 100)
-    }},
-  ]
+  // Try dismount methods (200ms between each).
+  // On 1.21.3+, raw shift must come FIRST: bot.dismount() sends { jump: true }
+  // which PaperInputListener interprets as climb input, not dismount.
+  const methods = []
 
-  // Add version-specific raw packet methods
   if (bot.supportFeature('newPlayerInputPacket')) {
-    // 1.21.3+ uses player_input packet
+    // 1.21.3+: shift is the correct dismount mechanism for PaperInputListener
     methods.push(
       { name: 'raw player_input (shift)', fn: () => bot._client.write('player_input', {
         inputs: { shift: true }
       })},
-      { name: 'raw player_input (jump)', fn: () => bot._client.write('player_input', {
-        inputs: { jump: true }
-      })}
+      { name: 'bot.dismount()', fn: () => bot.dismount() },
+      { name: 'sneak control', fn: () => {
+        bot.setControlState('sneak', true)
+        setTimeout(() => bot.setControlState('sneak', false), 100)
+      }},
     )
   } else {
-    // Pre-1.21.3 uses steer_vehicle packet
+    // Pre-1.21.3: bot.dismount() sends steer_vehicle with unmount flag (correct)
     methods.push(
+      { name: 'bot.dismount()', fn: () => bot.dismount() },
+      { name: 'sneak control', fn: () => {
+        bot.setControlState('sneak', true)
+        setTimeout(() => bot.setControlState('sneak', false), 100)
+      }},
       { name: 'raw steer_vehicle (unmount)', fn: () => bot._client.write('steer_vehicle', {
         sideways: 0, forward: 0, jump: 0, unmount: 1
       })}
     )
+  }
+
+  // Clear any stale input state on the server after dismount.
+  // bot.dismount() on 1.21.3+ sends { jump: true } which sets isSpacePressed on airships.
+  const clearShipInput = () => {
+    if (bot.supportFeature('newPlayerInputPacket')) {
+      bot._client.write('player_input', {
+        inputs: { forward: false, backward: false, left: false, right: false, jump: false, shift: false, sprint: false }
+      })
+    }
   }
 
   // Try each method with 200ms wait
@@ -476,6 +488,7 @@ async function customDismount(bot, log, originalStartPos = null) {
     }
 
     if (await quickWait(200)) {
+      clearShipInput()
       const endPos = bot.entity.position.clone()
       if (log) log(`  Success via ${method.name}`)
       return { success: true, method: method.name, usedFallback: false, startPos: dismountStartPos, endPos }
@@ -485,6 +498,7 @@ async function customDismount(bot, log, originalStartPos = null) {
   // Wait 1s for any delayed server response
   if (log) log('  Waiting 1s for delayed dismount...')
   if (await quickWait(1000)) {
+    clearShipInput()
     const endPos = bot.entity.position.clone()
     return { success: true, method: 'delayed', usedFallback: false, startPos: dismountStartPos, endPos }
   }
@@ -495,6 +509,7 @@ async function customDismount(bot, log, originalStartPos = null) {
 
   // If position changed significantly from original or bot.vehicle is null, we're done
   if (!bot.vehicle || posChanged(checkPos)) {
+    clearShipInput()
     if (log) log('  Success: position changed from original or vehicle cleared')
     return { success: true, method: 'delayed', usedFallback: false, startPos: dismountStartPos, endPos: checkPos }
   }
@@ -522,12 +537,14 @@ async function customDismount(bot, log, originalStartPos = null) {
 
   // Check chat response - "You are not riding a ship" means already dismounted (success!)
   if (dismountResponse) {
+    clearShipInput()
     if (log) log(`  Server response: "${dismountResponse}" - dismount confirmed`)
     return { success: true, method: '/blockships dismount', usedFallback: false, startPos: dismountStartPos, endPos: postDismountPos }
   }
 
   // Also check position change from original
   if (!bot.vehicle || posChanged(postDismountPos)) {
+    clearShipInput()
     if (log) log('  Success via /blockships dismount (position changed from original)')
     return { success: true, method: '/blockships dismount', usedFallback: false, startPos: dismountStartPos, endPos: postDismountPos }
   }

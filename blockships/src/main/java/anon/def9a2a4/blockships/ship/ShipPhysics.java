@@ -500,12 +500,12 @@ public class ShipPhysics {
     private void applyAirshipVerticalPhysics() {
         ShipConfig config = ship.config;
 
-        if (ship.isSpacePressed) {
+        if (ship.hasDriver && ship.isSpacePressed) {
             currentYVelocity = Math.min(currentYVelocity + effectiveLiftAcceleration, effectiveMaxVerticalSpeed);
             if (Math.abs(currentSpeed) < config.verticalForwardNudge) {
                 currentSpeed = config.verticalForwardNudge;
             }
-        } else if (ship.isSprintPressed) {
+        } else if (ship.hasDriver && ship.isSprintPressed) {
             currentYVelocity = Math.max(currentYVelocity - effectiveDescendAcceleration, -effectiveMaxVerticalSpeed);
             if (Math.abs(currentSpeed) < config.verticalForwardNudge) {
                 currentSpeed = config.verticalForwardNudge;
