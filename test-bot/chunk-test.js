@@ -279,9 +279,11 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   // Send explicit all-false player_input packet to guarantee the plugin clears
   // input state. setControlState only sends when state changes — if already false,
   // no packet is sent and stale input from the last steerShip tick may persist.
-  bot._client.write('player_input', {
-    inputs: { forward: false, backward: false, left: false, right: false, jump: false }
-  })
+  if (bot.supportFeature('newPlayerInputPacket')) {
+    bot._client.write('player_input', {
+      inputs: { forward: false, backward: false, left: false, right: false, jump: false }
+    })
+  }
   await sleep(10000)
 
   // 2) Exit ship FIRST, then measure position (same approach as test-bot.js)
