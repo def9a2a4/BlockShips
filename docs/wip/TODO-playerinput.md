@@ -136,10 +136,10 @@ Also update the "ProtocolLib not found" warning check (~line 164 in `onCommand`)
 
 ### CI — skip ProtocolLib for 1.21.2+ versions
 
-The CI matrix in `.github/workflows/server-test.yml` tests: `1.21.1`, `1.21.4`, `1.21.8`, `1.21.10`, `1.21.11`, `26.1.2`.
+The CI matrix in `.github/workflows/server-test.yml` tests: `1.21.1`, `1.21.4`, `1.21.8`, `1.21.10`, `1.21.11`, `26.1.2`, `26.2`.
 
 - **1.21.1** → pre-1.21.2, needs ProtocolLib (keep as-is)
-- **1.21.4, 1.21.8, 1.21.10, 1.21.11, 26.1.2** → all ≥1.21.2, should use PaperInputListener WITHOUT ProtocolLib
+- **1.21.4, 1.21.8, 1.21.10, 1.21.11, 26.1.2, 26.2** → all ≥1.21.2, should use PaperInputListener WITHOUT ProtocolLib
 
 **Makefile change**: Replace the wildcard `cp $(DOWNLOAD_CACHE)/plugins/*.jar` in `test-server-plugin-copy` with explicit copies, conditionally including ProtocolLib only for 1.21.1:
 
