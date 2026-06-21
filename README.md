@@ -4,6 +4,9 @@ A Minecraft plugin that lets players create rideable, physics-enabled ships. Bui
 
 Download on Modrinth: [modrinth.com/plugin/blockships](https://modrinth.com/plugin/blockships)
 
+Other plugins that work nicely with BlockShips:
+- [DynLight](https://github.com/def9a2a4/DynLight) for dynamic lighting -- without this, light emitting blocks on custom ships won't work when the ship is assembled.
+
 [![Demo Gif](docs/assets/demo_vid.gif)](docs/assets/demo_vid.webm)
 
 ## **WARNING:** THIS PROJECT IS IN PRE-ALPHA. EXPECT BUGS, MISSING FEATURES, AND BREAKING CHANGES. USE AT YOUR OWN RISK, AND BACKUP YOUR WORLD OFTEN. THE DEVELOPER IS NOT RESPONSIBLE FOR ANY DAMAGE CAUSED BY THIS PLUGIN.
@@ -14,13 +17,9 @@ Download on Modrinth: [modrinth.com/plugin/blockships](https://modrinth.com/plug
 
 Ships can include:
 - **Functional blocks** - Crafting tables, anvils, enchanting tables work as normal. (furnaces/brewing stands don't yet work)
-- **Seats** - Stairs for passengers
+- **Seats** - passengers can sit on stairs
 - **Cannons** - a dispenser with a block of obsidian behind it will shoot its contents. fire all through the ship menu, or right click on the obsidian to fire.
-
-|                  Cannons Firing                   |                                         Cannon Menu                                          |
-| :-----------------------------------------------: | :------------------------------------------------------------------------------------------: |
-| ![Cannons Firing](docs/assets/cannons_firing.png) | ![Cannon Menu](docs/assets/menu_cannons.png) (or, right click obsidian to fire individually) |
-- **Storage** - Chests, barrels, dispensers remain accessible
+- **Storage** - Chests, barrels, dispensers, etc remain accessible
 - **Lead points** - Anything leashed to a fence will stay tied to the ship. You can lead things to the ship while its moving. Prefab ships have a single lead point.
 - **Health & damage** - Ships have health, take damage from collisions/attacks, and regenerate over time. Visual and audio feedback on hits.
 - **Movement Sounds** - Movement sounds in water and air (volume configurable in config.yml)
@@ -78,6 +77,12 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 | **Small Airship**<br>*Wood type, balloon type customizable* | ![Small Airship](docs/assets/crafting/small_airship.png) |
 
 
+## Cannons
+
+|                  Cannons Firing                   |                                         Cannon Menu                                          |
+| :-----------------------------------------------: | :------------------------------------------------------------------------------------------: |
+| ![Cannons Firing](docs/assets/cannons_firing.png) | ![Cannon Menu](docs/assets/menu_cannons.png) (or, right click obsidian to fire individually) |
+
 
 ## Commands
 
@@ -95,21 +100,25 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 # Installation
 
 1. Download the BlockShips jar file from modrinth: [modrinth.com/plugin/blockships](https://modrinth.com/plugin/blockships)
-2. **IMPORTANT: Download [ProtocolLib](https://www.spigotmc.org/resources/protocollib.1997/)**
+2. **IMPORTANT: Download [ProtocolLib](https://www.spigotmc.org/resources/protocollib.1997/)** if using 1.21.2 or below! ProtocolLib is no longer required as of BlockShips 0.0.16
 3. Place both jars in your server's `plugins` folder
 4. Restart the server
 
 # Configuration
 
 ## config.yml
+
 Main plugin settings including:
+
 - Ship physics (speed, acceleration, drag)
 - Buoyancy values (density, strength)
 - Collision settings (mass, response)
 - Crafting recipes
 
 ## blocks.yml
+
 Configure which blocks can be used in custom ships:
+
 - **Weight scale** - Affects buoyancy
 - **Collider** - Custom collision shapes
 - **Seat/storage** - Special block behaviors
