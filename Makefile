@@ -5,6 +5,10 @@ build:
 	mkdir -p bin
 	cp blockships/build/libs/BlockShips-*.jar bin
 
+.PHONY: dump-issues
+dump-issues:
+	bash docs/dump-issues.sh
+
 .PHONY: clean
 clean:
 	cd blockships && gradle clean
