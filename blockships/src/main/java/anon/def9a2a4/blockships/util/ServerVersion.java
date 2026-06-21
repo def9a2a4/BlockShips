@@ -30,11 +30,21 @@ public class ServerVersion {
         LOGGER.info("[ServerVersion] Parsing version: " + bukkitVersion);
 
         try {
-            // Format examples: "1.21.1-R0.1-SNAPSHOT", "1.21.9-R0.1-SNAPSHOT"
+            // Take leading numeric dot-separated segments; stop at the first non-numeric one.
+            // Formats seen: "1.21.1-R0.1-SNAPSHOT", "26.1.2-R0.1-SNAPSHOT", "26.2.build.24-alpha", "26.2.0"
             String[] parts = bukkitVersion.split("-")[0].split("\\.");
-            major = Integer.parseInt(parts[0]);
-            minor = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
-            patch = parts.length > 2 ? Integer.parseInt(parts[2]) : 0;
+            int[] nums = {0, 0, 0};
+            int count = 0;
+            for (String part : parts) {
+                if (count >= 3 || !part.matches("\\d+")) break;
+                nums[count++] = Integer.parseInt(part);
+            }
+            if (count == 0) {
+                throw new NumberFormatException("no numeric version components in '" + bukkitVersion + "'");
+            }
+            major = nums[0];
+            minor = nums[1];
+            patch = nums[2];
             versionNumber = major * 10000 + minor * 100 + patch;
             LOGGER.info("[ServerVersion] Detected version: " + major + "." + minor + "." + patch);
         } catch (Exception e) {
