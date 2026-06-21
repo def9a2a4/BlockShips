@@ -1,3 +1,8 @@
+---
+status: planned
+issue: 10
+---
+
 # Land Vehicle Support (Issue #10)
 
 ## Context

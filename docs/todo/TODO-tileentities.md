@@ -1,3 +1,10 @@
+---
+status: in-progress
+issue: 23
+version: v0.0.16
+commit: e9b6757
+---
+
 # Tile Entity Support Improvements
 
 Relates to: https://github.com/def9a2a4/BlockShips/issues/23

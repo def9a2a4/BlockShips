@@ -1,3 +1,9 @@
+---
+status: done
+version: v0.0.16
+commit: 4e5d9f6
+---
+
 # CI: chunk_persistence tests — root cause and fix (RESOLVED)
 
 ## Problem

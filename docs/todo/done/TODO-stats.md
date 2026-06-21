@@ -1,3 +1,10 @@
+---
+status: done
+issue: 18
+version: v0.0.16
+commit: 5da91fd
+---
+
 # Custom Ship Stats System - Design Document
 
 ## Overview

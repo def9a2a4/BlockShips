@@ -1,3 +1,7 @@
+---
+status: planned
+---
+
 # Minecart Ship Feature - Design Document
 
 ## Overview

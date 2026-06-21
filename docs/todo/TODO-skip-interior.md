@@ -1,3 +1,8 @@
+---
+status: planned
+issue: 8
+---
+
 # Skip Interior Collision Entities Entirely
 
 ## Context

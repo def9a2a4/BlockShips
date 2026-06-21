@@ -1,3 +1,7 @@
+---
+status: planned
+---
+
 # Refactor: Extract Skull/Banner Transform Calculation
 
 ## Problem

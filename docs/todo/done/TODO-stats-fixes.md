@@ -1,3 +1,10 @@
+---
+status: done
+issue: 18
+version: v0.0.16
+commit: 5da91fd
+---
+
 # Ship Stats System — Remaining Fixes
 
 ## UI Math Issues

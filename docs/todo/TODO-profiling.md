@@ -1,3 +1,8 @@
+---
+status: planned
+issue: 8
+---
+
 # Lightweight Performance Profiling
 
 ## Context

@@ -1,3 +1,10 @@
+---
+status: done
+issue: 28
+version: v0.0.16
+commit: e15f794
+---
+
 # Make ProtocolLib Optional — Use Paper PlayerInputEvent on 1.21.2+
 
 ## Problem
