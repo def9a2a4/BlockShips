@@ -1,14 +1,15 @@
 # v0.0.16 - Ship Stats, Sails & Engines, more block types, wider compatibility, bugfixes
 
-- **You probably want to reset your configs!**
-- **ProtocolLib is now optional on Paper 1.21.2+:** Ship controls use Minecraft's native input event on newer servers, so you no longer need to install ProtocolLib there. Pre-1.21.2 servers still require it. Now builds against and supports up to 1.21.11 ([#28](https://github.com/def9a2a4/BlockShips/issues/28))
-- **More blocks usable in custom ships:** Chiseled bookshelves, shelves (1.21.9+), and signs can now be part of a ship — their contents and sign text are preserved across assembly and disassembly ([#23](https://github.com/def9a2a4/BlockShips/issues/23))
+# You probably want to reset your configs!
+
 - **Ship speed now dependent on engines and sails:** Ships now have a power-to-mass ratio system that scales speed and rotation based on block composition ([#18](https://github.com/def9a2a4/BlockShips/issues/18))
   - Wool blocks act as sails (3 power), banners as upgraded sails (7 power), engines provide 30 power when fueled
   - Heavier ships are slower unless you add more power sources
   - Sail-only power is capped — engines required to push ships past 80% of max ratio
   - Engines use fuel, emit smoke when working
   - Ship info UI shows power ratio, effective speed percentage, and color-coded stats
+- **ProtocolLib is now optional on Paper 1.21.2+:** Ship controls use Minecraft's native input event on newer servers, so you no longer need to install ProtocolLib there. Pre-1.21.2 servers still require it. Now builds against and supports up to 1.21.11 ([#28](https://github.com/def9a2a4/BlockShips/issues/28))
+- **More blocks usable in custom ships:** Chiseled bookshelves, shelves (1.21.9+), and signs can now be part of a ship — their contents and sign text are preserved across assembly and disassembly ([#23](https://github.com/def9a2a4/BlockShips/issues/23))
 - **Ship rotation is now smooth and jitter-free!**
   - a recent performance update made this worse, now it's fixed!
 - **Alternate destruction mode:** Ships can be configured to permanently destroy on death instead of disassembling ([#27](https://github.com/def9a2a4/BlockShips/issues/27))
@@ -79,7 +80,7 @@ When a player places an engine, a BlockPlaceEvent listener transfers PDC tags to
 
 Pre-assembly fuel in blast furnace containers is transferred into wheelData on assembly; fuel is written back to containers on disassembly (c3e0705 — previously silently lost). Fuel deserialization is crash-safe with per-item try-catch. Click-to-refresh on engine status item shows live fuel state.
 
-CAMPFIRE_SIGNAL_SMOKE particles are emitted at fueled engine positions every 5 ticks while the ship has a driver.
+CAMPFIRE_COSY_SMOKE particles are emitted at fueled engine positions every 5 ticks while the ship has a driver.
 
 Per-engine fuel slots and burn ticks are serialized to `ship_wheels.yml` as Base64-encoded ItemStack bytes. Engine block indices and local positions are tracked in ShipModel for click detection on assembled ships.
 
@@ -212,12 +213,6 @@ Engine fuel lifecycle fixes (c3e0705):
 - Detection chat now shows output for assembled ship detection (was completely silent) with live fuel state (fueled/unfueled engine breakdown)
 - Density display uses weighted block count (matches physics — was using total block count which included weightless blocks like trapdoors)
 - Standardized chat terminology: "power" → "pts"
-
-### Prefab Ships Unable to Move (c8ef29c)
-
-Commit 5da91fd moved `computeEffectiveStats()` out of the ShipPhysics constructor to avoid a circular call with wheelData (needed for custom ship fuel state). But `recomputeStats()` was only called from custom-ship paths (ShipWheelManager assembly, resolveWheelData, engine menu close). Prefab ships never hit any of those paths, so `effectiveMaxSpeed`, `effectiveAcceleration`, `effectiveRotationSpeed`, etc. stayed at 0.0f. Ships could spawn and be mounted but couldn't move.
-
-Fix: call `physics.recomputeStats()` in the ShipInstance constructor after delegates are initialized. For prefab ships this sets the final config-based values. For custom ships it produces a conservative initial ratio (0 fueled engines), which gets recomputed after wheelData is linked.
 
 ### Ship Physics Timing (d001055)
 
