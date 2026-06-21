@@ -35,6 +35,8 @@
 - [ ] ship to ship collisions not working, temporarily disabled
 - [ ] fix heads on walls display and colliders
 - [ ] multiple ships wheels is buggy?
+- [ ] deck physics: if "player is not sending any input + player is standing on collision shulker + ship is moving", then teleport the player with the ship
+  - sneak is fine. maybe only teleport along if the player is sneaking?
 
 ## UNCLEAR
 

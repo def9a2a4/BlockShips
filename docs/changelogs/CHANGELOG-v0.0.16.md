@@ -1,6 +1,8 @@
-# v0.0.16 - Ship Stats, Sails & Engines, better visuals, bugfixes
+# v0.0.16 - Ship Stats, Sails & Engines, more block types, wider compatibility, bugfixes
 
 - **You probably want to reset your configs!**
+- **ProtocolLib is now optional on Paper 1.21.2+:** Ship controls use Minecraft's native input event on newer servers, so you no longer need to install ProtocolLib there. Pre-1.21.2 servers still require it. Now builds against and supports up to 1.21.11 ([#28](https://github.com/def9a2a4/BlockShips/issues/28))
+- **More blocks usable in custom ships:** Chiseled bookshelves, shelves (1.21.9+), and signs can now be part of a ship — their contents and sign text are preserved across assembly and disassembly ([#23](https://github.com/def9a2a4/BlockShips/issues/23))
 - **Ship speed now dependent on engines and sails:** Ships now have a power-to-mass ratio system that scales speed and rotation based on block composition ([#18](https://github.com/def9a2a4/BlockShips/issues/18))
   - Wool blocks act as sails (3 power), banners as upgraded sails (7 power), engines provide 30 power when fueled
   - Heavier ships are slower unless you add more power sources
@@ -16,6 +18,7 @@
 - **Towny compatibility:** ship entities now set an empty custom name to prevent Towny's mob removal timer from deleting them ([#17](https://github.com/def9a2a4/BlockShips/issues/17))
   - Previously, Towny would remove ship shulkers (collision/seat entities) in town chunks, ejecting players and ghosting the ship
   - Workaround config options for Towny are documented in the issue thread
+- **Drowned captains are rarer:** the default `special-drowned` spawn chance is lowered from 5% to 2% so they don't overwhelm biomes where drowned spawn heavily ([#29](https://github.com/def9a2a4/BlockShips/issues/29))
 - other various bugfixes and improvements
 
 ---
@@ -98,6 +101,8 @@ All consumers updated to use `physics.currentYaw` instead of `vehicle.getYaw()`:
 
 `currentYaw` is persisted in ship metadata for chunk recovery. Yaw normalized to [0, 360) to prevent drift.
 
+Persisting `currentYaw` across chunk recovery also addresses the chunk-reload symptom from [#7](https://github.com/def9a2a4/BlockShips/issues/7), where a parked ship would snap to north (collider rotates, display stays put) after its chunk unloaded and reloaded. This is a partial fix — the more severe collider/skin desync some users reported on older versions may still persist.
+
 ### Destruction Mode (3507fa0, dc0dfc6, 6288eed) — closes [#27](https://github.com/def9a2a4/BlockShips/issues/27)
 
 Ships can now be configured to permanently destroy on death instead of disassembling.
@@ -147,6 +152,8 @@ Tab completion includes all giveable item IDs. Item listing extracted into share
 
 Captain's manual content moved from hardcoded Java in ShipWheelMenu into `help_book.yml`. Content can be updated without recompiling. Help book content reloads on `/blockships reload` (f9ed87f). Shapeless recipe support added to ItemUtil.registerItemRecipe() (f9ed87f). Various content fixes and stats tuning applied.
 
+The Captain's Manual is now a craftable item — a shapeless recipe combining a Ship's Wheel with a book yields the written guide. It can also be obtained via `/blockships give captains_manual`.
+
 ### Towny Compatibility (856419d) — [#17](https://github.com/def9a2a4/BlockShips/issues/17)
 
 Towny's mob removal timer periodically scans town chunks and removes hostile mobs. Shulkers are on the default removal list, and BlockShips uses shulker entities as invisible collision boxes and seats. When the timer fires, ship collision entities get deleted, players get ejected, and the ship becomes a ghost (display entities survive since they're not mobs).
@@ -158,6 +165,31 @@ Applied to:
 - ShipInstance: root armor stand vehicle, carrier armor stands, and seat shulkers spawned during assembly and chunk recovery
 
 Server admins running Towny can also configure workarounds on the Towny side — see [#17](https://github.com/def9a2a4/BlockShips/issues/17) for details.
+
+### Optional ProtocolLib & Wider Version Support (e15f794, 13e84cb, 7da6074) — [#28](https://github.com/def9a2a4/BlockShips/issues/28)
+
+ProtocolLib is no longer a hard dependency. It is now declared as a `softdepend` in `plugin.yml` (and `compileOnly` in the build), so the plugin loads with or without it.
+
+Ship steering picks an input path based on the server:
+
+- **Paper 1.21.2+:** uses Minecraft's native `PlayerInputEvent` via the new `PaperInputListener`. This runs on the main thread and requires **no ProtocolLib**.
+- **Pre-1.21.2:** falls back to the existing ProtocolLib packet interception (`ShipSteeringListener`). ProtocolLib is still required here.
+
+This also fixes the **1.21.3–1.21.8** window where ProtocolLib's reflection on the player input record had stopped working (breaking WASD controls), and removes a race condition where input booleans were written from the netty thread while physics read them on the main thread.
+
+The plugin now builds against `paper-api:1.21.11`, so the effective supported range is roughly **1.21.2–1.21.11** on Paper without ProtocolLib (older versions remain supported with ProtocolLib installed).
+
+### More Custom-Ship Blocks: Shelves, Bookshelves, Signs (e9b6757) — partially addresses [#23](https://github.com/def9a2a4/BlockShips/issues/23)
+
+Three new block types can now be part of a custom ship, with their state preserved across assembly and disassembly:
+
+- **Chiseled bookshelves** (6 book slots)
+- **Shelves** (1.21.9+, 3 item slots)
+- **Signs** (standing, wall, and hanging) — front and back text, text color, glow state, and waxed flag are all retained
+
+Shelf and chiseled bookshelf contents are serialized through a new `TileStateInventoryHolder` path in `BlockStructureScanner` (these store items in the tile entity rather than block data). `blocks.yml` gains `chiseled_bookshelf` and `*_shelf` entries, both flagged `display_rotation: true` so they face the correct direction in flight.
+
+Note: due to a `BlockDisplay` limitation, shelf/bookshelf items and sign text are not visible while the ship is flying — they reappear when the ship is disassembled. This is a partial fix for [#23](https://github.com/def9a2a4/BlockShips/issues/23): decorated pots, other data blocks, and wall-mounted heads are still unsupported, and in-flight sign-text rendering is not yet implemented.
 
 ## Bug Fixes
 
@@ -247,3 +279,39 @@ Series of fixes following the smooth rotation rewrite:
 - `alignToGrid` used vehicle yaw instead of internal yaw, snapping to wrong position
 - Idle sync teleport caused unnecessary jitter — removed
 - Two rotation invariant bugs where forward direction disagreed with visual rotation in edge cases
+
+### Container Item Duplication on Assembly (19e0bc7)
+
+Inventory blocks duplicated their contents when a ship was assembled. The block's items were serialized into the ship data, but the snapshot inventory was never cleared before the block was set to air — and Bukkit drops a block's remaining items to the world on `setType(AIR)`. So every chest/furnace/hopper (and shelf/chiseled bookshelf) effectively spilled a second copy of its contents onto the ground.
+
+Fixed by clearing the snapshot inventory and pushing the empty state to the world (`getSnapshotInventory().clear()` + `update()`) before removing the block, on both the `Container` and `TileStateInventoryHolder` paths.
+
+### Shelf/Bookshelf Rotation & Destroy Drops (63bc339)
+
+Two issues with the newly supported shelf and chiseled bookshelf blocks:
+
+- They rendered without their facing direction in flight. Adding `display_rotation: true` to their `blocks.yml` entries applies the correct Y-axis rotation, matching how chests and barrels already work.
+- Their contents were not dropped when a ship was destroyed. Unlike containers, these blocks store items in `container_items` rather than the `storages` map, so they were missed by the destroy path. They now drop their items at the ship's death location.
+
+### Controls Warning Clarity (6236198)
+
+The startup warning shown when WASD controls cannot be initialized (no Paper input event and no ProtocolLib) was reworded to lead with the impact before the cause:
+
+```
+WASD ship controls will not work!
+Paper PlayerInputEvent not available, ProtocolLib not found.
+```
+
+### Rarer Drowned Captains — [#29](https://github.com/def9a2a4/BlockShips/issues/29)
+
+The default `special-drowned.spawn-chance` is lowered from `0.05` (5%) to `0.02` (2%). In biomes where drowned spawn heavily, the special ship-wheel-dropping drowned were appearing in overwhelming numbers. The feature can still be disabled entirely with `special-drowned.enabled: false`, or the rate tuned back up.
+
+## Known Issues / Not Yet Addressed
+
+These are tracked but not resolved in v0.0.16:
+
+- **Proper tile entity support ([#23](https://github.com/def9a2a4/BlockShips/issues/23)):** decorated pots and other data-bearing blocks still aren't supported, and sign text is preserved but not rendered while a ship is in flight.
+- **Wall heads ([#20](https://github.com/def9a2a4/BlockShips/issues/20)):** player/mob heads placed on walls still display incorrectly and lack colliders. Floor-mounted heads work.
+- **Partial destruction ([#24](https://github.com/def9a2a4/BlockShips/issues/24)):** only whole-ship destroy/disassemble (#27) is implemented; per-block / progressive destruction is not.
+- **Older-version visual desync ([#7](https://github.com/def9a2a4/BlockShips/issues/7)):** the chunk-reload rotation snap is fixed, but the more severe collider/skin desync reported on legacy versions may still occur.
+- **ProtocolLib reports ([#28](https://github.com/def9a2a4/BlockShips/issues/28)):** the underlying cause should be resolved by the optional-ProtocolLib path on 1.21.2+, but the issue remains open pending reporter confirmation.
