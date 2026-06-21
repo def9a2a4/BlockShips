@@ -8,17 +8,23 @@
   - Sail-only power is capped — engines required to push ships past 80% of max ratio
   - Engines use fuel, emit smoke when working
   - Ship info UI shows power ratio, effective speed percentage, and color-coded stats
-- **ProtocolLib is now optional on Paper 1.21.2+:** Ship controls use Minecraft's native input event on newer servers, so you no longer need to install ProtocolLib there. Pre-1.21.2 servers still require it. Now builds against and supports up to 1.21.11 ([#28](https://github.com/def9a2a4/BlockShips/issues/28))
+
 - **More blocks usable in custom ships:** Chiseled bookshelves, shelves (1.21.9+), and signs can now be part of a ship — their contents and sign text are preserved across assembly and disassembly ([#23](https://github.com/def9a2a4/BlockShips/issues/23))
+
+- **ProtocolLib is now optional on Paper 1.21.2+:** Ship controls use Minecraft's native input event on newer servers, so you no longer need to install ProtocolLib there. Pre-1.21.2 servers still require it. Now builds against and supports up to 1.21.11 ([#28](https://github.com/def9a2a4/BlockShips/issues/28))
+
 - **Ship rotation is now smooth and jitter-free!**
   - a recent performance update made this worse, now it's fixed!
-- **Alternate destruction mode:** Ships can be configured to permanently destroy on death instead of disassembling ([#27](https://github.com/def9a2a4/BlockShips/issues/27))
+
+- **Alternate (optional) destruction mode:** Ships can be configured to permanently destroy on death instead of disassembling ([#27](https://github.com/def9a2a4/BlockShips/issues/27))
   - Set `custom-ships.destruction-mode: destroy` in config.yml
   - Blocks are lost, but inventory contents, engine fuel, and mob leads are dropped
   - default is still to disassemble them into blocks on destruction
+
 - **Towny compatibility:** ship entities now set an empty custom name to prevent Towny's mob removal timer from deleting them ([#17](https://github.com/def9a2a4/BlockShips/issues/17))
   - Previously, Towny would remove ship shulkers (collision/seat entities) in town chunks, ejecting players and ghosting the ship
   - Workaround config options for Towny are documented in the issue thread
+
 - **Drowned captains are rarer:** the default `special-drowned` spawn chance is lowered from 5% to 2% so they don't overwhelm biomes where drowned spawn heavily ([#29](https://github.com/def9a2a4/BlockShips/issues/29))
 - other various bugfixes and improvements
 
