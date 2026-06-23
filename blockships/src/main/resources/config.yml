@@ -64,6 +64,11 @@ custom-ships:
   # Sails and engines provide power points; block weights provide mass.
   # ratio = power / mass determines ship performance.
   stats:
+    # Master switch for the power-to-mass ratio system.
+    # true  = custom ships scale speed/rotation by sails, engines, and mass (default)
+    # false = custom ships ignore composition and use the fixed default stats below
+    #         (sails and engines become cosmetic; restores pre-stats behavior)
+    enabled: true
     # Free power points every ship gets (ensures even tiny ships have some base ratio)
     base-power: 2
     # Power points per fueled engine (unfueled engines contribute 0)

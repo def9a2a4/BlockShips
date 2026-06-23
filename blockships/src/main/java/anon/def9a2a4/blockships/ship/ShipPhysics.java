@@ -80,8 +80,8 @@ public class ShipPhysics {
     private void computeEffectiveStats() {
         ShipConfig config = ship.config;
 
-        if (!"custom".equals(ship.shipType)) {
-            // Prefab ships: use config values directly, no ratio system
+        if (!"custom".equals(ship.shipType) || !config.statsEnabled) {
+            // Prefab ships, or stats system disabled: use config values directly, no ratio system
             effectiveMaxSpeed = config.maxSpeed;
             effectiveAcceleration = config.acceleration;
             effectiveRotationSpeed = config.rotationSpeed;
@@ -231,7 +231,7 @@ public class ShipPhysics {
         boolean anyMovementPressed = ship.isForwardPressed || ship.isBackwardPressed
                 || ship.isLeftPressed || ship.isRightPressed
                 || ship.isSpacePressed || ship.isSprintPressed;
-        if ("custom".equals(ship.shipType) && anyMovementPressed
+        if ("custom".equals(ship.shipType) && ship.config.statsEnabled && anyMovementPressed
                 && ship.model.engineCount > 0 && ship.resolveWheelData() != null) {
             tickEngineFuel();
         }

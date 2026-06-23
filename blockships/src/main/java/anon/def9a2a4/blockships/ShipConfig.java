@@ -45,6 +45,7 @@ public class ShipConfig {
     public final float verticalForwardNudge;
 
     // Ship stats (power-to-mass ratio system, custom ships only)
+    public final boolean statsEnabled;       // Master switch for the ratio system (default: true)
     public final int basePower;              // Free power points every ship gets (default: 2)
     public final int enginePower;            // Power points per fueled engine (default: 30)
     public final int woolPower;              // Power points per wool block (default: 3)
@@ -137,6 +138,7 @@ public class ShipConfig {
         this.maxVerticalSpeed = b.maxVerticalSpeed;
         this.verticalDrag = b.verticalDrag;
         this.verticalForwardNudge = b.verticalForwardNudge;
+        this.statsEnabled = b.statsEnabled;
         this.basePower = b.basePower;
         this.enginePower = b.enginePower;
         this.woolPower = b.woolPower;
@@ -284,6 +286,7 @@ public class ShipConfig {
             .assemblyNudgeHeight((float) cfg.getDouble("custom-ships.assembly-nudge-height", 0.2))
             .destroyOnDeath("destroy".equalsIgnoreCase(cfg.getString("custom-ships.destruction-mode", "disassemble")))
             // Ship stats (power-to-mass ratio system)
+            .statsEnabled(cfg.getBoolean("custom-ships.stats.enabled", true))
             .basePower(cfg.getInt("custom-ships.stats.base-power", 2))
             .enginePower(cfg.getInt("custom-ships.stats.engine-power", 30))
             .woolPower(cfg.getInt("custom-ships.stats.wool-power", 3))
@@ -360,6 +363,7 @@ public class ShipConfig {
         float verticalDrag = 0.9f;
         float verticalForwardNudge = 0.011f;
         // Ship stats defaults
+        boolean statsEnabled = true;
         int basePower = 2;
         int enginePower = 30;
         int woolPower = 3;
@@ -435,6 +439,7 @@ public class ShipConfig {
         Builder maxVerticalSpeed(float v) { maxVerticalSpeed = v; return this; }
         Builder verticalDrag(float v) { verticalDrag = v; return this; }
         Builder verticalForwardNudge(float v) { verticalForwardNudge = v; return this; }
+        Builder statsEnabled(boolean v) { statsEnabled = v; return this; }
         Builder basePower(int v) { basePower = v; return this; }
         Builder enginePower(int v) { enginePower = v; return this; }
         Builder woolPower(int v) { woolPower = v; return this; }
