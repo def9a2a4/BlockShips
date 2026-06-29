@@ -405,12 +405,12 @@ public class ShipWheelMenu {
                 fueledEngines = 0;
             }
         } else {
-            // Unassembled — use detection data, all engines unfueled
+            // Unassembled — use detection data; fueled count captured from furnace contents at detect time
             woolCount = wheelData.getLastDetectedWoolCount();
             bannerCount = wheelData.getLastDetectedBannerCount();
             engineCount = wheelData.getLastDetectedEngineCount();
             mass = Math.max(1, wheelData.getLastDetectedPositiveWeight());
-            fueledEngines = 0;
+            fueledEngines = wheelData.getLastDetectedFueledEngineCount();
         }
 
         int sailPower = woolCount * config.woolPower + bannerCount * config.bannerPower;

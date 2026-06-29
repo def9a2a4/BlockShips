@@ -44,6 +44,7 @@ public class ShipWheelData {
     private int lastDetectedWoolCount;   // Wool blocks (for ship stats)
     private int lastDetectedBannerCount; // Banner blocks (for ship stats)
     private int lastDetectedEngineCount; // Ship engine blocks
+    private int lastDetectedFueledEngineCount; // Engines whose furnace held fuel at detection time
 
     // Engine fuel state (persisted across sessions)
     // Key = engine block index, Value = array of 3 fuel ItemStacks (null = empty slot)
@@ -87,6 +88,7 @@ public class ShipWheelData {
         this.particleTask = null;
         this.lastDetectedBlockCount = 0;
         this.lastDetectedWeight = 0;
+        this.lastDetectedFueledEngineCount = 0;
     }
 
     public Location getBlockLocation() {
@@ -140,7 +142,7 @@ public class ShipWheelData {
 
     public void setLastDetectedStats(int blockCount, int weightedBlockCount, int totalWeight,
                                      int positiveWeight, int woolCount, int bannerCount,
-                                     int engineCount) {
+                                     int engineCount, int fueledEngineCount) {
         this.lastDetectedBlockCount = blockCount;
         this.lastDetectedWeightedBlockCount = weightedBlockCount;
         this.lastDetectedWeight = totalWeight;
@@ -148,6 +150,7 @@ public class ShipWheelData {
         this.lastDetectedWoolCount = woolCount;
         this.lastDetectedBannerCount = bannerCount;
         this.lastDetectedEngineCount = engineCount;
+        this.lastDetectedFueledEngineCount = fueledEngineCount;
     }
 
     public int getLastDetectedWeightedBlockCount() {
@@ -164,6 +167,10 @@ public class ShipWheelData {
 
     public int getLastDetectedEngineCount() {
         return lastDetectedEngineCount;
+    }
+
+    public int getLastDetectedFueledEngineCount() {
+        return lastDetectedFueledEngineCount;
     }
 
     // ===== Engine fuel state =====
