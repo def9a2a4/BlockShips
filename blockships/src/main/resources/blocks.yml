@@ -600,8 +600,7 @@ chiseled_bookshelf:
 "*_shelf":
   allowed: true
   weight: 1
-  collider: true
-  display_rotation: true
+  collider: false
 
 "#signs":
   allowed: true
