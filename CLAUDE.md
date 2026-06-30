@@ -1,1 +1,3 @@
-build with `make build`
+- build with `make build`
+- all temporary stuff goes in `.temp/`, and don't bother deleting it. don't use system `/tmp/`
+- avoid meaningless fluff around bash commands -- stuff like printing dividers between the commands. just run em
