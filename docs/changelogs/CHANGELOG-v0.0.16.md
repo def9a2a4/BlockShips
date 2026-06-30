@@ -8,6 +8,7 @@
   - Sail-only power is capped — engines required to push ships past 80% of max ratio
   - Engines use fuel, emit smoke when working
   - Ship info UI shows power ratio, effective speed percentage, and color-coded stats
+  - Server admins who prefer the old fixed-speed behavior can turn the whole system off with `custom-ships.stats.enabled: false` — custom ships then use fixed default speeds and ignore sails/engines/mass
 
 - **More blocks usable in custom ships:** Chiseled bookshelves, shelves (1.21.9+), and signs can now be part of a ship — their contents and sign text are preserved across assembly and disassembly ([#23](https://github.com/def9a2a4/BlockShips/issues/23))
 
@@ -46,12 +47,15 @@ The ratio maps linearly between a floor (minimum speed/rotation) and a cap (maxi
 
 Airship vertical speed scales separately with density magnitude (total mass / block count), independent of the horizontal power ratio.
 
+The system can be disabled entirely with `custom-ships.stats.enabled: false`: custom ships then fall back to fixed default stats and block composition no longer affects performance (engines also stop consuming fuel). The key defaults to `true`, so existing configs are unaffected and no config reset is needed — it takes effect on newly assembled ships and after a server restart, like the other `stats` settings.
+
 Ship info UI updated to show wool count, banner count, engine count, power ratio, and effective speed as a percentage (f542112, 8c7c2e7). Ship info hover simplified to show only speed %; detailed breakdown moved to a new Ship Stats banner item at slot 20 in the menu. Speed % uses sail cap (0.8) as 100% baseline — over 100% means engines are contributing. Speed and density values are color-coded in the UI (8c7c2e7). Floor acceleration default corrected from 0.005 to 0.015 (f9ed87f, f542112).
 
 New config values:
 
 ```yaml
 stats:
+  enabled: true
   base-power: 2
   engine-power: 30
   wool-power: 3
@@ -219,6 +223,10 @@ Engine fuel lifecycle fixes (c3e0705):
 - Detection chat now shows output for assembled ship detection (was completely silent) with live fuel state (fueled/unfueled engine breakdown)
 - Density display uses weighted block count (matches physics — was using total block count which included weightless blocks like trapdoors)
 - Standardized chat terminology: "power" → "pts"
+
+### Unassembled Preview Showed Engines as Unfueled
+
+The Ship Info panel and the detection chat message always reported **0 fueled engines** for a parked (unassembled) ship, even when its engines' blast furnaces held fuel — so the projected speed/ratio understated a fueled ship. Detection now reads each engine furnace's contents during the structure scan and counts engines holding burnable fuel, so the preview panel and detect message show the real fueled count and an engine-adjusted speed estimate. (Assembled ships were already correct; physics was never affected.)
 
 ### Ship Physics Timing (d001055)
 
