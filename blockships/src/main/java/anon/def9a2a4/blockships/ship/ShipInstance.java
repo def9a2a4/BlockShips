@@ -1946,8 +1946,13 @@ public class ShipInstance {
 
                 if (config.destroyOnDeath) {
                     // Full destruction: blocks are lost, only stored items drop
-                    // Drop inventory contents (chests, barrels, etc.)
-                    for (Inventory storage : storages.values()) {
+                    // Drop inventory contents (chests, barrels, etc.).
+                    // Skip engine blocks: their fuel is dropped exactly once via wheelData below.
+                    // An engine's storages entry is a stale assembly-time snapshot, so dropping it
+                    // here too would duplicate the fuel (and drop the pre-burn amount).
+                    for (Map.Entry<Integer, Inventory> storageEntry : storages.entrySet()) {
+                        if (model.engineBlockIndices.contains(storageEntry.getKey())) continue;
+                        Inventory storage = storageEntry.getValue();
                         for (ItemStack item : storage.getContents()) {
                             if (item != null && !item.getType().isAir()) {
                                 world.dropItemNaturally(dropLocation, item);
@@ -2308,6 +2313,14 @@ public class ShipInstance {
         // Apply display transforms with correct deltaYaw (may be non-zero if
         // metadata restored a different currentYaw than the vehicle's frozen spawnYaw)
         updateDisplayTransforms();
+
+        // Recompute effective stats. The recovery path previously skipped this, so prefab and
+        // sail-only custom ships came back from a chunk reload / server restart stuck at
+        // effective*==0 (immovable, can't turn, airships can't ascend/descend). resolveWheelData()
+        // links wheelData for engine'd custom ships (null no-op for prefab/sail-only);
+        // recomputeStats() is unconditional and idempotent and handles prefab/custom/stats-disabled.
+        resolveWheelData();
+        physics.recomputeStats();
 
         // Start tick task
         task = new BukkitRunnable() {

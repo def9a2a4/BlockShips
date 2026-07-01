@@ -280,6 +280,12 @@ Commit 5da91fd moved `computeEffectiveStats()` out of the ShipPhysics constructo
 
 Fix: call `physics.recomputeStats()` in the ShipInstance constructor after delegates are initialized. For prefab ships this sets the final config-based values. For custom ships it produces a conservative initial ratio (0 fueled engines), which gets recomputed after wheelData is linked.
 
+### Ships Immovable After Chunk Recovery
+
+A follow-on to the fix above. Deferring `computeEffectiveStats()` out of the constructor (5da91fd) and restoring it on the spawn path (c8ef29c) both missed the chunk-**recovery** path: `recoverEntities()` never called `recomputeStats()`, so any ship rebuilt from persistence came back with all effective stat fields at 0.0f. Only engine'd custom ships self-healed (via the per-tick fuel/smoke path, which links wheelData); prefab ships and sail-only custom ships stayed frozen — immovable, unable to turn, airships unable to ascend or descend. This triggered on every chunk reload and every server restart, regardless of `stats.enabled`.
+
+Fix: call `resolveWheelData()` then `physics.recomputeStats()` at the end of `recoverEntities()`, mirroring the spawn path. `computeEffectiveStats` reads only config/model/wheelData (null-guarded) and is idempotent, so it is safe to run once per recovery.
+
 ### Rotation Bugs (55a6cc6, 59dcb85, 1648bb5, 3995b4d)
 
 Series of fixes following the smooth rotation rewrite:
@@ -294,6 +300,12 @@ Series of fixes following the smooth rotation rewrite:
 Inventory blocks duplicated their contents when a ship was assembled. The block's items were serialized into the ship data, but the snapshot inventory was never cleared before the block was set to air — and Bukkit drops a block's remaining items to the world on `setType(AIR)`. So every chest/furnace/hopper (and shelf/chiseled bookshelf) effectively spilled a second copy of its contents onto the ground.
 
 Fixed by clearing the snapshot inventory and pushing the empty state to the world (`getSnapshotInventory().clear()` + `update()`) before removing the block, on both the `Container` and `TileStateInventoryHolder` paths.
+
+### Engine Fuel Duplicated on Destruction (destroy mode)
+
+A crafted engine is a blast furnace — a `Container` — so at assembly its fuel was serialized into `container_items` and rebuilt into the in-memory `storages` map, *and* separately transferred into the wheel's engine slots. On a **destroy-mode** death the drop path iterated both `storages` and `wheelData`, so engine fuel dropped twice. Worse, the `storages` copy was the stale assembly-time snapshot, so it ignored fuel burned while sailing and could drop more fuel than the player ever had. (Disassemble mode was unaffected — it overwrites `container_items` from the wheel before placing.)
+
+Fixed by skipping engine block indices in the destroy-mode `storages` drop loop, leaving `wheelData` as the single authoritative source of dropped engine fuel. This also corrects ships saved before the fix, whose engine `container_items` are rebuilt into `storages` at load.
 
 ### Shelf/Bookshelf Rotation & Destroy Drops (63bc339)
 

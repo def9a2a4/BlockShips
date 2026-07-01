@@ -1,4 +1,4 @@
-# Fix audit findings — v0.0.16 release review (A–N)
+# Fix audit findings — v0.0.16 release review (A–O)
 
 ## Context
 
@@ -14,18 +14,20 @@ The rotation rewrite and the version/recipe/config-migration subsystems came bac
 release blockers there. The defects cluster in engine/fuel and destruction/tile-entity handling.
 
 **Priority order (severity, post re-review):** F (CRITICAL — immobile after *every* reload, prefab + sail-only)
-→ E (CRITICAL — destroy-mode fuel dup) → A, G, G2, K (HIGH) → B, L (MEDIUM) → H, I, J, M, N (LOW).
+→ E (CRITICAL — destroy-mode fuel dup) → A, G2, K (HIGH) → B, L, O2/O3, P1 (MEDIUM) → H, I, J, M, N, P2/P3 (LOW).
 A is re-rated HIGH (an exploit reachable without any GUI trick — see A). F was re-rated up from HIGH and
 re-scoped to include prefab ships during re-review. K is the third-pass exploit (recipe-validation bypass).
-Findings are independent and can land as separate commits.
+**G and O1 are both REFUTED** false positives (G: javap-proven; O1: `setType(AIR,true)` drops container
+contents — pass #4). Findings are independent and can land as separate commits.
 
-**New-in-0.0.16 regressions:** A, B, E, F, G, G2, K, L1, N1. The rest (H, I, J, L2/L3, M, N2/N3) are
-pre-existing latent issues the review surfaced — fix opportunistically.
+**New-in-0.0.16 regressions:** A, B, E, F, G2, K, L1. The rest (H, I, J, L2/L3, M2/M3, N2/N3, O2/O3, P) are
+pre-existing latent issues the review surfaced — fix opportunistically. (**M1, N1, G, O1** are non-issues —
+false positive / by-design — kept as records.)
 
-**Scope:** A, B, D, E, F, G, G2, K in scope; L opportunistic (command polish); H, I, J, M, N as time
+**Scope:** A, B, D, E, F, G2, K in scope; L, O2/O3, P1 opportunistic; H, I, J, M, N, P2/P3 as time
 allows. **C (live `/blockships reload` for flying ships) is declined** — applying `stats.enabled` (and all
 `stats.*` knobs) on next assemble/reassemble/restart is acceptable; that's the current behavior. C is kept
-below as a recorded "won't fix" so the limitation stays documented.
+below as a recorded "won't fix" so the limitation stays documented. (**G** kept as a refuted record.)
 
 ---
 
@@ -53,6 +55,8 @@ if (item != null && item.getType() != Material.AIR
 
 **Also align the engine status display (same root inconsistency).** `EngineMenuGUI.createStatusItem` (EngineMenuGUI.java:122-132) computes `hasFuelItems` with the identical non-AIR-only scan (line 127), so after the count fix an engine holding a non-burnable item would still show "has fuel" while contributing 0 power. Add the same `&& EngineMenuGUI.getBurnTime(item.getType()) > 0` guard there so the status item agrees with `countFueledEngines`. Leave the slot-copy/serialization scans (EngineMenuGUI.java:237,319 and ShipWheelData.java:432) alone — those preserve whatever's in the slot and must not filter, or items would be lost.
 
+> **Critique (in-depth, pass) — SOUND, two notes.** These are exactly the two remaining "is-fueled" scans (`hasFuel` at ShipWheelManager.java:962 was already burn-checked in `0f29942`). Confirmed `getBurnTime` returns >0 for every real fuel (no false-negative that would make a legit engine read unfueled) and a non-burnable can never set `burnTicks>0` (ignition is gated on `getBurnTime>0`), so the `burnTicks>0` early-branch stays safe. **The parked non-fuel item is dropped twice on a destroy-mode death — but that is finding E** (engine fuel double-drop), not new to A; A's count fix + E's destroy-loop guard together resolve it, and A alone needn't touch the drop path. *Optional hardening:* extract a shared `isBurnableFuel(ItemStack)` helper reused by all scan sites so a future 4th site can't reintroduce the bug.
+
 ---
 
 ## B — Stats UI & detect chat mislead when `stats.enabled: false`
@@ -61,7 +65,7 @@ if (item != null && item.getType() != Material.AIR
 
 **Fix.** Thread `statsEnabled` into the display layer (already in scope via the freshly-loaded `config`):
 
-1. Add a `boolean statsEnabled` field to the `ShipInfo` record (ShipWheelMenu.java:40-72) and pass `config.statsEnabled` when it's constructed in `getShipInfo` (~L424; config loaded at L368).
+1. Add a `boolean statsEnabled` field to the `ShipInfo` class (ShipWheelMenu.java:40-72 — it's a plain class, not a record) and pass `config.statsEnabled` when it's constructed in `getShipInfo` (~L424; config loaded at L368).
 2. In `createInfoItem` (ShipWheelMenu.java:436-490, ~L475-479) and `createStatsItem` (ShipWheelMenu.java:506-579, ~L518-570): when `!info.statsEnabled`, replace the ratio / speed % / effective-power / sail+engine-points / "add sails" lines with a single line like `Stats system disabled — fixed speed`. Keep the accurate lines (blocks, weight, density, mass, health).
 3. In the detection chat in `ShipWheelManager`, guard the ratio/speed/points messages on
    `config.statsEnabled`, printing a brief "stats disabled" note otherwise. **There are TWO such blocks,
@@ -85,7 +89,7 @@ Keep it to suppression + one note; do not derive display values from effective s
 
 ## D — Changelog polish
 
-In `docs/changelogs/CHANGELOG-v0.0.16.md`: add the commit hash to the detection-fix header (~line 227) to match every sibling Bug Fixes header — `### Unassembled Preview Showed Engines as Unfueled (0f29942)`. Optionally scope the "no config reset is needed" line to "for this toggle" to avoid surface tension with the top-of-file "reset your configs!" line. Add new Bug Fixes entries for **A, B, E, F, G** (and H/I if landed) as they land, each citing its commit (no entry for C — won't fix). Optional: a one-line note in the "Engine Stats Display and Fuel Lifecycle" section that the fueled/unfueled detect-chat breakdown now also covers unassembled previews.
+In `docs/changelogs/CHANGELOG-v0.0.16.md`: add the commit hash to the detection-fix header (~line 227) to match every sibling Bug Fixes header — `### Unassembled Preview Showed Engines as Unfueled (0f29942)`. Optionally scope the "no config reset is needed" line to "for this toggle" to avoid surface tension with the top-of-file "reset your configs!" line. Add new Bug Fixes entries for **A, B, E, F, G2, K** (and L/O/H/I if landed) as they land, each citing its commit (no entry for C — won't fix; no entry for G — refuted false positive). Optional: a one-line note in the "Engine Stats Display and Fuel Lifecycle" section that the fueled/unfueled detect-chat breakdown now also covers unassembled previews.
 
 ---
 
@@ -122,7 +126,8 @@ it drops once). Requires the crafted `ship_engine` (a tagged blast furnace), not
 it on the ground. Engine right-click→`EngineMenuGUI` reads `wheelData`, not the storages map, so removing
 the storages entry doesn't break the GUI.
 
-> **Note:** E and G edit the same scanner block (BlockStructureScanner.java:427-449) — land them together.
+> **Note:** E's scanner edits stand alone — G is refuted, so the earlier "land E+G together" coupling no
+> longer applies.
 
 ---
 
@@ -155,30 +160,36 @@ config/model/shipType/wheelData (wheelData null-guarded), touches no entity refs
 NPE risk, no reentrancy loop (it reads `ship.wheelData` directly, avoiding the documented circular call).
 Cheap; runs once per recovery.
 
+**⚠️ Why the test suite didn't catch this (re-review).** The `chunk_steering` mineflayer test *does* reload
+a chunk and steer a recovered prefab ship — but it only asserts total displacement `> 1.0` blocks, which is
+satisfied by the dismount deck-placement offset (vertical + seat offset), **not** horizontal propulsion. The
+real directional check (`west >= 2`) runs only on freshly-spawned ships. So the test is a **false negative**
+and went green across the CI matrix while the ship was actually dead-in-the-water. When fixing F, also
+strengthen `chunk_steering` to assert **directional horizontal movement after recovery**, or this regression
+stays masked.
+
 ---
 
-## G — Brewing stand contents lost on disassemble / spilled on assembly (HIGH)
+## G — Brewing stand contents lost on disassemble / spilled on assembly — REFUTED (false positive)
 
-**Problem.** `brewing_stand` is `allowed: true` (blocks.yml:716) but has no `storage:` entry and no
-`BREWING_STAND` case in `createStorageConfig`, so it returns `null`. `BrewingStand` *is* a `Container`,
-so the serialize+clear block (BlockStructureScanner.java:431-448) is skipped: (a) `container_items` is
-never written → the stand comes back empty on disassemble (potions/ingredient/blaze powder lost), and
-(b) the snapshot is never cleared → `setType(AIR, true)` spills the items on the ground at the assembly
-location. It is also not a `TileStateInventoryHolder`, so the secondary path misses it too. In destroy
-mode the items silently vanish.
+**Verdict: NOT a bug.** Independent `javap` on `paper-api-1.21.11` proves the load-bearing premise wrong:
+`org.bukkit.block.Container extends io.papermc.paper.block.TileStateInventoryHolder`, and
+`BrewingStand extends Container` — so a brewing stand **is** a `TileStateInventoryHolder`. The scanner's
+two checks (BlockStructureScanner.java:429 and :453) are **independent `if`s**, so a brewing stand
+correctly falls through the null-`StorageConfig` first branch and is caught by the second
+(`instanceof TileStateInventoryHolder`) branch, which serializes `container_items` and clears the snapshot
+(:453-462); restore is handled at :890-899. No loss, no spill, in either destroy or disassemble mode. Do
+**not** make the proposed `createStorageConfig`/serialize change. Kept as a record (like C).
 
-**Fix (future-proof).** In `BlockStructureScanner`, serialize+clear the snapshot for **any** `Container`
-regardless of whether a `StorageConfig` was produced — move the serialize/clear/update out from under the
-`if (storage != null)` guard, gating only the `storages`-map entry on a non-null config. The **restore
-side already works**: BlockStructureScanner.java:875-886 repopulates any `Container` from
-`container_items` generically — no companion change needed. Destroy-mode drop is covered by the existing
-TileState fallback (ShipInstance.java:1960-1979, `part.storage == null && container_items present`).
+**Do this instead (LOW — comment fix, no behavior):** the comment at BlockStructureScanner.java:451-452
+says these blocks "implement InventoryHolder but NOT Container," which is factually wrong (every Container
+*is* a TileStateInventoryHolder). Brewing-stand safety relies on the two `if`s at :429 and :453 staying
+**independent** — if a future refactor "dedupes" them into `if/else-if` believing they're disjoint, every
+Container with a null `StorageConfig` (brewing stand, beacon) would silently lose contents. Correct the
+comment to state `Container ⊂ TileStateInventoryHolder` and that the second `if` is the catch-all for
+Containers lacking a `StorageConfig`.
 
-**Combined E+G logic (same block):** serialize+clear for any Container (covers brewing_stand, beacon,
-furnaces, engines); gate the `storages`-map entry on `storage != null`; additionally exclude **engines**
-from the map (E cleanup). **Newly affected blocks (verified):** only `brewing_stand` (target) and
-`beacon` (1-slot payment inventory, normally empty — benign). `lectern`/`chiseled_bookshelf` are
-`TileStateInventoryHolder`, not `Container` — already handled, do **not** add a redundant case.
+> **Note:** G being refuted does **not** affect G2 — that's a separate slot-count truncation bug, still real.
 
 ---
 
@@ -195,9 +206,17 @@ destroyed — not returned, not dropped. Blast-furnace engines route through the
 plain furnaces/smokers specifically. The E+G "serialize any Container" change does **not** fix this — it's
 a slot-count mismatch, not a missing serialize.
 
-**Fix.** Give furnace/smoker a real 3-slot `StorageType` (preferred), or constrain the in-flight virtual
-inventory to the block's true slot count, or drop the truncated overflow at the disassembly location
-instead of discarding it. A dedicated 3-slot furnace storage type also makes the in-flight GUI honest.
+**Fix (chosen + verified in-depth).** Two complementary parts — the backstop is **required, not optional**:
+1. **Add a real `FURNACE(3)` StorageType** (makes the in-flight GUI honest → 3 slots). Three append-only edits:
+   - `ShipModel.java:480-489` — add `FURNACE(3)` to the enum (next to `CHEST(27)`, `DOUBLE_CHEST(54)`, `DROPPER(9)`, `HOPPER(5)`).
+   - `BlockStructureScanner.java:1002-1006` — the `FURNACE/BLAST_FURNACE/SMOKER` arm: `StorageType.CHEST` → `StorageType.FURNACE`.
+   - `ShipModel.java:~515` — add `FURNACE` to the valid-types error string (the enum is `valueOf`-parsed from persisted YAML, so the constant must round-trip).
+   - Critique audited **every** `StorageType` use: nothing branches on the specific constant (all read `.slots`/`.name()`), and `HOPPER(5)` already proves `Bukkit.createInventory(null, slots, name)` renders a non-9-multiple size fine — so a 3-slot GUI is safe. No other switch site to touch.
+2. **REQUIRED backstop for the existing fleet.** A furnace already assembled+saved keeps `type=CHEST` (27) in its on-disk model until it is rescanned/reassembled — the enum change does **not** retroactively shrink it, so its *next* disassembly still truncates. At the single restore chokepoint `deserializeInventory` (BlockStructureScanner.java:~1057, reached via restore at ~881), **divert** items whose stored `slot >= inventorySize` to `world.dropItemNaturally` at the block location instead of discarding. Keep slots 0..size-1 by index; do **not** compact (overflow is arbitrary chest content, must not be crammed into furnace fuel/result slots).
+
+**Not affected:** engines `return` before the storage branch (fuel GUI); real chests/barrels declare `storage:` and early-return before the switch; brewing stands use the TileStateInventoryHolder path; the destroy-on-death path drops the whole inventory regardless of size — leave it untouched.
+
+*(Larger alternative, out of scope: size the StorageConfig from the block's actual `getSnapshotInventory().getSize()` at scan time, eliminating the whole enum-vs-reality mismatch class — bigger change to the persistence format.)*
 
 ---
 
@@ -214,6 +233,12 @@ exploit — only cosmetic clutter (arbitrary items parked in fuel slots, retriev
 **Fix.** In the fuel-slot branch, also cancel when `event.getClick() == ClickType.SWAP_OFFHAND` and the
 player's offhand item (`player.getInventory().getItemInOffHand()`) is non-AIR and not valid fuel — mirror
 the existing NUMBER_KEY guard at DisplayShip.java:2242-2247.
+
+> **H-adjacent (LOW, re-review, unconfirmed):** the *placed-block* engine GUI (`EngineBlockMenuHolder` /
+> `saveBlockFuelState`) may not gate click validation the way the assembled-ship GUI does — the status/
+> refresh branch at DisplayShip.java:2233 only matches `EngineMenuHolder`, so non-fuel could be parked in
+> the furnace's slots 0-2. This is **subsumed by A's count/import fix** for the *power* exploit (non-fuel
+> stops granting thrust); only cosmetic clutter remains. Confirm opportunistically while doing H.
 
 ---
 
@@ -235,12 +260,15 @@ the existing NUMBER_KEY guard at DisplayShip.java:2242-2247.
 
 ## J — Minor verified leftovers (LOW)
 
-- **J1 — Config default drift between `config.yml` and the `ShipConfig` builder defaults.** `water-density`
-  is `3` in config.yml (L57) but the builder default is `2.5f` (ShipConfig.java:359); per-ship `max-speed`
-  is `0.55` in config.yml (L286/L370) but the builder default is `0.5f` (ShipConfig.java:341). The builder
-  default is only used when a key is **missing** from the user's config, so a user who deletes those keys
-  silently gets different behavior than the shipped config. **Fix:** align the builder defaults to the
-  shipped config.yml values (`2.5f`→`3f`, `0.5f`→`0.55f`), or vice-versa — pick one source of truth.
+- **J1 — Config default drift between `config.yml` and the key-missing fallbacks.** `water-density` is `3`
+  in config.yml (L57) but the fallback is `2.5`; per-ship `max-speed` is `0.55` in config.yml (L286/L370)
+  but the fallback is `0.5`. The fallback is only used when a key is **missing** from the user's config, so
+  a user who deletes those keys silently gets different behavior than the shipped config. **⚠️ Fix target
+  corrected in re-review:** the effective fallback is the **inline second arg of `getDouble`** —
+  `ShipConfig.java:202` (`...,0.5`) and `:231` (`...,2.5`). The Builder field initializers at `:341`/`:359`
+  are **dead code** (always overwritten by the builder calls), so editing them changes nothing. **Fix:**
+  change the `getDouble` defaults at `:202`/`:231` to `0.55`/`3` (or align config.yml) — pick one source of
+  truth.
 - **J2 — `fuel-burn-multiplier` can round a valid fuel's burn time to 0.** `newBurnTicks =
   round(baseBurnTicks * fuelBurnMultiplier)` (ShipPhysics.java:168-182); at a tiny multiplier a low-burn
   fuel (e.g. BAMBOO=50) rounds to 0, so the `if (newBurnTicks > 0)` guard skips it — the item is never
@@ -266,10 +294,13 @@ true). The captains_manual shapeless recipe and the shapeless support are both n
 low-value — the real harm is silent consumption of a valuable wrong ingredient (mob head / balloon), and
 the validation-bypass is an architectural HIGH-risk for any future shapeless recipe. Treat as HIGH.
 
-**Fix.** In the shapeless branch of `onCraftShipKit`, validate each matrix item against the parsed
-`RecipeIngredient.matches()` (as the shaped path already does) and `setResult(null)` if a custom-item
-ingredient doesn't truly match. Alternatively, make `CustomItemIngredient.getRecipeChoice()` return a
-predicate-backed `ExactChoice`. This affects all custom-item shapeless ingredients, not just the manual.
+**Fix (revised after in-depth critique).** In the shapeless branch of `onCraftShipKit` (DisplayShip.java:946-948), re-validate the matrix, with two corrections the naive version got wrong:
+1. **Match custom-item ingredients by PDC, not by name-suffix.** `CustomItemIngredient.matches()` only checks base material + `getDisplayName().endsWith("Ship Wheel")` — so an anvil-renamed vanilla head literally named "Ship Wheel" still passes and yields a free manual, and (worse) it's then consumed **without refund** because the refund gate `onCraftNonConsumable` uses the PDC check `isShipWheel()` (DisplayShip.java:1832-1839), which *disagrees* with `matches()`. Validate the wheel ingredient by its `custom_item_id` PDC (reuse `isShipWheel`/the PDC read) so the prep-gate and refund-gate are consistent and the renamed-head hole is closed. (This also makes the `endsWith` color-code fragility moot.)
+2. **Build the ingredient pool with `ingredients.<key>.get(0)` per key**, NOT by flattening the inner lists. Registration (ItemUtil.java:105-112) uses only `get(0)` per key (a list under one key is a *choice*, registered as one ingredient), so flattening would demand N matrix items where Bukkit registered 1 and break legit crafts. Match plain ingredients (BOOK) via the existing `VanillaIngredient.matches`.
+
+Then, for each non-AIR matrix item consume one matching pool entry; on any unmatched item or leftover → `setResult(null); return;` (same mechanism the shaped path trusts — blocks both craft and consumption). Keep the `extractBanner(...)` call. A real Ship's Wheel + BOOK still produces the manual.
+
+`ExactChoice` at registration is **not viable**: the wheel's randomized skin-profile UUID (ItemUtil.java:257) breaks full-ItemStack equality (would reject real wheels), and Paper has no predicate-based `RecipeChoice` for a PDC check — handler-side validation is the right route. Only one shapeless recipe exists today (captains_manual); the fix reads ingredients generically so future ones are covered.
 
 ---
 
@@ -294,13 +325,17 @@ predicate-backed `ExactChoice`. This affects all custom-item shapeless ingredien
 
 ---
 
-## M — Help book robustness (LOW/MEDIUM, mostly latent)
+## M — Help book robustness (LOW, mostly latent)
 
-- **M1 — `createWrittenBook()` NPEs if `sections` is null.** It dereferences `sections.length`
-  (HelpBookContent.java:101) without the null fallback that `getSections()` (:76-85) has, and is reachable
-  independently of `load()` (craft preview DisplayShip.java:996, give BlockShipsPlugin.java:277). A
-  malformed/throwing `load()` could leave `sections` null → NPE spamming during craft-preview. **Fix:**
-  have `createWrittenBook()` call `getSections()` instead of reading the field; wrap `load()` in try/catch.
+- **M1 — `createWrittenBook()` NPE on null `sections` — FALSE POSITIVE (re-review).** It does dereference
+  `sections.length` (HelpBookContent.java:101) without the null fallback `getSections()` (:76-85) has, but
+  the NPE is **not reachable**: `load()` runs unconditionally in `onEnable` (BlockShipsPlugin.java:51)
+  before any caller (craft preview DisplayShip.java:996, give BlockShipsPlugin.java:277, `openBook`
+  ShipWheelMenu.java:723), and **every** exit path of `load()` assigns `sections` non-null (fallback array
+  on missing resource / empty list / normal `toArray`). The "malformed/throwing `load()`" hypothesis also
+  fails — a throw in `load()` aborts `onEnable`, so no caller ever runs with a half-initialized state.
+  Kept as a record (like G). **Optional hygiene only (not a bug fix):** have `createWrittenBook()` call
+  `getSections()` for consistency.
 - **M2 — Pagination ignores Minecraft's real per-page caps.** `estimateSectionLines`
   (HelpBookContent.java:134-137) counts only `content.length()` — not the title, the per-section color-code
   overhead, or embedded `\n` — and nothing clamps to MC's ~256-char/page limit, so user-edited/added
@@ -316,21 +351,85 @@ predicate-backed `ExactChoice`. This affects all custom-item shapeless ingredien
 
 ## N — Towny naming coverage + special-drowned (LOW/MEDIUM)
 
-- **N1 — Special drowned + nautilus mount miss the Towny empty-name treatment** (gap in the 0.0.16 Towny
-  fix `856439d`). The four ArmorStand/Shulker **ship** entities are all correctly covered, but the special
-  drowned (`SpecialDrownedListener.java:122`) and its `ZOMBIE_NAUTILUS` mount (:174) are persistent mobs
-  (`setRemoveWhenFarAway(false)`) that never get `customName(Component.empty())`. If the Towny fix's intent
-  is "all BlockShips-spawned mobs survive Towny culling," these were missed and a Towny server could cull
-  them. Judgment call (they're natural-ish world mobs). **Fix (if in scope):** set empty name +
-  `customNameVisible=false` on both. **Verified OK:** ship entities are identified by scoreboard tags, not
-  names, so forcing empty names breaks nothing; display entities correctly skip the treatment; the name is
-  set inside the spawn lambda (no cull race).
+- **N1 — Special drowned + nautilus mount don't get the Towny empty-name treatment — BY DESIGN, not a
+  defect (re-review).** Factually true: the four ArmorStand/Shulker **ship** entities are covered, but the
+  special drowned (`SpecialDrownedListener.java:122`) and its `ZOMBIE_NAUTILUS` mount (:174) never get
+  `customName(Component.empty())`. But the Towny workaround exists to hide the *invisible structural* ship
+  entities from Towny's plugin-entity culling; the drowned and nautilus are **real, visible mobs meant to
+  be fought**, not structural markers. Empty-naming them would be semantically wrong and isn't the fix's
+  intent. **Not a regression, not in scope** — reclassified to won't-fix (like C/G). Kept as a record.
 - **N2 — spawn-chance / drop-chance not clamped to [0,1]** (pre-existing). Read raw at
   SpecialDrownedListener.java:74/78; a value >1.0 makes every drowned special. **Fix:** clamp on read.
-- **N3 — `/blockships reload` doesn't (un)register the drowned listener on an `enabled` toggle**
-  (pre-existing). `reloadConfig()` updates the flag (BlockShipsPlugin.java:242) but never registers/
-  unregisters, so toggling `enabled` needs a full restart. No leak (registration is once-only). **Fix:**
-  register/unregister based on the new `enabled` state in the reload branch.
+- **N3 — `/blockships reload` can't *enable* the drowned listener at runtime** (pre-existing). `reloadConfig()`
+  updates the flag (BlockShipsPlugin.java:242) but never registers/unregisters. **Re-review narrowed this:**
+  only the **off→on** direction is broken — if the plugin starts with the feature disabled, the listener is
+  never registered, so flipping to `true` + reload does nothing until a restart. The **on→off** direction
+  already works via the `if (!enabled) return` guard at SpecialDrownedListener.java:88. No leak (registration
+  is once-only). **Fix:** register/unregister based on the new `enabled` state in the reload branch.
+
+---
+
+## O — Engine/recovery leftovers from the catch-all sweep (MEDIUM) — re-review: O2 real-narrow, O3 real-edge, **O1 REFUTED (false positive)**
+
+- **O1 — Placed engine block broken/exploded destroys its furnace fuel — REFUTED (false positive, pass #4
+  resolved).** The claim was that `onBreakShipEngine` (DisplayShip.java:2368-2372) /
+  `handleExplosionEngineDrops` (:2394) call `block.setType(Material.AIR)` and thereby destroy a placed
+  engine's fuel. **Resolved against the code:** placed-engine fuel *does* live in the real furnace container
+  (`EngineMenuGUI.openForBlock` :283-286 reads it, `saveBlockFuelState` :308-321 writes it via
+  `blockInv.setItem`), **but** `block.setType(Material.AIR)` defaults to `applyPhysics=true` — identical to
+  the scanner's `setType(Material.AIR, true)` (BlockStructureScanner.java:966/971), which triggers vanilla
+  `onRemove` → `Containers.dropContents`. The scanner's own anti-spill code (clearing the snapshot first
+  "to prevent item drops when removeBlocks() calls setType(AIR)", :437-440) is the codebase's evidence that
+  `setType(AIR, true)` **drops** container contents. So a broken engine's fuel **drops naturally on the
+  ground** — not destroyed. (Same premise finding **E** depends on, so the two are consistent.) The proposed
+  "drop Container contents before setType(AIR)" fix would cause a **double drop** — do **not** apply it.
+  Kept as a record (like G). Only loss in the original claim that survives is cosmetic: the fuel drops as
+  loose items at the block rather than back into the broken engine — vanilla furnace-break behavior, fine.
+- **O2 — Engine fuel GUI opened while sailing refunds burned fuel on close** (free fuel / desync; CONFIRMED
+  ×2). `EngineMenuGUI.open` snapshots `wheelData` slots at open time (:97-101); `tickEngineFuel` burns the
+  **live** `wheelData` array each tick while any movement key is held (ShipPhysics.java:151-191); on close
+  `saveFuelState` overwrites the live array with the stale snapshot (:229-240) and never rewrites
+  `engineBurnTicks` → consumed fuel restored + burn-ticks desync. Also fires on the status-slot
+  click-refresh (DisplayShip.java:2234). **Reachability (re-review): NARROW** — the driver is seated and
+  can't reopen the engine block mid-sail, so this needs a **non-driver** to hold the engine GUI open while
+  the driver sails (fuel burning during the open window). Real but situational; MEDIUM stands with this
+  caveat. **Fix:** merge GUI edits against the live array, or skip/re-sync while the engine is actively
+  burning.
+- **O3 — `recoverEntities` throws on an out-of-range block index, aborting batch recovery** (CONFIRMED).
+  The bulk path throws `IllegalStateException` when `blockIdx >= model.parts.size()` (ShipInstance.java:2234-2237);
+  the per-ship recovery loop has `try/finally` with no `catch` (DisplayShip.java:166-204), so one bad ship
+  aborts recovery of the rest of that chunk's batch. The incremental `tryAddEntity` path already skips
+  out-of-range indices. **Reachability (re-review): EDGE** — only when a ship's persisted `model.parts` no
+  longer matches the live model (model edit / regen between save and load); not hit on a normal reload.
+  Real robustness gap. **Fix:** replace the throw with `continue` + a warning, matching `tryAddEntity`.
+  - **Broadening (pass #4):** the throw also propagates out of the **startup** recovery sweep
+    (`recoverUnregisteredShips`, DisplayShip.java:118-128, no catch), aborting recovery of *all* remaining
+    ships across every chunk/world at startup — not just one chunk's batch. Strengthens the case for the fix.
+
+---
+
+## P — Session/persistence leftovers (pass #4 gap-hunt)
+
+- **P1 — Ghost-driver acceleration: horizontal physics not gated on `hasDriver` (MEDIUM).** ShipPhysics.java:240-251
+  gates accel/drag only on `isForwardPressed`/`isBackwardPressed`, never on `ship.hasDriver`. Those flags are
+  cleared only by `freeSeat()` ← `VehicleExitEvent` (DisplayShip.java:1415); there is no `EntityDismountEvent`/
+  `PlayerDeathEvent`/`PlayerChangedWorldEvent` handler. If a driver loses the seat without `VehicleExitEvent`
+  firing (death while seated, forced cross-world teleport), `isForwardPressed` stays `true` → line 240 pins
+  `currentSpeed` to max and the drag/stop blocks (251, 270) are skipped → the ship cruises forever, unmanned.
+  Vertical physics *is* gated on `hasDriver` (ShipPhysics.java:503/508/514) — a real asymmetry. **Fix:** gate
+  the accel/drag branches on `ship.hasDriver` (reconciled to real passengers every tick in `handleSteeringInput`,
+  ShipInstance.java:1489-1494), which removes the stuck-flag dependency entirely.
+- **P2 — Orphaned per-world metadata `.yml` on wheel-break destroy (LOW, disk leak).** Breaking an assembled
+  ship's wheel (DisplayShip.java:2201 → `ShipWheelManager.removeWheel`:139-150) calls `ship.destroy()` but never
+  `shipWorldData.removeShip(...)`, unlike the disassemble path (ShipWheelManager.java:493). The chunk index
+  self-heals, but `worlds/{world}/ships/{uuid}.yml` is never deleted and no orphan sweep exists → permanent
+  dead-file accumulation (disk only; no dupe/gameplay effect). **Fix:** call `removeShip` in `removeWheel` when
+  destroying an assembled ship.
+- **P3 — Async metadata write can resurrect a just-deleted ship file (LOW, disk leak/race).** The 60s periodic
+  task (DisplayShip.java:214-229) snapshots registered ships and submits async `{uuid}.yml` writes; if a ship is
+  removed after snapshot but before the write lands, `removeShip()` deletes the file then the queued write
+  recreates it. Index is authoritative on load (no live dupe). **Fix:** a tombstone set the IO executor checks,
+  or route `removeShip`'s delete through the same `ioExecutor`.
 
 ---
 
@@ -347,11 +446,21 @@ predicate-backed `ExactChoice`. This affects all custom-item shapeless ingredien
   `storage`+`container_items` already persisted), destroy it, confirm a single drop — proves the
   destroy-loop guard, not just the scanner change, is doing the work.
 - **F:** build a sail-only custom ship (wool, no engine), fly it, unload its chunk (move far away / reload)
-  and return; confirm it still moves. Repeat with `stats.enabled=false`.
-- **G:** put a brewing stand with potions+ingredient on a ship, assemble; confirm nothing spills on the
-  ground; disassemble; confirm contents restored. Test destroy mode drops them.
+  and return; confirm it still moves. Repeat with a **prefab** ship and with `stats.enabled=false`.
+  **Also strengthen `chunk_steering`** to assert directional horizontal movement after recovery (it currently
+  only checks total distance >1.0, a false negative — see F).
+- **G:** REFUTED (false positive) — no test. (Optional regression: a brewing stand with potions round-trips
+  through assemble→disassemble with no spill — confirms the existing TileStateInventoryHolder path.)
 - **G2:** in flight, open a plain furnace/smoker on a ship, fill all 27 slots; disassemble; confirm items
   in slots 3–26 are returned (not destroyed).
+- **O1:** REFUTED (false positive) — no fix. (Optional confirmation: put fuel in a placed engine, break it —
+  the fuel drops on the ground, confirming `setType(AIR,true)` drops contents, consistent with E's anti-spill
+  rationale.)
+- **P1:** mount and drive a ship, then lose the seat via a non-`VehicleExitEvent` path (die while seated, or
+  force a cross-world teleport); confirm the ship stops (does not cruise on unmanned). Re-mount and confirm
+  normal control.
+- **O2:** with a second player, open the engine GUI while the driver holds W (engine burning), then close
+  it — burned fuel must NOT be refunded. (O3 is build/trace-only.)
 - **H:** in the engine GUI, press F (offhand swap) with a non-fuel item in the offhand over a fuel slot —
   must be blocked.
 - **I:** build-only / no behavioral test needed; confirm `make build` passes and the correct input path is
@@ -363,4 +472,4 @@ predicate-backed `ExactChoice`. This affects all custom-item shapeless ingredien
   custom-item `base-material` and give it — graceful error, no stack trace.
 - **Regression:** the mineflayer test-bot suite (chunk_persistence, airship) still passes.
 - **D:** re-read the edited changelog section for style/accuracy. Add Bug Fixes entries for **A, B, E, F,
-  G, G2, K** (and L/H/I if landed), each citing its commit. No entry for C.
+  G2, K** (and L/O/H/I if landed), each citing its commit. No entry for C (won't fix) or G (refuted).
