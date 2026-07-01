@@ -286,7 +286,7 @@ public class ShipConfig {
             .assemblyNudgeHeight((float) cfg.getDouble("custom-ships.assembly-nudge-height", 0.2))
             .destroyOnDeath("destroy".equalsIgnoreCase(cfg.getString("custom-ships.destruction-mode", "disassemble")))
             // Ship stats (power-to-mass ratio system)
-            .statsEnabled(cfg.getBoolean("custom-ships.stats.enabled", true))
+            .statsEnabled(cfg.getBoolean("custom-ships.stats.enabled", false))
             .basePower(cfg.getInt("custom-ships.stats.base-power", 2))
             .enginePower(cfg.getInt("custom-ships.stats.engine-power", 30))
             .woolPower(cfg.getInt("custom-ships.stats.wool-power", 3))
@@ -363,7 +363,7 @@ public class ShipConfig {
         float verticalDrag = 0.9f;
         float verticalForwardNudge = 0.011f;
         // Ship stats defaults
-        boolean statsEnabled = true;
+        boolean statsEnabled = false;
         int basePower = 2;
         int enginePower = 30;
         int woolPower = 3;

@@ -9,6 +9,7 @@
   - Engines use fuel, emit smoke when working
   - Ship info UI shows power ratio, effective speed percentage, and color-coded stats
   - Server admins who prefer the old fixed-speed behavior can turn the whole system off with `custom-ships.stats.enabled: false` — custom ships then use fixed default speeds and ignore sails/engines/mass
+  - **The stats system is disabled by default** (`custom-ships.stats.enabled: false`) pending a rework in a future update. Set it to `true` to opt in
 
 - **More blocks usable in custom ships:** Chiseled bookshelves, shelves (1.21.9+), and signs can now be part of a ship — their contents and sign text are preserved across assembly and disassembly ([#23](https://github.com/def9a2a4/BlockShips/issues/23))
 
@@ -47,7 +48,7 @@ The ratio maps linearly between a floor (minimum speed/rotation) and a cap (maxi
 
 Airship vertical speed scales separately with density magnitude (total mass / block count), independent of the horizontal power ratio.
 
-The system can be disabled entirely with `custom-ships.stats.enabled: false`: custom ships then fall back to fixed default stats and block composition no longer affects performance (engines also stop consuming fuel). The key defaults to `true`, so existing configs are unaffected and no config reset is needed — it takes effect on newly assembled ships and after a server restart, like the other `stats` settings.
+The system can be disabled entirely with `custom-ships.stats.enabled: false`: custom ships then fall back to fixed default stats and block composition no longer affects performance (engines also stop consuming fuel). The key **defaults to `false`** pending a rework of the stats system in a future update — set it to `true` to opt in. It takes effect on newly assembled ships and after a server restart, like the other `stats` settings.
 
 Ship info UI updated to show wool count, banner count, engine count, power ratio, and effective speed as a percentage (f542112, 8c7c2e7). Ship info hover simplified to show only speed %; detailed breakdown moved to a new Ship Stats banner item at slot 20 in the menu. Speed % uses sail cap (0.8) as 100% baseline — over 100% means engines are contributing. Speed and density values are color-coded in the UI (8c7c2e7). Floor acceleration default corrected from 0.005 to 0.015 (f9ed87f, f542112).
 
