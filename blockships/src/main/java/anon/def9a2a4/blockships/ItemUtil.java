@@ -43,10 +43,14 @@ public class ItemUtil {
 
         List<String> registeredNames = new ArrayList<>();
 
-        // Register recipes for custom items (e.g., balloons)
+        // Register recipes for custom items (e.g., balloons).
+        // Engines only do anything while the stats system is on, so don't register the
+        // ship_engine recipe when stats are disabled. Re-runs on /blockships reload.
+        boolean statsEnabled = plugin.getConfig().getBoolean("custom-ships.stats.enabled", false);
         var customItemsSection = plugin.getConfig().getConfigurationSection("custom-items");
         if (customItemsSection != null) {
             for (String itemType : customItemsSection.getKeys(false)) {
+                if ("ship_engine".equals(itemType) && !statsEnabled) continue;
                 if (registerItemRecipe(plugin, itemType, "custom-items." + itemType, registeredRecipes, itemFactory)) {
                     registeredNames.add(itemType);
                 }

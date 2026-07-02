@@ -31,6 +31,50 @@ below as a recorded "won't fix" so the limitation stays documented. (**G** kept 
 
 ---
 
+## Stats-relevance triage — 0.0.16 ship decision (supersedes the older priority order)
+
+**Context.** 0.0.16 ships with the power-to-mass **stats system OFF by default**
+(`custom-ships.stats.enabled: false`), and engines/power will be **completely refactored** in a
+later release. So the release focus is defects that bite *regardless* of the toggle; stats/engine
+bugs are largely dormant in the shipped config and can be deferred to the refactor.
+
+Two related changes landed alongside this triage:
+- **Engine crafting is now gated on `stats.enabled`** — the `ship_engine` recipe is not registered
+  while stats are off (`ItemUtil.registerAllRecipes`; re-runs on `/blockships reload`). So no new
+  engines can exist in the default config, which makes every engine-only bug dormant by default.
+- The `statsEnabled` field comment in `ShipConfig.java:48` was corrected ("default: true" → false).
+
+### Bin A — NOT stats-related (fix regardless of toggle) — release focus
+- **F (CRITICAL, stats-independent)** — immobile after chunk recovery. `recomputeStats()` sets the
+  fixed effective speeds even when stats are off, so this breaks ships in the **default** config.
+  Top blocker. *(fix already written; see F.)*
+- **G2 (HIGH)** — plain furnace/smoker silent item loss (slots 3–26) on disassembly.
+- **K (HIGH)** — Captain's Manual shapeless recipe eats a wrong ingredient / bypasses validation.
+- **O3** — `recoverEntities` throw aborts recovery of the rest of the batch / all ships at startup.
+- **P1** — ghost-driver: unmanned ship cruises forever if the seat is lost without `VehicleExitEvent`.
+- **L1/L2/L3** — give: duplicate entries, item loss on full inventory, crash on bad base-material.
+- Lower/opportunistic (still toggle-independent): **I1/I2/I3, J1, M2/M3, N2/N3, P2/P3, D**, G-comment.
+
+### Bin B — stats-related, GAME-BREAKING (dormant with stats off)
+- **E** — engine fuel dup on destroy, **and the live no-drop regression** introduced by the applied
+  fix. Item dup/loss, but only for crafted engines — which can no longer be crafted when stats are
+  off. **Decision: revert the applied E fix** so the release doesn't carry the no-drop regression;
+  the proper single-source-of-truth fix belongs to the engine/power refactor. Revert/rewrite the E
+  changelog entry too. (See E for the reverted-vs-refactor detail.)
+
+### Bin C — stats-related, MINOR (defer to refactor)
+- **A** — non-burnable items counted as fuel (free-thrust exploit).
+- **B** — stats UI/detect chat still shows ratio/speed% when disabled. *Cosmetic, but visible in the
+  **default off** config* — the one Bin C item worth doing for release polish.
+- **H** — `SWAP_OFFHAND` bypasses engine fuel validation.
+- **J2** — `fuel-burn-multiplier` can round a valid fuel to 0 burn ticks.
+- **O2** — engine GUI refunds burned fuel on close (narrow).
+
+**Recommended release scope:** Bin A serious items (F, G2, K, O3, P1, L1–L3) + B for off-state
+polish + revert E; defer the rest of Bin B/C to the engine refactor.
+
+---
+
 ## A — `countFueledEngines` counts non-burnable items as fuel (real bug — re-rated HIGH)
 
 > **Severity:** the deep review re-rated this HIGH. It's an exploit reachable **without** any GUI trick:

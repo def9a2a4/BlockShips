@@ -45,7 +45,7 @@ public class ShipConfig {
     public final float verticalForwardNudge;
 
     // Ship stats (power-to-mass ratio system, custom ships only)
-    public final boolean statsEnabled;       // Master switch for the ratio system (default: true)
+    public final boolean statsEnabled;       // Master switch for the ratio system (default: false)
     public final int basePower;              // Free power points every ship gets (default: 2)
     public final int enginePower;            // Power points per fueled engine (default: 30)
     public final int woolPower;              // Power points per wool block (default: 3)
