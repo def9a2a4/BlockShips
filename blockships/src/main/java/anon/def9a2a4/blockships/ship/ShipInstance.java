@@ -283,9 +283,11 @@ public class ShipInstance {
                     if (blockIdx < model.parts.size()) {
                         ShipModel.ModelPart part = model.parts.get(blockIdx);
                         if (part.storage != null) {
-                            Inventory storage = Bukkit.createInventory(null, part.storage.type.slots,
-                                net.kyori.adventure.text.Component.text(part.storage.name));
-                            storage.setContents(items);
+                            Inventory storage = createStorageInventory(part.storage);
+                            // Cap to the inventory size: `items` is sized from the persisted
+                            // token count, which can exceed the (possibly changed) storage size.
+                            storage.setContents(java.util.Arrays.copyOf(items,
+                                java.lang.Math.min(items.length, storage.getSize())));
                             instance.storages.put(blockIdx, storage);
                         }
                     }
@@ -707,8 +709,7 @@ public class ShipInstance {
 
             // Create inventory for this block if it has storage configured
             if (p.storage != null) {
-                Inventory storage = Bukkit.createInventory(null, p.storage.type.slots,
-                    net.kyori.adventure.text.Component.text(p.storage.name));
+                Inventory storage = createStorageInventory(p.storage);
 
                 // Restore saved inventory contents if available
                 if (p.rawYaml.containsKey("container_items")) {
@@ -1895,6 +1896,19 @@ public class ShipInstance {
     }
 
     /**
+     * Creates the virtual storage inventory for a ship storage block.
+     * Routes odd-size storage (e.g. HOPPER = 5 slots) through the type-based
+     * {@code createInventory} overload, which has no multiple-of-9 restriction that the
+     * size-based overload enforces (assembling a hopper would otherwise throw).
+     */
+    private static Inventory createStorageInventory(ShipModel.StorageConfig sc) {
+        net.kyori.adventure.text.Component title = net.kyori.adventure.text.Component.text(sc.name);
+        return (sc.type.invType != null)
+            ? Bukkit.createInventory(null, sc.type.invType, title)
+            : Bukkit.createInventory(null, sc.type.slots, title);
+    }
+
+    /**
      * Restores storage inventory contents from saved data.
      * Used when loading ships from persistence.
      */
@@ -1902,7 +1916,11 @@ public class ShipInstance {
         for (Map.Entry<Integer, ItemStack[]> entry : savedContents.entrySet()) {
             Inventory inv = storages.get(entry.getKey());
             if (inv != null) {
-                inv.setContents(entry.getValue());
+                // Cap to inventory size: an unguarded setContents throws IllegalArgumentException
+                // if the saved array is larger than the storage, which would fail the whole ship load.
+                ItemStack[] saved = entry.getValue();
+                inv.setContents(java.util.Arrays.copyOf(saved,
+                    java.lang.Math.min(saved.length, inv.getSize())));
             }
         }
     }

@@ -478,15 +478,23 @@ public final class ShipModel {
     }
 
     public enum StorageType {
-        CHEST(27),
-        DOUBLE_CHEST(54),
-        DROPPER(9),
-        HOPPER(5);
+        CHEST(27, null),
+        DOUBLE_CHEST(54, null),
+        DROPPER(9, null),
+        HOPPER(5, org.bukkit.event.inventory.InventoryType.HOPPER);
 
         public final int slots;
+        /**
+         * Non-null → build the virtual inventory via the type-based
+         * {@code Bukkit.createInventory(holder, InventoryType, title)} overload, which has no
+         * multiple-of-9 size restriction (the int-based overload throws for HOPPER's 5 slots).
+         * Null → use the size-based overload as before.
+         */
+        public final org.bukkit.event.inventory.InventoryType invType;
 
-        StorageType(int slots) {
+        StorageType(int slots, org.bukkit.event.inventory.InventoryType invType) {
             this.slots = slots;
+            this.invType = invType;
         }
     }
 
