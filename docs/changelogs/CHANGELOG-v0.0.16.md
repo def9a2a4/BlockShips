@@ -28,6 +28,7 @@
   - Workaround config options for Towny are documented in the issue thread
 
 - **Drowned captains are rarer:** the default `special-drowned` spawn chance is lowered from 5% to 2% so they don't overwhelm biomes where drowned spawn heavily ([#29](https://github.com/def9a2a4/BlockShips/issues/29))
+- **New blocks now work without resetting configs:** `blocks.yml`, `items.yml`, and prefab ship models are read from the jar instead of a stale on-disk copy, so newly-supported blocks (like shelves) work on upgraded servers automatically. To customize, drop an edited copy under a new `config/` subfolder
 - other various bugfixes and improvements
 
 ---
@@ -314,6 +315,14 @@ Two issues with the newly supported shelf and chiseled bookshelf blocks:
 
 - They rendered without their facing direction in flight. Adding `display_rotation: true` to their `blocks.yml` entries applies the correct Y-axis rotation, matching how chests and barrels already work.
 - Their contents were not dropped when a ship was destroyed. Unlike containers, these blocks store items in `container_items` rather than the `storages` map, so they were missed by the destroy path. They now drop their items at the ship's death location.
+
+### Newly-Added Blocks Missing on Upgraded Servers (662292f)
+
+On servers upgraded from an earlier version, newly-supported blocks — most visibly shelves (1.21.9+) — were rejected during ship assembly. `blocks.yml` was extracted to the plugin data folder on first run and then only ever read from that disk copy, never merging new defaults. A server that generated `blocks.yml` before shelves existed kept a stale copy without the `*_shelf` entry: the bundled default had it, but the on-disk file hid it. `items.yml` and the prefab ship models had the same stale-copy pattern.
+
+These content files are no longer written to disk. They're read straight from the jar (via a new `ConfigResources` helper), so every update ships current defaults automatically. Admins who want to customize a file drop an edited copy under a new `config/` subfolder (`config/blocks.yml`, `config/items.yml`, `config/prefab_ships/*.yml`), which is read in preference to the bundled copy but never overwritten by the plugin.
+
+`ConfigValidator` was reworked to match: it now warns when a legacy copy still sits at the data-folder root (that location is no longer read — move it to `config/` or delete it), and when a `config/blocks.yml` override is missing entries the bundled default has (an override going stale). `config.yml` is unchanged — Bukkit already layers bundled defaults under the user's file, so it never suffered this problem.
 
 ### Controls Warning Clarity (6236198)
 
