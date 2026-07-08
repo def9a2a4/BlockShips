@@ -769,30 +769,34 @@ public class ShipWheelManager {
 
                 // Send detection chat for assembled ship
                 ShipConfig config = ShipConfig.load(plugin, "custom");
-                int mass = Math.max(1, ship.model.mass);
-                int sailPower = ship.model.woolCount * config.woolPower + ship.model.bannerCount * config.bannerPower;
-                float sailRatio = (float) (config.basePower + sailPower) / mass;
-                float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
-                float engineBonus = (float) (fueledEngines * config.enginePower) / mass;
-                float ratio = Math.min(nonEngineRatio + engineBonus, 1.0f);
-                int speedPercent = Math.round(ratio / config.sailCapRatio * 100);
-
                 player.sendMessage("§aShip detected (assembled)");
                 player.sendMessage("§7Blocks: §f" + blockCount);
                 player.sendMessage("§7Health: §f" + (int) Math.ceil(currentHealth) + " §7/ §f" + (int) maxHealth);
-                player.sendMessage("§7Sails: §f" + ship.model.woolCount + " wool, " + ship.model.bannerCount + " banners §7(" + sailPower + " pts)");
-                if (ship.model.engineCount > 0) {
-                    int unfueled = ship.model.engineCount - fueledEngines;
-                    if (fueledEngines > 0) {
-                        int fueledPts = fueledEngines * config.enginePower;
-                        player.sendMessage("§7Engines §a(fueled)§7: §f" + fueledEngines + " §7(" + fueledPts + " pts)");
+                if (config.statsEnabled) {
+                    int mass = Math.max(1, ship.model.mass);
+                    int sailPower = ship.model.woolCount * config.woolPower + ship.model.bannerCount * config.bannerPower;
+                    float sailRatio = (float) (config.basePower + sailPower) / mass;
+                    float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
+                    float engineBonus = (float) (fueledEngines * config.enginePower) / mass;
+                    float ratio = Math.min(nonEngineRatio + engineBonus, 1.0f);
+                    int speedPercent = Math.round(ratio / config.sailCapRatio * 100);
+
+                    player.sendMessage("§7Sails: §f" + ship.model.woolCount + " wool, " + ship.model.bannerCount + " banners §7(" + sailPower + " pts)");
+                    if (ship.model.engineCount > 0) {
+                        int unfueled = ship.model.engineCount - fueledEngines;
+                        if (fueledEngines > 0) {
+                            int fueledPts = fueledEngines * config.enginePower;
+                            player.sendMessage("§7Engines §a(fueled)§7: §f" + fueledEngines + " §7(" + fueledPts + " pts)");
+                        }
+                        if (unfueled > 0) {
+                            player.sendMessage("§7Engines §c(unfueled)§7: §f" + unfueled + " §7(0 pts)");
+                        }
                     }
-                    if (unfueled > 0) {
-                        player.sendMessage("§7Engines §c(unfueled)§7: §f" + unfueled + " §7(0 pts)");
-                    }
+                    String speedColor = speedPercent >= 125 ? "§b" : speedPercent >= 100 ? "§a" : speedPercent >= 75 ? "§e" : speedPercent >= 50 ? "§6" : "§c";
+                    player.sendMessage("§7Speed: " + speedColor + speedPercent + "%");
+                } else {
+                    player.sendMessage("§7Stats: §8disabled");
                 }
-                String speedColor = speedPercent >= 125 ? "§b" : speedPercent >= 100 ? "§a" : speedPercent >= 75 ? "§e" : speedPercent >= 50 ? "§6" : "§c";
-                player.sendMessage("§7Speed: " + speedColor + speedPercent + "%");
 
                 return true;
             }
@@ -896,26 +900,30 @@ public class ShipWheelManager {
             player.sendMessage("§7Seats: §c0 §7(default seat at wheel will be used)");
         }
         // Ship stats
-        int sailPower = woolCount * config.woolPower + bannerCount * config.bannerPower;
-        int shipMass = Math.max(1, calculateMass(shipBlocks));
-        float sailRatio = (float) (config.basePower + sailPower) / shipMass;
-        float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
-        float engineBonus = (float) (fueledEngineCount * config.enginePower) / shipMass;
-        float ratio = Math.min(nonEngineRatio + engineBonus, 1.0f);
-        int speedPercent = Math.round(ratio / config.sailCapRatio * 100);
-        player.sendMessage("§7Sails: §f" + woolCount + " wool, " + bannerCount + " banners §7(" + sailPower + " pts)");
-        if (engineCount > 0) {
-            int unfueled = engineCount - fueledEngineCount;
-            if (fueledEngineCount > 0) {
-                int fueledPts = fueledEngineCount * config.enginePower;
-                player.sendMessage("§7Engines §a(fueled)§7: §f" + fueledEngineCount + " §7(" + fueledPts + " pts)");
+        if (config.statsEnabled) {
+            int sailPower = woolCount * config.woolPower + bannerCount * config.bannerPower;
+            int shipMass = Math.max(1, calculateMass(shipBlocks));
+            float sailRatio = (float) (config.basePower + sailPower) / shipMass;
+            float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
+            float engineBonus = (float) (fueledEngineCount * config.enginePower) / shipMass;
+            float ratio = Math.min(nonEngineRatio + engineBonus, 1.0f);
+            int speedPercent = Math.round(ratio / config.sailCapRatio * 100);
+            player.sendMessage("§7Sails: §f" + woolCount + " wool, " + bannerCount + " banners §7(" + sailPower + " pts)");
+            if (engineCount > 0) {
+                int unfueled = engineCount - fueledEngineCount;
+                if (fueledEngineCount > 0) {
+                    int fueledPts = fueledEngineCount * config.enginePower;
+                    player.sendMessage("§7Engines §a(fueled)§7: §f" + fueledEngineCount + " §7(" + fueledPts + " pts)");
+                }
+                if (unfueled > 0) {
+                    player.sendMessage("§7Engines §c(unfueled)§7: §f" + unfueled + " §7(0 pts — fuel to activate)");
+                }
             }
-            if (unfueled > 0) {
-                player.sendMessage("§7Engines §c(unfueled)§7: §f" + unfueled + " §7(0 pts — fuel to activate)");
-            }
+            String speedColor = speedPercent >= 125 ? "§b" : speedPercent >= 100 ? "§a" : speedPercent >= 75 ? "§e" : speedPercent >= 50 ? "§6" : "§c";
+            player.sendMessage("§7Speed: " + speedColor + speedPercent + "%" + (speedPercent < 50 ? " §8(add banners or wool as sails!)" : ""));
+        } else {
+            player.sendMessage("§7Stats: §8disabled");
         }
-        String speedColor = speedPercent >= 125 ? "§b" : speedPercent >= 100 ? "§a" : speedPercent >= 75 ? "§e" : speedPercent >= 50 ? "§6" : "§c";
-        player.sendMessage("§7Speed: " + speedColor + speedPercent + "%" + (speedPercent < 50 ? " §8(add banners or wool as sails!)" : ""));
 
         // Store detected blocks and stats for Ship Info display
         int positiveWeight = calculateMass(shipBlocks);

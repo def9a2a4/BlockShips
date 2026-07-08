@@ -227,19 +227,27 @@ public class ShipPhysics {
         Location vehicleLoc = ship.vehicle.getLocation();
         ShipConfig config = ship.config;
 
-        // Tick engine fuel (only for custom ships with engines, while any movement key held)
+        // Tick engine fuel (only for custom ships with engines, while any movement key held).
+        // Note: uses the broad anyMovementPressed (incl. Space/Sprint) because a ship can burn
+        // fuel while ascending/turning, whereas `throttling` below is W/S-only. Both are gated
+        // on hasDriver so a driverless ship with stuck input flags neither moves nor burns fuel.
         boolean anyMovementPressed = ship.isForwardPressed || ship.isBackwardPressed
                 || ship.isLeftPressed || ship.isRightPressed
                 || ship.isSpacePressed || ship.isSprintPressed;
-        if ("custom".equals(ship.shipType) && ship.config.statsEnabled && anyMovementPressed
+        if ("custom".equals(ship.shipType) && ship.config.statsEnabled && ship.hasDriver && anyMovementPressed
                 && ship.model.engineCount > 0 && ship.resolveWheelData() != null) {
             tickEngineFuel();
         }
 
+        // Only a real driver produces thrust. Without this, an input flag left stuck true after a
+        // seat loss that skipped VehicleExitEvent (death while seated, forced cross-world teleport)
+        // would drive the ship forever unmanned.
+        boolean throttling = ship.hasDriver && (ship.isForwardPressed || ship.isBackwardPressed);
+
         // Apply acceleration/deceleration based on input state
-        if (ship.isForwardPressed) {
+        if (throttling && ship.isForwardPressed) {
             currentSpeed = Math.min(currentSpeed + effectiveAcceleration, effectiveMaxSpeed);
-        } else if (ship.isBackwardPressed) {
+        } else if (throttling && ship.isBackwardPressed) {
             if (currentSpeed > 0) {
                 currentSpeed = Math.max(currentSpeed - config.activeDeceleration, 0.0f);
             } else {
@@ -247,8 +255,8 @@ public class ShipPhysics {
             }
         }
 
-        // Apply drag based on player presence (unless actively pressing W/S)
-        if (!ship.isForwardPressed && !ship.isBackwardPressed) {
+        // Apply drag when not actively throttling (a driverless ship always drags → coasts to a stop)
+        if (!throttling) {
             float dragMultiplier;
             if (ship.hasDriver) {
                 dragMultiplier = config.mountedDrag;
@@ -267,8 +275,7 @@ public class ShipPhysics {
         }
 
         // Stop if speed is very small (only when not actively accelerating)
-        if (!ship.isForwardPressed && !ship.isBackwardPressed
-                && Math.abs(currentSpeed) < config.minMovementThreshold) {
+        if (!throttling && Math.abs(currentSpeed) < config.minMovementThreshold) {
             currentSpeed = 0.0f;
         }
 
@@ -302,13 +309,15 @@ public class ShipPhysics {
             // using actual displacement to match carrier velocity computation.
         }
 
-        // Update rotation based on input state
-        if (ship.isLeftPressed) {
+        // Update rotation based on input state. Gate only the active-turn arms on hasDriver (not
+        // `throttling`) so a driver can still steer with A/D alone; the decay `else` stays always-on
+        // so a driverless ship's spin winds down instead of turning forever.
+        if (ship.hasDriver && ship.isLeftPressed) {
             currentRotationVelocity = Math.max(
                 currentRotationVelocity - effectiveRotationAcceleration,
                 -effectiveRotationSpeed
             );
-        } else if (ship.isRightPressed) {
+        } else if (ship.hasDriver && ship.isRightPressed) {
             currentRotationVelocity = Math.min(
                 currentRotationVelocity + effectiveRotationAcceleration,
                 effectiveRotationSpeed

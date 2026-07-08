@@ -50,11 +50,13 @@ public class ShipWheelMenu {
         public final float sailCapRatio; // sail cap threshold (from config, e.g. 0.8)
         public final float sailRatio;  // uncapped sail ratio (before sail cap applied)
         public final float ratio;      // final ratio (with sail cap + engines)
+        public final boolean statsEnabled; // whether the power-to-mass stats system is active
 
         public ShipInfo(int blockCount, int totalWeight, int mass, float density, int maxHealth,
                         Integer currentHealth, float surfaceOffset, float airDensity, float waterDensity,
                         int woolCount, int bannerCount, int sailPower, int engineCount, int fueledEngines,
-                        int enginePowerPerEngine, float sailCapRatio, float sailRatio, float ratio) {
+                        int enginePowerPerEngine, float sailCapRatio, float sailRatio, float ratio,
+                        boolean statsEnabled) {
             this.blockCount = blockCount;
             this.totalWeight = totalWeight;
             this.mass = mass;
@@ -73,6 +75,7 @@ public class ShipWheelMenu {
             this.sailCapRatio = sailCapRatio;
             this.sailRatio = sailRatio;
             this.ratio = ratio;
+            this.statsEnabled = statsEnabled;
         }
     }
 
@@ -424,7 +427,8 @@ public class ShipWheelMenu {
         return new ShipInfo(blockCount, totalWeight, mass, density, maxHealth, currentHealth,
                             surfaceOffset, airDensity, waterDensity,
                             woolCount, bannerCount, sailPower, engineCount, fueledEngines,
-                            config.enginePower, config.sailCapRatio, sailRatio, ratio);
+                            config.enginePower, config.sailCapRatio, sailRatio, ratio,
+                            config.statsEnabled);
     }
 
     /**
@@ -472,11 +476,15 @@ public class ShipWheelMenu {
 
                 // Ship stats (simplified — detailed breakdown in stats item below)
                 lore.add("");
-                int speedPercent = Math.round(info.ratio / info.sailCapRatio * 100);
-                String maxTag = info.ratio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
-                lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%" + maxTag);
-                if (speedPercent < 50) {
-                    lore.add(ChatColor.DARK_PURPLE + "(add banners or wool as sails!)");
+                if (info.statsEnabled) {
+                    int speedPercent = Math.round(info.ratio / info.sailCapRatio * 100);
+                    String maxTag = info.ratio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
+                    lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%" + maxTag);
+                    if (speedPercent < 50) {
+                        lore.add(ChatColor.DARK_PURPLE + "(add banners or wool as sails!)");
+                    }
+                } else {
+                    lore.add(ChatColor.GRAY + "Stats system disabled — fixed speed");
                 }
             } else {
                 lore.add(ChatColor.GRAY + "No ship detected yet");
@@ -512,6 +520,12 @@ public class ShipWheelMenu {
 
             ShipInfo info = getShipInfo(wheelData);
             if (info != null) {
+              if (!info.statsEnabled) {
+                // Stats system off: composition/points/ratio are inert — show only mass + a note.
+                lore.add("");
+                lore.add(ChatColor.GRAY + "Mass: " + ChatColor.WHITE + info.mass);
+                lore.add(ChatColor.GRAY + "Stats system disabled — fixed speed");
+              } else {
                 BlockShipsPlugin plugin = (BlockShipsPlugin) Bukkit.getPluginManager().getPlugin("BlockShips");
                 ShipConfig config = ShipConfig.load(plugin, "custom");
                 // Sail breakdown
@@ -568,6 +582,7 @@ public class ShipWheelMenu {
                 int speedPercent = Math.round(info.ratio / info.sailCapRatio * 100);
                 String maxTag = info.ratio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
                 lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%" + maxTag);
+              }
             } else {
                 lore.add(ChatColor.GRAY + "Detect ship first");
             }
