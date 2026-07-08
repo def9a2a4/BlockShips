@@ -944,7 +944,39 @@ public class DisplayShip implements Listener {
         String balloonColor = null;
 
         if (shapeless) {
-            // Shapeless: Bukkit handles validation. Extract banner if present.
+            // Bukkit only matched the shapeless recipe on base material (e.g. any PLAYER_HEAD for the
+            // ship_wheel ingredient), so a mob head / renamed head / balloon could craft the result and be
+            // silently consumed. Re-validate the grid ourselves: build the ingredient pool the same way
+            // ItemUtil registered it (one choice per config key) and require every non-empty grid slot to
+            // match a distinct pool entry, matching custom items by their custom_item_id PDC (rename-proof)
+            // rather than by display name.
+            var ingredientsSection = plugin.getConfig().getConfigurationSection(recipePath + ".ingredients");
+            List<RecipeIngredient> pool = new ArrayList<>();
+            if (ingredientsSection != null) {
+                for (String key : ingredientsSection.getKeys(false)) {
+                    List<String> ingredientStrings = plugin.getConfig().getStringList(recipePath + ".ingredients." + key);
+                    if (ingredientStrings.isEmpty()) continue;
+                    try {
+                        List<RecipeIngredient> parsed = RecipeIngredient.parseList(ingredientStrings, plugin, this.textureManager);
+                        if (!parsed.isEmpty()) pool.add(parsed.get(0));
+                    } catch (IllegalArgumentException ex) {
+                        plugin.getLogger().warning("Failed to parse ingredient for " + shipType + ": " + ex.getMessage());
+                        e.getInventory().setResult(null);
+                        return;
+                    }
+                }
+            }
+            List<RecipeIngredient> remaining = new ArrayList<>(pool);
+            for (ItemStack item : e.getInventory().getMatrix()) {
+                if (item == null || item.getType().isAir()) continue;
+                boolean matched = false;
+                for (java.util.Iterator<RecipeIngredient> it = remaining.iterator(); it.hasNext(); ) {
+                    if (ingredientMatches(it.next(), item)) { it.remove(); matched = true; break; }
+                }
+                if (!matched) { e.getInventory().setResult(null); return; }  // wrong/extra ingredient
+            }
+            if (!remaining.isEmpty()) { e.getInventory().setResult(null); return; }  // missing an ingredient
+
             banner = RecipeValidator.extractBanner(e.getInventory());
         } else {
             // Shaped: full pattern-based validation
@@ -1830,12 +1862,30 @@ public class DisplayShip implements Listener {
      * Helper: Check if an item is a ship wheel custom item
      */
     private boolean isShipWheel(ItemStack stack) {
+        return matchesCustomItemId(stack, "ship_wheel");
+    }
+
+    /**
+     * Checks whether an item carries the given blockships custom_item_id PDC tag. Unlike matching by
+     * display name, this cannot be forged by an anvil rename.
+     */
+    private boolean matchesCustomItemId(ItemStack stack, String customItemId) {
         if (stack == null || !stack.hasItemMeta()) return false;
-        ItemMeta meta = stack.getItemMeta();
-        PersistentDataContainer pdc = meta.getPersistentDataContainer();
+        PersistentDataContainer pdc = stack.getItemMeta().getPersistentDataContainer();
         NamespacedKey itemIdKey = new NamespacedKey(plugin, "custom_item_id");
         return pdc.has(itemIdKey, PersistentDataType.STRING) &&
-               "ship_wheel".equals(pdc.get(itemIdKey, PersistentDataType.STRING));
+               customItemId.equals(pdc.get(itemIdKey, PersistentDataType.STRING));
+    }
+
+    /**
+     * Whether a crafting-grid item satisfies a recipe ingredient. Custom-item ingredients are matched by
+     * their custom_item_id PDC (rename-proof); everything else uses the ingredient's own matcher.
+     */
+    private boolean ingredientMatches(RecipeIngredient ingredient, ItemStack item) {
+        if (ingredient instanceof CustomItemIngredient ci) {
+            return matchesCustomItemId(item, ci.getCustomItemId());
+        }
+        return ingredient.matches(item);
     }
 
     /**

@@ -323,6 +323,9 @@ public class ShipInstance {
 
         // Create root vehicle ArmorStand (for physics, health, display mounting)
         // Players never ride this directly - they ride seat ArmorStands instead
+        // If any spawn/setup below throws, tear down whatever was already spawned so a failed
+        // assembly leaves no orphaned ghost entities (see catch at the end of the spawn sequence).
+        try {
         this.vehicle = w.spawn(base, ArmorStand.class, as -> {
             as.setInvisible(true);
             as.setGravity(false);
@@ -947,6 +950,13 @@ public class ShipInstance {
                 id.setTransformationMatrix(new Matrix4f(spawnDisplayWorld).mul(p.local));
             });
             displays.add(new DisplayInstance(child, new Matrix4f(p.local)));
+        }
+        } catch (Throwable ex) {
+            // Assembly failed partway — despawn everything already spawned (vehicle, parent,
+            // block/item displays, collider carriers + shulkers) so no invisible ghosts remain,
+            // then rethrow so the caller reports the failure.
+            destroy();
+            throw ex;
         }
 
         // Wait 1 tick for entities to spawn, then mount and start ticking
@@ -2449,6 +2459,12 @@ public class ShipInstance {
             }
             parent.remove();
         }
+        // Remove child block/item displays directly. Normally they are passengers of `parent`
+        // (removed above), but on a failed assembly they are spawned and not yet mounted (mounting is
+        // deferred 1 tick), so remove them by list too. Idempotent — a double remove() is harmless.
+        for (DisplayInstance di : displays) {
+            if (di.entity != null && di.entity.isValid()) di.entity.remove();
+        }
         // Dismount any riders before removing shulkers
         // (removePassenger triggers VehicleExitEvent, which handles safe-position teleport)
         for (CollisionBox cb : colliders) {
@@ -2465,7 +2481,7 @@ public class ShipInstance {
             cb.carrier.remove();   // Remove carrier (ArmorStand or Interaction)
         }
         // Remove root vehicle
-        if (vehicle.isValid()) vehicle.remove();
+        if (vehicle != null && vehicle.isValid()) vehicle.remove();
         // Clear incremental recovery state
         pendingCarriers.clear();
         pendingShulkers.clear();

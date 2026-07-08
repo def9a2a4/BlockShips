@@ -876,11 +876,16 @@ public class BlockStructureScanner {
                     (java.util.List<Map<String, Object>>) part.rawYaml.get("container_items");
 
                 org.bukkit.block.Container container = (org.bukkit.block.Container) block.getState();
-                org.bukkit.inventory.ItemStack[] items = deserializeInventory(itemsData, container.getSnapshotInventory().getSize());
+                java.util.List<org.bukkit.inventory.ItemStack> overflow = new java.util.ArrayList<>();
+                org.bukkit.inventory.ItemStack[] items = deserializeInventory(itemsData, container.getSnapshotInventory().getSize(), overflow);
 
                 // Set items on the snapshot's inventory, then update to persist
                 container.getSnapshotInventory().setContents(items);
                 container.update();
+                // Drop any overflow (virtual GUI larger than the real block, e.g. a furnace) so it's not lost
+                for (org.bukkit.inventory.ItemStack extra : overflow) {
+                    block.getWorld().dropItemNaturally(block.getLocation().add(0.5, 0.5, 0.5), extra);
+                }
             }
 
             // Restore TileStateInventoryHolder blocks (shelves, chiseled bookshelves)
@@ -891,9 +896,13 @@ public class BlockStructureScanner {
                 java.util.List<Map<String, Object>> itemsData =
                     (java.util.List<Map<String, Object>>) part.rawYaml.get("container_items");
 
-                org.bukkit.inventory.ItemStack[] items = deserializeInventory(itemsData, tileInv.getSnapshotInventory().getSize());
+                java.util.List<org.bukkit.inventory.ItemStack> overflow = new java.util.ArrayList<>();
+                org.bukkit.inventory.ItemStack[] items = deserializeInventory(itemsData, tileInv.getSnapshotInventory().getSize(), overflow);
                 tileInv.getSnapshotInventory().setContents(items);
                 tileInv.update();
+                for (org.bukkit.inventory.ItemStack extra : overflow) {
+                    block.getWorld().dropItemNaturally(block.getLocation().add(0.5, 0.5, 0.5), extra);
+                }
             }
 
             // Restore sign text
@@ -1066,21 +1075,34 @@ public class BlockStructureScanner {
      * Deserializes an inventory from stored data.
      * Returns an array of ItemStacks that can be set to an inventory.
      */
-    private static org.bukkit.inventory.ItemStack[] deserializeInventory(java.util.List<Map<String, Object>> itemsData, int inventorySize) {
+    /**
+     * Deserializes persisted container items into an array sized to the REAL block inventory.
+     * Items whose stored slot is beyond the real inventory (e.g. a furnace that was shown in flight
+     * as a larger virtual chest) are added to {@code overflowOut} so the caller can drop them to the
+     * world instead of silently destroying them. Slot index is read via Number to tolerate a
+     * Long/Double from a migrated/hand-edited model.
+     */
+    private static org.bukkit.inventory.ItemStack[] deserializeInventory(java.util.List<Map<String, Object>> itemsData, int inventorySize,
+                                                                         java.util.List<org.bukkit.inventory.ItemStack> overflowOut) {
         org.bukkit.inventory.ItemStack[] items = new org.bukkit.inventory.ItemStack[inventorySize];
 
         if (itemsData != null) {
             for (Map<String, Object> itemData : itemsData) {
-                int slot = (Integer) itemData.get("slot");
+                int slot = ((Number) itemData.get("slot")).intValue();
                 byte[] serialized = (byte[]) itemData.get("item");
+                if (serialized == null || slot < 0) continue;
 
-                if (slot >= 0 && slot < inventorySize && serialized != null) {
-                    try {
-                        org.bukkit.inventory.ItemStack item = org.bukkit.inventory.ItemStack.deserializeBytes(serialized);
+                try {
+                    org.bukkit.inventory.ItemStack item = org.bukkit.inventory.ItemStack.deserializeBytes(serialized);
+                    if (item == null) continue;
+                    if (slot < inventorySize) {
                         items[slot] = item;
-                    } catch (Exception e) {
-                        e.printStackTrace();
+                    } else {
+                        // Virtual GUI had more slots than the real block — don't destroy the overflow.
+                        overflowOut.add(item);
                     }
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
             }
         }
