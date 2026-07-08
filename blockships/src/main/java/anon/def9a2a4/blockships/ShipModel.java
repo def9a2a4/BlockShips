@@ -159,17 +159,10 @@ public final class ShipModel {
     }
 
     public static ShipModel fromFile(JavaPlugin plugin, String filePath, String shipType) {
-        // Load model file
-        java.io.File modelFile = new java.io.File(plugin.getDataFolder(), filePath);
-        if (!modelFile.exists()) {
-            throw new IllegalArgumentException("Model file not found: " + modelFile.getAbsolutePath());
-        }
-
-        org.bukkit.configuration.file.YamlConfiguration config;
-        try {
-            config = org.bukkit.configuration.file.YamlConfiguration.loadConfiguration(modelFile);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Failed to load model from file: " + filePath, e);
+        // Load model from config/<filePath> override if present, else from the jar. Not extracted to disk.
+        org.bukkit.configuration.file.YamlConfiguration config = ConfigResources.load(plugin, filePath);
+        if (config.getMapList("blocks").isEmpty()) {
+            throw new IllegalArgumentException("Model file not found or has no blocks: " + filePath);
         }
 
         List<ModelPart> out = new ArrayList<>();

@@ -4,7 +4,6 @@ import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -36,15 +35,9 @@ public class ItemTextureManager {
      *     ...
      */
     public void load() {
-        File itemsFile = new File(plugin.getDataFolder(), ITEMS_FILE);
-
-        if (!itemsFile.exists()) {
-            plugin.getLogger().warning(ITEMS_FILE + " not found. Item textures will not be available.");
-            return;
-        }
-
+        // Read from config/items.yml override if present, else from the jar. Not extracted to disk.
         try {
-            YamlConfiguration config = YamlConfiguration.loadConfiguration(itemsFile);
+            YamlConfiguration config = ConfigResources.load(plugin, ITEMS_FILE);
             ConfigurationSection textureSetsSection = config.getConfigurationSection("texture-sets");
 
             if (textureSetsSection == null) {

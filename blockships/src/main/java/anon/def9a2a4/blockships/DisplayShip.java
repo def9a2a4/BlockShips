@@ -81,8 +81,8 @@ public class DisplayShip implements Listener {
     }
 
     public void initialize() {
-        // Extract default model files from JAR if they don't exist
-        extractDefaultModelFiles();
+        // Item textures and prefab models are read from the jar (or a config/ override) on demand;
+        // nothing is extracted to disk.
 
         // Load item textures from items.yml
         textureManager.load();
@@ -311,43 +311,6 @@ public class DisplayShip implements Listener {
         }
     }
 
-    private void extractDefaultModelFiles() {
-        // Extract items.yml if it doesn't exist
-        java.io.File itemsFile = new java.io.File(plugin.getDataFolder(), "items.yml");
-        if (!itemsFile.exists()) {
-            try {
-                plugin.saveResource("items.yml", false);
-            } catch (IllegalArgumentException e) {
-                plugin.getLogger().warning("items.yml not found in JAR resources. You'll need to provide it manually.");
-            }
-        }
-
-        // Get all unique model files from config
-        var shipsSection = plugin.getConfig().getConfigurationSection("ships");
-        if (shipsSection == null) return;
-
-        Set<String> modelFiles = new HashSet<>();
-        for (String shipType : shipsSection.getKeys(false)) {
-            String modelPath = plugin.getConfig().getString("ships." + shipType + ".model-path");
-            if (modelPath != null) {
-                modelFiles.add(modelPath);
-            }
-        }
-
-        // Extract each unique model file if it doesn't exist
-        for (String modelPath : modelFiles) {
-            java.io.File file = new java.io.File(plugin.getDataFolder(), modelPath);
-            if (!file.exists()) {
-                // Create parent directories if needed
-                file.getParentFile().mkdirs();
-                try {
-                    plugin.saveResource(modelPath, false);
-                } catch (IllegalArgumentException e) {
-                    plugin.getLogger().warning("Model file '" + modelPath + "' not found in JAR resources. You'll need to provide it manually.");
-                }
-            }
-        }
-    }
 
     public void shutdown() {
         // Save all ships to per-world storage - entities persist via Minecraft
