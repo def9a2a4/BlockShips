@@ -434,11 +434,10 @@ public class BlockStructureScanner {
                     org.bukkit.inventory.Inventory inv = container.getSnapshotInventory();
                     rawYaml.put("container_items", serializeInventory(inv));
 
-                    // Clear snapshot inventory, then push to world to prevent item drops
-                    // when removeBlocks() calls setType(AIR). Must clear the SNAPSHOT (not
-                    // live via getInventory()), because update() writes snapshot state to world.
-                    container.getSnapshotInventory().clear();
-                    container.update();
+                    // NOTE: the world container is intentionally NOT emptied here. Clearing is
+                    // deferred to removeBlocks() (Pass 0) so that if assembly throws between the
+                    // scan and removeBlocks (e.g. in the ShipInstance constructor), the world
+                    // container keeps its contents -> clean, retryable no-op instead of item loss.
 
                     // Serialize storage config for persistence
                     Map<String, Object> storageMap = new HashMap<>();
@@ -455,10 +454,9 @@ public class BlockStructureScanner {
                 if (!tileItems.isEmpty()) {
                     rawYaml.put("container_items", tileItems);
                 }
-                // Clear snapshot inventory, then push to world to prevent item drops
-                // when removeBlocks() calls setType(AIR).
-                tileInv.getSnapshotInventory().clear();
-                tileInv.update();
+                // Clearing is deferred to removeBlocks() (Pass 0) — see the Container branch above.
+                // (A plain Container is also a TileStateInventoryHolder, so it re-serializes its
+                // still-full snapshot here over container_items with byte-identical data; harmless.)
             }
 
             // Capture sign text for restoration on disassembly
@@ -930,11 +928,14 @@ public class BlockStructureScanner {
     /**
      * Removes blocks that were part of a ship structure.
      * Uses two-pass removal to prevent attached blocks (banners, signs, etc.) from dropping.
+     * Water flows into the freed space because setType(AIR, true) triggers block updates
+     * (may be costly for very large ships).
      *
-     * TODO: Currently uses setType(AIR, false) which disables block updates. Change to
-     * setType(AIR, true) to trigger block updates so water flows into the space left by the ship.
-     * WARNING: This may cause performance issues with many block updates for large ships.
-     * Consider manually filling with water based on Y-level instead.
+     * <p>MUST stay synchronous with the scan that produced {@code model}: scanStructure serializes
+     * container contents but leaves the world containers full, and Pass 0 below empties them just
+     * before removal. That is only safe because no server tick (hence no hopper transfer) occurs
+     * between the scan and this call. Inserting a {@code runTaskLater} between them would turn this
+     * into an item-duplication bug.
      *
      * @param wheelLocation The center location of the structure
      * @param model The ship model containing block positions
@@ -958,6 +959,25 @@ public class BlockStructureScanner {
                 attachableBlocks.add(blockLoc);
             } else {
                 solidBlocks.add(blockLoc);
+            }
+        }
+
+        // Pass 0: empty container snapshots so the setType(AIR) passes below can't spill their
+        // contents. The contents were already serialized into the model during scanStructure.
+        // Only solid blocks can be containers (no inventory-holding block is attachable). Each
+        // clear is guarded so a failure on one block can't leave a half-cleared / half-removed ship.
+        for (Location loc : solidBlocks) {
+            try {
+                org.bukkit.block.BlockState st = loc.getBlock().getState();
+                if (st instanceof io.papermc.paper.block.TileStateInventoryHolder tsih) {
+                    tsih.getSnapshotInventory().clear();
+                    tsih.update();  // write the emptied state so setType(AIR) can't drop items
+                }
+            } catch (Exception e) {
+                // Static context: no plugin field here. Use the always-available server logger.
+                // Worst case, this one container spills its items on setType — dropped, not deleted.
+                org.bukkit.Bukkit.getLogger().warning("[BlockShips] removeBlocks: failed to clear "
+                    + "container at " + loc + " before removal: " + e.getMessage());
             }
         }
 
