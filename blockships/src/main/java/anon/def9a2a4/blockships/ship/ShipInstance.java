@@ -722,7 +722,7 @@ public class ShipInstance {
 
                     if (itemsData != null) {
                         for (java.util.Map<String, Object> itemData : itemsData) {
-                            int slot = (Integer) itemData.get("slot");
+                            int slot = ((Number) itemData.get("slot")).intValue();
                             byte[] serialized = (byte[]) itemData.get("item");
 
                             if (slot >= 0 && slot < storage.getSize() && serialized != null) {
@@ -2263,10 +2263,13 @@ public class ShipInstance {
             int blockIdx = entry.getKey();
             Shulker s = shulkers.get(blockIdx);
             if (s != null) {
-                // Validate block index against model - throw if model definition changed
+                // Skip a collider whose index no longer fits the model (model definition changed between
+                // save and load) instead of throwing — a throw here would abort recovery of every remaining
+                // ship in the batch. Matches how the incremental tryAddEntity path tolerates this.
                 if (blockIdx >= model.parts.size()) {
-                    throw new IllegalStateException("Ship " + id + " recovery failed: block index " + blockIdx +
-                        " exceeds model parts size " + model.parts.size() + ". Model definition may have changed.");
+                    plugin.getLogger().warning("Ship " + id + " recovery: collider block index " + blockIdx +
+                        " exceeds model parts size " + model.parts.size() + " — skipping (model may have changed).");
+                    continue;
                 }
                 // Get collision config from model
                 ShipModel.ModelPart part = model.parts.get(blockIdx);

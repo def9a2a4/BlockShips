@@ -782,6 +782,7 @@ public class BlockStructureScanner {
             Block block = blockLoc.getBlock();
             Material existingType = block.getType();
 
+            try {
             // Handle conflicts in force mode
             if (!existingType.isAir() && existingType != Material.WATER && existingType != Material.LAVA) {
                 if (force && FragileBlocks.isFragile(existingType)) {
@@ -929,6 +930,13 @@ public class BlockStructureScanner {
                 if (waxed != null) sign.setWaxed(waxed);
                 sign.update();
             }
+            } catch (Exception e) {
+                // A block is always placed (setBlockData above) before any throwing metadata restore, so a
+                // bad banner/sign/container value only skips this one block's decoration — the rest of the
+                // ship still places and the ship still fully disassembles + deregisters.
+                org.bukkit.Bukkit.getLogger().warning("[BlockShips] placeBlocks: failed to restore block at "
+                    + blockLoc + ", skipping its metadata: " + e.getMessage());
+            }
         }
 
         return true;
@@ -1031,7 +1039,12 @@ public class BlockStructureScanner {
             case FURNACE:
             case BLAST_FURNACE:
             case SMOKER:
-                storageType = ShipModel.StorageType.CHEST;  // Furnaces have 3 slots but we'll use CHEST type
+                // Open a real 3-slot furnace GUI in flight (exact match to the block's 3 slots → no overflow
+                // on disassembly). Smoker/blast furnace render as a furnace GUI (cosmetic; same 3 slots).
+                // Blast-furnace engines also hit this arm, but their storage inventory is inert at runtime
+                // (they use EngineMenuGUI), so it's harmless. Applies to newly assembled ships only; existing
+                // ships keep their persisted CHEST type (the disassembly overflow-drop keeps that safe).
+                storageType = ShipModel.StorageType.FURNACE;
                 name = "Ship Furnace";
                 break;
             case HOPPER:

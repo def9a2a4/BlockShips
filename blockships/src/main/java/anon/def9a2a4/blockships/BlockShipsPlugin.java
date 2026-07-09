@@ -267,7 +267,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                 // Ship wheel
                 if (itemType.equals("ship_wheel")) {
                     ItemStack wheel = displayShip.createShipWheelItem();
-                    player.getInventory().addItem(wheel);
+                    giveOrDrop(player, wheel);
                     sender.sendMessage("Gave you a ship wheel!");
                     return true;
                 }
@@ -275,7 +275,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                 // Captain's Manual (written book)
                 if (itemType.equals("captains_manual")) {
                     ItemStack manual = HelpBookContent.createWrittenBook();
-                    player.getInventory().addItem(manual);
+                    giveOrDrop(player, manual);
                     sender.sendMessage("Gave you a Captain's Manual!");
                     return true;
                 }
@@ -283,7 +283,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                 // Custom items (ship_engine, balloon, etc.)
                 if (getConfig().contains("custom-items." + itemType)) {
                     ItemStack item = displayShip.getItemFactory().createItem(itemType, "_DEFAULT", null);
-                    player.getInventory().addItem(item);
+                    giveOrDrop(player, item);
                     sender.sendMessage("Gave you a " + itemType + "!");
                     return true;
                 }
@@ -292,7 +292,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                 if (getConfig().contains("ships." + itemType)) {
                     ItemStack defaultBanner = new ItemStack(Material.WHITE_BANNER);
                     ItemStack shipKit = DisplayShip.createShipKit(itemType, defaultBanner, "SPRUCE", this);
-                    player.getInventory().addItem(shipKit);
+                    giveOrDrop(player, shipKit);
                     sender.sendMessage("Gave you a " + itemType + " ship kit!");
                     return true;
                 }
@@ -505,24 +505,15 @@ public class BlockShipsPlugin extends JavaPlugin {
 
     private void sendGiveableItems(CommandSender sender) {
         sender.sendMessage("Available items:");
-        sender.sendMessage("  - ship_wheel");
-        sender.sendMessage("  - captains_manual");
-        var customItemsSection = getConfig().getConfigurationSection("custom-items");
-        if (customItemsSection != null) {
-            for (String key : customItemsSection.getKeys(false)) {
-                sender.sendMessage("  - " + key);
-            }
-        }
-        var shipsSection = getConfig().getConfigurationSection("ships");
-        if (shipsSection != null) {
-            for (String key : shipsSection.getKeys(false)) {
-                sender.sendMessage("  - " + key);
-            }
+        for (String name : getGiveableItemNames()) {
+            sender.sendMessage("  - " + name);
         }
     }
 
     private List<String> getGiveableItemNames() {
-        List<String> items = new ArrayList<>();
+        // LinkedHashSet: ship_wheel/captains_manual are also present in the custom-items config section,
+        // so a plain list would show them twice. Dedupe while preserving order.
+        java.util.Set<String> items = new java.util.LinkedHashSet<>();
         items.add("ship_wheel");
         items.add("captains_manual");
         var customItemsSection = getConfig().getConfigurationSection("custom-items");
@@ -533,7 +524,18 @@ public class BlockShipsPlugin extends JavaPlugin {
         if (shipsSection != null) {
             items.addAll(shipsSection.getKeys(false));
         }
-        return items;
+        return new ArrayList<>(items);
+    }
+
+    /**
+     * Gives an item to a player, dropping any that doesn't fit at their feet instead of silently losing it
+     * (Bukkit's addItem returns leftovers when the inventory is full and does NOT auto-drop them).
+     */
+    private void giveOrDrop(org.bukkit.entity.Player p, ItemStack item) {
+        if (item == null) return;
+        for (ItemStack leftover : p.getInventory().addItem(item).values()) {
+            p.getWorld().dropItemNaturally(p.getLocation(), leftover);
+        }
     }
 
     @Override

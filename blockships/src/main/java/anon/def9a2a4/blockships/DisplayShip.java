@@ -198,6 +198,9 @@ public class DisplayShip implements Listener {
                     plugin.getLogger().info("Recovered unregistered ship " + shipId + " in chunk " + chunk.getX() + "," + chunk.getZ());
                     recovered++;
                 }
+            } catch (Exception e) {
+                // Never let one bad ship abort recovery of the rest of the startup sweep.
+                plugin.getLogger().warning("Failed to recover ship " + shipId + ", skipping: " + e.getMessage());
             } finally {
                 shipsBeingRecovered.remove(shipId);
             }
@@ -489,6 +492,11 @@ public class DisplayShip implements Listener {
                                 } else {
                                     plugin.getLogger().info("Recovered ship " + shipId + " from chunk load at " + chunkX + "," + chunkZ);
                                 }
+                            } catch (Exception e) {
+                                // recoverEntities (and other per-ship work) is otherwise unguarded here — a
+                                // throw would skip the rest of this chunk's batch. Skip just this ship.
+                                plugin.getLogger().warning("Failed to recover ship " + shipId + ", skipping: " + e.getMessage());
+                                failedRecovery.add(shipId);
                             } finally {
                                 shipsBeingRecovered.remove(shipId);
                             }

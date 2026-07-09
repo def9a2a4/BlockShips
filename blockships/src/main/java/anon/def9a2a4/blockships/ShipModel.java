@@ -474,7 +474,11 @@ public final class ShipModel {
         CHEST(27, null),
         DOUBLE_CHEST(54, null),
         DROPPER(9, null),
-        HOPPER(5, org.bukkit.event.inventory.InventoryType.HOPPER);
+        HOPPER(5, org.bukkit.event.inventory.InventoryType.HOPPER),
+        // Real 3-slot furnace GUI for furnace/smoker/blast-furnace blocks in flight. Exact size match to the
+        // real block → zero overflow on disassembly. Result slot is take-only (correct furnace behaviour);
+        // no smelting occurs while assembled (no ticking block).
+        FURNACE(3, org.bukkit.event.inventory.InventoryType.FURNACE);
 
         public final int slots;
         /**
@@ -514,7 +518,7 @@ public final class ShipModel {
                 storageType = StorageType.valueOf(typeStr);
             } catch (IllegalArgumentException e) {
                 throw new IllegalArgumentException("Invalid storage type: " + typeStr +
-                    ". Valid types: CHEST, DOUBLE_CHEST, DROPPER, HOPPER");
+                    ". Valid types: CHEST, DOUBLE_CHEST, DROPPER, HOPPER, FURNACE");
             }
 
             // Read name (optional, defaults to storage type name)
