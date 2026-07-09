@@ -426,13 +426,17 @@ async function testPostRecoverySteeringBase(testName, spawnFn, isAirship = false
   await sleep(300)
 
   const endPos = bot.entity.position
+  // Assert DIRECTIONAL horizontal travel, not just total displacement: forward steering drives the
+  // ship west (negative X), so require >=2 blocks westward. Total-distance > 1.0 is a false negative —
+  // the dismount deck/seat offset alone clears it even if the recovered ship never actually moved.
+  const dx = endPos.x - startPos.x
   const moved = endPos.distanceTo(startPos)
-  say(`Moved ${moved.toFixed(1)} blocks`)
+  say(`Moved ${moved.toFixed(1)} blocks (dX=${dx.toFixed(1)})`)
 
-  if (moved > 1.0) {
+  if (dx <= -2.0) {
     pass(testName)
   } else {
-    fail(testName, 'Recovered ship did not respond to steering')
+    fail(testName, `Recovered ship did not respond to steering: expected >=2 blocks westward (negative X), got dX=${dx.toFixed(2)} (moved ${dx > 0 ? 'east' : dx < 0 ? 'west but <2' : 'nowhere'})`)
   }
 }
 
