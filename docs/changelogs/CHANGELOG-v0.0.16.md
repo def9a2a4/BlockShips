@@ -11,7 +11,8 @@
   - Server admins who prefer the old fixed-speed behavior can turn the whole system off with `custom-ships.stats.enabled: false` — custom ships then use fixed default speeds and ignore sails/engines/mass
   - **The stats system is disabled by default** (`custom-ships.stats.enabled: false`) pending a rework in a future update. Set it to `true` to opt in
 
-- **More blocks usable in custom ships:** Chiseled bookshelves, shelves (1.21.9+), and signs can now be part of a ship — their contents and sign text are preserved across assembly and disassembly ([#23](https://github.com/def9a2a4/BlockShips/issues/23))
+- **More blocks usable in custom ships:** Chiseled bookshelves, shelves (1.21.9+), and signs can now be part of a ship, and their contents, sign text, and custom (anvil) names are preserved across assembly and disassembly ([#23](https://github.com/def9a2a4/BlockShips/issues/23))
+- **Ship assembly is now crash- and data-safe:** hoppers no longer crash assembly, a failed assembly can no longer empty your containers, and plain furnaces/smokers no longer lose items stored in them on disassembly
 
 - **ProtocolLib is now optional on Paper 1.21.2+:** Ship controls use Minecraft's native input event on newer servers, so you no longer need to install ProtocolLib there. Pre-1.21.2 servers still require it. Now builds against and supports up to 1.21.11 ([#28](https://github.com/def9a2a4/BlockShips/issues/28))
 
@@ -206,6 +207,57 @@ Note: due to a `BlockDisplay` limitation, shelf/bookshelf items and sign text ar
 
 ## Bug Fixes
 
+### Hopper Ships Crashed; A Failed Assembly Destroyed Container Contents (8ea5b92, 587e90a, 30f269c, 12045ef)
+
+A cluster of assembly-lifecycle bugs:
+
+- A ship containing a **hopper** threw on assembly. The in-flight storage GUI is built with `Bukkit.createInventory(size)`, which requires a multiple of 9 slots, and a hopper has 5. Odd-sized storage now uses the `InventoryType` overload, which has no such restriction (8ea5b92).
+- The scan serialized and **cleared every container** before the ship object was built, so *any* failure during assembly permanently emptied every chest/barrel/furnace on the ship. The clear is now deferred until the blocks are actually removed, so a failed assembly leaves the world untouched (587e90a).
+- A mid-assembly failure also left already-spawned display/collision entities as invisible orphans that multiplied on each retry; they're now torn down on failure (30f269c).
+- A failed assembly now shows the player a clear error with a report link and logs the real cause, instead of failing silently (12045ef).
+
+### Furnace/Smoker Items Lost on Disassembly (30f269c, bef8292)
+
+A plain furnace, smoker, or blast furnace on a ship opened a 27-slot chest GUI in flight (they have no dedicated storage type), but on disassembly only the real block's 3 slots were restored — anything in the other slots was silently destroyed. Overflow items are now dropped at the block instead of deleted (30f269c), and plain furnaces now open a real 3-slot furnace GUI in flight, so newly assembled ships have no mismatch at all (bef8292).
+
+### Assembly & Disassembly Hardened Against Bad Block Data (bef8292, 699a394)
+
+Restoring a block's metadata on disassembly (banner/sign colors, sign text, container items, skull profiles) was unguarded, so one bad value threw out of the loop and left the ship half-placed but still registered as alive. Each block's metadata restore is now isolated — a failure skips only that block's decoration, and the ship still fully disassembles. A sign with no dye color also threw during the assembly scan (the color getter is nullable) and now defaults to black (699a394). And a hand-edited or migrated save whose stored slot index isn't a plain integer no longer aborts the storage restore.
+
+### Leads Broken When Disassembling a Rotated Ship (699a394)
+
+Disassembling a ship rotated 90/180/270° could drop the leads on leashed animals. The restored fence is positioned with rounding (to cancel a tiny floating-point error from the rotation), but the lead-hitch was placed with truncation, so it could land one block off the fence, in the air, and pop off. The hitch now rounds to match the fence.
+
+### Renamed Containers and Banners Lost Their Names (a760209)
+
+A block's custom (anvil) name lives in tile-entity data that block data can't carry, so a renamed chest, barrel, furnace, hopper, dropper, dispenser, or banner lost its name across an assemble/disassemble cycle and showed a generic "Ship Chest" label on its in-flight GUI. Custom names now travel with the ship and are reapplied on disassembly, and the in-flight GUI shows the real name with full color and formatting.
+
+### Mob Heads and Wall-Mounted Heads (799ca40)
+
+Mob heads (zombie, skeleton, creeper, piglin, dragon) fell through to the generic block-display path, which renders only the baked model — so floor mob heads lost their rotation and wall heads rendered wrong. Every head (player and mob) now uses the same item-display path player heads already use: the scanner captures rotation/facing for any skull, wall variants map to their floor item form, and a shared transform helper is used by the spawn, per-tick, and chunk-recovery paths (the recovery path previously applied floor-only math to wall heads, so even player wall heads jumped on reload). Wall heads (player and mob, except the full-block dragon head) also now get a collider aligned to the rendered head. Largely resolves [#20](https://github.com/def9a2a4/BlockShips/issues/20).
+
+### One Bad Ship Aborted Recovery of All Others (bef8292)
+
+When a ship's saved data no longer matched its model (the definition changed between save and load), recovery threw — and because the startup sweep had no per-ship error handling, it aborted recovery of every remaining ship across all chunks and worlds. The stale block is now skipped with a warning, and both recovery loops catch per-ship failures.
+
+### Unmanned Ships Could Fly Forever (47b7cb3)
+
+A ship's motion was driven by the last input flags, which clear only on a normal dismount. If a driver left the seat without one (died while seated, or was teleported to another world), the flags stuck and the ship kept accelerating and turning with nobody aboard. Horizontal movement, rotation, and fuel burn are now gated on the ship having a real driver (vertical already was), so an abandoned ship coasts to a stop.
+
+### Stats Shown Even When the System Was Off (47b7cb3)
+
+With the stats system disabled (the default), physics uses fixed speeds, but the wheel menu and "ship detected" chat still printed power ratio, speed %, sail/engine points, and "add sails!" hints — making it look like the toggle did nothing. Those are now suppressed with a brief "stats disabled" note; block count, weight, mass, and health still show.
+
+### Engine Exploit, Recipe, and /blockships give Fixes (535a4eb, 30f269c, bef8292)
+
+- **Free engine fuel:** an engine counted as fueled if it held *any* item, but only burnable items are consumed — so a non-burnable item (raw iron, cobblestone) granted permanent thrust that never depleted. Only burnable fuel now counts (535a4eb). *(Only relevant with `stats.enabled: true`.)*
+- **Captain's Manual recipe:** the shapeless recipe matched on base material only, so any player head (mob head, decorative head, balloon) + a book crafted the manual and silently consumed the wrong item. It now validates the real ship-wheel tag (30f269c).
+- **/blockships give:** the give list and tab-complete listed `ship_wheel` and `captains_manual` twice; a full inventory ate the item instead of dropping it; and a misconfigured `base-material` threw a raw error, which also broke plugin startup. All three fixed (bef8292).
+
+### Command Help & Error Consistency (e869ed5)
+
+An unknown `/blockships` subcommand used to print the raw plugin.yml usage string; it now shows a clear "Unknown subcommand" message plus the in-game help, which is the single source of truth for the command list. All error and permission-denied messages now read consistently in red. The `plugin.yml` metadata was also corrected (author, and the missing `highlightseats`/`spawndrowned` entries).
+
 ### Circular resolveWheelData Call (65112f3)
 
 `computeEffectiveStats` called `resolveWheelData` which called `computeEffectiveStats` again, creating infinite recursion in certain code paths. Broken by restructuring the call chain to avoid the cycle.
@@ -342,7 +394,7 @@ The default `special-drowned.spawn-chance` is lowered from `0.05` (5%) to `0.02`
 These are tracked but not resolved in v0.0.16:
 
 - **Proper tile entity support ([#23](https://github.com/def9a2a4/BlockShips/issues/23)):** decorated pots and other data-bearing blocks still aren't supported, and sign text is preserved but not rendered while a ship is in flight.
-- **Wall heads ([#20](https://github.com/def9a2a4/BlockShips/issues/20)):** player/mob heads placed on walls still display incorrectly and lack colliders. Floor-mounted heads work.
+- **Dragon head on walls ([#20](https://github.com/def9a2a4/BlockShips/issues/20)):** wall-mounted heads now render correctly and have colliders; the full-block dragon head is the one variant still not specially handled.
 - **Partial destruction ([#24](https://github.com/def9a2a4/BlockShips/issues/24)):** only whole-ship destroy/disassemble (#27) is implemented; per-block / progressive destruction is not.
 - **Older-version visual desync ([#7](https://github.com/def9a2a4/BlockShips/issues/7)):** the chunk-reload rotation snap is fixed, but the more severe collider/skin desync reported on legacy versions may still occur.
 - **ProtocolLib reports ([#28](https://github.com/def9a2a4/BlockShips/issues/28)):** the underlying cause should be resolved by the optional-ProtocolLib path on 1.21.2+, but the issue remains open pending reporter confirmation.
