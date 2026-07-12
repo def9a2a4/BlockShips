@@ -10,7 +10,7 @@ Open issue count: **16**
 
 - **Labels:** documentation, help wanted, more-info-needed
 - **Link:** https://github.com/def9a2a4/BlockShips/issues/29
-- **Comments:** 3
+- **Comments:** 4
 
 how do i disable that?
 
@@ -42,13 +42,17 @@ how do i disable that?
 
 > Thanks for the suggestion! I'll lower their default spawn rates in the next update.
 
+**def9a2a4** (2026-06-21T21:57:59Z):
+
+> Hi @luis0543, I've updated the spawn rates in 0.0.16 (coming soon!). If you want, check out a pre-release here and tell me if it works: https://github.com/def9a2a4/BlockShips/actions/runs/27918603858/artifacts/7779641575
+
 ---
 
 ## #28 — potential protocollib issue?
 
 - **Labels:** more-info-needed
 - **Link:** https://github.com/def9a2a4/BlockShips/issues/28
-- **Comments:** 5
+- **Comments:** 6
 
 So when i dont have protocol thingy  i can sit in the ship but it doesnt move
 so i add the plugin and then i cant sit in the ship
@@ -82,13 +86,17 @@ idk why its not working or if i need to set up protocol
 
 > having those two plugins installed should do it, for the most part. can you provide information about the server you are running, and server startup logs?
 
+**def9a2a4** (2026-06-21T21:57:11Z):
+
+> Hi @axolotltimmy3-ops , the latest update (0.0.16) removes the dependency on ProtocolLib for server versions over 1.21.2 -- if you want, check out a pre-release here and tell me if it works: https://github.com/def9a2a4/BlockShips/actions/runs/27918603858/artifacts/7779641575
+
 ---
 
 ## #27 — destruction - complete destruction, no block placement
 
 - **Labels:** enhancement
 - **Link:** https://github.com/def9a2a4/BlockShips/issues/27
-- **Comments:** 4
+- **Comments:** 5
 
 When a ship is destroyed, it reverts back into a block format. I would much prefer for combat immersion if the ship was just gone once destroyed. Lose a battle, the sky or sea isn't littered with ship remains, instead its just completely gone
 
@@ -119,6 +127,10 @@ When a ship is destroyed, it reverts back into a block format. I would much pref
 > I completely agree that the current firing control system is clunky, please see my plans for it in #22 and feel free to comment there. Ideally I would like it to be based on vanilla redstone but this might be too complex to implement. Feedback on this would be very very welcome!
 > 
 > Please also see #16 for other movecraft-related issues
+
+**def9a2a4** (2026-06-21T21:58:44Z):
+
+> Hi @Grievous07, I added this in 0.0.16, although its not enabled by default. If you want, check out a pre-release here and tell me if it works: https://github.com/def9a2a4/BlockShips/actions/runs/27918603858/artifacts/7779641575
 
 ---
 
@@ -246,7 +258,7 @@ I have yet to nail down many of the specifics, in particular with regards to the
 
 - **Labels:** enhancement, help wanted, plugins-compat
 - **Link:** https://github.com/def9a2a4/BlockShips/issues/17
-- **Comments:** 7
+- **Comments:** 9
 
 It'd be awesome if the ships didn't bug out when entering a towny claim, and impossible to re-enter when left. 
 
@@ -309,6 +321,16 @@ I'd love to see it work with Towny or claim plugins, especially when it comes to
 **def9a2a4** (2026-06-08T20:27:57Z):
 
 > @mayacel, thanks! does adjusting the towny config resolve your issue? this will help me determine whether my built-in fix will work
+
+**def9a2a4** (2026-06-21T21:59:53Z):
+
+> Hi @mayacel and @ContainAlphanumericCharacters , I've done my best to support towny in v0.0.16 -- If you want, check out a pre-release here and tell me if it works: https://github.com/def9a2a4/BlockShips/actions/runs/27918603858/artifacts/7779641575
+> 
+> Please note that this is a pre-release, might have some bugs, and should be run on test servers (or with backups) only.
+
+**mayacel** (2026-06-21T23:39:07Z):
+
+> @def9a2a4 seems fine to me
 
 ---
 
@@ -525,7 +547,7 @@ idk if it would be possible to optimize this, but playing this on old hardware o
 
 - **Labels:** bug, version-compat, maybe
 - **Link:** https://github.com/def9a2a4/BlockShips/issues/7
-- **Comments:** 5
+- **Comments:** 6
 
     BlockShips v0.0.12 
     Server: Purpur 1.21.1
@@ -578,5 +600,9 @@ Hello! I found a bug. At one point, after I left my ship parked and went to test
 > Hi @Ennemar,
 > 
 > Although I have not managed to look into this bug specifically, the latest update 0.0.14 contains various bugfixes and improvements across the board. If you can give it a try, let me know if this issue persists: https://modrinth.com/plugin/blockships/version/0.0.14
+
+**def9a2a4** (2026-06-21T22:00:44Z):
+
+> Hi @Ennemar , 0.0.16 might fix some of these issues. If you want, check out a pre-release here and tell me if it works: https://github.com/def9a2a4/BlockShips/actions/runs/27918603858/artifacts/7779641575
 
 ---
