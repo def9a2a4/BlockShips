@@ -248,12 +248,38 @@ public class ShipWheelManager {
         // shipType is "custom" for custom block ships
         // Pass empty customization - custom ships use scanned blocks as-is (no wood type replacement)
         // Display/collision offsets are applied inside ShipInstance based on config
-        ShipInstance ship = new ShipInstance(plugin, "custom", model, wheelLoc, ShipCustomization.empty());
-        ship.sourceModel = model;  // Store the model for disassembly
+        ShipInstance ship = null;
+        try {
+            ship = new ShipInstance(plugin, "custom", model, wheelLoc, ShipCustomization.empty());
+            ship.sourceModel = model;  // Store the model for disassembly
 
-        // Transfer leads from world to ship's leadable shulkers BEFORE removing blocks
-        // This must happen while the fence blocks still exist (LeashHitch attached to fence)
-        transferLeadsToShip(ship, model, wheelLoc);
+            // Transfer leads from world to ship's leadable shulkers BEFORE removing blocks
+            // This must happen while the fence blocks still exist (LeashHitch attached to fence)
+            transferLeadsToShip(ship, model, wheelLoc);
+        } catch (Throwable t) {
+            // Assembly failed before any blocks were removed (removeBlocks is below), so the world
+            // is untouched. Tear down anything already spawned: on a constructor throw the
+            // constructor's own catch already cleaned up (ship stays null); on a leads throw the
+            // ship is fully built but unregistered, so destroy it here. Guard destroy so a cleanup
+            // failure can't mask the original cause in the log.
+            if (ship != null) {
+                try {
+                    ship.destroy();
+                } catch (Throwable cleanup) {
+                    plugin.getLogger().warning("Cleanup after failed assembly also failed: " + cleanup.getMessage());
+                }
+            }
+            plugin.getLogger().log(java.util.logging.Level.SEVERE,
+                "Ship assembly failed for " + player.getName(), t);
+            player.sendMessage(net.kyori.adventure.text.Component.text(
+                "Ship assembly failed: " + t.getClass().getSimpleName()
+                    + (t.getMessage() != null ? ": " + t.getMessage() : ""),
+                net.kyori.adventure.text.format.NamedTextColor.RED));
+            player.sendMessage(net.kyori.adventure.text.Component.text(
+                "This is a bug - please report it at https://github.com/def9a2a4/BlockShips/issues",
+                net.kyori.adventure.text.format.NamedTextColor.RED));
+            return false;
+        }
 
         // NOW remove the blocks from the world (after leads are transferred)
         BlockStructureScanner.removeBlocks(wheelLoc, model);
