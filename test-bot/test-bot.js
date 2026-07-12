@@ -377,6 +377,10 @@ async function testWeirdBlocksShip() {
     return
   }
 
+  // buildCustomShipWithWheel leaves a ship wheel in the bot's hand (creative place doesn't consume
+  // it); clear it now so right-clicking the hopper opens the container instead of the wheel handler.
+  await clearInventory(bot)
+
   // Preload the hopper (5-slot container) with coal, including the last slot, so disassembly
   // exercises the container item round-trip and the 5-slot inventory boundary.
   const hopperPos = blockCharWorldPos(WEIRD_SHIP, 'H', RUNWAY_X, 101, RUNWAY_Z - 1)
@@ -394,12 +398,24 @@ async function testWeirdBlocksShip() {
     fail(testName, `Hopper not placed at ${hopperPos.x},${hopperPos.y},${hopperPos.z} (got ${hopperBlock ? hopperBlock.name : 'none'})`)
     return
   }
-  bot.chat(`/item replace block ${hopperPos.x} ${hopperPos.y} ${hopperPos.z} container.0 minecraft:coal 3`)
+  // NOTE: /item replace block requires the `with` keyword before the item; without it the
+  // server rejects the command silently (bot.chat surfaces no error) and the hopper stays empty.
+  bot.chat(`/item replace block ${hopperPos.x} ${hopperPos.y} ${hopperPos.z} container.0 with minecraft:coal 3`)
   await sleep(200)
-  bot.chat(`/item replace block ${hopperPos.x} ${hopperPos.y} ${hopperPos.z} container.4 minecraft:coal 2`)
+  bot.chat(`/item replace block ${hopperPos.x} ${hopperPos.y} ${hopperPos.z} container.4 with minecraft:coal 2`)
   await sleep(500)
 
-  await clearInventory(bot)
+  // Verify the preload actually landed, so a bad preload fails as "preload failed" rather than
+  // surfacing later as an ambiguous round-trip mismatch. Reading a container needs the bot in
+  // interaction range, so tp onto the hopper, read, then tp back to the runway for assembly.
+  bot.chat(`/tp @s ${hopperPos.x + 0.5} ${hopperPos.y + 1} ${hopperPos.z + 0.5}`)
+  await sleep(400)
+  const preloaded = await readContainerItemCount(bot, hopperBlock, 'coal')
+  if (preloaded !== WEIRD_COAL_TOTAL) {
+    fail(testName, `Hopper preload failed: expected ${WEIRD_COAL_TOTAL} coal in the world hopper, found ${preloaded}`)
+    return
+  }
+  await teleportToRunway()
 
   say('Assembling weird ship...')
   try {
