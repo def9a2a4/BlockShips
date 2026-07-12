@@ -681,7 +681,11 @@ public class ShipWheelManager {
             org.joml.Vector3f pos = new org.joml.Vector3f();
             part.local.getTranslation(pos);
             org.joml.Vector3f rotatedPos = BlockStructureScanner.rotatePosition(pos, rotationDelta);
-            Location fenceLoc = shipLoc.clone().add(rotatedPos.x, rotatedPos.y, rotatedPos.z);
+            // Round to match placeBlocks (BlockStructureScanner:775-781): getBlock() below floors, so an
+            // unrounded rotated coord that landed just under an integer (cos(90°)≈6e-17 error) would put the
+            // LeashHitch one block off the fence and the lead would pop off on a rotated ship's disassembly.
+            Location fenceLoc = shipLoc.clone().add(
+                Math.round(rotatedPos.x), Math.round(rotatedPos.y), Math.round(rotatedPos.z));
 
             // Spawn LeashHitch at the fence block
             org.bukkit.entity.LeashHitch hitch = fenceLoc.getWorld().spawn(

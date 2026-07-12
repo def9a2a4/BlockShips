@@ -471,7 +471,10 @@ public class BlockStructureScanner {
                     }
                     String key = side.name().toLowerCase();
                     signData.put(key + "_lines", lines);
-                    signData.put(key + "_color", signSide.getColor().name());
+                    // getColor() is @Nullable (Colorable); default to BLACK to avoid an NPE that would abort
+                    // the scan. Restore side (:924-925) already tolerates null.
+                    org.bukkit.DyeColor signColor = signSide.getColor();
+                    signData.put(key + "_color", (signColor != null ? signColor : org.bukkit.DyeColor.BLACK).name());
                     signData.put(key + "_glowing", signSide.isGlowingText());
                 }
                 signData.put("waxed", sign.isWaxed());
