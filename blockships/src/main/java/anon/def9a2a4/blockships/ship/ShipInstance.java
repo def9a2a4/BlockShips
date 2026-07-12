@@ -481,8 +481,15 @@ public class ShipInstance {
             ShipModel.ModelPart p = model.parts.get(blockIndex);
             final int currentBlockIndex = blockIndex;  // For use in lambda
 
-            // Check if this part needs special rendering (player head or banner)
+            // Check if this part needs special rendering (head/skull or banner).
+            // Heads (player AND mob) render as ItemDisplay + HEAD transform: BlockDisplay
+            // cannot render a skull's rotation (skulls draw via a block-entity renderer).
+            // skull_rotation/skull_facing are captured for every head; only player heads
+            // additionally carry skull_profile. Their presence marks "this part is a head".
             boolean hasSkullProfile = p.rawYaml.containsKey("skull_profile");
+            boolean hasHead = hasSkullProfile
+                              || p.rawYaml.containsKey("skull_rotation")
+                              || p.rawYaml.containsKey("skull_facing");
             // Detect banners by rotation/facing keys (works for both plain and patterned banners)
             boolean hasBannerPatterns = p.rawYaml.containsKey("banner_patterns") ||
                                         p.rawYaml.containsKey("banner_rotation") ||
@@ -491,28 +498,41 @@ public class ShipInstance {
             org.bukkit.entity.Display child;
             Matrix4f displayTransform;  // Transform used for DisplayInstance (may include rotation)
 
-            if (hasSkullProfile || hasBannerPatterns) {
+            if (hasHead || hasBannerPatterns) {
                 // Spawn as ItemDisplay to preserve textures
                 child = w.spawn(displaySpawnLoc, org.bukkit.entity.ItemDisplay.class, id -> {
                     // Create ItemStack for the display
                     ItemStack displayItem;
 
-                    if (hasSkullProfile) {
-                        // Create player head item with texture
-                        displayItem = new ItemStack(Material.PLAYER_HEAD);
-                        ItemMeta meta = displayItem.getItemMeta();
+                    if (hasHead) {
+                        // Create head/skull item. Wall variants have no item form, so map
+                        // them to their floor item (mirrors the banner _WALL_ remap below).
+                        Material headMaterial = Material.PLAYER_HEAD;
+                        String headBlockName = String.valueOf(p.rawYaml.get("block"));
+                        if (headBlockName.contains("_WALL_HEAD")) {
+                            headBlockName = headBlockName.replace("_WALL_HEAD", "_HEAD");
+                        } else if (headBlockName.contains("_WALL_SKULL")) {
+                            headBlockName = headBlockName.replace("_WALL_SKULL", "_SKULL");
+                        }
+                        try {
+                            headMaterial = Material.valueOf(headBlockName);
+                        } catch (IllegalArgumentException ex) {
+                            // Unknown material - fall back to a player head so assembly never aborts
+                            plugin.getLogger().warning("Unknown head material '" + headBlockName
+                                + "' for block " + currentBlockIndex + ", using PLAYER_HEAD. "
+                                + "Please report at " + BlockShipsPlugin.ISSUES_URL);
+                        }
+                        displayItem = new ItemStack(headMaterial);
 
-                        if (meta instanceof org.bukkit.inventory.meta.SkullMeta) {
-                            org.bukkit.inventory.meta.SkullMeta skullMeta = (org.bukkit.inventory.meta.SkullMeta) meta;
-                            String profileData = (String) p.rawYaml.get("skull_profile");
-
-                            // Deserialize and apply profile
+                        // Apply a stored skin profile (player heads only; mob heads have none)
+                        String profileData = (String) p.rawYaml.get("skull_profile");
+                        if (profileData != null
+                                && displayItem.getItemMeta() instanceof org.bukkit.inventory.meta.SkullMeta skullMeta) {
                             com.destroystokyo.paper.profile.PlayerProfile profile = deserializeSkullProfile(profileData);
                             if (profile != null) {
                                 skullMeta.setPlayerProfile(profile);
+                                displayItem.setItemMeta(skullMeta);
                             }
-
-                            displayItem.setItemMeta(skullMeta);
                         }
                     } else {
                         // Create banner item with patterns
@@ -569,36 +589,12 @@ public class ShipInstance {
                         finalTransform.translate(config.customDisplayOffset);
                     }
 
-                    if (hasSkullProfile) {
-                        // Player heads: use HEAD transform mode (displays as worn on head)
+                    if (hasHead) {
+                        // Heads (player + mob): use HEAD transform mode (displays as worn on head)
                         id.setItemDisplayTransform(org.bukkit.entity.ItemDisplay.ItemDisplayTransform.HEAD);
 
                         Matrix4f skullTransform = new Matrix4f(finalTransform);
-
-                        // Calculate yaw from stored rotation data
-                        float skullYaw = 0.0f;
-                        boolean isWallSkull = p.rawYaml.containsKey("skull_facing");
-                        if (p.rawYaml.containsKey("skull_rotation")) {
-                            // Floor head: 16-step rotation
-                            BlockFace rotation = safeBlockFace(p.rawYaml, "skull_rotation", BlockFace.NORTH);
-                            skullYaw = getYawFromBlockFace(rotation);
-                        } else if (isWallSkull) {
-                            // Wall head: 4-direction facing
-                            BlockFace facing = safeBlockFace(p.rawYaml, "skull_facing", BlockFace.NORTH);
-                            skullYaw = getYawFromBlockFace(facing);
-                        }
-
-                        // Position skull: move to block center, rotate
-                        if (isWallSkull) {
-                            // Wall skulls: +0.25 Y offset, +180 deg yaw, +0.25 Z toward wall
-                            skullTransform.translate(0.5f, 0.5f + 0.25f, 0.5f);
-                            skullTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw + 180));
-                            skullTransform.translate(0.0f, 0.0f, 0.25f);
-                        } else {
-                            // Floor skulls: centered at block center
-                            skullTransform.translate(0.5f, 0.5f, 0.5f);
-                            skullTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw));
-                        }
+                        applySkullTransform(skullTransform, p.rawYaml);
 
                         id.setTransformationMatrix(new Matrix4f(spawnDisplayWorld).mul(skullTransform));
                     } else {
@@ -613,27 +609,9 @@ public class ShipInstance {
                 // ItemDisplay: apply same rotation transforms as used above for tick() updates
                 // Note: displayOffset is applied in tick() via T_display, not here
                 displayTransform = new Matrix4f(p.local);
-                if (hasSkullProfile) {
-                    // Apply skull rotation to displayTransform (must match spawn transforms above)
-                    float skullYaw = 0.0f;
-                    boolean isWallSkull = p.rawYaml.containsKey("skull_facing");
-                    if (p.rawYaml.containsKey("skull_rotation")) {
-                        BlockFace rotation = safeBlockFace(p.rawYaml, "skull_rotation", BlockFace.NORTH);
-                        skullYaw = getYawFromBlockFace(rotation);
-                    } else if (isWallSkull) {
-                        BlockFace facing = safeBlockFace(p.rawYaml, "skull_facing", BlockFace.NORTH);
-                        skullYaw = getYawFromBlockFace(facing);
-                    }
-                    if (isWallSkull) {
-                        // Wall skulls: +0.25 Y offset, +180 deg yaw, +0.25 Z toward wall
-                        displayTransform.translate(0.5f, 0.5f + 0.25f, 0.5f);
-                        displayTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw + 180));
-                        displayTransform.translate(0.0f, 0.0f, 0.25f);
-                    } else {
-                        // Floor skulls: centered at block center
-                        displayTransform.translate(0.5f, 0.5f, 0.5f);
-                        displayTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw));
-                    }
+                if (hasHead) {
+                    // Apply skull rotation to displayTransform (must match spawn transform above)
+                    applySkullTransform(displayTransform, p.rawYaml);
                 } else if (hasBannerPatterns) {
                     displayTransform = calculateBannerTransform(new Matrix4f(p.local), p.rawYaml);
                 }
@@ -1620,6 +1598,38 @@ public class ShipInstance {
         return transform;
     }
 
+    /**
+     * Applies the head/skull display transform (in-place) onto {@code transform}.
+     * Handles both floor heads (16-step {@code skull_rotation}) and wall heads
+     * (4-direction {@code skull_facing}). Shared by the spawn transform, the
+     * per-tick {@code DisplayInstance.base}, and the chunk-recovery path so the
+     * three cannot drift. Applies to player and mob heads identically.
+     */
+    private void applySkullTransform(Matrix4f transform, Map<?, ?> rawYaml) {
+        float skullYaw = 0.0f;
+        boolean isWallSkull = rawYaml.containsKey("skull_facing");
+        if (rawYaml.containsKey("skull_rotation")) {
+            // Floor head: 16-step rotation
+            BlockFace rotation = safeBlockFace(rawYaml, "skull_rotation", BlockFace.NORTH);
+            skullYaw = getYawFromBlockFace(rotation);
+        } else if (isWallSkull) {
+            // Wall head: 4-direction facing
+            BlockFace facing = safeBlockFace(rawYaml, "skull_facing", BlockFace.NORTH);
+            skullYaw = getYawFromBlockFace(facing);
+        }
+
+        if (isWallSkull) {
+            // Wall skulls: +0.25 Y offset, +180 deg yaw, +0.25 Z toward wall
+            transform.translate(0.5f, 0.5f + 0.25f, 0.5f);
+            transform.rotateY((float) java.lang.Math.toRadians(-skullYaw + 180));
+            transform.translate(0.0f, 0.0f, 0.25f);
+        } else {
+            // Floor skulls: centered at block center
+            transform.translate(0.5f, 0.5f, 0.5f);
+            transform.rotateY((float) java.lang.Math.toRadians(-skullYaw));
+        }
+    }
+
     // Start a slower-polling task to check for movement when ship is idle
     private void startIdleCheckTask() {
         if (idleCheckTask != null) {
@@ -2407,24 +2417,19 @@ public class ShipInstance {
                 transform.translate(-0.5f, 0f, -0.5f);
             }
 
-            // Handle skulls and banners
-            boolean hasSkullProfile = part.rawYaml.containsKey("skull_profile");
+            // Handle heads/skulls and banners
+            boolean hasHead = part.rawYaml.containsKey("skull_profile") ||
+                              part.rawYaml.containsKey("skull_rotation") ||
+                              part.rawYaml.containsKey("skull_facing");
             // Detect banners by rotation/facing keys (works for both plain and patterned banners)
             boolean hasBannerPatterns = part.rawYaml.containsKey("banner_patterns") ||
                                         part.rawYaml.containsKey("banner_rotation") ||
                                         part.rawYaml.containsKey("banner_facing");
 
-            if (hasSkullProfile) {
-                float skullYaw = 0.0f;
-                if (part.rawYaml.containsKey("skull_rotation")) {
-                    BlockFace rotation = safeBlockFace(part.rawYaml, "skull_rotation", BlockFace.NORTH);
-                    skullYaw = getYawFromBlockFace(rotation);
-                } else if (part.rawYaml.containsKey("skull_facing")) {
-                    BlockFace facing = safeBlockFace(part.rawYaml, "skull_facing", BlockFace.NORTH);
-                    skullYaw = getYawFromBlockFace(facing);
-                }
-                transform.translate(0.5f, 0.5f, 0.5f);
-                transform.rotateY((float) java.lang.Math.toRadians(-skullYaw));
+            if (hasHead) {
+                // Use the shared helper so recovery matches the spawn/tick transform
+                // exactly (incl. the wall-head branch this path previously lacked).
+                applySkullTransform(transform, part.rawYaml);
             } else if (hasBannerPatterns) {
                 return calculateBannerTransform(new Matrix4f(part.local), part.rawYaml);
             }

@@ -409,10 +409,24 @@ public class BlockStructureScanner {
             anon.def9a2a4.blockships.blockconfig.CollisionConfig colliderConfig = props.getCollider();
             ShipModel.CollisionConfig collision;
             if (colliderConfig.isEnabled()) {
+                Vector3f colliderOffset = new Vector3f(colliderConfig.getOffset());
+
+                // Wall heads/skulls: shift the 0.5 shulker toward the wall + up so it
+                // sits where the head renders (see applySkullTransform in ShipInstance).
+                // Gate on Skull state + Directional so only wall heads are shifted (not
+                // other small directional blocks), and on size <= 0.5 so dragon's
+                // full-block collider is left centered.
+                if (block.getState() instanceof org.bukkit.block.Skull
+                        && blockData instanceof org.bukkit.block.data.Directional wallDir
+                        && colliderConfig.getSize() <= 0.5f) {
+                    org.bukkit.util.Vector f = wallDir.getFacing().getDirection();
+                    colliderOffset.set(-(float) f.getX() * 0.25f, 0.25f, -(float) f.getZ() * 0.25f);
+                }
+
                 collision = new ShipModel.CollisionConfig(
                     true,
                     colliderConfig.getSize(),
-                    new Vector3f(colliderConfig.getOffset())
+                    colliderOffset
                 );
             } else {
                 collision = new ShipModel.CollisionConfig(false, 1.0f, new Vector3f(0, 0, 0));
@@ -516,25 +530,24 @@ public class BlockStructureScanner {
                 rawYaml.put("display_yaw", facingYaw);
             }
 
-            // Capture special block metadata that BlockData can't preserve
-            // Player heads: store skull profile and rotation
-            if (block.getType() == Material.PLAYER_HEAD || block.getType() == Material.PLAYER_WALL_HEAD) {
-                if (block.getState() instanceof org.bukkit.block.Skull) {
-                    org.bukkit.block.Skull skull = (org.bukkit.block.Skull) block.getState();
-                    com.destroystokyo.paper.profile.PlayerProfile profile = skull.getPlayerProfile();
-                    if (profile != null) {
-                        // Serialize the profile to Base64
-                        rawYaml.put("skull_profile", serializeProfile(profile));
-                    }
+            // Capture special block metadata that BlockData can't preserve.
+            // All heads/skulls (player AND mob) render as ItemDisplay + HEAD transform,
+            // so capture their rotation/facing. Only player heads carry a skin profile.
+            if (block.getState() instanceof org.bukkit.block.Skull) {
+                org.bukkit.block.Skull skull = (org.bukkit.block.Skull) block.getState();
+                com.destroystokyo.paper.profile.PlayerProfile profile = skull.getPlayerProfile();
+                if (profile != null) {
+                    // Serialize the profile to Base64 (player heads only)
+                    rawYaml.put("skull_profile", serializeProfile(profile));
+                }
 
-                    // Store rotation or facing
-                    if (blockData instanceof org.bukkit.block.data.Rotatable) {
-                        org.bukkit.block.data.Rotatable rotatable = (org.bukkit.block.data.Rotatable) blockData;
-                        rawYaml.put("skull_rotation", rotatable.getRotation().name());
-                    } else if (blockData instanceof org.bukkit.block.data.Directional) {
-                        org.bukkit.block.data.Directional directional = (org.bukkit.block.data.Directional) blockData;
-                        rawYaml.put("skull_facing", directional.getFacing().name());
-                    }
+                // Store rotation (floor, 16-step) or facing (wall, 4-direction)
+                if (blockData instanceof org.bukkit.block.data.Rotatable) {
+                    org.bukkit.block.data.Rotatable rotatable = (org.bukkit.block.data.Rotatable) blockData;
+                    rawYaml.put("skull_rotation", rotatable.getRotation().name());
+                } else if (blockData instanceof org.bukkit.block.data.Directional) {
+                    org.bukkit.block.data.Directional directional = (org.bukkit.block.data.Directional) blockData;
+                    rawYaml.put("skull_facing", directional.getFacing().name());
                 }
             }
 
