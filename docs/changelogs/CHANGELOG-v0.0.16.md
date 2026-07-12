@@ -1,23 +1,15 @@
-# v0.0.16 - Ship Stats, Sails & Engines, more block types, wider compatibility, bugfixes
+# v0.0.16 - compatibility, bugfixes, performance, and in-dev ship stats system
 
-# You probably want to reset your configs!
-
-- **Ship speed now dependent on engines and sails:** Ships now have a power-to-mass ratio system that scales speed and rotation based on block composition ([#18](https://github.com/def9a2a4/BlockShips/issues/18))
-  - Wool blocks act as sails (3 power), banners as upgraded sails (7 power), engines provide 30 power when fueled
-  - Heavier ships are slower unless you add more power sources
-  - Sail-only power is capped — engines required to push ships past 80% of max ratio
-  - Engines use fuel, emit smoke when working
-  - Ship info UI shows power ratio, effective speed percentage, and color-coded stats
-  - Server admins who prefer the old fixed-speed behavior can turn the whole system off with `custom-ships.stats.enabled: false` — custom ships then use fixed default speeds and ignore sails/engines/mass
-  - **The stats system is disabled by default** (`custom-ships.stats.enabled: false`) pending a rework in a future update. Set it to `true` to opt in
-
-- **More blocks usable in custom ships:** Chiseled bookshelves, shelves (1.21.9+), and signs can now be part of a ship, and their contents, sign text, and custom (anvil) names are preserved across assembly and disassembly ([#23](https://github.com/def9a2a4/BlockShips/issues/23))
-- **Ship assembly is now crash- and data-safe:** hoppers no longer crash assembly, a failed assembly can no longer empty your containers, and plain furnaces/smokers no longer lose items stored in them on disassembly
+# You probably want to reset/check your configs!
 
 - **ProtocolLib is now optional on Paper 1.21.2+:** Ship controls use Minecraft's native input event on newer servers, so you no longer need to install ProtocolLib there. Pre-1.21.2 servers still require it. Now builds against and supports up to 1.21.11 ([#28](https://github.com/def9a2a4/BlockShips/issues/28))
 
 - **Ship rotation is now smooth and jitter-free!**
   - a recent performance update made this worse, now it's fixed!
+
+- **More blocks usable in custom ships:** Chiseled bookshelves, shelves (1.21.9+), and signs can now be part of a ship, and their contents, sign text, and custom (anvil) names are preserved across assembly and disassembly ([#23](https://github.com/def9a2a4/BlockShips/issues/23))
+
+- **Ship assembly is now crash- and data-safe:** hoppers no longer crash assembly, a failed assembly can no longer empty your containers, and plain furnaces/smokers no longer lose items stored in them on disassembly
 
 - **Alternate (optional) destruction mode:** Ships can be configured to permanently destroy on death instead of disassembling ([#27](https://github.com/def9a2a4/BlockShips/issues/27))
   - Set `custom-ships.destruction-mode: destroy` in config.yml
@@ -29,7 +21,19 @@
   - Workaround config options for Towny are documented in the issue thread
 
 - **Drowned captains are rarer:** the default `special-drowned` spawn chance is lowered from 5% to 2% so they don't overwhelm biomes where drowned spawn heavily ([#29](https://github.com/def9a2a4/BlockShips/issues/29))
-- **New blocks now work without resetting configs:** `blocks.yml`, `items.yml`, and prefab ship models are read from the jar instead of a stale on-disk copy, so newly-supported blocks (like shelves) work on upgraded servers automatically. To customize, drop an edited copy under a new `config/` subfolder
+
+- **New blocks now work without resetting configs:** `blocks.yml`, `items.yml`, and prefab ship models are read from the jar instead of a stale on-disk copy, so newly-supported blocks (like shelves) work on upgraded servers automatically. To customize, drop an edited copy under a new `config/` subfolder. **If you modified these, you should manually merge the configs!**
+
+- **[DISABLED BY DEFAULT] Ship speed now dependent on engines and sails:** Ships now have a power-to-mass ratio system that scales speed and rotation based on block composition ([#18](https://github.com/def9a2a4/BlockShips/issues/18))
+  - Wool blocks act as sails (3 power), banners as upgraded sails (7 power), engines provide 30 power when fueled
+  - Heavier ships are slower unless you add more power sources
+  - Sail-only power is capped — engines required to push ships past 80% of max ratio
+  - Engines use fuel, emit smoke when working
+  - Ship info UI shows power ratio, effective speed percentage, and color-coded stats
+  - Server admins who prefer the old fixed-speed behavior can turn the whole system off with `custom-ships.stats.enabled: false` — custom ships then use fixed default speeds and ignore sails/engines/mass
+  - **The stats system is disabled by default** (`custom-ships.stats.enabled: false`) pending a rework in a future update. Set it to `true` to opt in
+  - rework will probably be via integration with [Mechanism](https://modrinth.com/plugin/mechanism) plugin
+
 - other various bugfixes and improvements
 
 ---
@@ -58,7 +62,7 @@ New config values:
 
 ```yaml
 stats:
-  enabled: true
+  enabled: false  # you must enable the ship stats system here; it's disabled by default
   base-power: 2
   engine-power: 30
   wool-power: 3
@@ -85,7 +89,7 @@ stats:
 
 ### Engine System (16e7a07, 8dd07a7)
 
-New custom item: Ship Engine. Crafted from 8 copper ingots surrounding a blast furnace (shaped recipe). Appears as a blast furnace with enchant glint (f542112 — new `enchant-glint` config field for custom items).
+New custom item: Ship Engine. Crafted from 8 copper ingots surrounding a blast furnace (shaped recipe). Appears as a blast furnace with enchant glint (f542112 — new `enchant-glint` config field for custom items). Because the ship stats system is disabled by default, the engine recipe isn't registered unless you enable it (`custom-ships.stats.enabled: true`) — so engines are uncraftable in the default config.
 
 When a player places an engine, a BlockPlaceEvent listener transfers PDC tags to the block's TileState. The BlockStructureScanner detects tagged blast furnaces as engines and includes them in stats calculations. Vanilla smelting is suppressed on engine blocks.
 
@@ -201,7 +205,7 @@ Three new block types can now be part of a custom ship, with their state preserv
 - **Shelves** (1.21.9+, 3 item slots)
 - **Signs** (standing, wall, and hanging) — front and back text, text color, glow state, and waxed flag are all retained
 
-Shelf and chiseled bookshelf contents are serialized through a new `TileStateInventoryHolder` path in `BlockStructureScanner` (these store items in the tile entity rather than block data). `blocks.yml` gains `chiseled_bookshelf` and `*_shelf` entries, both flagged `display_rotation: true` so they face the correct direction in flight.
+Shelf and chiseled bookshelf contents are serialized through a new `TileStateInventoryHolder` path in `BlockStructureScanner` (these store items in the tile entity rather than block data). `blocks.yml` gains `chiseled_bookshelf` and `*_shelf` entries so they can be part of a ship and render correctly in flight.
 
 Note: due to a `BlockDisplay` limitation, shelf/bookshelf items and sign text are not visible while the ship is flying — they reappear when the ship is disassembled. This is a partial fix for [#23](https://github.com/def9a2a4/BlockShips/issues/23): decorated pots, other data blocks, and wall-mounted heads are still unsupported, and in-flight sign-text rendering is not yet implemented.
 
@@ -218,7 +222,7 @@ A cluster of assembly-lifecycle bugs:
 
 ### Furnace/Smoker Items Lost on Disassembly (30f269c, bef8292)
 
-A plain furnace, smoker, or blast furnace on a ship opened a 27-slot chest GUI in flight (they have no dedicated storage type), but on disassembly only the real block's 3 slots were restored — anything in the other slots was silently destroyed. Overflow items are now dropped at the block instead of deleted (30f269c), and plain furnaces now open a real 3-slot furnace GUI in flight, so newly assembled ships have no mismatch at all (bef8292).
+A plain furnace, smoker, or blast furnace on a ship opened a 27-slot chest GUI in flight (they have no dedicated storage type), but on disassembly only the real block's 3 slots were restored — anything in the other slots was silently destroyed. Overflow items are now dropped at the block instead of deleted (30f269c), and plain furnaces now open a real 3-slot furnace GUI in flight, so newly assembled ships have no mismatch at all (bef8292). Note: a furnace ship saved *before* this update may drop those overflow items twice (a one-time dupe) the first time it's disassembled; re-assembling it clears the mismatch for good.
 
 ### Assembly & Disassembly Hardened Against Bad Block Data (bef8292, 699a394)
 
@@ -234,7 +238,7 @@ A block's custom (anvil) name lives in tile-entity data that block data can't ca
 
 ### Mob Heads and Wall-Mounted Heads (799ca40)
 
-Mob heads (zombie, skeleton, creeper, piglin, dragon) fell through to the generic block-display path, which renders only the baked model — so floor mob heads lost their rotation and wall heads rendered wrong. Every head (player and mob) now uses the same item-display path player heads already use: the scanner captures rotation/facing for any skull, wall variants map to their floor item form, and a shared transform helper is used by the spawn, per-tick, and chunk-recovery paths (the recovery path previously applied floor-only math to wall heads, so even player wall heads jumped on reload). Wall heads (player and mob, except the full-block dragon head) also now get a collider aligned to the rendered head. Largely resolves [#20](https://github.com/def9a2a4/BlockShips/issues/20).
+Mob heads (zombie, skeleton, creeper, piglin, dragon) fell through to the generic block-display path, which renders only the baked model — so floor mob heads lost their rotation and wall heads rendered wrong. Every head (player and mob) now uses the same item-display path player heads already use: the scanner captures rotation/facing for any skull, wall variants map to their floor item form, and a shared transform helper is used by the spawn, per-tick, and chunk-recovery paths (the recovery path previously applied floor-only math to wall heads, so even player wall heads jumped on reload). Wall heads (player and mob) now get a collider too. Resolves [#20](https://github.com/def9a2a4/BlockShips/issues/20).
 
 ### One Bad Ship Aborted Recovery of All Others (bef8292)
 
@@ -365,7 +369,7 @@ Fixed by skipping engine block indices in the destroy-mode `storages` drop loop,
 
 Two issues with the newly supported shelf and chiseled bookshelf blocks:
 
-- They rendered without their facing direction in flight. Adding `display_rotation: true` to their `blocks.yml` entries applies the correct Y-axis rotation, matching how chests and barrels already work.
+- They rendered without their correct facing in flight; their `blocks.yml` entries were fixed so they now face the right direction, like chests and barrels.
 - Their contents were not dropped when a ship was destroyed. Unlike containers, these blocks store items in `container_items` rather than the `storages` map, so they were missed by the destroy path. They now drop their items at the ship's death location.
 
 ### Newly-Added Blocks Missing on Upgraded Servers (662292f)
@@ -394,7 +398,6 @@ The default `special-drowned.spawn-chance` is lowered from `0.05` (5%) to `0.02`
 These are tracked but not resolved in v0.0.16:
 
 - **Proper tile entity support ([#23](https://github.com/def9a2a4/BlockShips/issues/23)):** decorated pots and other data-bearing blocks still aren't supported, and sign text is preserved but not rendered while a ship is in flight.
-- **Dragon head on walls ([#20](https://github.com/def9a2a4/BlockShips/issues/20)):** wall-mounted heads now render correctly and have colliders; the full-block dragon head is the one variant still not specially handled.
 - **Partial destruction ([#24](https://github.com/def9a2a4/BlockShips/issues/24)):** only whole-ship destroy/disassemble (#27) is implemented; per-block / progressive destruction is not.
 - **Older-version visual desync ([#7](https://github.com/def9a2a4/BlockShips/issues/7)):** the chunk-reload rotation snap is fixed, but the more severe collider/skin desync reported on legacy versions may still occur.
 - **ProtocolLib reports ([#28](https://github.com/def9a2a4/BlockShips/issues/28)):** the underlying cause should be resolved by the optional-ProtocolLib path on 1.21.2+, but the issue remains open pending reporter confirmation.
