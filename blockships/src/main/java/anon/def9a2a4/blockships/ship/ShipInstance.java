@@ -283,7 +283,8 @@ public class ShipInstance {
                     if (blockIdx < model.parts.size()) {
                         ShipModel.ModelPart part = model.parts.get(blockIdx);
                         if (part.storage != null) {
-                            Inventory storage = createStorageInventory(part.storage);
+                            Inventory storage = createStorageInventory(part.storage,
+                                part.rawYaml.get("custom_name") instanceof String cns ? cns : null);
                             // Cap to the inventory size: `items` is sized from the persisted
                             // token count, which can exceed the (possibly changed) storage size.
                             storage.setContents(java.util.Arrays.copyOf(items,
@@ -712,7 +713,8 @@ public class ShipInstance {
 
             // Create inventory for this block if it has storage configured
             if (p.storage != null) {
-                Inventory storage = createStorageInventory(p.storage);
+                Inventory storage = createStorageInventory(p.storage,
+                    p.rawYaml.get("custom_name") instanceof String cns ? cns : null);
 
                 // Restore saved inventory contents if available
                 if (p.rawYaml.containsKey("container_items")) {
@@ -1911,8 +1913,18 @@ public class ShipInstance {
      * {@code createInventory} overload, which has no multiple-of-9 restriction that the
      * size-based overload enforces (assembling a hopper would otherwise throw).
      */
-    private static Inventory createStorageInventory(ShipModel.StorageConfig sc) {
-        net.kyori.adventure.text.Component title = net.kyori.adventure.text.Component.text(sc.name);
+    private static Inventory createStorageInventory(ShipModel.StorageConfig sc, String customNameGson) {
+        net.kyori.adventure.text.Component title;
+        if (customNameGson != null) {
+            try {
+                // A container's real (anvil) name, captured at scan; full color/format fidelity.
+                title = net.kyori.adventure.text.serializer.gson.GsonComponentSerializer.gson().deserialize(customNameGson);
+            } catch (Exception e) {
+                title = net.kyori.adventure.text.Component.text(sc.name);  // malformed persisted JSON → generic label
+            }
+        } else {
+            title = net.kyori.adventure.text.Component.text(sc.name);
+        }
         return (sc.type.invType != null)
             ? Bukkit.createInventory(null, sc.type.invType, title)
             : Bukkit.createInventory(null, sc.type.slots, title);

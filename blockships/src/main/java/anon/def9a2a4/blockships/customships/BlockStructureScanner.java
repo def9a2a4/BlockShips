@@ -564,6 +564,16 @@ public class BlockStructureScanner {
                 }
             }
 
+            // Persist a block's custom name (anvil-renamed containers, banners, ...) — Nameable tile-entity
+            // NBT that blockdata can't carry. Restored generically in placeBlocks; used as the storage GUI title.
+            if (block.getState() instanceof org.bukkit.Nameable nameable) {
+                net.kyori.adventure.text.Component cn = nameable.customName();
+                if (cn != null) {
+                    rawYaml.put("custom_name",
+                        net.kyori.adventure.text.serializer.gson.GsonComponentSerializer.gson().serialize(cn));
+                }
+            }
+
             parts.add(new ShipModel.ModelPart(blockData, transform, collision, storage, rawYaml));
             blockIndex++;
         }
@@ -929,6 +939,18 @@ public class BlockStructureScanner {
                 Boolean waxed = (Boolean) signData.get("waxed");
                 if (waxed != null) sign.setWaxed(waxed);
                 sign.update();
+            }
+
+            // Restore a Nameable block's custom name (containers, banners) captured at scan. Separate generic
+            // pass so it fires even for a named block with no items/patterns. Safe double-update: getState()
+            // reads the just-written world state, so setting only the name preserves items/patterns.
+            if (part.rawYaml.containsKey("custom_name")) {
+                org.bukkit.block.BlockState nameState = block.getState();
+                if (nameState instanceof org.bukkit.Nameable n) {
+                    n.customName(net.kyori.adventure.text.serializer.gson.GsonComponentSerializer
+                        .gson().deserialize(String.valueOf(part.rawYaml.get("custom_name"))));
+                    nameState.update();
+                }
             }
             } catch (Exception e) {
                 // A block is always placed (setBlockData above) before any throwing metadata restore, so a
