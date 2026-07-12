@@ -208,9 +208,9 @@ test-server-startup-only:
 	rm -f server_input; \
 	rm -f errors.log; \
 	FAILED=0; \
-	if grep -qE "ERROR.*BlockShips|BlockShips.*Exception" server.log 2>/dev/null; then \
+	if grep -qE "ERROR.*BlockShips|BlockShips.*(Exception|Throwable)|\[BlockShips\].*(failed to restore|skipping)|at anon\.def9a2a4\.blockships" server.log 2>/dev/null; then \
 		echo "=== SERVER ERRORS ===" | tee -a errors.log; \
-		grep -E "ERROR.*BlockShips|BlockShips.*Exception" server.log | tee -a errors.log; \
+		grep -E "ERROR.*BlockShips|BlockShips.*(Exception|Throwable)|\[BlockShips\].*(failed to restore|skipping)|at anon\.def9a2a4\.blockships" server.log | tee -a errors.log; \
 		FAILED=1; \
 	fi; \
 	if [ $$FAILED -eq 1 ]; then \
@@ -303,10 +303,10 @@ test-server-ci:
 		echo "Bot tests failed (exit code $$BOT_EXIT)" | tee -a errors.log; \
 		FAILED=1; \
 	fi; \
-	if grep -qE "ERROR.*BlockShips|BlockShips.*Exception" server.log 2>/dev/null; then \
+	if grep -qE "ERROR.*BlockShips|BlockShips.*(Exception|Throwable)|\[BlockShips\].*(failed to restore|skipping)|at anon\.def9a2a4\.blockships" server.log 2>/dev/null; then \
 		echo "" | tee -a errors.log; \
 		echo "=== SERVER ERRORS ===" | tee -a errors.log; \
-		grep -E "ERROR.*BlockShips|BlockShips.*Exception" server.log | tee -a errors.log; \
+		grep -E "ERROR.*BlockShips|BlockShips.*(Exception|Throwable)|\[BlockShips\].*(failed to restore|skipping)|at anon\.def9a2a4\.blockships" server.log | tee -a errors.log; \
 		FAILED=1; \
 	fi; \
 	if [ $$FAILED -eq 1 ]; then \

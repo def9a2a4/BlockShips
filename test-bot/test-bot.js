@@ -8,14 +8,22 @@ const {
   sleep,
   clearInventory,
   waitForWater,
+  waitForShulkers,
   CUSTOM_SHIP,
   CUSTOM_AIRSHIP,
+  WEIRD_SHIP,
   buildCustomShipWithWheel,
+  blockCharWorldPos,
+  findShulkers,
+  getShipEntityPos,
   mountShip,
   customDismount,
   steerShip,
   cleanup,
   clickWheelMenu,
+  disassembleViaWheelMenu,
+  markServerLog,
+  scanServerErrorsSince,
   createBot,
   setupBotEvents
 } = require('./lib/helpers')
@@ -339,6 +347,209 @@ async function testCustomAirship() {
   await testCustomShipBase('custom_airship', CUSTOM_AIRSHIP, true)
 }
 
+// Regression test for the hopper crash (#7), container item dup/loss (G2), and metadata
+// restore (T). Builds a ship packed with odd-sized containers + metadata blocks, preloads
+// the hopper with items, then assembles -> drives -> disassembles and asserts the round-trip
+// completes cleanly: full entity spawn, item preservation, and no BlockShips errors logged.
+//
+// Assembly removes ALL blocks incl. the wheel, so there is no wheel block to click while
+// assembled. Disassembly uses the real player path: sneak + right-click a ship shulker to open
+// the wheel menu, then click Disassemble (disassembleViaWheelMenu). This is normal (non-force)
+// disassembly; it succeeds over the water runway because WATER/LAVA are replaceable.
+const WEIRD_MIN_SHULKERS = 12  // 0 (crash -> destroy) vs ~30 (success); a safe lower bound
+const WEIRD_COAL_TOTAL = 5
+
+async function testWeirdBlocksShip() {
+  const testName = 'weird_ship'
+  say(`=== TEST: ${testName} ===`)
+
+  await cleanup(bot)
+  await teleportToRunway()
+  await clearInventory(bot)
+
+  // Mark the server log so the post-run scan only sees lines produced during this test.
+  const logMarker = markServerLog()
+
+  say('Building weird-blocks ship...')
+  const buildResult = await buildCustomShipBlocks(WEIRD_SHIP)  // builds at (RUNWAY_X, 101, RUNWAY_Z - 1)
+  if (!buildResult.success) {
+    fail(testName, buildResult.error)
+    return
+  }
+
+  // Preload the hopper (5-slot container) with coal, including the last slot, so disassembly
+  // exercises the container item round-trip and the 5-slot inventory boundary.
+  const hopperPos = blockCharWorldPos(WEIRD_SHIP, 'H', RUNWAY_X, 101, RUNWAY_Z - 1)
+  if (!hopperPos) {
+    fail(testName, 'Could not locate hopper in WEIRD_SHIP config')
+    return
+  }
+  let hopperBlock = null
+  for (let attempt = 0; attempt < 10; attempt++) {
+    hopperBlock = bot.blockAt(new Vec3(hopperPos.x, hopperPos.y, hopperPos.z))
+    if (hopperBlock && hopperBlock.name === 'hopper') break
+    await sleep(200)
+  }
+  if (!hopperBlock || hopperBlock.name !== 'hopper') {
+    fail(testName, `Hopper not placed at ${hopperPos.x},${hopperPos.y},${hopperPos.z} (got ${hopperBlock ? hopperBlock.name : 'none'})`)
+    return
+  }
+  bot.chat(`/item replace block ${hopperPos.x} ${hopperPos.y} ${hopperPos.z} container.0 minecraft:coal 3`)
+  await sleep(200)
+  bot.chat(`/item replace block ${hopperPos.x} ${hopperPos.y} ${hopperPos.z} container.4 minecraft:coal 2`)
+  await sleep(500)
+
+  await clearInventory(bot)
+
+  say('Assembling weird ship...')
+  try {
+    await bot.activateBlock(buildResult.wheelBlock)
+    if (!await clickWheelMenu(bot, log, 'assemble')) {
+      fail(testName, 'Assembly menu interaction failed')
+      return
+    }
+  } catch (e) {
+    fail(testName, `Assembly failed: ${e.message}`)
+    return
+  }
+
+  // Full-spawn assertion: the hopper crash makes assembly throw -> destroy() -> ~0 shulkers.
+  const spawned = await waitForShulkers(bot, 50)
+  say(`Ship spawned ${spawned.length} shulkers (need >= ${WEIRD_MIN_SHULKERS})`)
+  if (spawned.length < WEIRD_MIN_SHULKERS) {
+    fail(testName, `Assembly incomplete: only ${spawned.length} shulkers (need >= ${WEIRD_MIN_SHULKERS}) — likely container-inventory crash`)
+    return
+  }
+
+  // Nudge so the driver seat is the nearest shulker, then mount and drive it around.
+  bot.chat(`/tp @s ~ ~ ~-1`)
+  await sleep(500)
+  const startPos = bot.entity.position.clone()
+
+  say('Mounting weird ship...')
+  if (!await mountShip(bot, log)) {
+    fail(testName, 'Could not mount weird ship')
+    return
+  }
+
+  const { dx, dy, dz, totalMovement, dismountError } = await runControlSequence(startPos)
+  say(`Movement: dX=${dx.toFixed(1)}, dY=${dy.toFixed(1)}, dZ=${dz.toFixed(1)}`)
+  if (dismountError) {
+    fail(testName, `Dismount failed: ${dismountError}`)
+    return
+  }
+  if (totalMovement < 2.0) {
+    fail(testName, `Insufficient movement (total=${totalMovement.toFixed(2)}, need >=2)`)
+    return
+  }
+
+  // Record the ship's current (driven-to) position before disassembling — blocks restore here.
+  const shipShulkers = findShulkers(bot, 60)
+  if (shipShulkers.length === 0) {
+    fail(testName, 'Ship disappeared after driving')
+    return
+  }
+  const shipPos = getShipEntityPos(shipShulkers[0])
+
+  // Disassemble the way a player does: sneak + right-click a ship shulker to open the wheel
+  // menu, then click Disassemble (there is no wheel block while assembled).
+  say('Disassembling weird ship via wheel menu...')
+  if (!await disassembleViaWheelMenu(bot, log)) {
+    fail(testName, 'Could not open the wheel menu / click disassemble on any ship shulker')
+    return
+  }
+  // Poll until all ship entities are gone (disassembly ran to completion).
+  let remaining = shipShulkers.length
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await sleep(500)
+    remaining = findShulkers(bot, 60).length
+    if (remaining === 0) break
+  }
+  if (remaining !== 0) {
+    fail(testName, `Disassembly did not complete: ${remaining} shulkers remain`)
+    return
+  }
+
+  // No stray dropped items near the ship (a duplication/spill symptom). Check this BEFORE
+  // moving the bot near the wreck so it can't collect any strays first.
+  const strayItems = Object.values(bot.entities).filter(e =>
+    (e.name === 'item' || e.objectType === 'Item') &&
+    e.position && e.position.distanceTo(shipPos) < 12
+  )
+  if (strayItems.length > 0) {
+    fail(testName, `${strayItems.length} stray dropped item(s) near ship after disassembly`)
+    return
+  }
+
+  // Item round-trip: locate the restored hopper near the ship's last position, teleport into
+  // interaction range, open it, and confirm the preloaded coal came back exactly.
+  const restoredHopper = await findNearbyBlock(bot, shipPos, 'hopper', 8)
+  if (!restoredHopper) {
+    fail(testName, 'Restored hopper not found after disassembly')
+    return
+  }
+  const hp = restoredHopper.position
+  bot.chat(`/tp @s ${hp.x + 0.5} ${hp.y + 1} ${hp.z + 0.5}`)
+  await sleep(500)
+  const coalInHopper = await readContainerItemCount(bot, restoredHopper, 'coal')
+  if (coalInHopper !== WEIRD_COAL_TOTAL) {
+    fail(testName, `Hopper item round-trip failed: expected ${WEIRD_COAL_TOTAL} coal, found ${coalInHopper}`)
+    return
+  }
+
+  // Server-log scan: catch swallowed [BlockShips] exceptions/warnings logged this run.
+  const scan = scanServerErrorsSince(logMarker)
+  if (!scan.available) {
+    log('WARNING: server log not readable (set MC_SERVER_LOG); skipping log-error assertion')
+  } else if (scan.errors.length > 0) {
+    fail(testName, `BlockShips errors logged during test: ${scan.errors.slice(0, 3).join(' | ')}`)
+    return
+  }
+
+  pass(`${testName} (shulkers=${spawned.length}, movement=${totalMovement.toFixed(1)}, coal=${coalInHopper})`)
+}
+
+// Scan a small cube around `center` for the first block whose name matches `blockName`.
+async function findNearbyBlock(bot, center, blockName, radius) {
+  const cx = Math.round(center.x), cy = Math.round(center.y), cz = Math.round(center.z)
+  for (let r = 0; r <= radius; r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dz = -r; dz <= r; dz++) {
+          // Only inspect the shell at distance r to widen outward from center.
+          if (Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz)) !== r) continue
+          const b = bot.blockAt(new Vec3(cx + dx, cy + dy, cz + dz))
+          if (b && b.name === blockName) return b
+        }
+      }
+    }
+  }
+  return null
+}
+
+// Open a container block and count items of `itemName` inside it. The bot inventory is
+// cleared before this, so any coal in the window is the container's (mineflayer merges the
+// container + player slots into window.slots; player slots hold nothing relevant here).
+async function readContainerItemCount(bot, block, itemName) {
+  let window = null
+  try {
+    window = await bot.openContainer(block)
+    await sleep(200)
+    let count = 0
+    for (const item of window.containerItems()) {
+      if (item && item.name === itemName) count += item.count
+    }
+    return count
+  } catch (e) {
+    log(`readContainerItemCount error: ${e.message}`)
+    return -1
+  } finally {
+    if (window) {
+      try { await window.close() } catch (e2) {}
+    }
+  }
+}
+
 // =============================================================================
 // Test Registry and Interactive Mode
 // =============================================================================
@@ -349,6 +560,7 @@ const TESTS = {
   smallairship: { name: 'Small Airship', fn: () => testShipControls('smallairship') },
   custom_ship: { name: 'Custom Ship', fn: testCustomShip },
   custom_airship: { name: 'Custom Airship', fn: testCustomAirship },
+  weird_ship: { name: 'Weird Blocks Ship', fn: testWeirdBlocksShip },
 }
 
 function listTests() {
