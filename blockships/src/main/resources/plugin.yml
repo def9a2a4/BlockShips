@@ -2,7 +2,7 @@ name: BlockShips
 main: anon.def9a2a4.blockships.BlockShipsPlugin
 version: ${version}
 api-version: 1.21
-author: You
+author: def9a2a4
 description: Rideable display entity ships with collision and persistence.
 softdepend: [ProtocolLib]
 
@@ -13,9 +13,11 @@ commands:
       /blockships help - Show help and list all commands
       /blockships info - Show ship and wheel statistics
       /blockships dismount - Force-dismount from a ship
+      /blockships highlightseats - Highlight seats on the ship you are looking at
       /blockships highlightcolliders - Toggle glowing on collider shulkers
       /blockships reload - Reload the plugin configuration
       /blockships give <item> - Give yourself a ship wheel or ship kit
+      /blockships spawndrowned - Spawn a special drowned at your location
       /blockships recipes [player] - Unlock all BlockShips recipes
       /blockships forcedisassembleall - Force-disassemble all assembled ships
       /blockships killentities - Remove all BlockShips entities from worlds

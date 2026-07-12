@@ -223,7 +223,7 @@ public class BlockShipsPlugin extends JavaPlugin {
 
             if (args[0].equalsIgnoreCase("reload")) {
                 if (!sender.hasPermission("blockships.reload")) {
-                    sender.sendMessage("You don't have permission to reload this plugin.");
+                    sender.sendMessage("§cYou don't have permission to reload this plugin.");
                     return true;
                 }
                 reloadConfig();
@@ -250,12 +250,12 @@ public class BlockShipsPlugin extends JavaPlugin {
 
             if (args[0].equalsIgnoreCase("give")) {
                 if (!(sender instanceof Player player)) {
-                    sender.sendMessage("Only players can use this command.");
+                    sender.sendMessage("§cOnly players can use this command.");
                     return true;
                 }
 
                 if (!sender.hasPermission("blockships.give")) {
-                    sender.sendMessage("You don't have permission to give ship kits.");
+                    sender.sendMessage("§cYou don't have permission to give ship kits.");
                     return true;
                 }
 
@@ -300,24 +300,24 @@ public class BlockShipsPlugin extends JavaPlugin {
                     return true;
                 }
 
-                sender.sendMessage("Unknown item: " + itemType);
+                sender.sendMessage("§cUnknown item: " + itemType);
                 sendGiveableItems(sender);
                 return true;
             }
 
             if (args[0].equalsIgnoreCase("spawndrowned")) {
                 if (!(sender instanceof Player player)) {
-                    sender.sendMessage("Only players can use this command.");
+                    sender.sendMessage("§cOnly players can use this command.");
                     return true;
                 }
 
                 if (!sender.hasPermission("blockships.give")) {
-                    sender.sendMessage("You don't have permission to spawn drowned.");
+                    sender.sendMessage("§cYou don't have permission to spawn drowned.");
                     return true;
                 }
 
                 if (specialDrownedListener == null) {
-                    sender.sendMessage("Special drowned spawning is not initialized - the plugin may not have"
+                    sender.sendMessage("§cSpecial drowned spawning is not initialized - the plugin may not have"
                         + " enabled correctly. Please report at " + ISSUES_URL);
                     return true;
                 }
@@ -326,19 +326,19 @@ public class BlockShipsPlugin extends JavaPlugin {
                 if (drowned != null) {
                     sender.sendMessage("Spawned a special drowned!");
                 } else {
-                    sender.sendMessage("Failed to spawn special drowned: your location has no valid world.");
+                    sender.sendMessage("§cFailed to spawn special drowned: your location has no valid world.");
                 }
                 return true;
             }
 
             if (args[0].equalsIgnoreCase("dismount")) {
                 if (!(sender instanceof Player player)) {
-                    sender.sendMessage("Only players can use this command.");
+                    sender.sendMessage("§cOnly players can use this command.");
                     return true;
                 }
 
                 if (!sender.hasPermission("blockships.dismount")) {
-                    sender.sendMessage("You don't have permission to use this command.");
+                    sender.sendMessage("§cYou don't have permission to use this command.");
                     return true;
                 }
 
@@ -352,7 +352,7 @@ public class BlockShipsPlugin extends JavaPlugin {
 
             if (args[0].equalsIgnoreCase("highlightseats")) {
                 if (!(sender instanceof Player player)) {
-                    sender.sendMessage("Only players can use this command.");
+                    sender.sendMessage("§cOnly players can use this command.");
                     return true;
                 }
 
@@ -368,7 +368,7 @@ public class BlockShipsPlugin extends JavaPlugin {
 
             if (args[0].equalsIgnoreCase("highlightcolliders")) {
                 if (!(sender instanceof Player player)) {
-                    sender.sendMessage("Only players can use this command.");
+                    sender.sendMessage("§cOnly players can use this command.");
                     return true;
                 }
 
@@ -389,7 +389,7 @@ public class BlockShipsPlugin extends JavaPlugin {
 
             if (args[0].equalsIgnoreCase("recipes")) {
                 if (!sender.hasPermission("blockships.recipes")) {
-                    sender.sendMessage("You don't have permission to unlock recipes.");
+                    sender.sendMessage("§cYou don't have permission to unlock recipes.");
                     return true;
                 }
 
@@ -399,13 +399,13 @@ public class BlockShipsPlugin extends JavaPlugin {
                     // Target specified player
                     targetPlayer = Bukkit.getPlayer(args[1]);
                     if (targetPlayer == null) {
-                        sender.sendMessage("Player not found: " + args[1]);
+                        sender.sendMessage("§cPlayer not found: " + args[1]);
                         return true;
                     }
                 } else {
                     // Target self (must be a player)
                     if (!(sender instanceof Player)) {
-                        sender.sendMessage("Console must specify a player: /blockships recipes <player>");
+                        sender.sendMessage("§cConsole must specify a player: /blockships recipes <player>");
                         return true;
                     }
                     targetPlayer = (Player) sender;
@@ -425,7 +425,7 @@ public class BlockShipsPlugin extends JavaPlugin {
 
             if (args[0].equalsIgnoreCase("forcedisassembleall")) {
                 if (!sender.hasPermission("blockships.admin")) {
-                    sender.sendMessage("You don't have permission to use this command.");
+                    sender.sendMessage("§cYou don't have permission to use this command.");
                     return true;
                 }
 
@@ -458,7 +458,7 @@ public class BlockShipsPlugin extends JavaPlugin {
 
             if (args[0].equalsIgnoreCase("killentities")) {
                 if (!sender.hasPermission("blockships.admin")) {
-                    sender.sendMessage("You don't have permission to use this command.");
+                    sender.sendMessage("§cYou don't have permission to use this command.");
                     return true;
                 }
 
@@ -503,6 +503,11 @@ public class BlockShipsPlugin extends JavaPlugin {
                     removedCount + " orphaned entity/entities");
                 return true;
             }
+
+            // Unrecognized subcommand - show help instead of the raw plugin.yml usage string
+            sender.sendMessage("§cUnknown subcommand: " + args[0]);
+            sendHelp(sender);
+            return true;
         }
         return false;
     }
