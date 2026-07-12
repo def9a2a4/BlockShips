@@ -161,14 +161,15 @@ public final class ShipModel {
     public static ShipModel fromFile(JavaPlugin plugin, String filePath, String shipType) {
         // Load model from config/<filePath> override if present, else from the jar. Not extracted to disk.
         org.bukkit.configuration.file.YamlConfiguration config = ConfigResources.load(plugin, filePath);
-        if (config.getMapList("blocks").isEmpty()) {
+        List<Map<?, ?>> blocks = config.getMapList("blocks");
+        if (blocks.isEmpty()) {
             throw new IllegalArgumentException("Model file not found or has no blocks: " + filePath);
         }
 
         List<ModelPart> out = new ArrayList<>();
         List<SeatInfo> seats = new ArrayList<>();
         int blockIndex = 0;
-        for (Map<?, ?> map : config.getMapList("blocks")) {
+        for (Map<?, ?> map : blocks) {
             String mat = String.valueOf(map.get("block"));
             @SuppressWarnings("unchecked")
             List<Object> raw = (List<Object>) map.get("transformation");
