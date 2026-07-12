@@ -118,13 +118,16 @@ public class EngineMenuGUI {
         int burnTicks = ship.wheelData != null ? ship.wheelData.getEngineBurnTicks(engineBlockIndex) : 0;
         boolean isBurning = burnTicks > 0;
 
-        // Check if fuel items are present in slots (even if not burning yet)
+        // Check if burnable fuel is present in slots (even if not burning yet). Require getBurnTime > 0
+        // so a non-burnable item can't show the engine as "Ready" while contributing zero power —
+        // stays consistent with countFueledEngines.
         boolean hasFuelItems = false;
         if (ship.wheelData != null) {
             ItemStack[] slots = ship.wheelData.getAllEngineFuelSlots().get(engineBlockIndex);
             if (slots != null) {
                 for (ItemStack item : slots) {
-                    if (item != null && item.getType() != Material.AIR) {
+                    if (item != null && item.getType() != Material.AIR
+                            && getBurnTime(item.getType()) > 0) {
                         hasFuelItems = true;
                         break;
                     }
