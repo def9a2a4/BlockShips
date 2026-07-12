@@ -24,6 +24,9 @@ import java.util.List;
 
 public class BlockShipsPlugin extends JavaPlugin {
 
+    /** Where users should report bugs and unexpected errors. */
+    public static final String ISSUES_URL = "https://github.com/def9a2a4/BlockShips/issues";
+
     private DisplayShip displayShip;
     private ShipSteeringListener steeringListener;
     private PaperInputListener paperInputListener;
@@ -142,7 +145,7 @@ public class BlockShipsPlugin extends JavaPlugin {
             sender.sendMessage("§e/blockships forcedisassembleall §7- Force-disassemble all assembled ships §c§l[DANGEROUS]");
             sender.sendMessage("§e/blockships killentities §7- Remove all BlockShips entities from worlds §c§l[DANGEROUS]");
         }
-        sender.sendMessage("§7Found a bug? Report it at: §bhttps://github.com/def9a2a4/BlockShips/issues");
+        sender.sendMessage("§7Found a bug? Report it at: §b" + ISSUES_URL);
     }
 
     /**
@@ -314,7 +317,8 @@ public class BlockShipsPlugin extends JavaPlugin {
                 }
 
                 if (specialDrownedListener == null) {
-                    sender.sendMessage("Special drowned spawning is not initialized.");
+                    sender.sendMessage("Special drowned spawning is not initialized - the plugin may not have"
+                        + " enabled correctly. Please report at " + ISSUES_URL);
                     return true;
                 }
 
@@ -322,7 +326,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                 if (drowned != null) {
                     sender.sendMessage("Spawned a special drowned!");
                 } else {
-                    sender.sendMessage("Failed to spawn special drowned.");
+                    sender.sendMessage("Failed to spawn special drowned: your location has no valid world.");
                 }
                 return true;
             }

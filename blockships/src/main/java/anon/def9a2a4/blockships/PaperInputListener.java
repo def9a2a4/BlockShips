@@ -36,7 +36,7 @@ public class PaperInputListener implements Listener {
 
         Input input = event.getInput();
 
-        // Handle dismount explicitly — PlayerToggleSneakEvent is NOT guaranteed
+        // Handle dismount explicitly - PlayerToggleSneakEvent is NOT guaranteed
         // to fire when player is in a vehicle on all Paper versions.
         // dismountPlayer() is idempotent (checks getVehicle() first).
         if (input.isSneak()) {

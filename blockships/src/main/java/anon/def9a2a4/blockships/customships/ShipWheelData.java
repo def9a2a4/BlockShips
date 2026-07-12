@@ -214,7 +214,7 @@ public class ShipWheelData {
             ItemStack[] slots = engineFuelSlots.get(idx);
             if (slots != null) {
                 for (ItemStack item : slots) {
-                    // Only burnable fuel counts as "fueled" — matches tickEngineFuel, which only
+                    // Only burnable fuel counts as "fueled" - matches tickEngineFuel, which only
                     // consumes items with getBurnTime > 0. Without this, a non-burnable item (raw iron,
                     // cobblestone) sneaked into an engine's furnace slots reads as fueled forever and
                     // grants permanent free thrust that never depletes.

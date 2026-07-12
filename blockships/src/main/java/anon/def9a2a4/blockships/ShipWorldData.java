@@ -326,7 +326,7 @@ public class ShipWorldData {
         // Entity count for recovery validation (default 0 for legacy data)
         int entityCount = config.getInt("entity_count", 0);
 
-        // Internal yaw for chunk recovery (absent in legacy metadata → NaN → fall back to vehicle NBT)
+        // Internal yaw for chunk recovery (absent in legacy metadata -> NaN -> fall back to vehicle NBT)
         float currentYaw = config.contains("current_yaw")
             ? (float) config.getDouble("current_yaw") : Float.NaN;
 

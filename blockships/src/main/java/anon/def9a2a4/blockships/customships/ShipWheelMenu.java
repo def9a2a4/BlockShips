@@ -386,7 +386,7 @@ public class ShipWheelMenu {
             maxHealth = Math.max(1, shipMass);
         }
 
-        // Ship stats — use live ShipInstance data when assembled
+        // Ship stats - use live ShipInstance data when assembled
         int woolCount, bannerCount, engineCount, fueledEngines, mass;
         if (wheelData.isAssembled()) {
             ShipInstance ship = ShipRegistry.byId(wheelData.getAssembledShipUUID());
@@ -400,7 +400,7 @@ public class ShipWheelMenu {
                     ? wd.countFueledEngines(ship.model.engineBlockIndices)
                     : 0;
             } else {
-                // Ship not found (destroyed?) — use detection data
+                // Ship not found (destroyed?) - use detection data
                 woolCount = wheelData.getLastDetectedWoolCount();
                 bannerCount = wheelData.getLastDetectedBannerCount();
                 engineCount = wheelData.getLastDetectedEngineCount();
@@ -408,7 +408,7 @@ public class ShipWheelMenu {
                 fueledEngines = 0;
             }
         } else {
-            // Unassembled — use detection data; fueled count captured from furnace contents at detect time
+            // Unassembled - use detection data; fueled count captured from furnace contents at detect time
             woolCount = wheelData.getLastDetectedWoolCount();
             bannerCount = wheelData.getLastDetectedBannerCount();
             engineCount = wheelData.getLastDetectedEngineCount();
@@ -474,7 +474,7 @@ public class ShipWheelMenu {
                 lore.add(ChatColor.GRAY + "Density: " + densityColor + String.format("%.2f", info.density)
                     + ChatColor.GRAY + " (" + densityColor + floatStatus + ChatColor.GRAY + ")");
 
-                // Ship stats (simplified — detailed breakdown in stats item below)
+                // Ship stats (simplified - detailed breakdown in stats item below)
                 lore.add("");
                 if (info.statsEnabled) {
                     int speedPercent = Math.round(info.ratio / info.sailCapRatio * 100);
@@ -484,7 +484,7 @@ public class ShipWheelMenu {
                         lore.add(ChatColor.DARK_PURPLE + "(add banners or wool as sails!)");
                     }
                 } else {
-                    lore.add(ChatColor.GRAY + "Stats system disabled — fixed speed");
+                    lore.add(ChatColor.GRAY + "Stats system disabled - fixed speed");
                 }
             } else {
                 lore.add(ChatColor.GRAY + "No ship detected yet");
@@ -521,10 +521,10 @@ public class ShipWheelMenu {
             ShipInfo info = getShipInfo(wheelData);
             if (info != null) {
               if (!info.statsEnabled) {
-                // Stats system off: composition/points/ratio are inert — show only mass + a note.
+                // Stats system off: composition/points/ratio are inert - show only mass + a note.
                 lore.add("");
                 lore.add(ChatColor.GRAY + "Mass: " + ChatColor.WHITE + info.mass);
-                lore.add(ChatColor.GRAY + "Stats system disabled — fixed speed");
+                lore.add(ChatColor.GRAY + "Stats system disabled - fixed speed");
               } else {
                 BlockShipsPlugin plugin = (BlockShipsPlugin) Bukkit.getPluginManager().getPlugin("BlockShips");
                 ShipConfig config = ShipConfig.load(plugin, "custom");
@@ -550,7 +550,7 @@ public class ShipWheelMenu {
                     }
                 }
 
-                // Engines — always show fueled/unfueled breakdown
+                // Engines - always show fueled/unfueled breakdown
                 if (info.engineCount > 0) {
                     int unfueled = info.engineCount - info.fueledEngines;
                     if (info.fueledEngines > 0) {
@@ -740,7 +740,7 @@ public class ShipWheelMenu {
 
     /**
      * Returns a ChatColor for speed percentage display.
-     * Red (<50%) → Gold (50-74%) → Yellow (75-99%) → Green (100-124%) → Blue (125%+)
+     * Red (<50%) -> Gold (50-74%) -> Yellow (75-99%) -> Green (100-124%) -> Blue (125%+)
      */
     private static ChatColor speedColor(int speedPercent) {
         if (speedPercent >= 125) return ChatColor.AQUA;

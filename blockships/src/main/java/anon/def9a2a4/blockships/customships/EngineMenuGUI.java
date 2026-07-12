@@ -119,7 +119,7 @@ public class EngineMenuGUI {
         boolean isBurning = burnTicks > 0;
 
         // Check if burnable fuel is present in slots (even if not burning yet). Require getBurnTime > 0
-        // so a non-burnable item can't show the engine as "Ready" while contributing zero power —
+        // so a non-burnable item can't show the engine as "Ready" while contributing zero power -
         // stays consistent with countFueledEngines.
         boolean hasFuelItems = false;
         if (ship.wheelData != null) {
@@ -154,7 +154,7 @@ public class EngineMenuGUI {
             if (meta != null) {
                 meta.setDisplayName(ChatColor.YELLOW + "Engine Ready");
                 meta.setLore(Arrays.asList(
-                    ChatColor.GRAY + "Fuel loaded — will burn when sailing",
+                    ChatColor.GRAY + "Fuel loaded - will burn when sailing",
                     ChatColor.DARK_GRAY + "Click to refresh"
                 ));
                 status.setItemMeta(meta);
@@ -290,7 +290,7 @@ public class EngineMenuGUI {
             }
         }
 
-        // Status item (always idle for placed blocks — no burn ticks)
+        // Status item (always idle for placed blocks - no burn ticks)
         ItemStack status = new ItemStack(Material.BLAST_FURNACE);
         ItemMeta meta = status.getItemMeta();
         if (meta != null) {
@@ -315,7 +315,7 @@ public class EngineMenuGUI {
         org.bukkit.block.Container container = (org.bukkit.block.Container) block.getState();
         org.bukkit.inventory.Inventory blockInv = container.getSnapshotInventory();
 
-        // Write fuel slots back (targeted, not full clear — preserves other container state)
+        // Write fuel slots back (targeted, not full clear - preserves other container state)
         Inventory gui = holder.getInventory();
         for (int i = 0; i < FUEL_SLOTS.length && i < blockInv.getSize(); i++) {
             ItemStack item = gui.getItem(FUEL_SLOTS[i]);

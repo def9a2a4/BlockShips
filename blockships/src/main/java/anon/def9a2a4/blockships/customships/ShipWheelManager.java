@@ -276,7 +276,7 @@ public class ShipWheelManager {
                     + (t.getMessage() != null ? ": " + t.getMessage() : ""),
                 net.kyori.adventure.text.format.NamedTextColor.RED));
             player.sendMessage(net.kyori.adventure.text.Component.text(
-                "This is a bug - please report it at https://github.com/def9a2a4/BlockShips/issues",
+                "This is a bug - please report it with server logs at " + anon.def9a2a4.blockships.BlockShipsPlugin.ISSUES_URL,
                 net.kyori.adventure.text.format.NamedTextColor.RED));
             return false;
         }
@@ -708,7 +708,7 @@ public class ShipWheelManager {
             part.local.getTranslation(pos);
             org.joml.Vector3f rotatedPos = BlockStructureScanner.rotatePosition(pos, rotationDelta);
             // Round to match placeBlocks (BlockStructureScanner:775-781): getBlock() below floors, so an
-            // unrounded rotated coord that landed just under an integer (cos(90°)≈6e-17 error) would put the
+            // unrounded rotated coord that landed just under an integer (cos(90 deg)~6e-17 error) would put the
             // LeashHitch one block off the fence and the lead would pop off on a rotated ship's disassembly.
             Location fenceLoc = shipLoc.clone().add(
                 Math.round(rotatedPos.x), Math.round(rotatedPos.y), Math.round(rotatedPos.z));
@@ -946,7 +946,7 @@ public class ShipWheelManager {
                     player.sendMessage("§7Engines §a(fueled)§7: §f" + fueledEngineCount + " §7(" + fueledPts + " pts)");
                 }
                 if (unfueled > 0) {
-                    player.sendMessage("§7Engines §c(unfueled)§7: §f" + unfueled + " §7(0 pts — fuel to activate)");
+                    player.sendMessage("§7Engines §c(unfueled)§7: §f" + unfueled + " §7(0 pts - fuel to activate)");
                 }
             }
             String speedColor = speedPercent >= 125 ? "§b" : speedPercent >= 100 ? "§a" : speedPercent >= 75 ? "§e" : speedPercent >= 50 ? "§6" : "§c";
@@ -1186,7 +1186,7 @@ public class ShipWheelManager {
 
     /**
      * Starts a repeating task to spawn particles on detected blocks.
-     * Runs for 5 seconds (10 iterations × 0.5s).
+     * Runs for 5 seconds (10 iterations x 0.5s).
      * Uses different colors: white for regular blocks, orange for passenger seats, red for driver seat.
      */
     private void startParticleVisualization(ShipWheelData wheelData) {
@@ -1207,7 +1207,7 @@ public class ShipWheelManager {
         final Set<Location> finalRegularBlocks = regularBlocks;
         final Set<Location> finalSeatBlocks = seatBlocks;
         final Location finalDriverSeat = driverSeat;
-        final int[] iterationsLeft = {10};  // 10 iterations × 10 ticks = 5 seconds
+        final int[] iterationsLeft = {10};  // 10 iterations x 10 ticks = 5 seconds
 
         BukkitRunnable particleTask = new BukkitRunnable() {
             @Override
@@ -1423,7 +1423,7 @@ public class ShipWheelManager {
 
         final List<Shulker> finalPassengerSeats = passengerSeats;
         final Shulker finalDriverSeat = driverSeatShulker;
-        final int[] iterationsLeft = {10};  // 10 iterations × 10 ticks = 5 seconds
+        final int[] iterationsLeft = {10};  // 10 iterations x 10 ticks = 5 seconds
 
         BukkitRunnable particleTask = new BukkitRunnable() {
             @Override

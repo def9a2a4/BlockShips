@@ -31,8 +31,8 @@ public class ShipPhysics {
     public float currentRotationVelocity = 0.0f;
     public Vector3f collisionForce = new Vector3f(0, 0, 0);
 
-    // Internal yaw tracking — vehicle yaw is frozen at spawnYaw to avoid the entity
-    // tracker's byte-precision (~1.4°) rotation packets conflicting with our float-precision
+    // Internal yaw tracking - vehicle yaw is frozen at spawnYaw to avoid the entity
+    // tracker's byte-precision (~1.4 deg) rotation packets conflicting with our float-precision
     // position sync packets, which causes periodic jitter every 3 ticks.
     // All rotation is applied via display entity transformations + interpolation instead.
     public float currentYaw;
@@ -99,8 +99,8 @@ public class ShipPhysics {
         // Apply sail cap: non-engine contribution capped at sailCapRatio
         float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
         // Count fueled engines from wheel data (engines with active fuel)
-        // Use ship.wheelData directly — all callers guarantee it's set before reaching here.
-        // Avoids circular call: resolveWheelData() → recomputeStats() → computeEffectiveStats().
+        // Use ship.wheelData directly - all callers guarantee it's set before reaching here.
+        // Avoids circular call: resolveWheelData() -> recomputeStats() -> computeEffectiveStats().
         anon.def9a2a4.blockships.customships.ShipWheelData wd = ship.wheelData;
         int fueledEngines = (wd != null)
             ? wd.countFueledEngines(ship.model.engineBlockIndices)
@@ -255,7 +255,7 @@ public class ShipPhysics {
             }
         }
 
-        // Apply drag when not actively throttling (a driverless ship always drags → coasts to a stop)
+        // Apply drag when not actively throttling (a driverless ship always drags -> coasts to a stop)
         if (!throttling) {
             float dragMultiplier;
             if (ship.hasDriver) {
@@ -393,7 +393,7 @@ public class ShipPhysics {
             // Proportional approach with damping
             if (Math.abs(yDifference) < 0.1) {
                 currentYVelocity = 0.0f;
-                // Close enough — don't move or teleport. Prevents carrier jitter
+                // Close enough - don't move or teleport. Prevents carrier jitter
                 // for players standing on deck after dismount.
             } else {
                 float targetVelocity = (float) (yDifference * config.buoyancyStrength);
@@ -558,7 +558,7 @@ public class ShipPhysics {
 
         float pitch = loc.getPitch();
 
-        // Keep vehicle yaw frozen — only snap position (visual rotation is via display transforms)
+        // Keep vehicle yaw frozen - only snap position (visual rotation is via display transforms)
         Location snapped = new Location(loc.getWorld(), x, y, z, loc.getYaw(), pitch);
         TeleportCompat.teleport(ship.vehicle, snapped);
 
@@ -628,7 +628,7 @@ public class ShipPhysics {
         // Find players standing on deck BEFORE moving
         Map<Player, Shulker> playersOnDeck = findPlayersOnDeck();
 
-        // Set the new aligned location (update vehicle yaw — ship is stationary,
+        // Set the new aligned location (update vehicle yaw - ship is stationary,
         // so no byte-precision jitter risk, and cardinal angles map exactly to bytes)
         Location aligned = new Location(loc.getWorld(), x, y, z, snappedYaw, snappedPitch);
         TeleportCompat.teleport(ship.vehicle, aligned);

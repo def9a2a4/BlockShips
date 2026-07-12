@@ -476,16 +476,16 @@ public final class ShipModel {
         DROPPER(9, null),
         HOPPER(5, org.bukkit.event.inventory.InventoryType.HOPPER),
         // Real 3-slot furnace GUI for furnace/smoker/blast-furnace blocks in flight. Exact size match to the
-        // real block → zero overflow on disassembly. Result slot is take-only (correct furnace behaviour);
+        // real block -> zero overflow on disassembly. Result slot is take-only (correct furnace behaviour);
         // no smelting occurs while assembled (no ticking block).
         FURNACE(3, org.bukkit.event.inventory.InventoryType.FURNACE);
 
         public final int slots;
         /**
-         * Non-null → build the virtual inventory via the type-based
+         * Non-null -> build the virtual inventory via the type-based
          * {@code Bukkit.createInventory(holder, InventoryType, title)} overload, which has no
          * multiple-of-9 size restriction (the int-based overload throws for HOPPER's 5 slots).
-         * Null → use the size-based overload as before.
+         * Null -> use the size-based overload as before.
          */
         public final org.bukkit.event.inventory.InventoryType invType;
 
@@ -792,7 +792,7 @@ public final class ShipModel {
             List<Number> indices = (List<Number>) map.get("engine_block_indices");
             for (Number idx : indices) engineBlockIndices.add(idx.intValue());
         }
-        // Old YAML files may contain "engine_local_positions" — ignored (dead data, removed)
+        // Old YAML files may contain "engine_local_positions" - ignored (dead data, removed)
 
         // Load wool/banner power from config for sail power calculation
         org.bukkit.plugin.Plugin plugin = org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");

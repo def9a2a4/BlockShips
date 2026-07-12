@@ -13,7 +13,7 @@ import java.util.stream.Collectors;
 
 /**
  * Content resources (blocks.yml, items.yml, prefab ship models) are read from the jar, or from an
- * optional override under the data folder's {@code config/} subfolder — they are no longer extracted
+ * optional override under the data folder's {@code config/} subfolder - they are no longer extracted
  * to disk. This validator:
  *   1. warns if a legacy copy still lives at the plugin-folder root (from an older version) where it is
  *      no longer read, so admins know to move or delete it, and
@@ -44,7 +44,7 @@ public class ConfigValidator {
             if (legacy.exists()) {
                 logger.warning("Found " + path + " at the plugin folder root. This location is no longer read"
                     + " (defaults now come from the jar). To keep customizations, move it to config/" + path
-                    + " — otherwise you can delete it.");
+                    + " - otherwise you can delete it.");
             }
         }
 

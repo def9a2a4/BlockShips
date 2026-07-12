@@ -362,7 +362,7 @@ public class DisplayShip implements Listener {
             ShipRegistry.unregister(ship);
             plugin.getLogger().fine("Suspended ship " + ship.id + " for chunk unload at " + chunk.getX() + "," + chunk.getZ());
         }
-        // Persist chunk indices (async — serialized behind metadata writes on ioExecutor)
+        // Persist chunk indices (async - serialized behind metadata writes on ioExecutor)
         shipWorldData.saveAllChunkIndicesAsync();
     }
 
@@ -493,7 +493,7 @@ public class DisplayShip implements Listener {
                                     plugin.getLogger().info("Recovered ship " + shipId + " from chunk load at " + chunkX + "," + chunkZ);
                                 }
                             } catch (Exception e) {
-                                // recoverEntities (and other per-ship work) is otherwise unguarded here — a
+                                // recoverEntities (and other per-ship work) is otherwise unguarded here - a
                                 // throw would skip the rest of this chunk's batch. Skip just this ship.
                                 plugin.getLogger().warning("Failed to recover ship " + shipId + ", skipping: " + e.getMessage());
                                 failedRecovery.add(shipId);
@@ -2394,7 +2394,7 @@ public class DisplayShip implements Listener {
     }
 
     /**
-     * Handles explosions destroying ship engine blocks — drops custom item instead of vanilla.
+     * Handles explosions destroying ship engine blocks - drops custom item instead of vanilla.
      */
     @EventHandler
     public void onEngineExplode(org.bukkit.event.entity.EntityExplodeEvent event) {

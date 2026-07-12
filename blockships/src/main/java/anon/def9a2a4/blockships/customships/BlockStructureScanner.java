@@ -308,7 +308,7 @@ public class BlockStructureScanner {
 
         // Track weight and center of volume (only for blocks with weight)
         int totalWeight = 0;
-        int totalMass = 0;  // Sum of max(0, weight) per block — used for health and power ratio
+        int totalMass = 0;  // Sum of max(0, weight) per block - used for health and power ratio
         int weightedBlockCount = 0;
         float sumX = 0, sumY = 0, sumZ = 0;
 
@@ -454,7 +454,7 @@ public class BlockStructureScanner {
                 if (!tileItems.isEmpty()) {
                     rawYaml.put("container_items", tileItems);
                 }
-                // Clearing is deferred to removeBlocks() (Pass 0) — see the Container branch above.
+                // Clearing is deferred to removeBlocks() (Pass 0) - see the Container branch above.
                 // (A plain Container is also a TileStateInventoryHolder, so it re-serializes its
                 // still-full snapshot here over container_items with byte-identical data; harmless.)
             }
@@ -567,7 +567,7 @@ public class BlockStructureScanner {
                 }
             }
 
-            // Persist a block's custom name (anvil-renamed containers, banners, ...) — Nameable tile-entity
+            // Persist a block's custom name (anvil-renamed containers, banners, ...) - Nameable tile-entity
             // NBT that blockdata can't carry. Restored generically in placeBlocks; used as the storage GUI title.
             if (block.getState() instanceof org.bukkit.Nameable nameable) {
                 net.kyori.adventure.text.Component cn = nameable.customName();
@@ -786,7 +786,7 @@ public class BlockStructureScanner {
             Vector3f rotatedPos = rotatePosition(pos, rotationDelta);
 
             // Round to nearest integer to avoid floating-point precision errors
-            // (e.g., cos(90°) ≈ 6.12e-17 instead of exactly 0 can cause off-by-one block placement)
+            // (e.g., cos(90 deg) ~ 6.12e-17 instead of exactly 0 can cause off-by-one block placement)
             Location blockLoc = wheelLocation.clone().add(
                 Math.round(rotatedPos.x),
                 Math.round(rotatedPos.y),
@@ -957,7 +957,7 @@ public class BlockStructureScanner {
             }
             } catch (Exception e) {
                 // A block is always placed (setBlockData above) before any throwing metadata restore, so a
-                // bad banner/sign/container value only skips this one block's decoration — the rest of the
+                // bad banner/sign/container value only skips this one block's decoration - the rest of the
                 // ship still places and the ship still fully disassembles + deregisters.
                 org.bukkit.Bukkit.getLogger().warning("[BlockShips] placeBlocks: failed to restore block at "
                     + blockLoc + ", skipping its metadata: " + e.getMessage());
@@ -1017,7 +1017,7 @@ public class BlockStructureScanner {
                 }
             } catch (Exception e) {
                 // Static context: no plugin field here. Use the always-available server logger.
-                // Worst case, this one container spills its items on setType — dropped, not deleted.
+                // Worst case, this one container spills its items on setType - dropped, not deleted.
                 org.bukkit.Bukkit.getLogger().warning("[BlockShips] removeBlocks: failed to clear "
                     + "container at " + loc + " before removal: " + e.getMessage());
             }
@@ -1064,7 +1064,7 @@ public class BlockStructureScanner {
             case FURNACE:
             case BLAST_FURNACE:
             case SMOKER:
-                // Open a real 3-slot furnace GUI in flight (exact match to the block's 3 slots → no overflow
+                // Open a real 3-slot furnace GUI in flight (exact match to the block's 3 slots -> no overflow
                 // on disassembly). Smoker/blast furnace render as a furnace GUI (cosmetic; same 3 slots).
                 // Blast-furnace engines also hit this arm, but their storage inventory is inert at runtime
                 // (they use EngineMenuGUI), so it's harmless. Applies to newly assembled ships only; existing
@@ -1136,11 +1136,13 @@ public class BlockStructureScanner {
                     if (slot < inventorySize) {
                         items[slot] = item;
                     } else {
-                        // Virtual GUI had more slots than the real block — don't destroy the overflow.
+                        // Virtual GUI had more slots than the real block - don't destroy the overflow.
                         overflowOut.add(item);
                     }
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    org.bukkit.Bukkit.getLogger().warning("[BlockShips] Failed to deserialize container item at slot "
+                        + slot + ", dropping it: " + e.getMessage() + ". Please report at "
+                        + anon.def9a2a4.blockships.BlockShipsPlugin.ISSUES_URL);
                 }
             }
         }
@@ -1161,7 +1163,9 @@ public class BlockStructureScanner {
                 }
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            org.bukkit.Bukkit.getLogger().warning("[BlockShips] Failed to serialize player head profile, head texture"
+                + " will be lost: " + e.getMessage() + ". Please report at "
+                + anon.def9a2a4.blockships.BlockShipsPlugin.ISSUES_URL);
         }
         return null;
     }
@@ -1184,7 +1188,9 @@ public class BlockStructureScanner {
 
             return profile;
         } catch (Exception e) {
-            e.printStackTrace();
+            org.bukkit.Bukkit.getLogger().warning("[BlockShips] Failed to deserialize player head profile, head texture"
+                + " will be lost: " + e.getMessage() + ". Please report at "
+                + anon.def9a2a4.blockships.BlockShipsPlugin.ISSUES_URL);
         }
         return null;
     }

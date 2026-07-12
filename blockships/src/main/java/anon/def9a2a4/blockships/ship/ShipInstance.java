@@ -441,7 +441,7 @@ public class ShipInstance {
                 if (mp.collision.enable) {
                     shulkerLightTags.merge(idx, emission, java.lang.Math::max);
                 } else {
-                    // No collider (torch, etc.) — find neighbor with collider
+                    // No collider (torch, etc.) - find neighbor with collider
                     Matrix4f m = mp.local;
                     int x = java.lang.Math.round(m.m30()), y = java.lang.Math.round(m.m31()), z = java.lang.Math.round(m.m32());
                     for (int[] d : neighborPriority) {
@@ -590,7 +590,7 @@ public class ShipInstance {
 
                         // Position skull: move to block center, rotate
                         if (isWallSkull) {
-                            // Wall skulls: +0.25 Y offset, +180° yaw, +0.25 Z toward wall
+                            // Wall skulls: +0.25 Y offset, +180 deg yaw, +0.25 Z toward wall
                             skullTransform.translate(0.5f, 0.5f + 0.25f, 0.5f);
                             skullTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw + 180));
                             skullTransform.translate(0.0f, 0.0f, 0.25f);
@@ -625,7 +625,7 @@ public class ShipInstance {
                         skullYaw = getYawFromBlockFace(facing);
                     }
                     if (isWallSkull) {
-                        // Wall skulls: +0.25 Y offset, +180° yaw, +0.25 Z toward wall
+                        // Wall skulls: +0.25 Y offset, +180 deg yaw, +0.25 Z toward wall
                         displayTransform.translate(0.5f, 0.5f + 0.25f, 0.5f);
                         displayTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw + 180));
                         displayTransform.translate(0.0f, 0.0f, 0.25f);
@@ -732,7 +732,9 @@ public class ShipInstance {
                                     ItemStack item = ItemStack.deserializeBytes(serialized);
                                     storage.setItem(slot, item);
                                 } catch (Exception e) {
-                                    e.printStackTrace();
+                                    plugin.getLogger().warning("Failed to restore container item at block "
+                                        + currentBlockIndex + " slot " + slot + ", dropping it: " + e.getMessage()
+                                        + ". Please report at " + BlockShipsPlugin.ISSUES_URL);
                                 }
                             }
                         }
@@ -770,8 +772,8 @@ public class ShipInstance {
                             as.addScoreboardTag(ShipTags.CARRIER_TAG);
                             as.addScoreboardTag(ShipTags.blockIndexTag(currentBlockIndex));
                         } catch (Throwable t) {
-                            plugin.getLogger().severe("ArmorStand config failed for block " + currentBlockIndex + ": " + t.getMessage());
-                            t.printStackTrace();
+                            plugin.getLogger().log(java.util.logging.Level.SEVERE, "ArmorStand config failed for block "
+                                + currentBlockIndex + ": " + t.getMessage() + ". Please report at " + BlockShipsPlugin.ISSUES_URL, t);
                         }
                     });
 
@@ -866,8 +868,8 @@ public class ShipInstance {
                                     // Scale attribute not available on this version - shulker uses default size
                                 }
                             } catch (Throwable e) {
-                                plugin.getLogger().severe("Shulker config failed for block " + finalBlockIndex + ": " + e.getMessage());
-                                e.printStackTrace();
+                                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Shulker config failed for block "
+                                    + finalBlockIndex + ": " + e.getMessage() + ". Please report at " + BlockShipsPlugin.ISSUES_URL, e);
                             }
                         });
                     } catch (Throwable e) {
@@ -893,8 +895,8 @@ public class ShipInstance {
                     if (spawnedShulker != null && spawnedShulker.isValid()) {
                         spawnedShulker.remove();
                     }
-                    plugin.getLogger().severe("Collider spawn failed for block " + currentBlockIndex + ": " + e.getMessage());
-                    e.printStackTrace();
+                    plugin.getLogger().log(java.util.logging.Level.SEVERE, "Collider spawn failed for block "
+                        + currentBlockIndex + ": " + e.getMessage() + ". Please report at " + BlockShipsPlugin.ISSUES_URL, e);
                 }
 
                 // Store leadable shulker reference for prefab ship lead attachment (single lead point)
@@ -954,7 +956,7 @@ public class ShipInstance {
             displays.add(new DisplayInstance(child, new Matrix4f(p.local)));
         }
         } catch (Throwable ex) {
-            // Assembly failed partway — despawn everything already spawned (vehicle, parent,
+            // Assembly failed partway - despawn everything already spawned (vehicle, parent,
             // block/item displays, collider carriers + shulkers) so no invisible ghosts remain,
             // then rethrow so the caller reports the failure.
             destroy();
@@ -1044,7 +1046,7 @@ public class ShipInstance {
     /**
      * Computes a collider's world position from the rotation matrix, collision translation,
      * local transform, and per-block offset. Writes result into {@code outPos}.
-     * All matrix/vector parameters are used as scratch space — callers can pass work fields
+     * All matrix/vector parameters are used as scratch space - callers can pass work fields
      * for zero-alloc usage in the tick loop, or temporary locals elsewhere.
      */
     private static void computeColliderWorldPos(
@@ -1164,7 +1166,7 @@ public class ShipInstance {
 
             // Verify passenger relationship is intact (can break on chunk reload)
             // Throttled: TeleportCompat already re-adds passengers after each teleport,
-            // so this only catches chunk reload edge cases — checking every 20 ticks is sufficient
+            // so this only catches chunk reload edge cases - checking every 20 ticks is sufficient
             if (shouldCheckPassengers && cb.carrier.isValid() && cb.entity.isValid() && !cb.carrier.getPassengers().contains(cb.entity)) {
                 cb.carrier.addPassenger(cb.entity);
             }
@@ -1173,7 +1175,7 @@ public class ShipInstance {
                 TeleportCompat.teleport(cb.carrier, workCarrierLoc);
                 // DO NOT teleport shulker directly - it causes block snapping
                 // Shulker should follow carrier as passenger
-                // NOTE: Do NOT set velocity on carriers — it causes client-side prediction
+                // NOTE: Do NOT set velocity on carriers - it causes client-side prediction
                 // to fight with teleport positioning, producing Y-axis jitter for players
                 // standing on the shulkers. Carriers move only via teleport.
             }
@@ -1284,7 +1286,7 @@ public class ShipInstance {
             }
         }
 
-        // Always update collision positions when physics ran — carriers must stay
+        // Always update collision positions when physics ran - carriers must stay
         // in sync with the vehicle (and its passenger display chain) at all speeds.
         // The per-carrier velocity threshold (0.01) inside updateCollisionPositions()
         // already filters out micro-drift.
@@ -1299,7 +1301,7 @@ public class ShipInstance {
         boolean hasMoved = hasMovedSinceLastTick(currentVehicleLoc, yaw, pitch);
 
         if (!hasMoved && !firstTick) {
-            // Update previous state even when idle — prevents stale previousVehicleLocation
+            // Update previous state even when idle - prevents stale previousVehicleLocation
             // from causing a velocity spike when the ship starts moving again
             previousVehicleLocation = currentVehicleLoc.clone();
             previousYaw = yaw;
@@ -1308,7 +1310,7 @@ public class ShipInstance {
             // nearby players. This forces the client to discard stale entity state and
             // receive fresh spawn packets with exact positions, fixing collision jitter.
             if (ticksSinceLastMovement == 0) {
-                // Vehicle yaw stays frozen at spawnYaw — currentYaw is persisted
+                // Vehicle yaw stays frozen at spawnYaw - currentYaw is persisted
                 // via per-world metadata for chunk recovery instead of vehicle NBT.
                 refreshCarrierTracking();
             }
@@ -1348,9 +1350,9 @@ public class ShipInstance {
 
     /**
      * Updates display entity transformations based on the current rotation delta.
-     * Vehicle yaw is frozen at spawnYaw — all visual rotation is applied here via the
+     * Vehicle yaw is frozen at spawnYaw - all visual rotation is applied here via the
      * display transformation matrix, using the internal yaw tracked by ShipPhysics.
-     * This avoids the entity tracker's byte-precision (~1.4°) rotation packets.
+     * This avoids the entity tracker's byte-precision (~1.4 deg) rotation packets.
      *
      * Called from tick() on every active tick, and from alignToGrid() (to reset
      * the transformation after spawnYaw is re-anchored to currentYaw).
@@ -1459,7 +1461,7 @@ public class ShipInstance {
             // [0] entity ID
             mod.write(0, vehicle.getEntityId());
 
-            // [1] PositionMoveRotation — construct NMS object via cached reflection
+            // [1] PositionMoveRotation - construct NMS object via cached reflection
             Object pos = vec3Constructor.newInstance(loc.getX(), loc.getY(), loc.getZ());
             double vx = velocity != null ? velocity.getX() : 0;
             double vy = velocity != null ? velocity.getY() : 0;
@@ -1468,7 +1470,7 @@ public class ShipInstance {
             Object posRot = posRotConstructor.newInstance(pos, vel, loc.getYaw(), loc.getPitch());
             mod.write(1, posRot);
 
-            // [2] relative flags — leave as empty set (absolute positioning)
+            // [2] relative flags - leave as empty set (absolute positioning)
             // [3] onGround
             mod.write(3, false);
 
@@ -1806,7 +1808,7 @@ public class ShipInstance {
 
     /**
      * Dismounts a player from a ship if they are riding a ship shulker.
-     * Calls removePassenger which triggers VehicleExitEvent — the DisplayShip
+     * Calls removePassenger which triggers VehicleExitEvent - the DisplayShip
      * event handler handles safe-position teleport, seat freeing, and velocity transfer.
      * @param player The player to dismount
      * @return true if the player was dismounted from a ship, false otherwise
@@ -1867,7 +1869,7 @@ public class ShipInstance {
             isRightPressed = false;
             isSpacePressed = false;
             isSprintPressed = false;
-            // Kill vertical velocity on driver exit — buoyancy deadzone (0.1 blocks)
+            // Kill vertical velocity on driver exit - buoyancy deadzone (0.1 blocks)
             // will catch whatever offset remains without producing jitter
             physics.currentYVelocity = 0.0f;
             // Snap position and rotation to reduce floating-point jitter
@@ -1920,7 +1922,7 @@ public class ShipInstance {
                 // A container's real (anvil) name, captured at scan; full color/format fidelity.
                 title = net.kyori.adventure.text.serializer.gson.GsonComponentSerializer.gson().deserialize(customNameGson);
             } catch (Exception e) {
-                title = net.kyori.adventure.text.Component.text(sc.name);  // malformed persisted JSON → generic label
+                title = net.kyori.adventure.text.Component.text(sc.name);  // malformed persisted JSON -> generic label
             }
         } else {
             title = net.kyori.adventure.text.Component.text(sc.name);
@@ -2001,7 +2003,7 @@ public class ShipInstance {
                         storage.clear();
                     }
                     // Drop TileStateInventoryHolder items (shelves, chiseled bookshelves)
-                    // These aren't in the storages map — their items are serialized in rawYaml
+                    // These aren't in the storages map - their items are serialized in rawYaml
                     for (ShipModel.ModelPart part : sourceModel.parts) {
                         if (part.storage == null && part.rawYaml.containsKey("container_items")) {
                             @SuppressWarnings("unchecked")
@@ -2276,11 +2278,11 @@ public class ShipInstance {
             Shulker s = shulkers.get(blockIdx);
             if (s != null) {
                 // Skip a collider whose index no longer fits the model (model definition changed between
-                // save and load) instead of throwing — a throw here would abort recovery of every remaining
+                // save and load) instead of throwing - a throw here would abort recovery of every remaining
                 // ship in the batch. Matches how the incremental tryAddEntity path tolerates this.
                 if (blockIdx >= model.parts.size()) {
                     plugin.getLogger().warning("Ship " + id + " recovery: collider block index " + blockIdx +
-                        " exceeds model parts size " + model.parts.size() + " — skipping (model may have changed).");
+                        " exceeds model parts size " + model.parts.size() + " - skipping (model may have changed).");
                     continue;
                 }
                 // Get collision config from model
@@ -2476,7 +2478,7 @@ public class ShipInstance {
         }
         // Remove child block/item displays directly. Normally they are passengers of `parent`
         // (removed above), but on a failed assembly they are spawned and not yet mounted (mounting is
-        // deferred 1 tick), so remove them by list too. Idempotent — a double remove() is harmless.
+        // deferred 1 tick), so remove them by list too. Idempotent - a double remove() is harmless.
         for (DisplayInstance di : displays) {
             if (di.entity != null && di.entity.isValid()) di.entity.remove();
         }

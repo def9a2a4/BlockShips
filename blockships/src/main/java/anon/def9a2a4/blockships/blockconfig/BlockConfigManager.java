@@ -70,7 +70,6 @@ public class BlockConfigManager {
                 parseBlockEntry(key, blockConfig);
             } catch (Exception e) {
                 logger.warning("Failed to parse block config for '" + key + "': " + e.getMessage());
-                e.printStackTrace();
             }
         }
 
@@ -105,7 +104,6 @@ public class BlockConfigManager {
                 parseBlockEntry(key, blockConfig);
             } catch (Exception e) {
                 logger.warning("Failed to parse block config for '" + key + "': " + e.getMessage());
-                e.printStackTrace();
             }
         }
 

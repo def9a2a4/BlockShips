@@ -316,18 +316,18 @@ public class ShipConfig {
 
     /**
      * Computes an effective stat value from a power-to-mass ratio using linear interpolation.
-     * ratio 0.0 → floor, ratio defaultRatio → defaultVal, ratio 1.0 → cap.
+     * ratio 0.0 -> floor, ratio defaultRatio -> defaultVal, ratio 1.0 -> cap.
      * Result is clamped to [floor, cap].
      */
     public float computeStat(float ratio, float defaultVal, float floor, float configCap) {
         float cap = configCap > 0 ? configCap : defaultVal * maxRatioMultiplier;
         float stat;
         if (ratio <= defaultRatio) {
-            // Interpolate floor → default over ratio 0.0 → defaultRatio
+            // Interpolate floor -> default over ratio 0.0 -> defaultRatio
             float t = defaultRatio > 0 ? ratio / defaultRatio : 0;
             stat = floor + t * (defaultVal - floor);
         } else if (defaultRatio < 1.0f) {
-            // Interpolate default → cap over ratio defaultRatio → 1.0
+            // Interpolate default -> cap over ratio defaultRatio -> 1.0
             float t = (ratio - defaultRatio) / (1.0f - defaultRatio);
             stat = defaultVal + t * (cap - defaultVal);
         } else {

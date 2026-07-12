@@ -93,11 +93,11 @@ public class ItemFactory {
         try {
             baseMaterial = Material.valueOf(baseMaterialStr.toUpperCase());
         } catch (IllegalArgumentException e) {
-            // A typo'd base-material would otherwise throw up through createItem/createItemForRecipe — the
+            // A typo'd base-material would otherwise throw up through createItem/createItemForRecipe - the
             // latter runs during recipe registration at startup, so an unguarded throw breaks plugin enable
             // entirely, not just /blockships give. Degrade to null (callers fall back to a placeholder head).
             plugin.getLogger().warning("Custom item '" + itemId + "' has invalid base-material '"
-                + baseMaterialStr + "' — skipping.");
+                + baseMaterialStr + "' - skipping.");
             return null;
         }
         String textureSet = plugin.getConfig().getString(configPath + ".texture-set");
