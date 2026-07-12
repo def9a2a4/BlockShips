@@ -4,6 +4,7 @@ import org.bukkit.*;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.Recipe;
 import org.bukkit.inventory.ShapedRecipe;
+import org.bukkit.inventory.ShapelessRecipe;
 import org.bukkit.inventory.RecipeChoice;
 import org.bukkit.inventory.meta.SkullMeta;
 import org.bukkit.entity.Player;
@@ -42,10 +43,14 @@ public class ItemUtil {
 
         List<String> registeredNames = new ArrayList<>();
 
-        // Register recipes for custom items (e.g., balloons)
+        // Register recipes for custom items (e.g., balloons).
+        // Engines only do anything while the stats system is on, so don't register the
+        // ship_engine recipe when stats are disabled. Re-runs on /blockships reload.
+        boolean statsEnabled = plugin.getConfig().getBoolean("custom-ships.stats.enabled", false);
         var customItemsSection = plugin.getConfig().getConfigurationSection("custom-items");
         if (customItemsSection != null) {
             for (String itemType : customItemsSection.getKeys(false)) {
+                if ("ship_engine".equals(itemType) && !statsEnabled) continue;
                 if (registerItemRecipe(plugin, itemType, "custom-items." + itemType, registeredRecipes, itemFactory)) {
                     registeredNames.add(itemType);
                 }
@@ -81,20 +86,11 @@ public class ItemUtil {
         String recipePath = configPath + ".recipe";
         if (!plugin.getConfig().contains(recipePath)) return false;
 
-        // Get recipe pattern
-        List<String> pattern = plugin.getConfig().getStringList(recipePath + ".pattern");
-        if (pattern.isEmpty() || pattern.size() != 3) {
-            plugin.getLogger().warning("Invalid recipe pattern for " + itemType);
-            return false;
-        }
+        boolean shapeless = plugin.getConfig().getBoolean(recipePath + ".shapeless", false);
 
         // Create a placeholder kit item (actual customization happens in PrepareItemCraftEvent)
         ItemStack kit = itemFactory.createItemForRecipe(itemType);
-
-        // Create recipe
         NamespacedKey recipeKey = new NamespacedKey(plugin, itemType + "_kit_recipe");
-        ShapedRecipe recipe = new ShapedRecipe(recipeKey, kit);
-        recipe.shape(pattern.get(0), pattern.get(1), pattern.get(2));
 
         // Get ingredients using RecipeIngredient system
         var ingredientsSection = plugin.getConfig().getConfigurationSection(recipePath + ".ingredients");
@@ -103,37 +99,81 @@ public class ItemUtil {
             return false;
         }
 
-        for (String key : ingredientsSection.getKeys(false)) {
-            List<String> ingredientStrings = plugin.getConfig().getStringList(recipePath + ".ingredients." + key);
+        // Get texture manager for custom item ingredients
+        ItemTextureManager textureManager = ((anon.def9a2a4.blockships.BlockShipsPlugin) plugin)
+                .getDisplayShip().getTextureManager();
 
-            if (ingredientStrings.isEmpty()) {
-                plugin.getLogger().warning("No ingredients specified for key '" + key + "' in " + itemType);
-                continue;
+        if (shapeless) {
+            // Shapeless recipe: ingredients go in any slot
+            ShapelessRecipe recipe = new ShapelessRecipe(recipeKey, kit);
+            for (String key : ingredientsSection.getKeys(false)) {
+                List<String> ingredientStrings = plugin.getConfig().getStringList(recipePath + ".ingredients." + key);
+                if (ingredientStrings.isEmpty()) continue;
+                try {
+                    List<RecipeIngredient> ingredients = RecipeIngredient.parseList(ingredientStrings, plugin, textureManager);
+                    if (!ingredients.isEmpty()) {
+                        recipe.addIngredient(ingredients.get(0).getRecipeChoice());
+                    }
+                } catch (IllegalArgumentException e) {
+                    plugin.getLogger().warning("Recipe '" + itemType + "': failed to parse ingredient '" + key + "': " + e.getMessage());
+                    return false;
+                }
+            }
+            try {
+                Bukkit.addRecipe(recipe, true);
+            } catch (Exception e) {
+                plugin.getLogger().warning("Recipe '" + itemType + "': failed to register: " + e.getMessage());
+                return false;
+            }
+        } else {
+            // Shaped recipe: needs pattern
+            List<String> pattern = plugin.getConfig().getStringList(recipePath + ".pattern");
+            if (pattern.isEmpty() || pattern.size() != 3) {
+                plugin.getLogger().warning("Recipe '" + itemType + "': invalid pattern (need exactly 3 rows)");
+                return false;
+            }
+
+            ShapedRecipe recipe = new ShapedRecipe(recipeKey, kit);
+            recipe.shape(pattern.get(0), pattern.get(1), pattern.get(2));
+
+            // Collect which pattern characters get ingredients assigned
+            Set<Character> definedChars = new HashSet<>();
+            for (String key : ingredientsSection.getKeys(false)) {
+                List<String> ingredientStrings = plugin.getConfig().getStringList(recipePath + ".ingredients." + key);
+                if (ingredientStrings.isEmpty()) {
+                    plugin.getLogger().warning("Recipe '" + itemType + "': no ingredients specified for key '" + key + "'");
+                    return false;
+                }
+                try {
+                    List<RecipeIngredient> ingredients = RecipeIngredient.parseList(ingredientStrings, plugin, textureManager);
+                    if (!ingredients.isEmpty()) {
+                        recipe.setIngredient(key.charAt(0), ingredients.get(0).getRecipeChoice());
+                        definedChars.add(key.charAt(0));
+                    }
+                } catch (IllegalArgumentException e) {
+                    plugin.getLogger().warning("Recipe '" + itemType + "': failed to parse ingredient '" + key + "': " + e.getMessage());
+                    return false;
+                }
+            }
+
+            // Validate all pattern characters have a corresponding ingredient
+            for (String row : pattern) {
+                for (char c : row.toCharArray()) {
+                    if (c != ' ' && !definedChars.contains(c)) {
+                        plugin.getLogger().warning("Recipe '" + itemType + "': pattern uses '" + c + "' but no ingredient is defined for it");
+                        return false;
+                    }
+                }
             }
 
             try {
-                // Get texture manager for custom item ingredients
-                ItemTextureManager textureManager = ((anon.def9a2a4.blockships.BlockShipsPlugin) plugin)
-                        .getDisplayShip().getTextureManager();
-
-                // Parse ingredients using RecipeIngredient system
-                List<RecipeIngredient> ingredients = RecipeIngredient.parseList(ingredientStrings, plugin, textureManager);
-
-                if (ingredients.isEmpty()) {
-                    plugin.getLogger().warning("No valid ingredients for key '" + key + "' in " + itemType);
-                    continue;
-                }
-
-                // Use the first ingredient's recipe choice for Bukkit registration
-                RecipeChoice choice = ingredients.get(0).getRecipeChoice();
-                recipe.setIngredient(key.charAt(0), choice);
-
-            } catch (IllegalArgumentException e) {
-                plugin.getLogger().warning("Failed to parse ingredient '" + key + "' for " + itemType + ": " + e.getMessage());
+                Bukkit.addRecipe(recipe, true);
+            } catch (Exception e) {
+                plugin.getLogger().warning("Recipe '" + itemType + "': failed to register: " + e.getMessage());
+                return false;
             }
         }
 
-        Bukkit.addRecipe(recipe, true);
         registeredRecipes.add(recipeKey);
         return true;
     }

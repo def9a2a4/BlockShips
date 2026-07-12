@@ -1,6 +1,7 @@
 package anon.def9a2a4.blockships.customships;
 
 import anon.def9a2a4.blockships.BlockShipsPlugin;
+import anon.def9a2a4.blockships.HelpBookContent;
 import anon.def9a2a4.blockships.ShipConfig;
 import anon.def9a2a4.blockships.ShipRegistry;
 import anon.def9a2a4.blockships.ship.ShipInstance;
@@ -14,8 +15,6 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 
 import anon.def9a2a4.blockships.ItemUtil;
-import anon.def9a2a4.blockships.util.SteerPacketCompat;
-import org.bukkit.inventory.meta.BookMeta;
 import org.bukkit.inventory.meta.SkullMeta;
 
 import java.util.ArrayList;
@@ -34,23 +33,49 @@ public class ShipWheelMenu {
     public static class ShipInfo {
         public final int blockCount;
         public final int totalWeight;
+        public final int mass;  // sum of positive block weights (for display + ratio)
         public final float density;
         public final int maxHealth;
         public final Integer currentHealth;  // null if not assembled
         public final float surfaceOffset;
         public final float airDensity;
         public final float waterDensity;
+        // Ship stats
+        public final int woolCount;
+        public final int bannerCount;
+        public final int sailPower;
+        public final int engineCount;
+        public final int fueledEngines;
+        public final int enginePowerPerEngine; // power points per engine (from config)
+        public final float sailCapRatio; // sail cap threshold (from config, e.g. 0.8)
+        public final float sailRatio;  // uncapped sail ratio (before sail cap applied)
+        public final float ratio;      // final ratio (with sail cap + engines)
+        public final boolean statsEnabled; // whether the power-to-mass stats system is active
 
-        public ShipInfo(int blockCount, int totalWeight, float density, int maxHealth,
-                        Integer currentHealth, float surfaceOffset, float airDensity, float waterDensity) {
+        public ShipInfo(int blockCount, int totalWeight, int mass, float density, int maxHealth,
+                        Integer currentHealth, float surfaceOffset, float airDensity, float waterDensity,
+                        int woolCount, int bannerCount, int sailPower, int engineCount, int fueledEngines,
+                        int enginePowerPerEngine, float sailCapRatio, float sailRatio, float ratio,
+                        boolean statsEnabled) {
             this.blockCount = blockCount;
             this.totalWeight = totalWeight;
+            this.mass = mass;
             this.density = density;
             this.maxHealth = maxHealth;
             this.currentHealth = currentHealth;
             this.surfaceOffset = surfaceOffset;
             this.airDensity = airDensity;
             this.waterDensity = waterDensity;
+            this.woolCount = woolCount;
+            this.bannerCount = bannerCount;
+            this.sailPower = sailPower;
+            this.engineCount = engineCount;
+            this.fueledEngines = fueledEngines;
+            this.enginePowerPerEngine = enginePowerPerEngine;
+            this.sailCapRatio = sailCapRatio;
+            this.sailRatio = sailRatio;
+            this.ratio = ratio;
+            this.statsEnabled = statsEnabled;
         }
     }
 
@@ -87,19 +112,6 @@ public class ShipWheelMenu {
     // Help icon texture (question mark)
     private static final String HELP_TEXTURE = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZGE5OWIwNWI5YTFkYjRkMjliNWU2NzNkNzdhZTU0YTc3ZWFiNjY4MTg1ODYwMzVjOGEyMDA1YWViODEwNjAyYSJ9fX0=";
 
-    // Help content - used for both lore and book
-    // Controls text is dynamic based on server version (sprint vs S+Space for descent)
-    private static String[][] getHelpSections() {
-        return new String[][] {
-            {"Controls", SteerPacketCompat.getAirshipControlsHelp()},
-            {"Getting Started", "Place wheel on your build, open this menu by right-clicking the wheel, click the boat to assemble."},
-            {"Riding", "Right-click ship or seat to board. Sneak to exit."},
-            {"Menu & Disassembly", "Right-click the ship's wheel, or sneak + right-click anywhere on the ship. Click the pickaxe to disassemble."},
-            {"Cannons", "Dispenser + obsidian behind it. Right-click the obsidian to fire, or use the fireball in the menu."},
-            {"Functionality", "Chests, barrels, and other containers work on ships. Attach leads to fences to bring mobs or boats along. Stairs work as extra seats for players."},
-            {"Weight & Buoyancy", "Wood/wool = light, metals = heavy. Glowstone/end rods = lighter than air (airship!). Click the book to detect your ship and see more info."}
-        };
-    }
 
     // Menu item slots - Left group: detect/info, Right group: assemble/align/disassemble
     private static final int HELP_SLOT = 0;
@@ -113,6 +125,7 @@ public class ShipWheelMenu {
     private static final int DISASSEMBLE_SLOT = 16;
     private static final int FORCE_DISASSEMBLE_SLOT = 17;  // Right of disassemble button
     private static final int HIGHLIGHT_SEATS_SLOT = 19;    // Below detect slot (row 3)
+    private static final int STATS_SLOT = 20;              // Below info slot (row 3)
 
     /**
      * Opens the ship wheel menu for a player.
@@ -269,6 +282,7 @@ public class ShipWheelMenu {
 
         // Ship Info button - shows weight, density, and buoyancy info from last detection
         menu.setItem(INFO_SLOT, createInfoItem(wheelData));
+        menu.setItem(STATS_SLOT, createStatsItem(wheelData));
 
         // Highlight Seats button - always shown
         menu.setItem(HIGHLIGHT_SEATS_SLOT, createHighlightSeatsItem(wheelData));
@@ -329,6 +343,8 @@ public class ShipWheelMenu {
             return MenuAction.CAMERA_DISTANCE_DECREASE;
         } else if (slot == CAMERA_PLUS_SLOT) {
             return MenuAction.CAMERA_DISTANCE_INCREASE;
+        } else if (slot == STATS_SLOT) {
+            return MenuAction.INFO;  // Clicking stats banner also refreshes ship info
         }
         return MenuAction.NONE;
     }
@@ -345,8 +361,10 @@ public class ShipWheelMenu {
         }
 
         int blockCount = wheelData.getLastDetectedBlockCount();
+        int weightedBlockCount = wheelData.getLastDetectedWeightedBlockCount();
         int totalWeight = wheelData.getLastDetectedWeight();
-        float density = blockCount > 0 ? (float) totalWeight / blockCount : 0;
+        // Use weighted block count for density (matches ShipModel.getDensity() and physics)
+        float density = weightedBlockCount > 0 ? (float) totalWeight / weightedBlockCount : 0;
 
         // Get config values for float status thresholds
         BlockShipsPlugin plugin = (BlockShipsPlugin) Bukkit.getPluginManager().getPlugin("BlockShips");
@@ -364,12 +382,53 @@ public class ShipWheelMenu {
             currentHealth = (int) Math.ceil(wheelData.getLastCurrentHealth());
             maxHealth = (int) wheelData.getLastMaxHealth();
         } else {
-            int positiveWeight = wheelData.getLastDetectedPositiveWeight();
-            maxHealth = Math.max(1, positiveWeight);
+            int shipMass = wheelData.getLastDetectedPositiveWeight();
+            maxHealth = Math.max(1, shipMass);
         }
 
-        return new ShipInfo(blockCount, totalWeight, density, maxHealth, currentHealth,
-                            surfaceOffset, airDensity, waterDensity);
+        // Ship stats - use live ShipInstance data when assembled
+        int woolCount, bannerCount, engineCount, fueledEngines, mass;
+        if (wheelData.isAssembled()) {
+            ShipInstance ship = ShipRegistry.byId(wheelData.getAssembledShipUUID());
+            if (ship != null && ship.model != null) {
+                woolCount = ship.model.woolCount;
+                bannerCount = ship.model.bannerCount;
+                engineCount = ship.model.engineCount;
+                mass = Math.max(1, ship.model.mass);
+                anon.def9a2a4.blockships.customships.ShipWheelData wd = ship.resolveWheelData();
+                fueledEngines = (wd != null)
+                    ? wd.countFueledEngines(ship.model.engineBlockIndices)
+                    : 0;
+            } else {
+                // Ship not found (destroyed?) - use detection data
+                woolCount = wheelData.getLastDetectedWoolCount();
+                bannerCount = wheelData.getLastDetectedBannerCount();
+                engineCount = wheelData.getLastDetectedEngineCount();
+                mass = Math.max(1, wheelData.getLastDetectedPositiveWeight());
+                fueledEngines = 0;
+            }
+        } else {
+            // Unassembled - use detection data; fueled count captured from furnace contents at detect time
+            woolCount = wheelData.getLastDetectedWoolCount();
+            bannerCount = wheelData.getLastDetectedBannerCount();
+            engineCount = wheelData.getLastDetectedEngineCount();
+            mass = Math.max(1, wheelData.getLastDetectedPositiveWeight());
+            fueledEngines = wheelData.getLastDetectedFueledEngineCount();
+        }
+
+        int sailPower = woolCount * config.woolPower + bannerCount * config.bannerPower;
+
+        // Compute power ratio
+        float sailRatio = (float) (config.basePower + sailPower) / mass;
+        float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
+        float engineBonus = (float) (fueledEngines * config.enginePower) / mass;
+        float ratio = Math.min(nonEngineRatio + engineBonus, 1.0f);
+
+        return new ShipInfo(blockCount, totalWeight, mass, density, maxHealth, currentHealth,
+                            surfaceOffset, airDensity, waterDensity,
+                            woolCount, bannerCount, sailPower, engineCount, fueledEngines,
+                            config.enginePower, config.sailCapRatio, sailRatio, ratio,
+                            config.statsEnabled);
     }
 
     /**
@@ -396,18 +455,36 @@ public class ShipWheelMenu {
                     lore.add(ChatColor.GRAY + "Max Health: " + ChatColor.RED + "❤ " + info.maxHealth);
                 }
 
-                lore.add(ChatColor.GRAY + "Density: " + ChatColor.WHITE + String.format("%.2f", info.density));
-                lore.add(ChatColor.GRAY + "Surface Offset: " + ChatColor.AQUA + String.format("%.2f", info.surfaceOffset) + " blocks");
-
-                // Float status
+                // Density with colored float status
+                ChatColor densityColor;
+                String floatStatus;
                 if (info.density < info.airDensity) {
-                    lore.add(ChatColor.BLUE + "Airship");
+                    densityColor = ChatColor.AQUA;
+                    floatStatus = "Airship";
                 } else if (info.density < info.waterDensity) {
-                    lore.add(ChatColor.GREEN + "Floats well");
+                    densityColor = ChatColor.GREEN;
+                    floatStatus = "Floats well";
                 } else if (info.density < info.waterDensity + 0.5f) {
-                    lore.add(ChatColor.YELLOW + "Sits low in water");
+                    densityColor = ChatColor.YELLOW;
+                    floatStatus = "Sits low";
                 } else {
-                    lore.add(ChatColor.RED + "Sits very low");
+                    densityColor = ChatColor.RED;
+                    floatStatus = "Sits very low";
+                }
+                lore.add(ChatColor.GRAY + "Density: " + densityColor + String.format("%.2f", info.density)
+                    + ChatColor.GRAY + " (" + densityColor + floatStatus + ChatColor.GRAY + ")");
+
+                // Ship stats (simplified - detailed breakdown in stats item below)
+                lore.add("");
+                if (info.statsEnabled) {
+                    int speedPercent = Math.round(info.ratio / info.sailCapRatio * 100);
+                    String maxTag = info.ratio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
+                    lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%" + maxTag);
+                    if (speedPercent < 50) {
+                        lore.add(ChatColor.DARK_PURPLE + "(add banners or wool as sails!)");
+                    }
+                } else {
+                    lore.add(ChatColor.GRAY + "Stats system disabled - fixed speed");
                 }
             } else {
                 lore.add(ChatColor.GRAY + "No ship detected yet");
@@ -428,6 +505,92 @@ public class ShipWheelMenu {
      */
     public static void updateInfoItem(Inventory inventory, ShipWheelData wheelData) {
         inventory.setItem(INFO_SLOT, createInfoItem(wheelData));
+        inventory.setItem(STATS_SLOT, createStatsItem(wheelData));
+    }
+
+    /**
+     * Creates the detailed Ship Stats item (banner) with full breakdown.
+     */
+    private static ItemStack createStatsItem(ShipWheelData wheelData) {
+        ItemStack statsItem = new ItemStack(Material.WHITE_BANNER);
+        ItemMeta statsMeta = statsItem.getItemMeta();
+        if (statsMeta != null) {
+            statsMeta.setDisplayName(ChatColor.GOLD + "Ship Stats");
+            List<String> lore = new ArrayList<>();
+
+            ShipInfo info = getShipInfo(wheelData);
+            if (info != null) {
+              if (!info.statsEnabled) {
+                // Stats system off: composition/points/ratio are inert - show only mass + a note.
+                lore.add("");
+                lore.add(ChatColor.GRAY + "Mass: " + ChatColor.WHITE + info.mass);
+                lore.add(ChatColor.GRAY + "Stats system disabled - fixed speed");
+              } else {
+                BlockShipsPlugin plugin = (BlockShipsPlugin) Bukkit.getPluginManager().getPlugin("BlockShips");
+                ShipConfig config = ShipConfig.load(plugin, "custom");
+                // Sail breakdown
+                if (info.woolCount > 0) {
+                    lore.add(ChatColor.GRAY + "Wool: " + ChatColor.WHITE + info.woolCount
+                        + ChatColor.GRAY + " (" + (info.woolCount * config.woolPower) + " pts)");
+                }
+                if (info.bannerCount > 0) {
+                    lore.add(ChatColor.GRAY + "Banners: " + ChatColor.WHITE + info.bannerCount
+                        + ChatColor.GRAY + " (" + (info.bannerCount * config.bannerPower) + " pts)");
+                }
+
+                // Sail power with cap indicator
+                if (info.sailPower > 0) {
+                    int sailCapPoints = Math.round(info.sailCapRatio * info.mass);
+                    int effectiveSailPts = config.basePower + info.sailPower;  // base + sail
+                    if (effectiveSailPts > sailCapPoints) {
+                        lore.add(ChatColor.GRAY + "Sail Power: " + ChatColor.WHITE + info.sailPower + " pts"
+                            + ChatColor.YELLOW + " (capped at " + sailCapPoints + " pts)");
+                    } else {
+                        lore.add(ChatColor.GRAY + "Sail Power: " + ChatColor.WHITE + info.sailPower + " pts");
+                    }
+                }
+
+                // Engines - always show fueled/unfueled breakdown
+                if (info.engineCount > 0) {
+                    int unfueled = info.engineCount - info.fueledEngines;
+                    if (info.fueledEngines > 0) {
+                        int fueledPts = info.fueledEngines * info.enginePowerPerEngine;
+                        lore.add(ChatColor.GRAY + "Engines: " + ChatColor.GREEN + info.fueledEngines
+                            + ChatColor.GRAY + " (" + fueledPts + " pts)");
+                    }
+                    if (unfueled > 0) {
+                        lore.add(ChatColor.GRAY + "Engines " + ChatColor.RED + "(unfueled)"
+                            + ChatColor.GRAY + ": " + ChatColor.WHITE + unfueled
+                            + ChatColor.GRAY + " (0 pts)");
+                    }
+                }
+
+                lore.add("");
+                lore.add(ChatColor.GRAY + "Mass: " + ChatColor.WHITE + info.mass);
+                // Effective power after caps (matches physics formula):
+                // cappedSailPower = min(basePower + sailPower, sailCapRatio * mass)
+                // + enginePower, capped at 1.0 * mass total
+                int rawSailPower = config.basePower + info.sailPower;
+                int cappedSailPower = Math.min(rawSailPower, Math.round(info.sailCapRatio * info.mass));
+                int enginePts = info.fueledEngines * info.enginePowerPerEngine;
+                int effectivePower = Math.min(cappedSailPower + enginePts, info.mass);
+                lore.add(ChatColor.GRAY + "Effective Power: " + ChatColor.WHITE + effectivePower
+                    + ChatColor.GRAY + " / " + info.mass + " pts");
+                lore.add(ChatColor.GRAY + "Power Ratio: " + ChatColor.YELLOW
+                    + String.format("%.2f", info.ratio) + ChatColor.GRAY + " / 1.00");
+
+                int speedPercent = Math.round(info.ratio / info.sailCapRatio * 100);
+                String maxTag = info.ratio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
+                lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%" + maxTag);
+              }
+            } else {
+                lore.add(ChatColor.GRAY + "Detect ship first");
+            }
+
+            statsMeta.setLore(lore);
+            statsItem.setItemMeta(statsMeta);
+        }
+        return statsItem;
     }
 
     /**
@@ -555,25 +718,15 @@ public class ShipWheelMenu {
      */
     private static List<String> createHelpLore() {
         List<String> lore = new ArrayList<>();
-        for (String[] section : getHelpSections()) {
-            lore.add(ChatColor.YELLOW + section[0]);
-            lore.add(ChatColor.GRAY + section[1]);
-        }
+        lore.add(ChatColor.GRAY + "WASD to move, Space is up, Sprint is down");
+        lore.add(ChatColor.GRAY + "Place ship's wheel on ship and click 'Assemble' (boat)");
+        lore.add(ChatColor.GRAY + "Right-click ship to board, Sneak to dismount");
+        lore.add(ChatColor.GRAY + "Sails and engines make you go faster,");
+        lore.add(ChatColor.GRAY + "glowstone and other glowing blocks make you float.");
+        lore.add(ChatColor.GRAY + "Enough floating blocks -> airship");
         lore.add("");
-        lore.add(ChatColor.DARK_GRAY + "Click to open help book");
+        lore.add(ChatColor.DARK_GRAY + "Click for more info -- Captain's Manual");
         return lore;
-    }
-
-    private static final int BOOK_LINES_PER_PAGE = 12;
-    private static final int BOOK_CHARS_PER_LINE = 20;
-
-    /**
-     * Estimates the number of lines a section will take in the book.
-     */
-    private static int estimateSectionLines(String title, String content) {
-        // Title takes 1 line, content wraps based on chars per line, plus 1 blank line after
-        int contentLines = (int) Math.ceil((double) content.length() / BOOK_CHARS_PER_LINE);
-        return 1 + contentLines + 1;
     }
 
     /**
@@ -582,43 +735,18 @@ public class ShipWheelMenu {
      * @param player The player to show the book to
      */
     public static void openHelpBook(Player player) {
-        ItemStack book = new ItemStack(Material.WRITTEN_BOOK);
-        BookMeta bookMeta = (BookMeta) book.getItemMeta();
-        if (bookMeta != null) {
-            bookMeta.setTitle("Ship Wheel Help");
-            bookMeta.setAuthor("BlockShips");
+        HelpBookContent.openBook(player);
+    }
 
-            StringBuilder currentPage = new StringBuilder();
-            int currentLines = 0;
-            String[][] helpSections = getHelpSections();
-
-            for (int i = 0; i < helpSections.length; i++) {
-                String title = helpSections[i][0];
-                String content = helpSections[i][1];
-                int sectionLines = estimateSectionLines(title, content);
-
-                // Check if this section fits on current page
-                if (currentLines > 0 && currentLines + sectionLines > BOOK_LINES_PER_PAGE) {
-                    // Add "next page" hint and start new page
-                    currentPage.append(ChatColor.GRAY).append(ChatColor.ITALIC).append("(next page >>>)");
-                    bookMeta.addPage(currentPage.toString());
-                    currentPage = new StringBuilder();
-                    currentLines = 0;
-                }
-
-                // Add section to current page
-                currentPage.append(ChatColor.DARK_BLUE).append(ChatColor.BOLD).append(title).append("\n");
-                currentPage.append(ChatColor.BLACK).append(content).append("\n\n");
-                currentLines += sectionLines;
-            }
-
-            // Add final page if it has content
-            if (currentPage.length() > 0) {
-                bookMeta.addPage(currentPage.toString());
-            }
-
-            book.setItemMeta(bookMeta);
-        }
-        player.openBook(book);
+    /**
+     * Returns a ChatColor for speed percentage display.
+     * Red (<50%) -> Gold (50-74%) -> Yellow (75-99%) -> Green (100-124%) -> Blue (125%+)
+     */
+    private static ChatColor speedColor(int speedPercent) {
+        if (speedPercent >= 125) return ChatColor.AQUA;
+        if (speedPercent >= 100) return ChatColor.GREEN;
+        if (speedPercent >= 75) return ChatColor.YELLOW;
+        if (speedPercent >= 50) return ChatColor.GOLD;
+        return ChatColor.RED;
     }
 }

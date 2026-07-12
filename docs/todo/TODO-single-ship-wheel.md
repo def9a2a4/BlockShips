@@ -1,3 +1,8 @@
+---
+status: planned
+issue: 21
+---
+
 # Plan: Disallow Multiple Ship's Wheels on a Ship
 
 ## Goal

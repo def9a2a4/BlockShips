@@ -82,6 +82,23 @@ public class ShipInstance {
     public final List<Shulker> seatShulkers = new ArrayList<>();  // Seat shulkers in order (index 0 = driver)
     private final Set<Integer> occupiedSeatIndices = new HashSet<>();  // Track which seats are occupied
     public Shulker leadableShulker;  // Designated lead attachment point (for prefab ships)
+    public anon.def9a2a4.blockships.customships.ShipWheelData wheelData;  // Reference to wheel data (for engine fuel state, set during assembly)
+
+    /**
+     * Lazily resolves wheelData if not set (e.g., after chunk recovery).
+     * Looks up via ShipWheelManager by ship UUID.
+     */
+    public anon.def9a2a4.blockships.customships.ShipWheelData resolveWheelData() {
+        if (wheelData != null) return wheelData;
+        if (plugin instanceof anon.def9a2a4.blockships.BlockShipsPlugin bsp) {
+            wheelData = bsp.getShipWheelManager().getWheelByShipUUID(id);
+            if (wheelData != null && physics != null) {
+                physics.recomputeStats();  // Recompute now that fuel state is available
+            }
+        }
+        return wheelData;
+    }
+
     private BukkitRunnable task;
     private BukkitRunnable idleCheckTask;
 
@@ -89,8 +106,10 @@ public class ShipInstance {
     private Location previousVehicleLocation;
     private float previousYaw;
     private float previousPitch;
-    private float spawnYaw;  // Track spawn yaw for pre-1.21.9 display rotation fix
+    float spawnYaw;  // Track spawn yaw for display rotation delta calculation
+    private float metadataYaw = Float.NaN;  // Yaw from per-world metadata (for chunk recovery)
     private int ticksSinceLastMovement = 0;
+    private int engineSmokeTick = 0;  // Counter for throttling engine smoke particles
     private boolean taskStopped = false;
     private boolean firstTick = true; // Force first tick to update positions
 
@@ -238,6 +257,7 @@ public class ShipInstance {
             .build();
 
         ShipInstance instance = new ShipInstance(plugin, state.shipType, model, customization, state.id);
+        instance.metadataYaw = state.yaw;
 
         // For custom ships, restore the source model for disassembly
         if ("custom".equals(state.shipType)) {
@@ -263,9 +283,12 @@ public class ShipInstance {
                     if (blockIdx < model.parts.size()) {
                         ShipModel.ModelPart part = model.parts.get(blockIdx);
                         if (part.storage != null) {
-                            Inventory storage = Bukkit.createInventory(null, part.storage.type.slots,
-                                net.kyori.adventure.text.Component.text(part.storage.name));
-                            storage.setContents(items);
+                            Inventory storage = createStorageInventory(part.storage,
+                                part.rawYaml.get("custom_name") instanceof String cns ? cns : null);
+                            // Cap to the inventory size: `items` is sized from the persisted
+                            // token count, which can exceed the (possibly changed) storage size.
+                            storage.setContents(java.util.Arrays.copyOf(items,
+                                java.lang.Math.min(items.length, storage.getSize())));
                             instance.storages.put(blockIdx, storage);
                         }
                     }
@@ -301,11 +324,16 @@ public class ShipInstance {
 
         // Create root vehicle ArmorStand (for physics, health, display mounting)
         // Players never ride this directly - they ride seat ArmorStands instead
+        // If any spawn/setup below throws, tear down whatever was already spawned so a failed
+        // assembly leaves no orphaned ghost entities (see catch at the end of the spawn sequence).
+        try {
         this.vehicle = w.spawn(base, ArmorStand.class, as -> {
             as.setInvisible(true);
             as.setGravity(false);
             as.setSilent(true);
             as.setPersistent(true);
+            as.customName(net.kyori.adventure.text.Component.empty());
+            as.setCustomNameVisible(false);
             as.addScoreboardTag(ShipTags.shipRootTag(id));
 
             // Root vehicle has health system for ship damage
@@ -337,11 +365,17 @@ public class ShipInstance {
         this.physics = new ShipPhysics(this);
         this.collision = new ShipCollision(this);
 
+        // Compute initial effective stats. For prefab ships this is the final value
+        // (config-based, no ratio). For custom ships this is a preliminary computation
+        // with 0 fueled engines; recomputed after wheelData is linked in ShipWheelManager.
+        this.physics.recomputeStats();
+
         // Initialize previous state
         this.previousVehicleLocation = vehicle.getLocation().clone();
         this.previousYaw = vehicle.getYaw();
         this.previousPitch = vehicle.getPitch();
-        this.spawnYaw = vehicle.getYaw();  // Track spawn yaw for pre-1.21.9 display rotation
+        this.spawnYaw = ShipTags.normalizeYaw(vehicle.getYaw());
+        this.physics.currentYaw = this.spawnYaw;
 
         // Initialize chunk tracking for persistence
         this.currentChunkX = vehicle.getLocation().getBlockX() >> 4;
@@ -407,7 +441,7 @@ public class ShipInstance {
                 if (mp.collision.enable) {
                     shulkerLightTags.merge(idx, emission, java.lang.Math::max);
                 } else {
-                    // No collider (torch, etc.) — find neighbor with collider
+                    // No collider (torch, etc.) - find neighbor with collider
                     Matrix4f m = mp.local;
                     int x = java.lang.Math.round(m.m30()), y = java.lang.Math.round(m.m31()), z = java.lang.Math.round(m.m32());
                     for (int[] d : neighborPriority) {
@@ -447,8 +481,15 @@ public class ShipInstance {
             ShipModel.ModelPart p = model.parts.get(blockIndex);
             final int currentBlockIndex = blockIndex;  // For use in lambda
 
-            // Check if this part needs special rendering (player head or banner)
+            // Check if this part needs special rendering (head/skull or banner).
+            // Heads (player AND mob) render as ItemDisplay + HEAD transform: BlockDisplay
+            // cannot render a skull's rotation (skulls draw via a block-entity renderer).
+            // skull_rotation/skull_facing are captured for every head; only player heads
+            // additionally carry skull_profile. Their presence marks "this part is a head".
             boolean hasSkullProfile = p.rawYaml.containsKey("skull_profile");
+            boolean hasHead = hasSkullProfile
+                              || p.rawYaml.containsKey("skull_rotation")
+                              || p.rawYaml.containsKey("skull_facing");
             // Detect banners by rotation/facing keys (works for both plain and patterned banners)
             boolean hasBannerPatterns = p.rawYaml.containsKey("banner_patterns") ||
                                         p.rawYaml.containsKey("banner_rotation") ||
@@ -457,28 +498,41 @@ public class ShipInstance {
             org.bukkit.entity.Display child;
             Matrix4f displayTransform;  // Transform used for DisplayInstance (may include rotation)
 
-            if (hasSkullProfile || hasBannerPatterns) {
+            if (hasHead || hasBannerPatterns) {
                 // Spawn as ItemDisplay to preserve textures
                 child = w.spawn(displaySpawnLoc, org.bukkit.entity.ItemDisplay.class, id -> {
                     // Create ItemStack for the display
                     ItemStack displayItem;
 
-                    if (hasSkullProfile) {
-                        // Create player head item with texture
-                        displayItem = new ItemStack(Material.PLAYER_HEAD);
-                        ItemMeta meta = displayItem.getItemMeta();
+                    if (hasHead) {
+                        // Create head/skull item. Wall variants have no item form, so map
+                        // them to their floor item (mirrors the banner _WALL_ remap below).
+                        Material headMaterial = Material.PLAYER_HEAD;
+                        String headBlockName = String.valueOf(p.rawYaml.get("block"));
+                        if (headBlockName.contains("_WALL_HEAD")) {
+                            headBlockName = headBlockName.replace("_WALL_HEAD", "_HEAD");
+                        } else if (headBlockName.contains("_WALL_SKULL")) {
+                            headBlockName = headBlockName.replace("_WALL_SKULL", "_SKULL");
+                        }
+                        try {
+                            headMaterial = Material.valueOf(headBlockName);
+                        } catch (IllegalArgumentException ex) {
+                            // Unknown material - fall back to a player head so assembly never aborts
+                            plugin.getLogger().warning("Unknown head material '" + headBlockName
+                                + "' for block " + currentBlockIndex + ", using PLAYER_HEAD. "
+                                + "Please report at " + BlockShipsPlugin.ISSUES_URL);
+                        }
+                        displayItem = new ItemStack(headMaterial);
 
-                        if (meta instanceof org.bukkit.inventory.meta.SkullMeta) {
-                            org.bukkit.inventory.meta.SkullMeta skullMeta = (org.bukkit.inventory.meta.SkullMeta) meta;
-                            String profileData = (String) p.rawYaml.get("skull_profile");
-
-                            // Deserialize and apply profile
+                        // Apply a stored skin profile (player heads only; mob heads have none)
+                        String profileData = (String) p.rawYaml.get("skull_profile");
+                        if (profileData != null
+                                && displayItem.getItemMeta() instanceof org.bukkit.inventory.meta.SkullMeta skullMeta) {
                             com.destroystokyo.paper.profile.PlayerProfile profile = deserializeSkullProfile(profileData);
                             if (profile != null) {
                                 skullMeta.setPlayerProfile(profile);
+                                displayItem.setItemMeta(skullMeta);
                             }
-
-                            displayItem.setItemMeta(skullMeta);
                         }
                     } else {
                         // Create banner item with patterns
@@ -535,36 +589,12 @@ public class ShipInstance {
                         finalTransform.translate(config.customDisplayOffset);
                     }
 
-                    if (hasSkullProfile) {
-                        // Player heads: use HEAD transform mode (displays as worn on head)
+                    if (hasHead) {
+                        // Heads (player + mob): use HEAD transform mode (displays as worn on head)
                         id.setItemDisplayTransform(org.bukkit.entity.ItemDisplay.ItemDisplayTransform.HEAD);
 
                         Matrix4f skullTransform = new Matrix4f(finalTransform);
-
-                        // Calculate yaw from stored rotation data
-                        float skullYaw = 0.0f;
-                        boolean isWallSkull = p.rawYaml.containsKey("skull_facing");
-                        if (p.rawYaml.containsKey("skull_rotation")) {
-                            // Floor head: 16-step rotation
-                            BlockFace rotation = safeBlockFace(p.rawYaml, "skull_rotation", BlockFace.NORTH);
-                            skullYaw = getYawFromBlockFace(rotation);
-                        } else if (isWallSkull) {
-                            // Wall head: 4-direction facing
-                            BlockFace facing = safeBlockFace(p.rawYaml, "skull_facing", BlockFace.NORTH);
-                            skullYaw = getYawFromBlockFace(facing);
-                        }
-
-                        // Position skull: move to block center, rotate
-                        if (isWallSkull) {
-                            // Wall skulls: +0.25 Y offset, +180° yaw, +0.25 Z toward wall
-                            skullTransform.translate(0.5f, 0.5f + 0.25f, 0.5f);
-                            skullTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw + 180));
-                            skullTransform.translate(0.0f, 0.0f, 0.25f);
-                        } else {
-                            // Floor skulls: centered at block center
-                            skullTransform.translate(0.5f, 0.5f, 0.5f);
-                            skullTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw));
-                        }
+                        applySkullTransform(skullTransform, p.rawYaml);
 
                         id.setTransformationMatrix(new Matrix4f(spawnDisplayWorld).mul(skullTransform));
                     } else {
@@ -579,27 +609,9 @@ public class ShipInstance {
                 // ItemDisplay: apply same rotation transforms as used above for tick() updates
                 // Note: displayOffset is applied in tick() via T_display, not here
                 displayTransform = new Matrix4f(p.local);
-                if (hasSkullProfile) {
-                    // Apply skull rotation to displayTransform (must match spawn transforms above)
-                    float skullYaw = 0.0f;
-                    boolean isWallSkull = p.rawYaml.containsKey("skull_facing");
-                    if (p.rawYaml.containsKey("skull_rotation")) {
-                        BlockFace rotation = safeBlockFace(p.rawYaml, "skull_rotation", BlockFace.NORTH);
-                        skullYaw = getYawFromBlockFace(rotation);
-                    } else if (isWallSkull) {
-                        BlockFace facing = safeBlockFace(p.rawYaml, "skull_facing", BlockFace.NORTH);
-                        skullYaw = getYawFromBlockFace(facing);
-                    }
-                    if (isWallSkull) {
-                        // Wall skulls: +0.25 Y offset, +180° yaw, +0.25 Z toward wall
-                        displayTransform.translate(0.5f, 0.5f + 0.25f, 0.5f);
-                        displayTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw + 180));
-                        displayTransform.translate(0.0f, 0.0f, 0.25f);
-                    } else {
-                        // Floor skulls: centered at block center
-                        displayTransform.translate(0.5f, 0.5f, 0.5f);
-                        displayTransform.rotateY((float) java.lang.Math.toRadians(-skullYaw));
-                    }
+                if (hasHead) {
+                    // Apply skull rotation to displayTransform (must match spawn transform above)
+                    applySkullTransform(displayTransform, p.rawYaml);
                 } else if (hasBannerPatterns) {
                     displayTransform = calculateBannerTransform(new Matrix4f(p.local), p.rawYaml);
                 }
@@ -679,8 +691,8 @@ public class ShipInstance {
 
             // Create inventory for this block if it has storage configured
             if (p.storage != null) {
-                Inventory storage = Bukkit.createInventory(null, p.storage.type.slots,
-                    net.kyori.adventure.text.Component.text(p.storage.name));
+                Inventory storage = createStorageInventory(p.storage,
+                    p.rawYaml.get("custom_name") instanceof String cns ? cns : null);
 
                 // Restore saved inventory contents if available
                 if (p.rawYaml.containsKey("container_items")) {
@@ -690,7 +702,7 @@ public class ShipInstance {
 
                     if (itemsData != null) {
                         for (java.util.Map<String, Object> itemData : itemsData) {
-                            int slot = (Integer) itemData.get("slot");
+                            int slot = ((Number) itemData.get("slot")).intValue();
                             byte[] serialized = (byte[]) itemData.get("item");
 
                             if (slot >= 0 && slot < storage.getSize() && serialized != null) {
@@ -698,7 +710,9 @@ public class ShipInstance {
                                     ItemStack item = ItemStack.deserializeBytes(serialized);
                                     storage.setItem(slot, item);
                                 } catch (Exception e) {
-                                    e.printStackTrace();
+                                    plugin.getLogger().warning("Failed to restore container item at block "
+                                        + currentBlockIndex + " slot " + slot + ", dropping it: " + e.getMessage()
+                                        + ". Please report at " + BlockShipsPlugin.ISSUES_URL);
                                 }
                             }
                         }
@@ -730,12 +744,14 @@ public class ShipInstance {
                             as.setSilent(true);
                             as.setPersistent(true);
                             as.setMarker(true);
+                            as.customName(net.kyori.adventure.text.Component.empty());
+                            as.setCustomNameVisible(false);
                             as.addScoreboardTag(ShipTags.shipTag(this.id));
                             as.addScoreboardTag(ShipTags.CARRIER_TAG);
                             as.addScoreboardTag(ShipTags.blockIndexTag(currentBlockIndex));
                         } catch (Throwable t) {
-                            plugin.getLogger().severe("ArmorStand config failed for block " + currentBlockIndex + ": " + t.getMessage());
-                            t.printStackTrace();
+                            plugin.getLogger().log(java.util.logging.Level.SEVERE, "ArmorStand config failed for block "
+                                + currentBlockIndex + ": " + t.getMessage() + ". Please report at " + BlockShipsPlugin.ISSUES_URL, t);
                         }
                     });
 
@@ -752,6 +768,8 @@ public class ShipInstance {
                                 s.setGravity(false);
                                 s.setSilent(true);
                                 s.setPersistent(true);
+                                s.customName(net.kyori.adventure.text.Component.empty());
+                                s.setCustomNameVisible(false);
                                 s.setCollidable(true);
                                 s.setInvisible(true);
                                 s.setGlowing(config.collisionDebugGlow);  // Glow if debug mode enabled
@@ -828,8 +846,8 @@ public class ShipInstance {
                                     // Scale attribute not available on this version - shulker uses default size
                                 }
                             } catch (Throwable e) {
-                                plugin.getLogger().severe("Shulker config failed for block " + finalBlockIndex + ": " + e.getMessage());
-                                e.printStackTrace();
+                                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Shulker config failed for block "
+                                    + finalBlockIndex + ": " + e.getMessage() + ". Please report at " + BlockShipsPlugin.ISSUES_URL, e);
                             }
                         });
                     } catch (Throwable e) {
@@ -855,8 +873,8 @@ public class ShipInstance {
                     if (spawnedShulker != null && spawnedShulker.isValid()) {
                         spawnedShulker.remove();
                     }
-                    plugin.getLogger().severe("Collider spawn failed for block " + currentBlockIndex + ": " + e.getMessage());
-                    e.printStackTrace();
+                    plugin.getLogger().log(java.util.logging.Level.SEVERE, "Collider spawn failed for block "
+                        + currentBlockIndex + ": " + e.getMessage() + ". Please report at " + BlockShipsPlugin.ISSUES_URL, e);
                 }
 
                 // Store leadable shulker reference for prefab ship lead attachment (single lead point)
@@ -915,6 +933,13 @@ public class ShipInstance {
             });
             displays.add(new DisplayInstance(child, new Matrix4f(p.local)));
         }
+        } catch (Throwable ex) {
+            // Assembly failed partway - despawn everything already spawned (vehicle, parent,
+            // block/item displays, collider carriers + shulkers) so no invisible ghosts remain,
+            // then rethrow so the caller reports the failure.
+            destroy();
+            throw ex;
+        }
 
         // Wait 1 tick for entities to spawn, then mount and start ticking
         new BukkitRunnable() {
@@ -970,14 +995,12 @@ public class ShipInstance {
     }
 
     /**
-     * Builds a rotation matrix that combines the vehicle's current orientation with the model's initial rotation.
-     * This matrix should be used for positioning both collision boxes AND display entities.
-     *
-     * Note: Display entities do NOT inherit yaw rotation from their parent vehicle - only position is inherited.
-     * Therefore, we must explicitly apply the vehicle's rotation to display transforms.
+     * Builds a rotation matrix that combines the ship's current orientation with the model's initial rotation.
+     * Uses the internal yaw tracked by ShipPhysics (vehicle yaw is frozen at spawnYaw).
+     * Used for positioning collision boxes; display entities use a separate delta rotation path.
      */
     private Matrix4f buildRotationMatrix() {
-        float yaw = vehicle.getYaw();
+        float yaw = physics.currentYaw;
         float pitch = vehicle.getPitch();
 
         // Reuse work vectors instead of allocating new ones
@@ -1001,7 +1024,7 @@ public class ShipInstance {
     /**
      * Computes a collider's world position from the rotation matrix, collision translation,
      * local transform, and per-block offset. Writes result into {@code outPos}.
-     * All matrix/vector parameters are used as scratch space — callers can pass work fields
+     * All matrix/vector parameters are used as scratch space - callers can pass work fields
      * for zero-alloc usage in the tick loop, or temporary locals elsewhere.
      */
     private static void computeColliderWorldPos(
@@ -1121,7 +1144,7 @@ public class ShipInstance {
 
             // Verify passenger relationship is intact (can break on chunk reload)
             // Throttled: TeleportCompat already re-adds passengers after each teleport,
-            // so this only catches chunk reload edge cases — checking every 20 ticks is sufficient
+            // so this only catches chunk reload edge cases - checking every 20 ticks is sufficient
             if (shouldCheckPassengers && cb.carrier.isValid() && cb.entity.isValid() && !cb.carrier.getPassengers().contains(cb.entity)) {
                 cb.carrier.addPassenger(cb.entity);
             }
@@ -1130,7 +1153,7 @@ public class ShipInstance {
                 TeleportCompat.teleport(cb.carrier, workCarrierLoc);
                 // DO NOT teleport shulker directly - it causes block snapping
                 // Shulker should follow carrier as passenger
-                // NOTE: Do NOT set velocity on carriers — it causes client-side prediction
+                // NOTE: Do NOT set velocity on carriers - it causes client-side prediction
                 // to fight with teleport positioning, producing Y-axis jitter for players
                 // standing on the shulkers. Carriers move only via teleport.
             }
@@ -1214,6 +1237,7 @@ public class ShipInstance {
         collision.detect();  // Detect collisions and accumulate forces
         physics.update();    // Apply physics (movement, rotation, buoyancy)
         collision.applyResponse();  // Apply collision response
+        spawnEngineSmoke();  // Visual feedback for running engines
         cachedVehicleLoc = vehicle.getLocation();  // Refresh after physics moved the vehicle
 
         // Set vehicle velocity from actual displacement (after physics + collision response)
@@ -1225,7 +1249,7 @@ public class ShipInstance {
                 .setY(cachedVehicleLoc.getY() - previousVehicleLocation.getY())
                 .setZ(cachedVehicleLoc.getZ() - previousVehicleLocation.getZ());
             double speedSq = workVehicleVelocity.lengthSquared();
-            float yawDelta = java.lang.Math.abs(vehicle.getYaw() - previousYaw);
+            float yawDelta = java.lang.Math.abs(normalizeAngle(physics.currentYaw - previousYaw));
             boolean hasMovement = speedSq > POSITION_SYNC_THRESHOLD_SQ;
             boolean hasRotation = yawDelta > 0.1f;
             vehicleMovedThisTick = hasMovement || hasRotation;
@@ -1240,7 +1264,7 @@ public class ShipInstance {
             }
         }
 
-        // Always update collision positions when physics ran — carriers must stay
+        // Always update collision positions when physics ran - carriers must stay
         // in sync with the vehicle (and its passenger display chain) at all speeds.
         // The per-carrier velocity threshold (0.01) inside updateCollisionPositions()
         // already filters out micro-drift.
@@ -1248,14 +1272,14 @@ public class ShipInstance {
 
         // Get current vehicle state (reuse cached location from tick runnable)
         Location currentVehicleLoc = cachedVehicleLoc;
-        float yaw = vehicle.getYaw();
+        float yaw = physics.currentYaw;
         float pitch = vehicle.getPitch();
 
         // Check if ship has moved or rotated
         boolean hasMoved = hasMovedSinceLastTick(currentVehicleLoc, yaw, pitch);
 
         if (!hasMoved && !firstTick) {
-            // Update previous state even when idle — prevents stale previousVehicleLocation
+            // Update previous state even when idle - prevents stale previousVehicleLocation
             // from causing a velocity spike when the ship starts moving again
             previousVehicleLocation = currentVehicleLoc.clone();
             previousYaw = yaw;
@@ -1264,6 +1288,8 @@ public class ShipInstance {
             // nearby players. This forces the client to discard stale entity state and
             // receive fresh spawn packets with exact positions, fixing collision jitter.
             if (ticksSinceLastMovement == 0) {
+                // Vehicle yaw stays frozen at spawnYaw - currentYaw is persisted
+                // via per-world metadata for chunk recovery instead of vehicle NBT.
                 refreshCarrierTracking();
             }
             ticksSinceLastMovement++;
@@ -1297,33 +1323,35 @@ public class ShipInstance {
         previousYaw = yaw;
         previousPitch = pitch;
 
-        // Build rotation matrix for display entities (reusing work matrices to avoid allocations)
-        // On 1.21.9+: Vehicle rotation is inherited since displays are passengers of the vehicle
-        // On pre-1.21.9: Display's local coordinate system is "frozen" at spawn yaw, so we only
-        //                apply the DELTA rotation from spawn (not absolute yaw, which causes doubling)
+        updateDisplayTransforms();
+    }
+
+    /**
+     * Updates display entity transformations based on the current rotation delta.
+     * Vehicle yaw is frozen at spawnYaw - all visual rotation is applied here via the
+     * display transformation matrix, using the internal yaw tracked by ShipPhysics.
+     * This avoids the entity tracker's byte-precision (~1.4 deg) rotation packets.
+     *
+     * Called from tick() on every active tick, and from alignToGrid() (to reset
+     * the transformation after spawnYaw is re-anchored to currentYaw).
+     */
+    private void updateDisplayTransforms() {
         workR_initial.set(cachedR_initial);
 
-        if (TeleportCompat.needsPassengerEject()) {
-            // Pre-1.21.9: Apply only the DELTA rotation from spawn
-            // The display's frozen local coordinate system already has spawn_yaw
-            float deltaYaw = vehicle.getYaw() - spawnYaw;
-            float deltaPitch = vehicle.getPitch();  // Pitch starts at 0, so no spawn offset needed
+        float deltaYaw = physics.currentYaw - spawnYaw;
+        float deltaPitch = vehicle.getPitch();  // Pitch starts at 0, so no spawn offset needed
 
-            workDisplayRot.set(
-                (float) java.lang.Math.toRadians(-deltaYaw),
-                (float) java.lang.Math.toRadians(-deltaPitch),
-                0f
-            );
-            model.rotationTransform.transform(workDisplayRot, workDisplayTransformedRot);
-            workDisplayDelta.identity()
-                .rotateY(workDisplayTransformedRot.x)
-                .rotateX(workDisplayTransformedRot.y)
-                .rotateZ(workDisplayTransformedRot.z);
-            workR.set(workDisplayDelta).mul(workR_initial);
-        } else {
-            // 1.21.9+: Only initial rotation, vehicle rotation is inherited from passenger
-            workR.set(workR_initial);
-        }
+        workDisplayRot.set(
+            (float) java.lang.Math.toRadians(-deltaYaw),
+            (float) java.lang.Math.toRadians(-deltaPitch),
+            0f
+        );
+        model.rotationTransform.transform(workDisplayRot, workDisplayTransformedRot);
+        workDisplayDelta.identity()
+            .rotateY(workDisplayTransformedRot.x)
+            .rotateX(workDisplayTransformedRot.y)
+            .rotateZ(workDisplayTransformedRot.z);
+        workR.set(workDisplayDelta).mul(workR_initial);
 
         // Build translation matrix for position offset (in local space)
         workT.identity().translation(model.positionOffset);
@@ -1359,6 +1387,29 @@ public class ShipInstance {
      *   [2] Set relativeTo (empty = absolute)
      *   [3] boolean onGround
      */
+    /**
+     * Spawns smoke particles at fueled engine positions. Throttled to every 5 ticks.
+     */
+    private void spawnEngineSmoke() {
+        if (!"custom".equals(shipType) || model.engineBlockIndices.isEmpty()) return;
+        if (resolveWheelData() == null || !hasDriver) return;
+        if (++engineSmokeTick % 5 != 0) return;
+
+        for (int engineIdx : model.engineBlockIndices) {
+            if (wheelData.getEngineBurnTicks(engineIdx) <= 0) continue;
+
+            // Find the engine's collision shulker by block index
+            for (CollisionBox box : colliders) {
+                if (box.blockIndex == engineIdx && box.entity != null && box.entity.isValid()) {
+                    Location loc = box.entity.getLocation();
+                    loc.getWorld().spawnParticle(org.bukkit.Particle.CAMPFIRE_COSY_SMOKE,
+                        loc.getX(), loc.getY() + 1.0, loc.getZ(), 0, 0.0, 0.05, 0.0, 1.0);
+                    break;
+                }
+            }
+        }
+    }
+
     private void sendVehiclePositionSync(Location loc, org.bukkit.util.Vector velocity) {
         if (!positionSyncInitialized) {
             positionSyncInitialized = true;
@@ -1388,7 +1439,7 @@ public class ShipInstance {
             // [0] entity ID
             mod.write(0, vehicle.getEntityId());
 
-            // [1] PositionMoveRotation — construct NMS object via cached reflection
+            // [1] PositionMoveRotation - construct NMS object via cached reflection
             Object pos = vec3Constructor.newInstance(loc.getX(), loc.getY(), loc.getZ());
             double vx = velocity != null ? velocity.getX() : 0;
             double vy = velocity != null ? velocity.getY() : 0;
@@ -1397,7 +1448,7 @@ public class ShipInstance {
             Object posRot = posRotConstructor.newInstance(pos, vel, loc.getYaw(), loc.getPitch());
             mod.write(1, posRot);
 
-            // [2] relative flags — leave as empty set (absolute positioning)
+            // [2] relative flags - leave as empty set (absolute positioning)
             // [3] onGround
             mod.write(3, false);
 
@@ -1547,6 +1598,38 @@ public class ShipInstance {
         return transform;
     }
 
+    /**
+     * Applies the head/skull display transform (in-place) onto {@code transform}.
+     * Handles both floor heads (16-step {@code skull_rotation}) and wall heads
+     * (4-direction {@code skull_facing}). Shared by the spawn transform, the
+     * per-tick {@code DisplayInstance.base}, and the chunk-recovery path so the
+     * three cannot drift. Applies to player and mob heads identically.
+     */
+    private void applySkullTransform(Matrix4f transform, Map<?, ?> rawYaml) {
+        float skullYaw = 0.0f;
+        boolean isWallSkull = rawYaml.containsKey("skull_facing");
+        if (rawYaml.containsKey("skull_rotation")) {
+            // Floor head: 16-step rotation
+            BlockFace rotation = safeBlockFace(rawYaml, "skull_rotation", BlockFace.NORTH);
+            skullYaw = getYawFromBlockFace(rotation);
+        } else if (isWallSkull) {
+            // Wall head: 4-direction facing
+            BlockFace facing = safeBlockFace(rawYaml, "skull_facing", BlockFace.NORTH);
+            skullYaw = getYawFromBlockFace(facing);
+        }
+
+        if (isWallSkull) {
+            // Wall skulls: +0.25 Y offset, +180 deg yaw, +0.25 Z toward wall
+            transform.translate(0.5f, 0.5f + 0.25f, 0.5f);
+            transform.rotateY((float) java.lang.Math.toRadians(-skullYaw + 180));
+            transform.translate(0.0f, 0.0f, 0.25f);
+        } else {
+            // Floor skulls: centered at block center
+            transform.translate(0.5f, 0.5f, 0.5f);
+            transform.rotateY((float) java.lang.Math.toRadians(-skullYaw));
+        }
+    }
+
     // Start a slower-polling task to check for movement when ship is idle
     private void startIdleCheckTask() {
         if (idleCheckTask != null) {
@@ -1569,7 +1652,7 @@ public class ShipInstance {
 
                 // Check if vehicle has moved
                 Location currentLoc = vehicle.getLocation();
-                float currentYaw = vehicle.getYaw();
+                float currentYaw = physics.currentYaw;
                 float currentPitch = vehicle.getPitch();
 
                 if (hasMovedSinceLastTick(currentLoc, currentYaw, currentPitch)) {
@@ -1735,7 +1818,7 @@ public class ShipInstance {
 
     /**
      * Dismounts a player from a ship if they are riding a ship shulker.
-     * Calls removePassenger which triggers VehicleExitEvent — the DisplayShip
+     * Calls removePassenger which triggers VehicleExitEvent - the DisplayShip
      * event handler handles safe-position teleport, seat freeing, and velocity transfer.
      * @param player The player to dismount
      * @return true if the player was dismounted from a ship, false otherwise
@@ -1796,7 +1879,7 @@ public class ShipInstance {
             isRightPressed = false;
             isSpacePressed = false;
             isSprintPressed = false;
-            // Kill vertical velocity on driver exit — buoyancy deadzone (0.1 blocks)
+            // Kill vertical velocity on driver exit - buoyancy deadzone (0.1 blocks)
             // will catch whatever offset remains without producing jitter
             physics.currentYVelocity = 0.0f;
             // Snap position and rotation to reduce floating-point jitter
@@ -1837,6 +1920,29 @@ public class ShipInstance {
     }
 
     /**
+     * Creates the virtual storage inventory for a ship storage block.
+     * Routes odd-size storage (e.g. HOPPER = 5 slots) through the type-based
+     * {@code createInventory} overload, which has no multiple-of-9 restriction that the
+     * size-based overload enforces (assembling a hopper would otherwise throw).
+     */
+    private static Inventory createStorageInventory(ShipModel.StorageConfig sc, String customNameGson) {
+        net.kyori.adventure.text.Component title;
+        if (customNameGson != null) {
+            try {
+                // A container's real (anvil) name, captured at scan; full color/format fidelity.
+                title = net.kyori.adventure.text.serializer.gson.GsonComponentSerializer.gson().deserialize(customNameGson);
+            } catch (Exception e) {
+                title = net.kyori.adventure.text.Component.text(sc.name);  // malformed persisted JSON -> generic label
+            }
+        } else {
+            title = net.kyori.adventure.text.Component.text(sc.name);
+        }
+        return (sc.type.invType != null)
+            ? Bukkit.createInventory(null, sc.type.invType, title)
+            : Bukkit.createInventory(null, sc.type.slots, title);
+    }
+
+    /**
      * Restores storage inventory contents from saved data.
      * Used when loading ships from persistence.
      */
@@ -1844,7 +1950,11 @@ public class ShipInstance {
         for (Map.Entry<Integer, ItemStack[]> entry : savedContents.entrySet()) {
             Inventory inv = storages.get(entry.getKey());
             if (inv != null) {
-                inv.setContents(entry.getValue());
+                // Cap to inventory size: an unguarded setContents throws IllegalArgumentException
+                // if the saved array is larger than the storage, which would fail the whole ship load.
+                ItemStack[] saved = entry.getValue();
+                inv.setContents(java.util.Arrays.copyOf(saved,
+                    java.lang.Math.min(saved.length, inv.getSize())));
             }
         }
     }
@@ -1884,6 +1994,85 @@ public class ShipInstance {
                             explosionLocations.add(collider.entity.getLocation().clone());
                         }
                     }
+                }
+
+                if (config.destroyOnDeath) {
+                    // Full destruction: blocks are lost, only stored items drop
+                    // Drop inventory contents (chests, barrels, etc.).
+                    // Skip engine blocks: their fuel is dropped exactly once via wheelData below.
+                    // An engine's storages entry is a stale assembly-time snapshot, so dropping it
+                    // here too would duplicate the fuel (and drop the pre-burn amount).
+                    for (Map.Entry<Integer, Inventory> storageEntry : storages.entrySet()) {
+                        if (model.engineBlockIndices.contains(storageEntry.getKey())) continue;
+                        Inventory storage = storageEntry.getValue();
+                        for (ItemStack item : storage.getContents()) {
+                            if (item != null && !item.getType().isAir()) {
+                                world.dropItemNaturally(dropLocation, item);
+                            }
+                        }
+                        storage.clear();
+                    }
+                    // Drop TileStateInventoryHolder items (shelves, chiseled bookshelves)
+                    // These aren't in the storages map - their items are serialized in rawYaml
+                    for (ShipModel.ModelPart part : sourceModel.parts) {
+                        if (part.storage == null && part.rawYaml.containsKey("container_items")) {
+                            @SuppressWarnings("unchecked")
+                            java.util.List<java.util.Map<String, Object>> itemsData =
+                                (java.util.List<java.util.Map<String, Object>>) part.rawYaml.get("container_items");
+                            for (java.util.Map<String, Object> itemData : itemsData) {
+                                byte[] serialized = (byte[]) itemData.get("item");
+                                if (serialized != null) {
+                                    try {
+                                        ItemStack item = ItemStack.deserializeBytes(serialized);
+                                        if (item != null && !item.getType().isAir()) {
+                                            world.dropItemNaturally(dropLocation, item);
+                                        }
+                                    } catch (Exception e) {
+                                        // Skip corrupted items
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Drop engine fuel items
+                    for (ItemStack[] fuelSlots : wheelData.getAllEngineFuelSlots().values()) {
+                        for (ItemStack item : fuelSlots) {
+                            if (item != null && !item.getType().isAir()) {
+                                world.dropItemNaturally(dropLocation, item);
+                            }
+                        }
+                    }
+                    // Drop lead items for any entities leashed to ship shulkers.
+                    // In disassemble mode, transferLeadsFromShip() preserves leads by moving them to
+                    // fence posts. Here we just drop the lead items so players don't lose them silently.
+                    for (CollisionBox cb : colliders) {
+                        if (cb.entity == null || !cb.entity.isValid()) continue;
+                        for (org.bukkit.entity.Entity nearby : cb.entity.getWorld().getNearbyEntities(
+                                cb.entity.getLocation(), 12, 12, 12,
+                                e -> e instanceof io.papermc.paper.entity.Leashable l
+                                        && l.isLeashed()
+                                        && cb.entity.equals(l.getLeashHolder()))) {
+                            world.dropItemNaturally(cb.entity.getLocation(),
+                                    new ItemStack(org.bukkit.Material.LEAD));
+                            // Detach the leash to prevent Paper's tickLeash from dropping a second lead
+                            // when the shulker holder is removed by destroy()
+                            ((io.papermc.paper.entity.Leashable) nearby).setLeashHolder(null);
+                        }
+                    }
+                    // Capture wheel location before entities are removed
+                    Location wheelLoc = wheelData.getBlockLocation();
+                    // Destroy entities and clean up persistence
+                    if (bsp.getDisplayShip() != null) {
+                        destroyWithCleanup(bsp.getDisplayShip().getShipWorldData());
+                    } else {
+                        destroy();
+                    }
+                    wheelData.setAssembledShipUUID(null);
+                    // Remove wheel block from world and tracking (without dropping wheel item)
+                    manager.destroyWheelBlock(wheelLoc);
+                    // Spawn explosions
+                    spawnDestructionExplosions(world, explosionLocations);
+                    return;
                 }
 
                 // 3. Force disassemble - this calls ship.destroy() internally
@@ -2098,10 +2287,13 @@ public class ShipInstance {
             int blockIdx = entry.getKey();
             Shulker s = shulkers.get(blockIdx);
             if (s != null) {
-                // Validate block index against model - throw if model definition changed
+                // Skip a collider whose index no longer fits the model (model definition changed between
+                // save and load) instead of throwing - a throw here would abort recovery of every remaining
+                // ship in the batch. Matches how the incremental tryAddEntity path tolerates this.
                 if (blockIdx >= model.parts.size()) {
-                    throw new IllegalStateException("Ship " + id + " recovery failed: block index " + blockIdx +
-                        " exceeds model parts size " + model.parts.size() + ". Model definition may have changed.");
+                    plugin.getLogger().warning("Ship " + id + " recovery: collider block index " + blockIdx +
+                        " exceeds model parts size " + model.parts.size() + " - skipping (model may have changed).");
+                    continue;
                 }
                 // Get collision config from model
                 ShipModel.ModelPart part = model.parts.get(blockIdx);
@@ -2133,16 +2325,14 @@ public class ShipInstance {
 
         // 6. Restore state and start ticking
         previousVehicleLocation = vehicle.getLocation().clone();
-        previousYaw = vehicle.getYaw();
         previousPitch = vehicle.getPitch();
-        // Track spawn yaw for pre-1.21.9 display rotation fix
-        // Custom ships: use assemblyYaw (initialRotation.x) to match initial spawn state
-        // Prefab ships: use current vehicle yaw (initialRotation.x is 0 anyway)
-        if ("custom".equals(shipType)) {
-            spawnYaw = model.initialRotation.x;
-        } else {
-            spawnYaw = vehicle.getYaw();
-        }
+        // spawnYaw must match vehicle.getYaw() (the frozen NBT yaw the client inherits
+        // for display passengers on 1.21.9+). currentYaw from metadata provides the delta.
+        spawnYaw = ShipTags.normalizeYaw(vehicle.getYaw());
+        physics.currentYaw = !Float.isNaN(metadataYaw)
+            ? ShipTags.normalizeYaw(metadataYaw)
+            : spawnYaw;
+        previousYaw = physics.currentYaw;
         firstTick = true;
 
         // Initialize chunk tracking for persistence
@@ -2175,24 +2365,17 @@ public class ShipInstance {
         // Position collision boxes immediately before starting tick task
         updateCollisionPositions();
 
-        // Update display transforms to match current vehicle orientation
-        // At init time, use R_initial only - the display's frozen local coordinate system
-        // already has the spawn yaw (on pre-1.21.9), or vehicle rotation is inherited (on 1.21.9+)
-        Matrix4f R_initial = new Matrix4f()
-            .rotateY((float) java.lang.Math.toRadians(model.initialRotation.x))
-            .rotateX((float) java.lang.Math.toRadians(model.initialRotation.y))
-            .rotateZ((float) java.lang.Math.toRadians(model.initialRotation.z));
+        // Apply display transforms with correct deltaYaw (may be non-zero if
+        // metadata restored a different currentYaw than the vehicle's frozen spawnYaw)
+        updateDisplayTransforms();
 
-        Matrix4f T = new Matrix4f().translation(model.positionOffset);
-        Matrix4f T_display = new Matrix4f(T);
-        if ("custom".equals(shipType)) {
-            T_display.translate(config.customDisplayOffset);
-        }
-
-        for (DisplayInstance di : displays) {
-            Matrix4f world = new Matrix4f(R_initial).mul(T_display).mul(di.base);
-            di.entity.setTransformationMatrix(world);
-        }
+        // Recompute effective stats. The recovery path previously skipped this, so prefab and
+        // sail-only custom ships came back from a chunk reload / server restart stuck at
+        // effective*==0 (immovable, can't turn, airships can't ascend/descend). resolveWheelData()
+        // links wheelData for engine'd custom ships (null no-op for prefab/sail-only);
+        // recomputeStats() is unconditional and idempotent and handles prefab/custom/stats-disabled.
+        resolveWheelData();
+        physics.recomputeStats();
 
         // Start tick task
         task = new BukkitRunnable() {
@@ -2234,24 +2417,19 @@ public class ShipInstance {
                 transform.translate(-0.5f, 0f, -0.5f);
             }
 
-            // Handle skulls and banners
-            boolean hasSkullProfile = part.rawYaml.containsKey("skull_profile");
+            // Handle heads/skulls and banners
+            boolean hasHead = part.rawYaml.containsKey("skull_profile") ||
+                              part.rawYaml.containsKey("skull_rotation") ||
+                              part.rawYaml.containsKey("skull_facing");
             // Detect banners by rotation/facing keys (works for both plain and patterned banners)
             boolean hasBannerPatterns = part.rawYaml.containsKey("banner_patterns") ||
                                         part.rawYaml.containsKey("banner_rotation") ||
                                         part.rawYaml.containsKey("banner_facing");
 
-            if (hasSkullProfile) {
-                float skullYaw = 0.0f;
-                if (part.rawYaml.containsKey("skull_rotation")) {
-                    BlockFace rotation = safeBlockFace(part.rawYaml, "skull_rotation", BlockFace.NORTH);
-                    skullYaw = getYawFromBlockFace(rotation);
-                } else if (part.rawYaml.containsKey("skull_facing")) {
-                    BlockFace facing = safeBlockFace(part.rawYaml, "skull_facing", BlockFace.NORTH);
-                    skullYaw = getYawFromBlockFace(facing);
-                }
-                transform.translate(0.5f, 0.5f, 0.5f);
-                transform.rotateY((float) java.lang.Math.toRadians(-skullYaw));
+            if (hasHead) {
+                // Use the shared helper so recovery matches the spawn/tick transform
+                // exactly (incl. the wall-head branch this path previously lacked).
+                applySkullTransform(transform, part.rawYaml);
             } else if (hasBannerPatterns) {
                 return calculateBannerTransform(new Matrix4f(part.local), part.rawYaml);
             }
@@ -2303,6 +2481,12 @@ public class ShipInstance {
             }
             parent.remove();
         }
+        // Remove child block/item displays directly. Normally they are passengers of `parent`
+        // (removed above), but on a failed assembly they are spawned and not yet mounted (mounting is
+        // deferred 1 tick), so remove them by list too. Idempotent - a double remove() is harmless.
+        for (DisplayInstance di : displays) {
+            if (di.entity != null && di.entity.isValid()) di.entity.remove();
+        }
         // Dismount any riders before removing shulkers
         // (removePassenger triggers VehicleExitEvent, which handles safe-position teleport)
         for (CollisionBox cb : colliders) {
@@ -2319,7 +2503,7 @@ public class ShipInstance {
             cb.carrier.remove();   // Remove carrier (ArmorStand or Interaction)
         }
         // Remove root vehicle
-        if (vehicle.isValid()) vehicle.remove();
+        if (vehicle != null && vehicle.isValid()) vehicle.remove();
         // Clear incremental recovery state
         pendingCarriers.clear();
         pendingShulkers.clear();
@@ -2555,6 +2739,8 @@ public class ShipInstance {
      */
     public void alignToGrid() {
         physics.alignToGrid();
+        spawnYaw = physics.currentYaw;
+        updateDisplayTransforms();
     }
 
     // ========== Cannon System ==========

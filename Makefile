@@ -5,6 +5,10 @@ build:
 	mkdir -p bin
 	cp blockships/build/libs/BlockShips-*.jar bin
 
+.PHONY: dump-issues
+dump-issues:
+	bash docs/dump-issues.sh
+
 .PHONY: clean
 clean:
 	cd blockships && gradle clean
@@ -69,7 +73,11 @@ test-server-plugin-copy:
 	rm -rf $(TEST_SERVER_DIR)/plugins/
 	mkdir -p $(TEST_SERVER_DIR)/plugins
 	cp bin/*.jar $(TEST_SERVER_DIR)/plugins/
-	cp $(DOWNLOAD_CACHE)/plugins/*.jar $(TEST_SERVER_DIR)/plugins/
+ifeq ($(MINECRAFT_VERSION),1.21.1)
+	cp $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar $(TEST_SERVER_DIR)/plugins/
+endif
+	cp $(DOWNLOAD_CACHE)/plugins/ViaVersion.jar $(TEST_SERVER_DIR)/plugins/
+	cp $(DOWNLOAD_CACHE)/plugins/ViaBackwards.jar $(TEST_SERVER_DIR)/plugins/
 
 # Bot username for testing
 TEST_BOT_NAMES := TestBot
@@ -200,9 +208,9 @@ test-server-startup-only:
 	rm -f server_input; \
 	rm -f errors.log; \
 	FAILED=0; \
-	if grep -qE "ERROR.*BlockShips|BlockShips.*Exception" server.log 2>/dev/null; then \
+	if grep -qE "ERROR.*BlockShips|BlockShips.*(Exception|Throwable)|\[BlockShips\].*(failed to restore|skipping)|at anon\.def9a2a4\.blockships" server.log 2>/dev/null; then \
 		echo "=== SERVER ERRORS ===" | tee -a errors.log; \
-		grep -E "ERROR.*BlockShips|BlockShips.*Exception" server.log | tee -a errors.log; \
+		grep -E "ERROR.*BlockShips|BlockShips.*(Exception|Throwable)|\[BlockShips\].*(failed to restore|skipping)|at anon\.def9a2a4\.blockships" server.log | tee -a errors.log; \
 		FAILED=1; \
 	fi; \
 	if [ $$FAILED -eq 1 ]; then \
@@ -295,10 +303,10 @@ test-server-ci:
 		echo "Bot tests failed (exit code $$BOT_EXIT)" | tee -a errors.log; \
 		FAILED=1; \
 	fi; \
-	if grep -qE "ERROR.*BlockShips|BlockShips.*Exception" server.log 2>/dev/null; then \
+	if grep -qE "ERROR.*BlockShips|BlockShips.*(Exception|Throwable)|\[BlockShips\].*(failed to restore|skipping)|at anon\.def9a2a4\.blockships" server.log 2>/dev/null; then \
 		echo "" | tee -a errors.log; \
 		echo "=== SERVER ERRORS ===" | tee -a errors.log; \
-		grep -E "ERROR.*BlockShips|BlockShips.*Exception" server.log | tee -a errors.log; \
+		grep -E "ERROR.*BlockShips|BlockShips.*(Exception|Throwable)|\[BlockShips\].*(failed to restore|skipping)|at anon\.def9a2a4\.blockships" server.log | tee -a errors.log; \
 		FAILED=1; \
 	fi; \
 	if [ $$FAILED -eq 1 ]; then \

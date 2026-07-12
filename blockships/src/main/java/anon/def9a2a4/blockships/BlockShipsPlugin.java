@@ -24,8 +24,12 @@ import java.util.List;
 
 public class BlockShipsPlugin extends JavaPlugin {
 
+    /** Where users should report bugs and unexpected errors. */
+    public static final String ISSUES_URL = "https://github.com/def9a2a4/BlockShips/issues";
+
     private DisplayShip displayShip;
     private ShipSteeringListener steeringListener;
+    private PaperInputListener paperInputListener;
     private ShipWheelManager shipWheelManager;
     private SpecialDrownedListener specialDrownedListener;
 
@@ -36,8 +40,8 @@ public class BlockShipsPlugin extends JavaPlugin {
 
         saveDefaultConfig();
 
-        // Check for config mismatches
-        ConfigValidator.checkConfigMismatches(this);
+        // Warn if bundled resource files (blocks, items, prefab ships) are outdated
+        ConfigValidator.checkForOutdatedResources(this);
 
         // Load global physics config
         ShipInstance.loadGlobalPhysicsConfig(this);
@@ -46,16 +50,22 @@ public class BlockShipsPlugin extends JavaPlugin {
         BlockConfigManager.initialize(this);
         BlockConfigManager.getInstance().loadConfig();
 
-        // Check for ProtocolLib for WASD input detection
-        if (Bukkit.getPluginManager().getPlugin("ProtocolLib") == null) {
-            getLogger().warning("==================================================");
-            getLogger().warning("ProtocolLib not found! WASD ship controls will not work.");
-            getLogger().warning("Download it from: https://www.spigotmc.org/resources/protocollib.1997/");
-            getLogger().warning("The plugin will continue to load but ships won't be controllable.");
-            getLogger().warning("==================================================");
-        } else {
-            // Initialize steering listener (ProtocolLib WASD detection)
+        // Load help book content from bundled YAML
+        HelpBookContent.load(this);
+
+        // Initialize ship input detection (Paper PlayerInputEvent on 1.21.2+, ProtocolLib fallback)
+        if (anon.def9a2a4.blockships.util.ServerVersion.isAtLeast(1, 21, 2) && hasPaperInputEvent()) {
+            paperInputListener = new PaperInputListener(this);
+            getServer().getPluginManager().registerEvents(paperInputListener, this);
+            getLogger().info("Using Paper PlayerInputEvent for ship controls (ProtocolLib not required)");
+        } else if (Bukkit.getPluginManager().getPlugin("ProtocolLib") != null) {
             steeringListener = new ShipSteeringListener(this);
+        } else {
+            getLogger().warning("==================================================");
+            getLogger().warning("WASD ship controls will not work!");
+            getLogger().warning("Paper PlayerInputEvent not available, ProtocolLib not found.");
+            getLogger().warning("Install ProtocolLib or upgrade to Paper 1.21.2+ for ship controls.");
+            getLogger().warning("==================================================");
         }
 
         // Initialize ship-to-ship collision coordinator
@@ -105,6 +115,15 @@ public class BlockShipsPlugin extends JavaPlugin {
         return shipWheelManager;
     }
 
+    private boolean hasPaperInputEvent() {
+        try {
+            Class.forName("org.bukkit.event.player.PlayerInputEvent");
+            return true;
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
+    }
+
     private void sendHelp(CommandSender sender) {
         sender.sendMessage("§6=== BlockShips v" + getDescription().getVersion() + " ===");
         sender.sendMessage("§e/blockships help §7- Show this help message");
@@ -126,7 +145,7 @@ public class BlockShipsPlugin extends JavaPlugin {
             sender.sendMessage("§e/blockships forcedisassembleall §7- Force-disassemble all assembled ships §c§l[DANGEROUS]");
             sender.sendMessage("§e/blockships killentities §7- Remove all BlockShips entities from worlds §c§l[DANGEROUS]");
         }
-        sender.sendMessage("§7Found a bug? Report it at: §bhttps://github.com/def9a2a4/BlockShips/issues");
+        sender.sendMessage("§7Found a bug? Report it at: §b" + ISSUES_URL);
     }
 
     /**
@@ -158,11 +177,11 @@ public class BlockShipsPlugin extends JavaPlugin {
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (command.getName().equalsIgnoreCase("blockships")) {
             // Warn if ProtocolLib is missing
-            if (steeringListener == null) {
+            if (steeringListener == null && paperInputListener == null) {
                 sender.sendMessage("");
-                sender.sendMessage("§c§l⚠ WARNING: ProtocolLib not found! ⚠");
-                sender.sendMessage("§cWASD ship controls will not work without it.");
-                sender.sendMessage("§7Download: §bhttps://www.spigotmc.org/resources/protocollib.1997/");
+                sender.sendMessage("§c§l⚠ WARNING: No ship input handler active! ⚠");
+                sender.sendMessage("§cWASD ship controls will not work.");
+                sender.sendMessage("§7Install ProtocolLib or upgrade to Paper 1.21.2+");
                 sender.sendMessage("");
             }
 
@@ -204,7 +223,7 @@ public class BlockShipsPlugin extends JavaPlugin {
 
             if (args[0].equalsIgnoreCase("reload")) {
                 if (!sender.hasPermission("blockships.reload")) {
-                    sender.sendMessage("You don't have permission to reload this plugin.");
+                    sender.sendMessage("§cYou don't have permission to reload this plugin.");
                     return true;
                 }
                 reloadConfig();
@@ -219,6 +238,8 @@ public class BlockShipsPlugin extends JavaPlugin {
                 }
                 // Reload block configuration
                 BlockConfigManager.getInstance().reloadConfig();
+                // Reload help book content
+                HelpBookContent.load(this);
                 // Reload special drowned config
                 if (specialDrownedListener != null) {
                     specialDrownedListener.reloadConfig();
@@ -229,75 +250,75 @@ public class BlockShipsPlugin extends JavaPlugin {
 
             if (args[0].equalsIgnoreCase("give")) {
                 if (!(sender instanceof Player player)) {
-                    sender.sendMessage("Only players can use this command.");
+                    sender.sendMessage("§cOnly players can use this command.");
                     return true;
                 }
 
                 if (!sender.hasPermission("blockships.give")) {
-                    sender.sendMessage("You don't have permission to give ship kits.");
+                    sender.sendMessage("§cYou don't have permission to give ship kits.");
                     return true;
                 }
 
                 if (args.length < 2) {
                     sender.sendMessage("Usage: /blockships give <item>");
-                    sender.sendMessage("Available items:");
-                    sender.sendMessage("  - ship_wheel");
-                    var shipsSection = getConfig().getConfigurationSection("ships");
-                    if (shipsSection != null) {
-                        for (String shipType : shipsSection.getKeys(false)) {
-                            sender.sendMessage("  - " + shipType);
-                        }
-                    }
+                    sendGiveableItems(sender);
                     return true;
                 }
 
                 String itemType = args[1].toLowerCase();
 
-                // Handle ship_wheel specially
+                // Ship wheel
                 if (itemType.equals("ship_wheel")) {
                     ItemStack wheel = displayShip.createShipWheelItem();
-                    player.getInventory().addItem(wheel);
+                    giveOrDrop(player, wheel);
                     sender.sendMessage("Gave you a ship wheel!");
                     return true;
                 }
 
-                // Verify ship type exists in config
-                if (!getConfig().contains("ships." + itemType)) {
-                    sender.sendMessage("Unknown item: " + itemType);
-                    sender.sendMessage("Available items:");
-                    sender.sendMessage("  - ship_wheel");
-                    var shipsSection = getConfig().getConfigurationSection("ships");
-                    if (shipsSection != null) {
-                        for (String type : shipsSection.getKeys(false)) {
-                            sender.sendMessage("  - " + type);
-                        }
-                    }
+                // Captain's Manual (written book)
+                if (itemType.equals("captains_manual")) {
+                    ItemStack manual = HelpBookContent.createWrittenBook();
+                    giveOrDrop(player, manual);
+                    sender.sendMessage("Gave you a Captain's Manual!");
                     return true;
                 }
 
-                // Create ship kit with default wood (SPRUCE) and banner (WHITE)
-                ItemStack defaultBanner = new ItemStack(Material.WHITE_BANNER);
-                ItemStack shipKit = DisplayShip.createShipKit(itemType, defaultBanner, "SPRUCE", this);
+                // Custom items (ship_engine, balloon, etc.)
+                if (getConfig().contains("custom-items." + itemType)) {
+                    ItemStack item = displayShip.getItemFactory().createItem(itemType, "_DEFAULT", null);
+                    giveOrDrop(player, item);
+                    sender.sendMessage("Gave you a " + itemType + "!");
+                    return true;
+                }
 
-                // Give to player
-                player.getInventory().addItem(shipKit);
-                sender.sendMessage("Gave you a " + itemType + " ship kit!");
+                // Ship kits
+                if (getConfig().contains("ships." + itemType)) {
+                    ItemStack defaultBanner = new ItemStack(Material.WHITE_BANNER);
+                    ItemStack shipKit = DisplayShip.createShipKit(itemType, defaultBanner, "SPRUCE", this);
+                    giveOrDrop(player, shipKit);
+                    sender.sendMessage("Gave you a " + itemType + " ship kit!");
+                    return true;
+                }
+
+                sender.sendMessage("§cUnknown item: " + itemType);
+                sendGiveableItems(sender);
                 return true;
             }
 
             if (args[0].equalsIgnoreCase("spawndrowned")) {
                 if (!(sender instanceof Player player)) {
-                    sender.sendMessage("Only players can use this command.");
+                    sender.sendMessage("§cOnly players can use this command.");
                     return true;
                 }
 
                 if (!sender.hasPermission("blockships.give")) {
-                    sender.sendMessage("You don't have permission to spawn drowned.");
+                    sender.sendMessage("§cYou don't have permission to spawn drowned.");
                     return true;
                 }
 
                 if (specialDrownedListener == null) {
-                    sender.sendMessage("Special drowned spawning is not initialized.");
+                    sender.sendMessage("§cSpecial drowned spawning is not initialized - the plugin may not have"
+                        + " enabled correctly. Please report at " + ISSUES_URL);
                     return true;
                 }
 
@@ -305,19 +326,19 @@ public class BlockShipsPlugin extends JavaPlugin {
                 if (drowned != null) {
                     sender.sendMessage("Spawned a special drowned!");
                 } else {
-                    sender.sendMessage("Failed to spawn special drowned.");
+                    sender.sendMessage("§cFailed to spawn special drowned: your location has no valid world.");
                 }
                 return true;
             }
 
             if (args[0].equalsIgnoreCase("dismount")) {
                 if (!(sender instanceof Player player)) {
-                    sender.sendMessage("Only players can use this command.");
+                    sender.sendMessage("§cOnly players can use this command.");
                     return true;
                 }
 
                 if (!sender.hasPermission("blockships.dismount")) {
-                    sender.sendMessage("You don't have permission to use this command.");
+                    sender.sendMessage("§cYou don't have permission to use this command.");
                     return true;
                 }
 
@@ -331,7 +352,7 @@ public class BlockShipsPlugin extends JavaPlugin {
 
             if (args[0].equalsIgnoreCase("highlightseats")) {
                 if (!(sender instanceof Player player)) {
-                    sender.sendMessage("Only players can use this command.");
+                    sender.sendMessage("§cOnly players can use this command.");
                     return true;
                 }
 
@@ -347,7 +368,7 @@ public class BlockShipsPlugin extends JavaPlugin {
 
             if (args[0].equalsIgnoreCase("highlightcolliders")) {
                 if (!(sender instanceof Player player)) {
-                    sender.sendMessage("Only players can use this command.");
+                    sender.sendMessage("§cOnly players can use this command.");
                     return true;
                 }
 
@@ -368,7 +389,7 @@ public class BlockShipsPlugin extends JavaPlugin {
 
             if (args[0].equalsIgnoreCase("recipes")) {
                 if (!sender.hasPermission("blockships.recipes")) {
-                    sender.sendMessage("You don't have permission to unlock recipes.");
+                    sender.sendMessage("§cYou don't have permission to unlock recipes.");
                     return true;
                 }
 
@@ -378,13 +399,13 @@ public class BlockShipsPlugin extends JavaPlugin {
                     // Target specified player
                     targetPlayer = Bukkit.getPlayer(args[1]);
                     if (targetPlayer == null) {
-                        sender.sendMessage("Player not found: " + args[1]);
+                        sender.sendMessage("§cPlayer not found: " + args[1]);
                         return true;
                     }
                 } else {
                     // Target self (must be a player)
                     if (!(sender instanceof Player)) {
-                        sender.sendMessage("Console must specify a player: /blockships recipes <player>");
+                        sender.sendMessage("§cConsole must specify a player: /blockships recipes <player>");
                         return true;
                     }
                     targetPlayer = (Player) sender;
@@ -404,7 +425,7 @@ public class BlockShipsPlugin extends JavaPlugin {
 
             if (args[0].equalsIgnoreCase("forcedisassembleall")) {
                 if (!sender.hasPermission("blockships.admin")) {
-                    sender.sendMessage("You don't have permission to use this command.");
+                    sender.sendMessage("§cYou don't have permission to use this command.");
                     return true;
                 }
 
@@ -437,7 +458,7 @@ public class BlockShipsPlugin extends JavaPlugin {
 
             if (args[0].equalsIgnoreCase("killentities")) {
                 if (!sender.hasPermission("blockships.admin")) {
-                    sender.sendMessage("You don't have permission to use this command.");
+                    sender.sendMessage("§cYou don't have permission to use this command.");
                     return true;
                 }
 
@@ -482,8 +503,48 @@ public class BlockShipsPlugin extends JavaPlugin {
                     removedCount + " orphaned entity/entities");
                 return true;
             }
+
+            // Unrecognized subcommand - show help instead of the raw plugin.yml usage string
+            sender.sendMessage("§cUnknown subcommand: " + args[0]);
+            sendHelp(sender);
+            return true;
         }
         return false;
+    }
+
+    private void sendGiveableItems(CommandSender sender) {
+        sender.sendMessage("Available items:");
+        for (String name : getGiveableItemNames()) {
+            sender.sendMessage("  - " + name);
+        }
+    }
+
+    private List<String> getGiveableItemNames() {
+        // LinkedHashSet: ship_wheel/captains_manual are also present in the custom-items config section,
+        // so a plain list would show them twice. Dedupe while preserving order.
+        java.util.Set<String> items = new java.util.LinkedHashSet<>();
+        items.add("ship_wheel");
+        items.add("captains_manual");
+        var customItemsSection = getConfig().getConfigurationSection("custom-items");
+        if (customItemsSection != null) {
+            items.addAll(customItemsSection.getKeys(false));
+        }
+        var shipsSection = getConfig().getConfigurationSection("ships");
+        if (shipsSection != null) {
+            items.addAll(shipsSection.getKeys(false));
+        }
+        return new ArrayList<>(items);
+    }
+
+    /**
+     * Gives an item to a player, dropping any that doesn't fit at their feet instead of silently losing it
+     * (Bukkit's addItem returns leftovers when the inventory is full and does NOT auto-drop them).
+     */
+    private void giveOrDrop(org.bukkit.entity.Player p, ItemStack item) {
+        if (item == null) return;
+        for (ItemStack leftover : p.getInventory().addItem(item).values()) {
+            p.getWorld().dropItemNaturally(p.getLocation(), leftover);
+        }
     }
 
     @Override
@@ -522,15 +583,7 @@ public class BlockShipsPlugin extends JavaPlugin {
             String subcommand = args[0].toLowerCase();
 
             if (subcommand.equals("give") && sender.hasPermission("blockships.give")) {
-                // Complete with ship_wheel and ship types from config
-                List<String> types = new ArrayList<>();
-                types.add("ship_wheel");
-                var shipsSection = getConfig().getConfigurationSection("ships");
-                if (shipsSection != null) {
-                    types.addAll(shipsSection.getKeys(false));
-                }
-
-                for (String type : types) {
+                for (String type : getGiveableItemNames()) {
                     if (type.toLowerCase().startsWith(args[1].toLowerCase())) {
                         completions.add(type);
                     }

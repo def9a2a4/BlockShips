@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        minecraft: ['1.21.1', '1.21.4', '1.21.8', '1.21.10', '1.21.11', '26.1.2']
+        minecraft: ['1.21.1', '1.21.4', '1.21.8', '1.21.10', '1.21.11', '26.1.2', '26.2']
         # minecraft: ['1.21.1', '1.21.11']
         server: ['paper', 'purpur']
 
@@ -47,7 +47,7 @@ jobs:
         run: make test-server-download-all SERVER_VARIANT=${{ matrix.server }} MINECRAFT_VERSION=${{ matrix.minecraft }}
 
       - name: Setup test server
-        run: make test-server-setup
+        run: make test-server-setup MINECRAFT_VERSION=${{ matrix.minecraft }}
 
       - name: Run test server with bot
         if: ${{ !startsWith(matrix.minecraft, '26.') }}

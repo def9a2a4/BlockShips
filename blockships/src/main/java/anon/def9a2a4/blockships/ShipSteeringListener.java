@@ -134,8 +134,8 @@ public class ShipSteeringListener {
             }
 
         } catch (Exception ex) {
-            plugin.getLogger().warning("Error handling steering packet: " + ex.getMessage());
-            ex.printStackTrace();
+            plugin.getLogger().log(java.util.logging.Level.WARNING, "Error handling steering packet: "
+                + ex.getMessage() + ". Please report at " + BlockShipsPlugin.ISSUES_URL, ex);
         }
     }
 
@@ -191,8 +191,8 @@ public class ShipSteeringListener {
                 }
             }
         } catch (Exception ex) {
-            plugin.getLogger().warning("Error handling player_input packet: " + ex.getMessage());
-            ex.printStackTrace();
+            plugin.getLogger().log(java.util.logging.Level.WARNING, "Error handling player_input packet: "
+                + ex.getMessage() + ". Please report at " + BlockShipsPlugin.ISSUES_URL, ex);
         }
     }
 

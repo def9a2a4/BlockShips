@@ -294,7 +294,7 @@ public final class ShipPersistence {
                 loc.getX(),
                 loc.getY(),
                 loc.getZ(),
-                loc.getYaw(),
+                inst.physics.currentYaw,
                 loc.getPitch(),
                 bannerData,
                 inst.customization.getWoodType(),

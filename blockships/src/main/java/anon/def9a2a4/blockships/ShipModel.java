@@ -37,7 +37,8 @@ public final class ShipModel {
     public final float waterFloatOffset;   // Y-position offset from water surface where ship floats (for prefab ships)
 
     // Buoyancy system (for custom block ships)
-    public final int totalWeight;               // Sum of all block weights (excluding null-weight blocks)
+    public final int totalWeight;               // Sum of all block weights, including negative (for density/buoyancy)
+    public final int mass;                      // Sum of max(0, weight) per block (for health and power ratio)
     public final int blockCount;                // Number of blocks with weight (for density calculation)
     public final Vector3f centerOfVolume;       // Geometric center of all blocks (relative to wheel)
     public final float minY;                    // Bottom of ship (relative to origin)
@@ -47,13 +48,22 @@ public final class ShipModel {
     public final double maxHealth;              // Maximum health points for the ship
     public final double healthRegenPerSecond;   // Health regeneration rate per second
 
+    // Ship stats (power-to-mass ratio system)
+    public final int woolCount;                 // Number of wool blocks
+    public final int bannerCount;               // Number of banner blocks
+    public final int sailPower;                 // Sail power points (wool*3 + banner*7)
+    public final int engineCount;               // Number of ship engine blocks detected
+    public final List<Integer> engineBlockIndices;   // Block indices that are engines (for click detection + fuel)
+
     // Assembly rotation (for custom block ships disassembly)
     public final float assemblyYaw;             // Yaw angle when assembled (0=S, 90=W, 180=N, 270=E), 0 for prefab ships
 
     public ShipModel(List<ModelPart> parts, List<ItemPart> items, Vector3f initialRotation, Vector3f positionOffset,
                      Vector3f collisionOffset, Matrix3f rotationTransform, List<SeatInfo> seats, List<CannonInfo> cannons,
                      float waterFloatOffset, double maxHealth, double healthRegenPerSecond,
-                     int totalWeight, int blockCount, Vector3f centerOfVolume, float minY, float maxY, float assemblyYaw) {
+                     int totalWeight, int mass, int blockCount, Vector3f centerOfVolume, float minY, float maxY, float assemblyYaw,
+                     int woolCount, int bannerCount, int woolPower, int bannerPower, int engineCount,
+                     List<Integer> engineBlockIndices) {
         this.parts = parts;
         this.items = items;
         this.initialRotation = initialRotation;
@@ -66,11 +76,17 @@ public final class ShipModel {
         this.maxHealth = maxHealth;
         this.healthRegenPerSecond = healthRegenPerSecond;
         this.totalWeight = totalWeight;
+        this.mass = mass;
         this.blockCount = blockCount;
         this.centerOfVolume = centerOfVolume;
         this.minY = minY;
         this.maxY = maxY;
         this.assemblyYaw = assemblyYaw;
+        this.woolCount = woolCount;
+        this.bannerCount = bannerCount;
+        this.sailPower = woolCount * woolPower + bannerCount * bannerPower;
+        this.engineCount = engineCount;
+        this.engineBlockIndices = engineBlockIndices != null ? engineBlockIndices : Collections.emptyList();
     }
 
     /**
@@ -79,6 +95,17 @@ public final class ShipModel {
     public float getDensity() {
         if (blockCount == 0) return 0;
         return (float) totalWeight / blockCount;
+    }
+
+    /**
+     * Calculates the ship's power-to-mass ratio for stat scaling.
+     * Uses sail power only (engines are dynamic and added at runtime).
+     * @param basePower Free power points every ship gets
+     * @return The ratio (0.0 to ~1.0+), before sail cap is applied
+     */
+    public float getSailRatio(int basePower) {
+        if (mass <= 0) return 0;
+        return (float) (basePower + sailPower) / mass;
     }
 
     /**
@@ -132,23 +159,17 @@ public final class ShipModel {
     }
 
     public static ShipModel fromFile(JavaPlugin plugin, String filePath, String shipType) {
-        // Load model file
-        java.io.File modelFile = new java.io.File(plugin.getDataFolder(), filePath);
-        if (!modelFile.exists()) {
-            throw new IllegalArgumentException("Model file not found: " + modelFile.getAbsolutePath());
-        }
-
-        org.bukkit.configuration.file.YamlConfiguration config;
-        try {
-            config = org.bukkit.configuration.file.YamlConfiguration.loadConfiguration(modelFile);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Failed to load model from file: " + filePath, e);
+        // Load model from config/<filePath> override if present, else from the jar. Not extracted to disk.
+        org.bukkit.configuration.file.YamlConfiguration config = ConfigResources.load(plugin, filePath);
+        List<Map<?, ?>> blocks = config.getMapList("blocks");
+        if (blocks.isEmpty()) {
+            throw new IllegalArgumentException("Model file not found or has no blocks: " + filePath);
         }
 
         List<ModelPart> out = new ArrayList<>();
         List<SeatInfo> seats = new ArrayList<>();
         int blockIndex = 0;
-        for (Map<?, ?> map : config.getMapList("blocks")) {
+        for (Map<?, ?> map : blocks) {
             String mat = String.valueOf(map.get("block"));
             @SuppressWarnings("unchecked")
             List<Object> raw = (List<Object>) map.get("transformation");
@@ -377,10 +398,11 @@ public final class ShipModel {
 
         // Prefab ships don't use weight-based buoyancy - they use waterFloatOffset from YAML
         // Set weight/blockCount to 0, centerOfVolume to origin, minY/maxY to 0, and assemblyYaw to 0 (prefab ships don't rotate on assembly)
-        // Prefab ships have no cannons (empty list)
+        // Prefab ships have no cannons (empty list) and no sail counting (stats come from config)
         return new ShipModel(out, items, initialRotation, positionOffset, collisionOffset, rotationTransform,
                            seats, new ArrayList<>(), waterFloatOffset, maxHealth, healthRegenPerSecond,
-                           0, 0, new Vector3f(0, 0, 0), 0f, 0f, 0f);
+                           0, 0, 0, new Vector3f(0, 0, 0), 0f, 0f, 0f,
+                           0, 0, 3, 7, 0, null);
     }
 
     private static Matrix4f matrixFromMinecraftNbt(final float[] a) {
@@ -450,15 +472,27 @@ public final class ShipModel {
     }
 
     public enum StorageType {
-        CHEST(27),
-        DOUBLE_CHEST(54),
-        DROPPER(9),
-        HOPPER(5);
+        CHEST(27, null),
+        DOUBLE_CHEST(54, null),
+        DROPPER(9, null),
+        HOPPER(5, org.bukkit.event.inventory.InventoryType.HOPPER),
+        // Real 3-slot furnace GUI for furnace/smoker/blast-furnace blocks in flight. Exact size match to the
+        // real block -> zero overflow on disassembly. Result slot is take-only (correct furnace behaviour);
+        // no smelting occurs while assembled (no ticking block).
+        FURNACE(3, org.bukkit.event.inventory.InventoryType.FURNACE);
 
         public final int slots;
+        /**
+         * Non-null -> build the virtual inventory via the type-based
+         * {@code Bukkit.createInventory(holder, InventoryType, title)} overload, which has no
+         * multiple-of-9 size restriction (the int-based overload throws for HOPPER's 5 slots).
+         * Null -> use the size-based overload as before.
+         */
+        public final org.bukkit.event.inventory.InventoryType invType;
 
-        StorageType(int slots) {
+        StorageType(int slots, org.bukkit.event.inventory.InventoryType invType) {
             this.slots = slots;
+            this.invType = invType;
         }
     }
 
@@ -485,7 +519,7 @@ public final class ShipModel {
                 storageType = StorageType.valueOf(typeStr);
             } catch (IllegalArgumentException e) {
                 throw new IllegalArgumentException("Invalid storage type: " + typeStr +
-                    ". Valid types: CHEST, DOUBLE_CHEST, DROPPER, HOPPER");
+                    ". Valid types: CHEST, DOUBLE_CHEST, DROPPER, HOPPER, FURNACE");
             }
 
             // Read name (optional, defaults to storage type name)
@@ -584,9 +618,16 @@ public final class ShipModel {
         // Buoyancy/physics data
         map.put("assembly_yaw", assemblyYaw);
         map.put("total_weight", totalWeight);
+        map.put("mass", mass);
         map.put("block_count", blockCount);
         map.put("min_y", minY);
         map.put("max_y", maxY);
+        map.put("wool_count", woolCount);
+        map.put("banner_count", bannerCount);
+        map.put("engine_count", engineCount);
+        if (!engineBlockIndices.isEmpty()) {
+            map.put("engine_block_indices", new ArrayList<>(engineBlockIndices));
+        }
         map.put("center_of_volume", Arrays.asList(centerOfVolume.x, centerOfVolume.y, centerOfVolume.z));
 
         // Serialize parts - include transformation matrix (not in rawYaml for custom ships)
@@ -738,10 +779,33 @@ public final class ShipModel {
         double maxHealth = 40.0;
         double healthRegenPerSecond = 2.0;
 
+        // Ship stats
+        int mass = map.containsKey("mass") ? ((Number) map.get("mass")).intValue()
+            : map.containsKey("total_positive_weight") ? ((Number) map.get("total_positive_weight")).intValue() : 0;
+        int woolCount = map.containsKey("wool_count") ? ((Number) map.get("wool_count")).intValue() : 0;
+        int bannerCount = map.containsKey("banner_count") ? ((Number) map.get("banner_count")).intValue() : 0;
+        int engineCount = map.containsKey("engine_count") ? ((Number) map.get("engine_count")).intValue() : 0;
+
+        // Deserialize engine block indices
+        List<Integer> engineBlockIndices = new ArrayList<>();
+        if (map.containsKey("engine_block_indices")) {
+            @SuppressWarnings("unchecked")
+            List<Number> indices = (List<Number>) map.get("engine_block_indices");
+            for (Number idx : indices) engineBlockIndices.add(idx.intValue());
+        }
+        // Old YAML files may contain "engine_local_positions" - ignored (dead data, removed)
+
+        // Load wool/banner power from config for sail power calculation
+        org.bukkit.plugin.Plugin plugin = org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
+        ShipConfig config = (plugin != null) ? ShipConfig.load(plugin, "custom") : null;
+        int woolPower = config != null ? config.woolPower : 3;
+        int bannerPower = config != null ? config.bannerPower : 7;
+
         return new ShipModel(parts, new ArrayList<>(), initialRotation, positionOffset,
             collisionOffset, rotationTransform, seats, cannons, waterFloatOffset,
-            maxHealth, healthRegenPerSecond, totalWeight, blockCount,
-            centerOfVolume, minY, maxY, assemblyYaw);
+            maxHealth, healthRegenPerSecond, totalWeight, mass, blockCount,
+            centerOfVolume, minY, maxY, assemblyYaw,
+            woolCount, bannerCount, woolPower, bannerPower, engineCount, engineBlockIndices);
     }
 }
 

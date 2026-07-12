@@ -89,11 +89,22 @@ public class ItemFactory {
 
         String displayName = plugin.getConfig().getString(configPath + ".display-name", "{VARIANT} " + itemId);
         String baseMaterialStr = plugin.getConfig().getString(configPath + ".base-material", "PLAYER_HEAD");
-        Material baseMaterial = Material.valueOf(baseMaterialStr.toUpperCase());
+        Material baseMaterial;
+        try {
+            baseMaterial = Material.valueOf(baseMaterialStr.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            // A typo'd base-material would otherwise throw up through createItem/createItemForRecipe - the
+            // latter runs during recipe registration at startup, so an unguarded throw breaks plugin enable
+            // entirely, not just /blockships give. Degrade to null (callers fall back to a placeholder head).
+            plugin.getLogger().warning("Custom item '" + itemId + "' has invalid base-material '"
+                + baseMaterialStr + "' - skipping.");
+            return null;
+        }
         String textureSet = plugin.getConfig().getString(configPath + ".texture-set");
         String variantSource = plugin.getConfig().getString(configPath + ".variant-source");
+        boolean enchantGlint = plugin.getConfig().getBoolean(configPath + ".enchant-glint", false);
 
-        return new CustomItem(itemId, displayName, baseMaterial, textureSet, variantSource, plugin, textureManager);
+        return new CustomItem(itemId, displayName, baseMaterial, textureSet, variantSource, enchantGlint, plugin, textureManager);
     }
 
     /**

@@ -44,6 +44,36 @@ public class ShipConfig {
     public final float verticalDrag;
     public final float verticalForwardNudge;
 
+    // Ship stats (power-to-mass ratio system, custom ships only)
+    public final boolean statsEnabled;       // Master switch for the ratio system (default: false)
+    public final int basePower;              // Free power points every ship gets (default: 2)
+    public final int enginePower;            // Power points per fueled engine (default: 30)
+    public final int woolPower;              // Power points per wool block (default: 3)
+    public final int bannerPower;            // Power points per banner block (default: 7)
+    public final float fuelBurnMultiplier;   // Multiplier for fuel burn times (default: 1.0)
+    public final float sailCapRatio;         // Sail contribution capped at this ratio (default: 0.8)
+    public final float defaultRatio;         // Ratio that maps to current default stats (default: 0.7)
+    public final float maxRatioMultiplier;   // Stats multiplier at ratio 1.0, relative to default (default: 1.5)
+    // Absolute floors (minimum stat values regardless of ratio)
+    public final float floorMaxSpeed;        // 0.05 blocks/tick = 1 block/sec
+    public final float floorAcceleration;
+    public final float floorRotationSpeed;   // 0.6 deg/tick = 30s per revolution
+    public final float floorRotationAcceleration;
+    public final float floorRotationDeceleration;
+    public final float capRotationDeceleration;
+    // Absolute caps (maximum stat values regardless of ratio)
+    public final float capMaxSpeed;
+    public final float capAcceleration;
+    public final float capRotationSpeed;
+    public final float capRotationAcceleration;
+    // Airship vertical stats scaling
+    public final float verticalDensityScale;       // How much density magnitude affects vertical ratio
+    public final float verticalEngineScale;        // How much engine_points/mass affects vertical ratio
+    public final float floorMaxVerticalSpeed;
+    public final float floorVerticalAcceleration;
+    public final float capMaxVerticalSpeed;
+    public final float capVerticalAcceleration;
+
     // Collision physics
     public final float shipMass;
     public final float collisionResponseStrength;
@@ -79,6 +109,9 @@ public class ShipConfig {
     // Assembly/disassembly settings
     public final float assemblyNudgeHeight;  // Teleport players up by this amount during assembly/disassembly (0 to disable)
 
+    // Destruction settings
+    public final boolean destroyOnDeath;  // true = blocks lost on death, false = disassemble back into world
+
     private ShipConfig(Builder b) {
         this.collisionDebugGlow = b.collisionDebugGlow;
         this.maxSpeed = b.maxSpeed;
@@ -105,6 +138,31 @@ public class ShipConfig {
         this.maxVerticalSpeed = b.maxVerticalSpeed;
         this.verticalDrag = b.verticalDrag;
         this.verticalForwardNudge = b.verticalForwardNudge;
+        this.statsEnabled = b.statsEnabled;
+        this.basePower = b.basePower;
+        this.enginePower = b.enginePower;
+        this.woolPower = b.woolPower;
+        this.bannerPower = b.bannerPower;
+        this.fuelBurnMultiplier = b.fuelBurnMultiplier;
+        this.sailCapRatio = b.sailCapRatio;
+        this.defaultRatio = b.defaultRatio;
+        this.maxRatioMultiplier = b.maxRatioMultiplier;
+        this.floorMaxSpeed = b.floorMaxSpeed;
+        this.floorAcceleration = b.floorAcceleration;
+        this.floorRotationSpeed = b.floorRotationSpeed;
+        this.floorRotationAcceleration = b.floorRotationAcceleration;
+        this.floorRotationDeceleration = b.floorRotationDeceleration;
+        this.capRotationDeceleration = b.capRotationDeceleration;
+        this.capMaxSpeed = b.capMaxSpeed;
+        this.capAcceleration = b.capAcceleration;
+        this.capRotationSpeed = b.capRotationSpeed;
+        this.capRotationAcceleration = b.capRotationAcceleration;
+        this.verticalDensityScale = b.verticalDensityScale;
+        this.verticalEngineScale = b.verticalEngineScale;
+        this.floorMaxVerticalSpeed = b.floorMaxVerticalSpeed;
+        this.floorVerticalAcceleration = b.floorVerticalAcceleration;
+        this.capMaxVerticalSpeed = b.capMaxVerticalSpeed;
+        this.capVerticalAcceleration = b.capVerticalAcceleration;
         this.shipMass = b.shipMass;
         this.collisionResponseStrength = b.collisionResponseStrength;
         this.terrainCollisionStrength = b.terrainCollisionStrength;
@@ -128,6 +186,7 @@ public class ShipConfig {
         this.displayInterpolationDuration = b.displayInterpolationDuration;
         this.cameraDistance = b.cameraDistance;
         this.assemblyNudgeHeight = b.assemblyNudgeHeight;
+        this.destroyOnDeath = b.destroyOnDeath;
     }
 
     /**
@@ -225,7 +284,56 @@ public class ShipConfig {
             // Camera distance (for prefab ships; custom ships use per-ship value from ShipWheelData)
             .cameraDistance((float) cfg.getDouble(p + "camera-distance", 4.0))
             .assemblyNudgeHeight((float) cfg.getDouble("custom-ships.assembly-nudge-height", 0.2))
+            .destroyOnDeath("destroy".equalsIgnoreCase(cfg.getString("custom-ships.destruction-mode", "disassemble")))
+            // Ship stats (power-to-mass ratio system)
+            .statsEnabled(cfg.getBoolean("custom-ships.stats.enabled", false))
+            .basePower(cfg.getInt("custom-ships.stats.base-power", 2))
+            .enginePower(cfg.getInt("custom-ships.stats.engine-power", 30))
+            .woolPower(cfg.getInt("custom-ships.stats.wool-power", 3))
+            .bannerPower(cfg.getInt("custom-ships.stats.banner-power", 7))
+            .fuelBurnMultiplier((float) cfg.getDouble("custom-ships.stats.fuel-burn-multiplier", 1.0))
+            .sailCapRatio((float) cfg.getDouble("custom-ships.stats.sail-cap-ratio", 0.8))
+            .defaultRatio((float) cfg.getDouble("custom-ships.stats.default-ratio", 0.7))
+            .maxRatioMultiplier((float) cfg.getDouble("custom-ships.stats.max-ratio-multiplier", 1.5))
+            .floorMaxSpeed((float) cfg.getDouble("custom-ships.stats.floor-max-speed", 0.05))
+            .floorAcceleration((float) cfg.getDouble("custom-ships.stats.floor-acceleration", 0.015))
+            .floorRotationSpeed((float) cfg.getDouble("custom-ships.stats.floor-rotation-speed", 0.6))
+            .floorRotationAcceleration((float) cfg.getDouble("custom-ships.stats.floor-rotation-acceleration", 0.05))
+            .floorRotationDeceleration((float) cfg.getDouble("custom-ships.stats.floor-rotation-deceleration", 0.05))
+            .capRotationDeceleration((float) cfg.getDouble("custom-ships.stats.cap-rotation-deceleration", -1))
+            .capMaxSpeed((float) cfg.getDouble("custom-ships.stats.cap-max-speed", -1))
+            .capAcceleration((float) cfg.getDouble("custom-ships.stats.cap-acceleration", -1))
+            .capRotationSpeed((float) cfg.getDouble("custom-ships.stats.cap-rotation-speed", -1))
+            .capRotationAcceleration((float) cfg.getDouble("custom-ships.stats.cap-rotation-acceleration", -1))
+            .verticalDensityScale((float) cfg.getDouble("custom-ships.stats.vertical-density-scale", 0.3))
+            .verticalEngineScale((float) cfg.getDouble("custom-ships.stats.vertical-engine-scale", 0.01))
+            .floorMaxVerticalSpeed((float) cfg.getDouble("custom-ships.stats.floor-max-vertical-speed", 0.03))
+            .floorVerticalAcceleration((float) cfg.getDouble("custom-ships.stats.floor-vertical-acceleration", 0.01))
+            .capMaxVerticalSpeed((float) cfg.getDouble("custom-ships.stats.cap-max-vertical-speed", 0.5))
+            .capVerticalAcceleration((float) cfg.getDouble("custom-ships.stats.cap-vertical-acceleration", 0.1))
             .build();
+    }
+
+    /**
+     * Computes an effective stat value from a power-to-mass ratio using linear interpolation.
+     * ratio 0.0 -> floor, ratio defaultRatio -> defaultVal, ratio 1.0 -> cap.
+     * Result is clamped to [floor, cap].
+     */
+    public float computeStat(float ratio, float defaultVal, float floor, float configCap) {
+        float cap = configCap > 0 ? configCap : defaultVal * maxRatioMultiplier;
+        float stat;
+        if (ratio <= defaultRatio) {
+            // Interpolate floor -> default over ratio 0.0 -> defaultRatio
+            float t = defaultRatio > 0 ? ratio / defaultRatio : 0;
+            stat = floor + t * (defaultVal - floor);
+        } else if (defaultRatio < 1.0f) {
+            // Interpolate default -> cap over ratio defaultRatio -> 1.0
+            float t = (ratio - defaultRatio) / (1.0f - defaultRatio);
+            stat = defaultVal + t * (cap - defaultVal);
+        } else {
+            stat = cap;
+        }
+        return Math.max(floor, Math.min(cap, stat));
     }
 
     private static class Builder {
@@ -254,6 +362,33 @@ public class ShipConfig {
         float maxVerticalSpeed = 0.3f;
         float verticalDrag = 0.9f;
         float verticalForwardNudge = 0.011f;
+        // Ship stats defaults
+        boolean statsEnabled = false;
+        int basePower = 2;
+        int enginePower = 30;
+        int woolPower = 3;
+        int bannerPower = 7;
+        float fuelBurnMultiplier = 1.0f;
+        float sailCapRatio = 0.8f;
+        float defaultRatio = 0.7f;
+        float maxRatioMultiplier = 1.5f;
+        float floorMaxSpeed = 0.05f;           // 1 block/sec
+        float floorAcceleration = 0.015f;
+        float floorRotationSpeed = 0.6f;       // 30s per revolution
+        float floorRotationAcceleration = 0.05f;
+        float floorRotationDeceleration = 0.05f;
+        float capRotationDeceleration = -1f;
+        float capMaxSpeed = -1f;               // -1 = auto (maxRatioMultiplier * default)
+        float capAcceleration = -1f;
+        float capRotationSpeed = -1f;
+        float capRotationAcceleration = -1f;
+        float verticalDensityScale = 0.3f;
+        float verticalEngineScale = 0.01f;
+        float floorMaxVerticalSpeed = 0.03f;
+        float floorVerticalAcceleration = 0.01f;
+        float capMaxVerticalSpeed = 0.5f;
+        float capVerticalAcceleration = 0.1f;
+
         float shipMass = 100.0f;
         float collisionResponseStrength = 0.3f;
         float terrainCollisionStrength = 1.0f;
@@ -277,6 +412,7 @@ public class ShipConfig {
         int displayInterpolationDuration = 2;  // Ticks for display entity interpolation (1-4)
         float cameraDistance = 4.0f;  // Default matches Minecraft default
         float assemblyNudgeHeight = 0.2f;
+        boolean destroyOnDeath = false;
 
         Builder collisionDebugGlow(boolean v) { collisionDebugGlow = v; return this; }
         Builder maxSpeed(float v) { maxSpeed = v; return this; }
@@ -303,6 +439,31 @@ public class ShipConfig {
         Builder maxVerticalSpeed(float v) { maxVerticalSpeed = v; return this; }
         Builder verticalDrag(float v) { verticalDrag = v; return this; }
         Builder verticalForwardNudge(float v) { verticalForwardNudge = v; return this; }
+        Builder statsEnabled(boolean v) { statsEnabled = v; return this; }
+        Builder basePower(int v) { basePower = v; return this; }
+        Builder enginePower(int v) { enginePower = v; return this; }
+        Builder woolPower(int v) { woolPower = v; return this; }
+        Builder bannerPower(int v) { bannerPower = v; return this; }
+        Builder fuelBurnMultiplier(float v) { fuelBurnMultiplier = v; return this; }
+        Builder sailCapRatio(float v) { sailCapRatio = v; return this; }
+        Builder defaultRatio(float v) { defaultRatio = v; return this; }
+        Builder maxRatioMultiplier(float v) { maxRatioMultiplier = v; return this; }
+        Builder floorMaxSpeed(float v) { floorMaxSpeed = v; return this; }
+        Builder floorAcceleration(float v) { floorAcceleration = v; return this; }
+        Builder floorRotationSpeed(float v) { floorRotationSpeed = v; return this; }
+        Builder floorRotationAcceleration(float v) { floorRotationAcceleration = v; return this; }
+        Builder floorRotationDeceleration(float v) { floorRotationDeceleration = v; return this; }
+        Builder capRotationDeceleration(float v) { capRotationDeceleration = v; return this; }
+        Builder capMaxSpeed(float v) { capMaxSpeed = v; return this; }
+        Builder capAcceleration(float v) { capAcceleration = v; return this; }
+        Builder capRotationSpeed(float v) { capRotationSpeed = v; return this; }
+        Builder capRotationAcceleration(float v) { capRotationAcceleration = v; return this; }
+        Builder verticalDensityScale(float v) { verticalDensityScale = v; return this; }
+        Builder verticalEngineScale(float v) { verticalEngineScale = v; return this; }
+        Builder floorMaxVerticalSpeed(float v) { floorMaxVerticalSpeed = v; return this; }
+        Builder floorVerticalAcceleration(float v) { floorVerticalAcceleration = v; return this; }
+        Builder capMaxVerticalSpeed(float v) { capMaxVerticalSpeed = v; return this; }
+        Builder capVerticalAcceleration(float v) { capVerticalAcceleration = v; return this; }
         Builder shipMass(float v) { shipMass = v; return this; }
         Builder collisionResponseStrength(float v) { collisionResponseStrength = v; return this; }
         Builder terrainCollisionStrength(float v) { terrainCollisionStrength = v; return this; }
@@ -326,6 +487,7 @@ public class ShipConfig {
         Builder displayInterpolationDuration(int v) { displayInterpolationDuration = Math.max(1, Math.min(4, v)); return this; }
         Builder cameraDistance(float v) { cameraDistance = v; return this; }
         Builder assemblyNudgeHeight(float v) { assemblyNudgeHeight = v; return this; }
+        Builder destroyOnDeath(boolean v) { destroyOnDeath = v; return this; }
 
         ShipConfig build() { return new ShipConfig(this); }
     }

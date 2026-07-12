@@ -1,6 +1,6 @@
 # BlockShips Plugin Configuration
 
-# Set to false to disable config mismatch warnings on startup
+# Set to false to disable outdated resource file warnings on startup
 warn-config-mismatch: true
 
 # Whether ship blocks emit dynamic light (requires DynLight plugin)
@@ -13,7 +13,7 @@ special-drowned:
   # Enable/disable the feature
   enabled: true
   # Chance (0.0-1.0) that a naturally spawning drowned becomes special
-  spawn-chance: 0.05
+  spawn-chance: 0.02
   # Base64-encoded texture for the custom head they wear
   head-texture: "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZTcwYzY5NjJlZWE5ZDFjYjBiNTAzYWI3YjZiODFmYzUwNGI4YmQwMWY4YzQxNTYxZTBjMDIwYjZkMzY2YmQwMiJ9fX0="
   # Whether they hold a trident in main hand
@@ -38,6 +38,11 @@ custom-ships:
   max-ship-size: 1000  # Maximum number of blocks in a custom ship
   max-scan-size: 5000  # Maximum blocks to scan when ship exceeds limit (for reporting actual size)
 
+  # What happens when a custom ship is destroyed (health reaches 0)
+  # "disassemble" - blocks are placed back into the world (default)
+  # "destroy" - blocks are lost, stored items are dropped
+  destruction-mode: disassemble
+
   # Buoyancy system - weight-based floating
   # Ships float based on their density (total weight / block count) compared to water density
   # - Density < water: floats higher (surface offset increases)
@@ -54,6 +59,53 @@ custom-ships:
     strength: 0.05
     # Buoyancy damping: velocity damping to prevent oscillation (0.5 = stable)
     damping: 0.5
+
+  # Ship stats (power-to-mass ratio system)
+  # Sails and engines provide power points; block weights provide mass.
+  # ratio = power / mass determines ship performance.
+  stats:
+    # Master switch for the power-to-mass ratio system.
+    # true  = custom ships scale speed/rotation by sails, engines, and mass
+    # false = custom ships ignore composition and use the fixed default stats below
+    #         (sails and engines become cosmetic; restores pre-stats behavior) (default)
+    # NOTE: disabled by default pending a rework of the stats system in a future update.
+    # Feedback on ship stats balance and functionality welcome: https://github.com/def9a2a4/BlockShips/issues/18
+    enabled: false
+    # Free power points every ship gets (ensures even tiny ships have some base ratio)
+    base-power: 2
+    # Power points per fueled engine (unfueled engines contribute 0)
+    engine-power: 30
+    # Power points per wool block used as sail
+    wool-power: 3
+    # Power points per banner block used as sail
+    banner-power: 7
+    # Multiplier for fuel burn duration (2.0 = fuel lasts twice as long)
+    fuel-burn-multiplier: 1.0
+    # Sail contribution capped at this ratio (engines needed to push past it)
+    sail-cap-ratio: 0.8
+    # Ratio that maps to current default stats (0.55 max speed, 1.5 rotation, etc.)
+    default-ratio: 0.7
+    # Stats multiplier at ratio 1.0 relative to default (1.5 = 50% faster than default)
+    max-ratio-multiplier: 1.5
+    # Absolute floors (minimum stat values regardless of ratio)
+    floor-max-speed: 0.05           # 1 block/sec
+    floor-acceleration: 0.015
+    floor-rotation-speed: 0.6       # 30s per full revolution
+    floor-rotation-acceleration: 0.05
+    floor-rotation-deceleration: 0.05
+    # Absolute caps (-1 = auto: default * max-ratio-multiplier)
+    cap-max-speed: -1
+    cap-acceleration: -1
+    cap-rotation-speed: -1
+    cap-rotation-acceleration: -1
+    cap-rotation-deceleration: -1
+    # Airship vertical stat scaling (density magnitude + engines)
+    vertical-density-scale: 0.3
+    vertical-engine-scale: 0.01
+    floor-max-vertical-speed: 0.03
+    floor-vertical-acceleration: 0.01
+    cap-max-vertical-speed: 0.5
+    cap-vertical-acceleration: 0.1
 
   # Airship controls (for custom ships lighter than air)
   # Ships with density < air-density automatically become airships
@@ -172,6 +224,34 @@ custom-items:
       result-name: "Ship Wheel"
       result-item: PLAYER_HEAD
       result-texture-set: SHIP_WHEEL_SET
+
+  ship_engine:
+    display-name: "Ship Engine"
+    base-material: BLAST_FURNACE
+    enchant-glint: true
+    stackable: true
+    recipe:
+      pattern:
+        - "CCC"
+        - "CBC"
+        - "CCC"
+      ingredients:
+        C: [COPPER_INGOT]
+        B: [BLAST_FURNACE]
+      result-name: "Ship Engine"
+      result-item: BLAST_FURNACE
+
+  captains_manual:
+    display-name: "Captain's Manual"
+    base-material: WRITTEN_BOOK
+    stackable: false
+    recipe:
+      shapeless: true
+      ingredients:
+        W: ["blockships:ship_wheel"]
+        B: [BOOK]
+      result-name: "Captain's Manual"
+      result-item: WRITTEN_BOOK
 
 # list of ships
 ships:

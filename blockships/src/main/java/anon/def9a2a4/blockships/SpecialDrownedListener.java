@@ -71,7 +71,7 @@ public class SpecialDrownedListener implements Listener {
      */
     public void reloadConfig() {
         enabled = plugin.getConfig().getBoolean("special-drowned.enabled", true);
-        spawnChance = plugin.getConfig().getDouble("special-drowned.spawn-chance", 0.05);
+        spawnChance = plugin.getConfig().getDouble("special-drowned.spawn-chance", 0.02);
         headTexture = plugin.getConfig().getString("special-drowned.head-texture",
                 "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZTcwYzY5NjJlZWE5ZDFjYjBiNTAzYWI3YjZiODFmYzUwNGI4YmQwMWY4YzQxNTYxZTBjMDIwYjZkMzY2YmQwMiJ9fX0=");
         holdsTrident = plugin.getConfig().getBoolean("special-drowned.holds-trident", true);

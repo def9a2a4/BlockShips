@@ -26,7 +26,10 @@ public final class ShipRegistry {
 
     public static void unregister(ShipInstance s) {
         byId.remove(s.id);
-        byVehicle.remove(s.vehicle.getUniqueId());
+        // vehicle can be null if a failed assembly's destroy() runs before the root spawn completed.
+        if (s.vehicle != null) {
+            byVehicle.remove(s.vehicle.getUniqueId());
+        }
     }
 
     public static Collection<ShipInstance> getAllShips() {

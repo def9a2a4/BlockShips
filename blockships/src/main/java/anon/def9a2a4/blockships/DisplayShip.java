@@ -15,6 +15,9 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.inventory.FurnaceBurnEvent;
+import org.bukkit.event.inventory.FurnaceSmeltEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
@@ -78,8 +81,8 @@ public class DisplayShip implements Listener {
     }
 
     public void initialize() {
-        // Extract default model files from JAR if they don't exist
-        extractDefaultModelFiles();
+        // Item textures and prefab models are read from the jar (or a config/ override) on demand;
+        // nothing is extracted to disk.
 
         // Load item textures from items.yml
         textureManager.load();
@@ -195,6 +198,9 @@ public class DisplayShip implements Listener {
                     plugin.getLogger().info("Recovered unregistered ship " + shipId + " in chunk " + chunk.getX() + "," + chunk.getZ());
                     recovered++;
                 }
+            } catch (Exception e) {
+                // Never let one bad ship abort recovery of the rest of the startup sweep.
+                plugin.getLogger().warning("Failed to recover ship " + shipId + ", skipping: " + e.getMessage());
             } finally {
                 shipsBeingRecovered.remove(shipId);
             }
@@ -308,43 +314,6 @@ public class DisplayShip implements Listener {
         }
     }
 
-    private void extractDefaultModelFiles() {
-        // Extract items.yml if it doesn't exist
-        java.io.File itemsFile = new java.io.File(plugin.getDataFolder(), "items.yml");
-        if (!itemsFile.exists()) {
-            try {
-                plugin.saveResource("items.yml", false);
-            } catch (IllegalArgumentException e) {
-                plugin.getLogger().warning("items.yml not found in JAR resources. You'll need to provide it manually.");
-            }
-        }
-
-        // Get all unique model files from config
-        var shipsSection = plugin.getConfig().getConfigurationSection("ships");
-        if (shipsSection == null) return;
-
-        Set<String> modelFiles = new HashSet<>();
-        for (String shipType : shipsSection.getKeys(false)) {
-            String modelPath = plugin.getConfig().getString("ships." + shipType + ".model-path");
-            if (modelPath != null) {
-                modelFiles.add(modelPath);
-            }
-        }
-
-        // Extract each unique model file if it doesn't exist
-        for (String modelPath : modelFiles) {
-            java.io.File file = new java.io.File(plugin.getDataFolder(), modelPath);
-            if (!file.exists()) {
-                // Create parent directories if needed
-                file.getParentFile().mkdirs();
-                try {
-                    plugin.saveResource(modelPath, false);
-                } catch (IllegalArgumentException e) {
-                    plugin.getLogger().warning("Model file '" + modelPath + "' not found in JAR resources. You'll need to provide it manually.");
-                }
-            }
-        }
-    }
 
     public void shutdown() {
         // Save all ships to per-world storage - entities persist via Minecraft
@@ -354,6 +323,10 @@ public class DisplayShip implements Listener {
         // Don't call destroyAll() - let entities persist for recovery on restart
         // Just clear the in-memory registry
         ShipRegistry.clear();
+    }
+
+    public ItemFactory getItemFactory() {
+        return itemFactory;
     }
 
     public ItemTextureManager getTextureManager() {
@@ -389,7 +362,7 @@ public class DisplayShip implements Listener {
             ShipRegistry.unregister(ship);
             plugin.getLogger().fine("Suspended ship " + ship.id + " for chunk unload at " + chunk.getX() + "," + chunk.getZ());
         }
-        // Persist chunk indices (async — serialized behind metadata writes on ioExecutor)
+        // Persist chunk indices (async - serialized behind metadata writes on ioExecutor)
         shipWorldData.saveAllChunkIndicesAsync();
     }
 
@@ -519,6 +492,11 @@ public class DisplayShip implements Listener {
                                 } else {
                                     plugin.getLogger().info("Recovered ship " + shipId + " from chunk load at " + chunkX + "," + chunkZ);
                                 }
+                            } catch (Exception e) {
+                                // recoverEntities (and other per-ship work) is otherwise unguarded here - a
+                                // throw would skip the rest of this chunk's batch. Skip just this ship.
+                                plugin.getLogger().warning("Failed to recover ship " + shipId + ", skipping: " + e.getMessage());
+                                failedRecovery.add(shipId);
                             } finally {
                                 shipsBeingRecovered.remove(shipId);
                             }
@@ -928,57 +906,98 @@ public class DisplayShip implements Listener {
         String configPath = plugin.getConfig().contains("ships." + shipType) ? "ships." : "custom-items.";
         String recipePath = configPath + shipType + ".recipe";
 
-        // Load recipe pattern and ingredients
-        List<String> pattern = plugin.getConfig().getStringList(recipePath + ".pattern");
-        if (pattern.isEmpty() || pattern.size() != 3) {
-            e.getInventory().setResult(null);
-            return;
-        }
+        boolean shapeless = plugin.getConfig().getBoolean(recipePath + ".shapeless", false);
 
-        // Build ingredient map
-        Map<Character, List<RecipeIngredient>> ingredientMap = new HashMap<>();
-        var ingredientsSection = plugin.getConfig().getConfigurationSection(recipePath + ".ingredients");
-        if (ingredientsSection != null) {
-            for (String key : ingredientsSection.getKeys(false)) {
-                List<String> ingredientStrings = plugin.getConfig().getStringList(recipePath + ".ingredients." + key);
-                try {
-                    List<RecipeIngredient> ingredients = RecipeIngredient.parseList(ingredientStrings, plugin, this.textureManager);
-                    ingredientMap.put(key.charAt(0), ingredients);
-                } catch (IllegalArgumentException ex) {
-                    plugin.getLogger().warning("Failed to parse ingredient for " + shipType + ": " + ex.getMessage());
-                    e.getInventory().setResult(null);
-                    return;
+        // For shapeless recipes, Bukkit already validated ingredient matching
+        // For shaped recipes, use RecipeValidator for variant extraction
+        String variant = null;
+        ItemStack banner = null;
+        String balloonColor = null;
+
+        if (shapeless) {
+            // Bukkit only matched the shapeless recipe on base material (e.g. any PLAYER_HEAD for the
+            // ship_wheel ingredient), so a mob head / renamed head / balloon could craft the result and be
+            // silently consumed. Re-validate the grid ourselves: build the ingredient pool the same way
+            // ItemUtil registered it (one choice per config key) and require every non-empty grid slot to
+            // match a distinct pool entry, matching custom items by their custom_item_id PDC (rename-proof)
+            // rather than by display name.
+            var ingredientsSection = plugin.getConfig().getConfigurationSection(recipePath + ".ingredients");
+            List<RecipeIngredient> pool = new ArrayList<>();
+            if (ingredientsSection != null) {
+                for (String key : ingredientsSection.getKeys(false)) {
+                    List<String> ingredientStrings = plugin.getConfig().getStringList(recipePath + ".ingredients." + key);
+                    if (ingredientStrings.isEmpty()) continue;
+                    try {
+                        List<RecipeIngredient> parsed = RecipeIngredient.parseList(ingredientStrings, plugin, this.textureManager);
+                        if (!parsed.isEmpty()) pool.add(parsed.get(0));
+                    } catch (IllegalArgumentException ex) {
+                        plugin.getLogger().warning("Failed to parse ingredient for " + shipType + ": " + ex.getMessage());
+                        e.getInventory().setResult(null);
+                        return;
+                    }
                 }
             }
-        }
+            List<RecipeIngredient> remaining = new ArrayList<>(pool);
+            for (ItemStack item : e.getInventory().getMatrix()) {
+                if (item == null || item.getType().isAir()) continue;
+                boolean matched = false;
+                for (java.util.Iterator<RecipeIngredient> it = remaining.iterator(); it.hasNext(); ) {
+                    if (ingredientMatches(it.next(), item)) { it.remove(); matched = true; break; }
+                }
+                if (!matched) { e.getInventory().setResult(null); return; }  // wrong/extra ingredient
+            }
+            if (!remaining.isEmpty()) { e.getInventory().setResult(null); return; }  // missing an ingredient
 
-        // Validate crafting with RecipeValidator
-        RecipeValidator.ValidationResult validation = RecipeValidator.validateCrafting(
-                e.getInventory(),
-                pattern,
-                ingredientMap
-        );
+            banner = RecipeValidator.extractBanner(e.getInventory());
+        } else {
+            // Shaped: full pattern-based validation
+            List<String> pattern = plugin.getConfig().getStringList(recipePath + ".pattern");
+            if (pattern.isEmpty() || pattern.size() != 3) {
+                e.getInventory().setResult(null);
+                return;
+            }
 
-        if (!validation.isValid()) {
-            e.getInventory().setResult(null);
-            return;
-        }
+            Map<Character, List<RecipeIngredient>> ingredientMap = new HashMap<>();
+            var ingredientsSection = plugin.getConfig().getConfigurationSection(recipePath + ".ingredients");
+            if (ingredientsSection != null) {
+                for (String key : ingredientsSection.getKeys(false)) {
+                    List<String> ingredientStrings = plugin.getConfig().getStringList(recipePath + ".ingredients." + key);
+                    try {
+                        List<RecipeIngredient> ingredients = RecipeIngredient.parseList(ingredientStrings, plugin, this.textureManager);
+                        ingredientMap.put(key.charAt(0), ingredients);
+                    } catch (IllegalArgumentException ex) {
+                        plugin.getLogger().warning("Failed to parse ingredient for " + shipType + ": " + ex.getMessage());
+                        e.getInventory().setResult(null);
+                        return;
+                    }
+                }
+            }
 
-        // Extract banner (for ship customization)
-        ItemStack banner = RecipeValidator.extractBanner(e.getInventory());
+            RecipeValidator.ValidationResult validation = RecipeValidator.validateCrafting(
+                    e.getInventory(),
+                    pattern,
+                    ingredientMap
+            );
 
-        // Get primary variant (wood type, wool color, etc.)
-        String variant = validation.getPrimaryVariant();
+            if (!validation.isValid()) {
+                e.getInventory().setResult(null);
+                return;
+            }
 
-        // For airships, extract balloon color from the crafting matrix
-        String balloonColor = null;
-        if (plugin.getConfig().getString("ships." + shipType + ".type", "").equals("airship")) {
-            balloonColor = extractBalloonColor(e.getInventory());
+            banner = RecipeValidator.extractBanner(e.getInventory());
+            variant = validation.getPrimaryVariant();
+
+            if (plugin.getConfig().getString("ships." + shipType + ".type", "").equals("airship")) {
+                balloonColor = extractBalloonColor(e.getInventory());
+            }
         }
 
         // Create item using unified ItemFactory
         ItemStack result;
-        if (plugin.getConfig().contains("custom-items." + shipType)) {
+        if ("captains_manual".equals(shipType)) {
+            // Captain's Manual: create a written book with help content
+            result = HelpBookContent.createWrittenBook();
+        } else if (plugin.getConfig().contains("custom-items." + shipType)) {
             // Custom items
             result = itemFactory.createItem(shipType, variant, banner);
         } else {
@@ -986,6 +1005,27 @@ public class DisplayShip implements Listener {
             result = createShipKitWithBalloon(shipType, banner, variant, balloonColor);
         }
         e.getInventory().setResult(result);
+    }
+
+    @EventHandler
+    public void onCraftNonConsumable(org.bukkit.event.inventory.CraftItemEvent event) {
+        if (!(event.getRecipe() instanceof Keyed keyed)) return;
+        if (!keyed.getKey().getNamespace().equals(plugin.getName().toLowerCase())) return;
+        String recipeKey = keyed.getKey().getKey();
+        if (!recipeKey.equals("captains_manual_kit_recipe")) return;
+
+        // Return the ship wheel to the player after crafting
+        for (ItemStack item : event.getInventory().getMatrix()) {
+            if (item != null && isShipWheel(item)) {
+                ItemStack wheelCopy = item.clone();
+                wheelCopy.setAmount(1);
+                org.bukkit.entity.HumanEntity crafter = event.getWhoClicked();
+                Bukkit.getScheduler().runTask(plugin, () -> {
+                    crafter.getInventory().addItem(wheelCopy);
+                });
+                break;
+            }
+        }
     }
 
     @EventHandler
@@ -1277,6 +1317,13 @@ public class DisplayShip implements Listener {
             }
         }
 
+        // Check if this shulker is a ship engine - open fuel GUI
+        if (storageBlockIndex >= 0 && inst.model.engineBlockIndices.contains(storageBlockIndex)) {
+            anon.def9a2a4.blockships.customships.EngineMenuGUI.open(player, inst, storageBlockIndex);
+            e.setCancelled(true);
+            return;
+        }
+
         // Check if this shulker has storage
         if (storageBlockIndex >= 0) {
             Inventory storage = inst.storages.get(storageBlockIndex);
@@ -1394,7 +1441,7 @@ public class DisplayShip implements Listener {
                 float currentSpeed = inst.physics.currentSpeed;
                 float currentYVelocity = inst.physics.currentYVelocity;
 
-                float yawRad = (float) Math.toRadians(-inst.vehicle.getYaw());
+                float yawRad = (float) Math.toRadians(-inst.physics.currentYaw);
                 double forwardX = Math.sin(yawRad) * currentSpeed;
                 double forwardZ = Math.cos(yawRad) * currentSpeed;
                 boolean shipIsMoving = Math.abs(currentSpeed) > 0.01 || Math.abs(currentYVelocity) > 0.01;
@@ -1786,12 +1833,30 @@ public class DisplayShip implements Listener {
      * Helper: Check if an item is a ship wheel custom item
      */
     private boolean isShipWheel(ItemStack stack) {
+        return matchesCustomItemId(stack, "ship_wheel");
+    }
+
+    /**
+     * Checks whether an item carries the given blockships custom_item_id PDC tag. Unlike matching by
+     * display name, this cannot be forged by an anvil rename.
+     */
+    private boolean matchesCustomItemId(ItemStack stack, String customItemId) {
         if (stack == null || !stack.hasItemMeta()) return false;
-        ItemMeta meta = stack.getItemMeta();
-        PersistentDataContainer pdc = meta.getPersistentDataContainer();
+        PersistentDataContainer pdc = stack.getItemMeta().getPersistentDataContainer();
         NamespacedKey itemIdKey = new NamespacedKey(plugin, "custom_item_id");
         return pdc.has(itemIdKey, PersistentDataType.STRING) &&
-               "ship_wheel".equals(pdc.get(itemIdKey, PersistentDataType.STRING));
+               customItemId.equals(pdc.get(itemIdKey, PersistentDataType.STRING));
+    }
+
+    /**
+     * Whether a crafting-grid item satisfies a recipe ingredient. Custom-item ingredients are matched by
+     * their custom_item_id PDC (rename-proof); everything else uses the ingredient's own matcher.
+     */
+    private boolean ingredientMatches(RecipeIngredient ingredient, ItemStack item) {
+        if (ingredient instanceof CustomItemIngredient ci) {
+            return matchesCustomItemId(item, ci.getCustomItemId());
+        }
+        return ingredient.matches(item);
     }
 
     /**
@@ -2079,7 +2144,9 @@ public class DisplayShip implements Listener {
 
         // Update all seat shulkers immediately (so change takes effect if player is riding)
         for (Shulker shulker : ship.seatShulkers) {
-            setCameraDistanceOnShulker(shulker, newValue);
+            if (shulker != null && shulker.isValid()) {
+                setCameraDistanceOnShulker(shulker, newValue);
+            }
         }
 
         // Update menu items in place (no close/reopen)
@@ -2162,6 +2229,207 @@ public class DisplayShip implements Listener {
             ItemStack wheelItem = createShipWheelItem();
             world.dropItemNaturally(block.getLocation(), wheelItem);
         }
+    }
+
+    // ===== Engine Menu GUI event handlers =====
+
+    @EventHandler
+    public void onEngineMenuClick(InventoryClickEvent event) {
+        if (!(event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder)
+            && !(event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineBlockMenuHolder)) return;
+
+        // Block double-click collect (could pull non-fuel items from player inventory)
+        if (event.getClick() == org.bukkit.event.inventory.ClickType.DOUBLE_CLICK) {
+            event.setCancelled(true);
+            return;
+        }
+
+        int slot = event.getRawSlot();
+        // Allow fuel slot interactions, block everything else in the top inventory
+        if (slot >= 0 && slot < 9) {
+            if (!anon.def9a2a4.blockships.customships.EngineMenuGUI.isFuelSlot(slot)) {
+                event.setCancelled(true);
+                // Click-to-refresh on status slot
+                if (slot == anon.def9a2a4.blockships.customships.EngineMenuGUI.STATUS_SLOT) {
+                    if (event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder holder) {
+                        anon.def9a2a4.blockships.customships.EngineMenuGUI.saveFuelState(holder);
+                        anon.def9a2a4.blockships.customships.EngineMenuGUI.refreshStatus(holder);
+                    }
+                }
+                return;
+            }
+
+            // Block number-key hotbar swaps with non-fuel items
+            if (event.getClick() == org.bukkit.event.inventory.ClickType.NUMBER_KEY) {
+                org.bukkit.entity.Player player = (org.bukkit.entity.Player) event.getWhoClicked();
+                ItemStack hotbarItem = player.getInventory().getItem(event.getHotbarButton());
+                if (hotbarItem != null && hotbarItem.getType() != Material.AIR
+                        && !anon.def9a2a4.blockships.customships.EngineMenuGUI.isValidFuel(hotbarItem.getType())) {
+                    event.setCancelled(true);
+                    return;
+                }
+            }
+
+            // Validate fuel: if placing an item via cursor, check it's valid fuel
+            ItemStack cursor = event.getCursor();
+            if (cursor != null && cursor.getType() != Material.AIR) {
+                if (!anon.def9a2a4.blockships.customships.EngineMenuGUI.isValidFuel(cursor.getType())) {
+                    event.setCancelled(true);
+                }
+            }
+        }
+        // Block shift-clicks from player inventory that would move non-fuel items into engine GUI
+        if (event.isShiftClick() && slot >= 9) {
+            ItemStack clicked = event.getCurrentItem();
+            if (clicked != null && !anon.def9a2a4.blockships.customships.EngineMenuGUI.isValidFuel(clicked.getType())) {
+                event.setCancelled(true);
+            }
+        }
+    }
+
+    @EventHandler
+    public void onEngineMenuDrag(org.bukkit.event.inventory.InventoryDragEvent event) {
+        if (!(event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder)
+            && !(event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineBlockMenuHolder)) return;
+
+        // Check if any dragged slots are in the top inventory (engine GUI)
+        for (int rawSlot : event.getRawSlots()) {
+            if (rawSlot >= 0 && rawSlot < 9) {
+                // If dragging into a non-fuel slot, or dragging a non-fuel item, cancel
+                if (!anon.def9a2a4.blockships.customships.EngineMenuGUI.isFuelSlot(rawSlot)
+                        || !anon.def9a2a4.blockships.customships.EngineMenuGUI.isValidFuel(event.getOldCursor().getType())) {
+                    event.setCancelled(true);
+                    return;
+                }
+            }
+        }
+    }
+
+    @EventHandler
+    public void onEngineMenuClose(InventoryCloseEvent event) {
+        if (event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder holder) {
+            anon.def9a2a4.blockships.customships.EngineMenuGUI.saveFuelState(holder);
+            // Recompute stats immediately so fuel changes take effect without waiting for movement
+            holder.getShip().physics.recomputeStats();
+        } else if (event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineBlockMenuHolder blockHolder) {
+            anon.def9a2a4.blockships.customships.EngineMenuGUI.saveBlockFuelState(blockHolder);
+        }
+    }
+
+    // ===== Ship Engine event handlers =====
+
+    /**
+     * Opens custom fuel GUI instead of vanilla blast furnace UI on placed ship engines.
+     */
+    @EventHandler
+    public void onRightClickPlacedEngine(PlayerInteractEvent event) {
+        if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+        if (event.getClickedBlock() == null) return;
+        if (event.getClickedBlock().getType() != Material.BLAST_FURNACE) return;
+        if (!isShipEngine(event.getClickedBlock())) return;
+
+        event.setCancelled(true);
+        anon.def9a2a4.blockships.customships.EngineMenuGUI.openForBlock(event.getPlayer(), event.getClickedBlock());
+    }
+
+    private static final String ENGINE_PDC_VALUE = "ship_engine";
+
+    /**
+     * Transfers PDC tag from a ship engine item to the placed block's TileState.
+     * Bukkit doesn't auto-transfer item PDC to blocks, so we do it manually.
+     */
+    @EventHandler
+    public void onPlaceShipEngine(BlockPlaceEvent event) {
+        ItemStack item = event.getItemInHand();
+        if (item.getType() != Material.BLAST_FURNACE || !item.hasItemMeta()) return;
+
+        PersistentDataContainer itemPdc = item.getItemMeta().getPersistentDataContainer();
+        NamespacedKey itemIdKey = new NamespacedKey(plugin, "custom_item_id");
+        String itemId = itemPdc.get(itemIdKey, PersistentDataType.STRING);
+        if (!ENGINE_PDC_VALUE.equals(itemId)) return;
+
+        // Transfer PDC to block TileState
+        Block block = event.getBlockPlaced();
+        org.bukkit.block.BlockState state = block.getState();
+        if (state instanceof org.bukkit.block.TileState tileState) {
+            tileState.getPersistentDataContainer().set(itemIdKey, PersistentDataType.STRING, ENGINE_PDC_VALUE);
+            tileState.update();
+        }
+    }
+
+    /**
+     * Prevents ship engines from burning fuel via vanilla smelting mechanics.
+     */
+    @EventHandler
+    public void onEngineFurnaceBurn(FurnaceBurnEvent event) {
+        if (isShipEngine(event.getBlock())) {
+            event.setCancelled(true);
+        }
+    }
+
+    /**
+     * Prevents ship engines from smelting items via vanilla mechanics.
+     */
+    @EventHandler
+    public void onEngineFurnaceSmelt(FurnaceSmeltEvent event) {
+        if (isShipEngine(event.getBlock())) {
+            event.setCancelled(true);
+        }
+    }
+
+    /**
+     * Drops the custom ship engine item when a player breaks an engine block.
+     * Without this, breaking drops a vanilla blast furnace (losing PDC tag and glint).
+     */
+    @EventHandler
+    public void onBreakShipEngine(BlockBreakEvent event) {
+        Block block = event.getBlock();
+        if (!isShipEngine(block)) return;
+
+        event.setCancelled(true);
+        block.setType(Material.AIR);
+        block.getWorld().dropItemNaturally(
+            block.getLocation().add(0.5, 0.5, 0.5),
+            itemFactory.createItem("ship_engine", "_DEFAULT", null));
+    }
+
+    /**
+     * Handles explosions destroying ship engine blocks - drops custom item instead of vanilla.
+     */
+    @EventHandler
+    public void onEngineExplode(org.bukkit.event.entity.EntityExplodeEvent event) {
+        handleExplosionEngineDrops(event.blockList());
+    }
+
+    @EventHandler
+    public void onEngineBlockExplode(org.bukkit.event.block.BlockExplodeEvent event) {
+        handleExplosionEngineDrops(event.blockList());
+    }
+
+    private void handleExplosionEngineDrops(java.util.List<Block> blockList) {
+        java.util.Iterator<Block> it = blockList.iterator();
+        while (it.hasNext()) {
+            Block block = it.next();
+            if (isShipEngine(block)) {
+                it.remove();  // Prevent vanilla blast furnace drop
+                block.setType(Material.AIR);
+                block.getWorld().dropItemNaturally(
+                    block.getLocation().add(0.5, 0.5, 0.5),
+                    itemFactory.createItem("ship_engine", "_DEFAULT", null));
+            }
+        }
+    }
+
+    /**
+     * Checks if a block is a ship engine (blast furnace with engine PDC tag).
+     */
+    private boolean isShipEngine(Block block) {
+        if (block.getType() != Material.BLAST_FURNACE) return false;
+        org.bukkit.block.BlockState state = block.getState();
+        if (!(state instanceof org.bukkit.block.TileState tileState)) return false;
+        NamespacedKey itemIdKey = new NamespacedKey(plugin, "custom_item_id");
+        return ENGINE_PDC_VALUE.equals(
+            tileState.getPersistentDataContainer().get(itemIdKey, PersistentDataType.STRING));
     }
 
     /**

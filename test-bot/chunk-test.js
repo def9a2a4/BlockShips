@@ -12,6 +12,7 @@ const {
   CUSTOM_AIRSHIP,
   buildCustomShipWithWheel,
   findShulkers,
+  getShipEntityPos,
   mountShip,
   customDismount,
   steerShip,
@@ -22,10 +23,9 @@ const {
 } = require('./lib/helpers')
 
 // Tests to skip on specific MC versions (key = version, value = array of test key substrings)
-// mineflayer hardcodes jump:0x01 in steer_vehicle on pre-1.21.3, causing airship drift after dismount
+// 1.21.1: steer_vehicle path (pre-1.21.3) has separate dismount/jump flag issues
 const VERSION_SKIPS = {
   '1.21.1': ['persistence_airship'],
-  '1.21.4': ['persistence_airship'],
 }
 
 // Test results file (written incrementally for CI visibility)
@@ -236,7 +236,6 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
     return
   }
 
-  // Count shulkers before moving (positions are accurate here, stale after movement)
   const beforeCount = findShulkers(bot, 50).length
   if (beforeCount === 0) {
     fail(testName, 'No shulkers found after mounting')
@@ -244,13 +243,32 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   }
   log(`Counted ${beforeCount} shulkers before movement`)
 
-  // 1) Move ship
+  // Count all ship entity types before chunk cycle
+  const countEntitiesByType = (center, radius) => {
+    const counts = { armor_stand: 0, shulker: 0, block_display: 0, item_display: 0 }
+    for (const entity of Object.values(bot.entities)) {
+      if (!counts.hasOwnProperty(entity.name)) continue
+      const dx = entity.position.x - center.x
+      const dy = entity.position.y - center.y
+      const dz = entity.position.z - center.z
+      if (Math.sqrt(dx * dx + dy * dy + dz * dz) <= radius) {
+        counts[entity.name]++
+      }
+    }
+    return counts
+  }
+  const shipCenter = bot.entity.position.clone()
+  const beforeEntityCounts = countEntitiesByType(shipCenter, 50)
+  log(`Entity counts before: ${JSON.stringify(beforeEntityCounts)}`)
+
+  // 1) Move ship (short duration for airships — less vertical velocity to shed)
   say('Moving ship...')
-  await steerShip(bot, 1.0, 0, isAirship, 2000)
+  await steerShip(bot, 1.0, 0, isAirship, isAirship ? 500 : 2000)
   await steerShip(bot, -1.0, 0, false, 100)
   await steerShip(bot, 0.0, 0, false, 1000)
 
   // Zero all control inputs and wait for ship to fully settle
+  // Airships need extra time to decelerate vertically after chunk recovery
   bot.setControlState('forward', false)
   bot.setControlState('back', false)
   bot.setControlState('left', false)
@@ -258,27 +276,79 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
   bot.setControlState('jump', false)
   bot.setControlState('sneak', false)
   bot.setControlState('sprint', false)
-  await sleep(3000)
+  // Send explicit all-false player_input packet to guarantee the plugin clears
+  // input state. setControlState only sends when state changes — if already false,
+  // no packet is sent and stale input from the last steerShip tick may persist.
+  if (bot.supportFeature('newPlayerInputPacket')) {
+    bot._client.write('player_input', {
+      inputs: { forward: false, backward: false, left: false, right: false, jump: false }
+    })
+  }
+  await sleep(10000)
 
   // 2) Exit ship FIRST, then measure position (same approach as test-bot.js)
   await customDismount(bot, log)
-  await sleep(1000)  // Wait for entities to load after dismount
 
-  // Record position after dismounting - use this for teleport back
+  // Diagnostic: log ship entity positions to detect drift.
+  // Uses carrier (vehicle) positions via getShipEntityPos() — shulker positions are
+  // stale because the MC server doesn't send position packets for passenger entities.
+  const logShulkers = (label) => {
+    const s = findShulkers(bot, 100)
+    const sample = s.slice(0, 3).map(sh => {
+      const p = getShipEntityPos(sh)
+      return `(${p.x.toFixed(1)},${p.y.toFixed(1)},${p.z.toFixed(1)})`
+    })
+    say(`${label}: ${s.length} shulkers, first 3: ${sample.join(', ')}`)
+    return s
+  }
+  await sleep(200)
+  logShulkers('Right after dismount')
+  await sleep(1000)
+  const preCycleShulkers = logShulkers('1s after dismount')
+  await sleep(1000)
+
+  // Force position sync
+  bot.chat('/tp @s ~ ~ ~')
+  await sleep(500)
+
+  // Record bot's dismount position
   const movedPos = bot.entity.position.clone()
   const moveDistance = movedPos.distanceTo(startPos)
-  say(`Moved ${moveDistance.toFixed(1)} blocks`)
+  say(`Bot position: (${movedPos.x.toFixed(1)}, ${movedPos.y.toFixed(1)}, ${movedPos.z.toFixed(1)}), moved ${moveDistance.toFixed(1)} blocks`)
 
-  // 3) Teleport away, wait, teleport back to recorded position
-  await forceChunkCycle(movedPos)
+  // Use carrier positions for ship center — carrier ArmorStands are standalone entities
+  // whose positions update normally, unlike passenger shulkers which are stale.
+  // For airships this also avoids the Y-offset from bot dismount (ground vs altitude).
+  const avgShipPos = preCycleShulkers.reduce(
+    (acc, s) => {
+      const p = getShipEntityPos(s)
+      return { x: acc.x + p.x / preCycleShulkers.length,
+               y: acc.y + p.y / preCycleShulkers.length,
+               z: acc.z + p.z / preCycleShulkers.length }
+    },
+    { x: 0, y: 0, z: 0 }
+  )
+  say(`Ship center: (${avgShipPos.x.toFixed(1)}, ${avgShipPos.y.toFixed(1)}, ${avgShipPos.z.toFixed(1)})`)
+
+  // 3) Teleport away, wait, teleport back near SHIP (not bot dismount pos)
+  await forceChunkCycle(avgShipPos)
 
   // 5) Check ship after chunk cycle
-  const afterShulkers = findShulkers(bot, 100)
-  say(`Found ${afterShulkers.length} shulkers after chunk cycle`)
+  const afterShulkers = logShulkers('After teleport back (post chunk cycle)')
 
   if (afterShulkers.length === 0) {
     fail(testName, 'Ship not found after cycle')
     return
+  }
+
+  // Verify entity counts by type stayed constant
+  const afterEntityCounts = countEntitiesByType(avgShipPos, 50)
+  log(`Entity counts after: ${JSON.stringify(afterEntityCounts)}`)
+  for (const type of Object.keys(beforeEntityCounts)) {
+    if (afterEntityCounts[type] !== beforeEntityCounts[type]) {
+      fail(testName, `${type} count changed: ${beforeEntityCounts[type]} -> ${afterEntityCounts[type]}`)
+      return
+    }
   }
 
   // Verify shulker count stayed constant
@@ -287,17 +357,18 @@ async function testPositionPersistenceBase(testName, spawnFn, isAirship = false)
     return
   }
 
-  // Verify ALL shulkers are within 10 blocks of player dismount position
-  const afterPositions = afterShulkers.map(s => s.position)
-  say(`After positions: ${afterPositions.map(p => `(${p.x.toFixed(1)},${p.z.toFixed(1)})`).join(', ')}`)
-
-  const farthestDist = Math.max(...afterPositions.map(p => p.distanceTo(movedPos)))
-  say(`Farthest shulker from dismount point: ${farthestDist.toFixed(2)} blocks`)
+  // Verify ALL shulkers are within 10 blocks of pre-cycle ship position
+  const afterPositions = afterShulkers.map(s => getShipEntityPos(s))
+  const farthestDist = Math.max(...afterPositions.map(p => {
+    const dx = p.x - avgShipPos.x, dy = p.y - avgShipPos.y, dz = p.z - avgShipPos.z
+    return Math.sqrt(dx * dx + dy * dy + dz * dz)
+  }))
+  say(`Farthest shulker from pre-cycle ship center: ${farthestDist.toFixed(2)} blocks`)
 
   if (farthestDist < 10) {
     pass(testName)
   } else {
-    fail(testName, `Shulker ${farthestDist.toFixed(2)} blocks from dismount point (need <10)`)
+    fail(testName, `Shulker ${farthestDist.toFixed(2)} blocks from pre-cycle position (need <10)`)
   }
 }
 
@@ -355,13 +426,19 @@ async function testPostRecoverySteeringBase(testName, spawnFn, isAirship = false
   await sleep(300)
 
   const endPos = bot.entity.position
-  const moved = endPos.distanceTo(startPos)
-  say(`Moved ${moved.toFixed(1)} blocks`)
+  // Assert DIRECTIONAL propulsion after recovery: the recovered ship faces north and drives north
+  // (negative Z), so require >=10 blocks northward. This replaces a total-distance > 1.0 check that
+  // was a false negative — the vertical/seat dismount offset alone cleared it even for a dead ship.
+  // Log all three axes so the actual heading is visible if it ever changes.
+  const dx = endPos.x - startPos.x
+  const dy = endPos.y - startPos.y
+  const dz = endPos.z - startPos.z
+  say(`Moved dX=${dx.toFixed(1)} dY=${dy.toFixed(1)} dZ=${dz.toFixed(1)}`)
 
-  if (moved > 1.0) {
+  if (dz <= -10.0) {
     pass(testName)
   } else {
-    fail(testName, 'Recovered ship did not respond to steering')
+    fail(testName, `Recovered ship did not respond to steering: expected >=10 blocks north (negative Z), got dZ=${dz.toFixed(2)} (dX=${dx.toFixed(2)}, dY=${dy.toFixed(2)})`)
   }
 }
 

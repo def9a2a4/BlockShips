@@ -591,6 +591,17 @@ bookshelf:
   weight: 1
   collider: true
 
+chiseled_bookshelf:
+  allowed: true
+  weight: 1
+  collider: true
+  display_rotation: true
+
+"*_shelf":
+  allowed: true
+  weight: 1
+  collider: false
+
 "#signs":
   allowed: true
   weight: 1
@@ -611,7 +622,8 @@ player_head:
 player_wall_head:
   allowed: true
   weight: 1
-  collider: false
+  collider:
+    size: 0.5
 
 zombie_head:
   allowed: true
@@ -621,7 +633,8 @@ zombie_head:
 zombie_wall_head:
   allowed: true
   weight: 1
-  collider: false
+  collider:
+    size: 0.5
 
 skeleton_skull:
   allowed: true
@@ -632,7 +645,8 @@ skeleton_skull:
 skeleton_wall_skull:
   allowed: true
   weight: 1
-  collider: false
+  collider:
+    size: 0.5
 
 wither_skeleton_skull:
   allowed: true
@@ -643,7 +657,8 @@ wither_skeleton_skull:
 wither_skeleton_wall_skull:
   allowed: true
   weight: 1
-  collider: false
+  collider:
+    size: 0.5
 
 creeper_head:
   allowed: true
@@ -654,7 +669,8 @@ creeper_head:
 creeper_wall_head:
   allowed: true
   weight: 1
-  collider: false
+  collider:
+    size: 0.5
 
 dragon_head:
   allowed: true
@@ -675,7 +691,8 @@ piglin_head:
 piglin_wall_head:
   allowed: true
   weight: 1
-  collider: false
+  collider:
+    size: 0.5
 
 # === WALLS (weight: 3) ===
 "#walls":

@@ -198,15 +198,16 @@ const CUSTOM_SHIP = {
      "P P P",
      "P P P"],
     ["- - -",
-     "- - -",
+     "- B -",
      "- - -",
      "- W -",
      "- - -",
-     "- - -",
+     "S B -",
      "C B T"]
   ],
   blocks: {
     'P': 'oak_planks',
+    'S': 'white_wool',
     'W': 'wheel',
     'C': 'chest',
     'B': 'white_banner',
@@ -224,21 +225,84 @@ const CUSTOM_AIRSHIP = {
      "G P G",
      "G P G"],
     ["- - -",
+     "- B -",
      "- - -",
      "- - -",
      "- - -",
-     "- - -",
-     "- - -",
+     "S B -",
      "C B T"]
   ],
   blocks: {
     'G': 'glowstone',
     'P': 'oak_planks',
+    'S': 'white_wool',
     'W': 'wheel',
     'C': 'chest',
     'B': 'white_banner',
     'T': 'crafting_table'
   }
+}
+
+// "Weird blocks" ship: same 7x3 footprint as CUSTOM_SHIP, but the deck is packed with
+// odd-sized containers (hopper=5 slots, dropper/dispenser=9, barrel/trapped_chest=27) plus
+// furnace-family blocks and metadata blocks (banner, sign). Used by the weird_ship regression
+// test to guard the hopper-crash (#7), container item dup/loss (G2), and metadata-restore (T)
+// fixes. All blocks are in blocks.yml `allowed` and exist since 1.21.1.
+const WEIRD_SHIP = {
+  layers: [
+    ["P P P",
+     "P P P",
+     "P P P",
+     "P P P",
+     "P P P",
+     "P P P",
+     "P P P"],
+    ["H D I",
+     "A R F",
+     "B M E",
+     "S W N",
+     "G - -",
+     "- - -",
+     "- - -"]
+  ],
+  blocks: {
+    'P': 'oak_planks',
+    'W': 'wheel',
+    'S': 'white_wool',      // sail
+    'H': 'hopper',          // HOPPER storage, 5 slots — the #7 crash target
+    'D': 'dropper',         // DROPPER storage, 9 slots
+    'I': 'dispenser',       // DROPPER storage, 9 slots
+    'A': 'barrel',          // CHEST storage, 27 slots
+    'R': 'trapped_chest',   // CHEST storage, 27 slots
+    'F': 'furnace',
+    'B': 'blast_furnace',
+    'M': 'smoker',
+    'E': 'brewing_stand',
+    'N': 'white_banner',    // metadata restore (T)
+    'G': 'oak_sign'         // metadata restore (T)
+  }
+}
+
+// World position of the first cell matching `char` in a layer-based ship config.
+// Mirrors the offset math in buildShipFromLayers so callers can target a specific block
+// (e.g. preload items into the hopper) without duplicating the layout arithmetic.
+function blockCharWorldPos(config, char, centerX, buildY, centerZ) {
+  const { layers } = config
+  for (let y = 0; y < layers.length; y++) {
+    const layer = layers[y]
+    for (let z = 0; z < layer.length; z++) {
+      const row = layer[z].split(' ')
+      for (let x = 0; x < row.length; x++) {
+        if (row[x] !== char) continue
+        return {
+          x: centerX + (x - Math.floor(row.length / 2)),
+          y: buildY + y,
+          z: centerZ + (z - Math.floor(layer.length / 2))
+        }
+      }
+    }
+  }
+  return null
 }
 
 async function buildShipFromLayers(bot, config, centerX, centerY, centerZ) {
@@ -333,6 +397,18 @@ function findShulkers(bot, maxDist = 30) {
   return shulkers
 }
 
+/**
+ * Gets the server-accurate position of a shulker by reading its carrier's position.
+ * Shulkers are passengers of carrier ArmorStands — the MC server does not send position
+ * update packets for passengers, so shulker.position can be stale after ship movement.
+ * Carrier positions update normally as standalone entities.
+ * Falls back to shulker.position if no vehicle reference (e.g. after chunk reload when
+ * SET_PASSENGERS hasn't arrived yet — spawn packets give fresh positions anyway).
+ */
+function getShipEntityPos(shulker) {
+  return shulker.vehicle?.position ?? shulker.position
+}
+
 async function mountShip(bot, log) {
   const shulkers = findShulkers(bot)
   if (shulkers.length === 0) {
@@ -423,33 +499,45 @@ async function customDismount(bot, log, originalStartPos = null) {
            Math.abs(posCheckRef.z - currentPos.z) > threshold
   }
 
-  // Try dismount methods (200ms between each)
-  const methods = [
-    { name: 'bot.dismount()', fn: () => bot.dismount() },
-    { name: 'sneak control', fn: () => {
-      bot.setControlState('sneak', true)
-      setTimeout(() => bot.setControlState('sneak', false), 100)
-    }},
-  ]
+  // Try dismount methods (200ms between each).
+  // On 1.21.3+, raw shift must come FIRST: bot.dismount() sends { jump: true }
+  // which PaperInputListener interprets as climb input, not dismount.
+  const methods = []
 
-  // Add version-specific raw packet methods
   if (bot.supportFeature('newPlayerInputPacket')) {
-    // 1.21.3+ uses player_input packet
+    // 1.21.3+: shift is the correct dismount mechanism for PaperInputListener
     methods.push(
       { name: 'raw player_input (shift)', fn: () => bot._client.write('player_input', {
         inputs: { shift: true }
       })},
-      { name: 'raw player_input (jump)', fn: () => bot._client.write('player_input', {
-        inputs: { jump: true }
-      })}
+      { name: 'bot.dismount()', fn: () => bot.dismount() },
+      { name: 'sneak control', fn: () => {
+        bot.setControlState('sneak', true)
+        setTimeout(() => bot.setControlState('sneak', false), 100)
+      }},
     )
   } else {
-    // Pre-1.21.3 uses steer_vehicle packet
+    // Pre-1.21.3: bot.dismount() sends steer_vehicle with unmount flag (correct)
     methods.push(
+      { name: 'bot.dismount()', fn: () => bot.dismount() },
+      { name: 'sneak control', fn: () => {
+        bot.setControlState('sneak', true)
+        setTimeout(() => bot.setControlState('sneak', false), 100)
+      }},
       { name: 'raw steer_vehicle (unmount)', fn: () => bot._client.write('steer_vehicle', {
         sideways: 0, forward: 0, jump: 0, unmount: 1
       })}
     )
+  }
+
+  // Clear any stale input state on the server after dismount.
+  // bot.dismount() on 1.21.3+ sends { jump: true } which sets isSpacePressed on airships.
+  const clearShipInput = () => {
+    if (bot.supportFeature('newPlayerInputPacket')) {
+      bot._client.write('player_input', {
+        inputs: { forward: false, backward: false, left: false, right: false, jump: false, shift: false, sprint: false }
+      })
+    }
   }
 
   // Try each method with 200ms wait
@@ -462,6 +550,7 @@ async function customDismount(bot, log, originalStartPos = null) {
     }
 
     if (await quickWait(200)) {
+      clearShipInput()
       const endPos = bot.entity.position.clone()
       if (log) log(`  Success via ${method.name}`)
       return { success: true, method: method.name, usedFallback: false, startPos: dismountStartPos, endPos }
@@ -471,6 +560,7 @@ async function customDismount(bot, log, originalStartPos = null) {
   // Wait 1s for any delayed server response
   if (log) log('  Waiting 1s for delayed dismount...')
   if (await quickWait(1000)) {
+    clearShipInput()
     const endPos = bot.entity.position.clone()
     return { success: true, method: 'delayed', usedFallback: false, startPos: dismountStartPos, endPos }
   }
@@ -481,6 +571,7 @@ async function customDismount(bot, log, originalStartPos = null) {
 
   // If position changed significantly from original or bot.vehicle is null, we're done
   if (!bot.vehicle || posChanged(checkPos)) {
+    clearShipInput()
     if (log) log('  Success: position changed from original or vehicle cleared')
     return { success: true, method: 'delayed', usedFallback: false, startPos: dismountStartPos, endPos: checkPos }
   }
@@ -508,12 +599,14 @@ async function customDismount(bot, log, originalStartPos = null) {
 
   // Check chat response - "You are not riding a ship" means already dismounted (success!)
   if (dismountResponse) {
+    clearShipInput()
     if (log) log(`  Server response: "${dismountResponse}" - dismount confirmed`)
     return { success: true, method: '/blockships dismount', usedFallback: false, startPos: dismountStartPos, endPos: postDismountPos }
   }
 
   // Also check position change from original
   if (!bot.vehicle || posChanged(postDismountPos)) {
+    clearShipInput()
     if (log) log('  Success via /blockships dismount (position changed from original)')
     return { success: true, method: '/blockships dismount', usedFallback: false, startPos: dismountStartPos, endPos: postDismountPos }
   }
@@ -548,19 +641,24 @@ function steerShip(bot, forward, sideways, jump, durationMs) {
     const TICK_MS = 50
     let elapsed = 0
 
-    // 1.21.8 has issues with mineflayer's player_input packet for jump
-    const useRawPlayerInput = bot.version === '1.21.8'
+    // On 1.21.3+, mineflayer's bot.moveVehicle() sends player_input without jump,
+    // and bot.setControlState('jump') only sets a local physics flag (no packet).
+    // Send raw player_input with all fields to ensure the server receives jump/sprint.
+    const useRawPlayerInput = bot.supportFeature('newPlayerInputPacket')
 
     const sendInput = () => {
       if (useRawPlayerInput) {
-        // 1.21.8: Send player_input directly with jump field included
+        // Send player_input directly with all fields including jump/sprint.
+        // mineflayer's bot.moveVehicle() omits jump, and bot.setControlState('jump')
+        // only sets a local physics flag without sending a packet.
         bot._client.write('player_input', {
           inputs: {
             forward: forward > 0,
             backward: forward < 0,
             left: sideways > 0,
             right: sideways < 0,
-            jump: jump
+            jump: jump,
+            sprint: false
           }
         })
       } else {
@@ -767,6 +865,112 @@ async function clickWheelMenu(bot, log, action) {
   })
 }
 
+// Disassemble an assembled ship the way a player does: right-click a ship shulker to open the
+// wheel menu, then click Disassemble. When a ship is assembled there is NO wheel block in the
+// world (assembly removes all blocks), so the menu is reached via the shulkers —
+// sneak + right-click on ANY ship shulker opens the wheel menu
+// (DisplayShip.handleShulkerInteraction). Sneaking also prevents accidentally mounting a seat.
+// Returns true if the disassemble menu action was clicked.
+async function disassembleViaWheelMenu(bot, log, maxTries = 6) {
+  const shulkers = findShulkers(bot, 40)
+  if (shulkers.length === 0) {
+    if (log) log('  disassembleViaWheelMenu: no ship shulkers nearby')
+    return false
+  }
+
+  bot.setControlState('sneak', true)
+  await sleep(200)  // let the server register the sneaking state before interacting
+  try {
+    for (let i = 0; i < Math.min(shulkers.length, maxTries); i++) {
+      const seat = shulkers[i]
+      try { await bot.lookAt(seat.position.offset(0, 0.5, 0)) } catch (e) {}
+      // clickWheelMenu registers its own windowOpen listener, so start it BEFORE interacting.
+      const menuPromise = clickWheelMenu(bot, log, 'disassemble')
+      await sleep(100)
+      try { await bot.useOn(seat) } catch (e) {}
+      if (await menuPromise) return true
+      if (log) log(`  disassembleViaWheelMenu: shulker ${i + 1} did not open the wheel menu`)
+    }
+    return false
+  } finally {
+    bot.setControlState('sneak', false)
+    await sleep(100)
+  }
+}
+
+// =============================================================================
+// Server Log Scanning
+// =============================================================================
+//
+// The v0.0.16 fixes deliberately catch-and-log (WARNING / printStackTrace) instead of
+// throwing — e.g. BlockStructureScanner metadata restore logs "[BlockShips] ... skipping
+// its metadata", container deserialize does e.printStackTrace(). A purely behavioral
+// "it assembled" oracle is blind to those, so a test can scan the server log for new
+// BlockShips error lines produced during its run.
+
+function serverLogPath() {
+  // Default: repo/test-server/server.log (cwd is test-bot/ under `make test-server-ci`).
+  // Override with MC_SERVER_LOG when running against a server elsewhere.
+  return process.env.MC_SERVER_LOG || path.join(__dirname, '..', '..', 'test-server', 'server.log')
+}
+
+// Capture the current size of the server log so a later scan reads only lines appended
+// after this marker. Returns 0 if the log is not present.
+function markServerLog(logPath = serverLogPath()) {
+  try {
+    return fs.statSync(logPath).size
+  } catch (e) {
+    return 0
+  }
+}
+
+// Read only the bytes appended to the log since `marker`. Returns null if the log file is
+// unavailable (e.g. bot run against an external server) so callers can skip rather than fail.
+function readServerLogSince(marker, logPath = serverLogPath()) {
+  let fd = null
+  try {
+    fd = fs.openSync(logPath, 'r')
+    const size = fs.fstatSync(fd).size
+    const start = Math.min(Math.max(marker, 0), size)
+    const len = size - start
+    if (len <= 0) return ''
+    const buf = Buffer.alloc(len)
+    fs.readSync(fd, buf, 0, len, start)
+    return buf.toString('utf8')
+  } catch (e) {
+    return null
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd) } catch (e2) {}
+    }
+  }
+}
+
+// Scan a chunk of log text for BlockShips error/exception lines. Matches error *signatures*,
+// not log level, so benign WARN-level notices (e.g. the WASD-controls warning) don't trip it:
+//  - stacktrace frames in the plugin's package (from printStackTrace / logged Throwables)
+//  - BlockShips lines carrying an exception or ERROR/SEVERE severity
+//  - the specific swallowed-error phrases the v0.0.16 fixes log (metadata restore, assembly)
+// Kept in sync with the Makefile server.log grep in `test-server-ci`.
+function findServerErrorLines(logText) {
+  if (!logText) return []
+  return logText.split('\n').filter(line => {
+    if (!line.trim()) return false
+    if (line.includes('anon.def9a2a4.blockships')) return true
+    if (!line.includes('BlockShips')) return false
+    return /(Exception|Throwable|ERROR|SEVERE)/.test(line) ||
+           /failed to restore|skipping its metadata|assembly failed/i.test(line)
+  })
+}
+
+// Convenience: returns { available, errors } for the log window since `marker`.
+// available=false means the log couldn't be read (skip, don't fail).
+function scanServerErrorsSince(marker) {
+  const text = readServerLogSince(marker)
+  if (text === null) return { available: false, errors: [] }
+  return { available: true, errors: findServerErrorLines(text) }
+}
+
 // =============================================================================
 // Exports
 // =============================================================================
@@ -792,11 +996,14 @@ module.exports = {
   // Ship configs
   CUSTOM_SHIP,
   CUSTOM_AIRSHIP,
+  WEIRD_SHIP,
   buildShipFromLayers,
   buildCustomShipWithWheel,
+  blockCharWorldPos,
 
   // Ship helpers
   findShulkers,
+  getShipEntityPos,
   findWheelBlock,
   placeWheelAtPosition,
   mountShip,
@@ -808,6 +1015,14 @@ module.exports = {
   // Menu helpers
   getMenuTitle,
   clickWheelMenu,
+  disassembleViaWheelMenu,
+
+  // Server log scanning
+  serverLogPath,
+  markServerLog,
+  readServerLogSince,
+  findServerErrorLines,
+  scanServerErrorsSince,
 
   // Bot factory
   createBot,

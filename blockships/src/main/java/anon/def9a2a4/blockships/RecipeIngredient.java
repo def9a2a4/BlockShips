@@ -189,7 +189,7 @@ class CustomItemIngredient implements RecipeIngredient {
         String textureSet = plugin.getConfig().getString(configPath + ".texture-set");
         String variantSource = plugin.getConfig().getString(configPath + ".variant-source");
 
-        return new CustomItem(customItemId, displayName, baseMaterial, textureSet, variantSource, plugin, textureManager);
+        return new CustomItem(customItemId, displayName, baseMaterial, textureSet, variantSource, false, plugin, textureManager);
     }
 
     @Override

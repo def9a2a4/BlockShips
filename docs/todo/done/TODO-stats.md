@@ -1,3 +1,10 @@
+---
+status: done
+issue: 18
+version: v0.0.16
+commit: 5da91fd
+---
+
 # Custom Ship Stats System - Design Document
 
 ## Overview
@@ -135,9 +142,11 @@ Standard Minecraft furnace fuels:
 
 ### Engine GUI
 - Custom inventory menu (not the normal blast furnace smelting UI)
-- **Multiple fuel slots** — load up fuel in advance
-- Shows fuel remaining and estimated burn time
-- **Hopper-compatible** if feasible (auto-fuel from adjacent hoppers)
+- **3 fuel slots per engine** — queue up fuel in advance
+- Shows fuel remaining and estimated burn time per engine
+- Accessed by **right-clicking the engine block** on the assembled ship
+- Multi-engine ships show all engines in one GUI view
+- Crafting recipe: 8 copper ingots surrounding 1 blast furnace
 
 ### Engine Detection
 - Custom crafting recipe produces a blast furnace with PDC tag (`blockships:custom_item_id` = `"ship_engine"`)

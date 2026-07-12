@@ -9,7 +9,7 @@
     "test:all": "node test-bot.js; r1=$?; node chunk-test.js; r2=$?; exit $((r1 || r2))"
   },
   "dependencies": {
-    "mineflayer": "^4.33.0",
+    "mineflayer": "^4.37.1",
     "vec3": "^0.1.10"
   }
 }

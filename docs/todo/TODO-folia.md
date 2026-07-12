@@ -1,3 +1,8 @@
+---
+status: planned
+issue: 14
+---
+
 # Folia Compatibility: Comprehensive Analysis
 
 ## Context

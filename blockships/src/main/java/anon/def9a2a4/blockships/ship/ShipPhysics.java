@@ -31,8 +31,25 @@ public class ShipPhysics {
     public float currentRotationVelocity = 0.0f;
     public Vector3f collisionForce = new Vector3f(0, 0, 0);
 
+    // Internal yaw tracking - vehicle yaw is frozen at spawnYaw to avoid the entity
+    // tracker's byte-precision (~1.4 deg) rotation packets conflicting with our float-precision
+    // position sync packets, which causes periodic jitter every 3 ticks.
+    // All rotation is applied via display entity transformations + interpolation instead.
+    public float currentYaw;
+
     // Track vertical movement state for carrier refresh on stop
     private boolean wasVerticallyMoving = false;
+
+    // Effective stats (computed from power-to-mass ratio for custom ships, or config defaults for prefab)
+    private float effectiveMaxSpeed;
+    private float effectiveAcceleration;
+    private float effectiveRotationSpeed;
+    private float effectiveRotationAcceleration;
+    private float effectiveRotationDeceleration;
+    private float effectiveMaxVerticalSpeed;
+    private float effectiveLiftAcceleration;
+    private float effectiveDescendAcceleration;
+    private boolean statsComputed = false;
 
     // Sound cooldown (ticks until next sound can play)
     private int soundCooldown = 0;
@@ -43,6 +60,134 @@ public class ShipPhysics {
 
     public ShipPhysics(ShipInstance ship) {
         this.ship = ship;
+        // Stats are computed by caller after construction.
+        // For custom ships, recomputeStats() is called again after wheelData is linked.
+    }
+
+    /**
+     * Public wrapper to recompute effective stats after wheelData is linked.
+     * Must be called after ship.wheelData is assigned (assembly or recovery).
+     */
+    public void recomputeStats() {
+        computeEffectiveStats();
+    }
+
+    /**
+     * Computes effective stats from the ship's power-to-mass ratio.
+     * For custom ships, uses linear interpolation between floor/default/cap.
+     * For prefab ships, uses config values directly.
+     */
+    private void computeEffectiveStats() {
+        ShipConfig config = ship.config;
+
+        if (!"custom".equals(ship.shipType) || !config.statsEnabled) {
+            // Prefab ships, or stats system disabled: use config values directly, no ratio system
+            effectiveMaxSpeed = config.maxSpeed;
+            effectiveAcceleration = config.acceleration;
+            effectiveRotationSpeed = config.rotationSpeed;
+            effectiveRotationAcceleration = config.rotationAcceleration;
+            effectiveRotationDeceleration = config.rotationDeceleration;
+            effectiveMaxVerticalSpeed = config.maxVerticalSpeed;
+            effectiveLiftAcceleration = config.liftAcceleration;
+            effectiveDescendAcceleration = config.descendAcceleration;
+            statsComputed = true;
+            return;
+        }
+
+        // Custom ships: compute ratio from sail power and mass
+        float sailRatio = ship.model.getSailRatio(config.basePower);
+        // Apply sail cap: non-engine contribution capped at sailCapRatio
+        float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
+        // Count fueled engines from wheel data (engines with active fuel)
+        // Use ship.wheelData directly - all callers guarantee it's set before reaching here.
+        // Avoids circular call: resolveWheelData() -> recomputeStats() -> computeEffectiveStats().
+        anon.def9a2a4.blockships.customships.ShipWheelData wd = ship.wheelData;
+        int fueledEngines = (wd != null)
+            ? wd.countFueledEngines(ship.model.engineBlockIndices)
+            : 0;  // No wheel data = no fuel state = 0 fueled engines
+        float enginePower = fueledEngines * config.enginePower;
+        int mass = Math.max(1, ship.model.mass);
+        float ratio = Math.min(nonEngineRatio + enginePower / mass, 1.0f);
+
+        // Compute horizontal stats
+        effectiveMaxSpeed = config.computeStat(ratio, config.maxSpeed,
+            config.floorMaxSpeed, config.capMaxSpeed);
+        effectiveAcceleration = config.computeStat(ratio, config.acceleration,
+            config.floorAcceleration, config.capAcceleration);
+        effectiveRotationSpeed = config.computeStat(ratio, config.rotationSpeed,
+            config.floorRotationSpeed, config.capRotationSpeed);
+        effectiveRotationAcceleration = config.computeStat(ratio, config.rotationAcceleration,
+            config.floorRotationAcceleration, config.capRotationAcceleration);
+        effectiveRotationDeceleration = config.computeStat(ratio, config.rotationDeceleration,
+            config.floorRotationDeceleration, config.capRotationDeceleration);
+
+        // Compute vertical stats (airships only, density-based)
+        if (ship.isAirship) {
+            float density = ship.model.getDensity();
+            float densityMag = Math.abs(density);
+            float engineVerticalBonus = (mass > 0) ? (enginePower / mass) * config.verticalEngineScale : 0;
+            float verticalRatio = Math.min(densityMag * config.verticalDensityScale + engineVerticalBonus, 1.0f);
+
+            effectiveMaxVerticalSpeed = config.computeStat(verticalRatio, config.maxVerticalSpeed,
+                config.floorMaxVerticalSpeed, config.capMaxVerticalSpeed);
+            effectiveLiftAcceleration = config.computeStat(verticalRatio, config.liftAcceleration,
+                config.floorVerticalAcceleration, config.capVerticalAcceleration);
+            effectiveDescendAcceleration = config.computeStat(verticalRatio, config.descendAcceleration,
+                config.floorVerticalAcceleration, config.capVerticalAcceleration);
+        } else {
+            effectiveMaxVerticalSpeed = config.maxVerticalSpeed;
+            effectiveLiftAcceleration = config.liftAcceleration;
+            effectiveDescendAcceleration = config.descendAcceleration;
+        }
+
+        statsComputed = true;
+    }
+
+    /**
+     * Ticks fuel consumption for all engines. Called once per tick while W is held.
+     * When an engine's burn ticks reach 0, the next fuel item is consumed.
+     * Recomputes effective stats when fuel state changes.
+     */
+    private void tickEngineFuel() {
+        boolean fuelChanged = false;
+        anon.def9a2a4.blockships.customships.ShipWheelData wd = ship.wheelData;
+
+        for (int engineIdx : ship.model.engineBlockIndices) {
+            int burnTicks = wd.getEngineBurnTicks(engineIdx);
+
+            if (burnTicks > 0) {
+                // Burn existing fuel
+                wd.setEngineBurnTicks(engineIdx, burnTicks - 1);
+                if (burnTicks - 1 == 0) fuelChanged = true;
+            } else {
+                // Try to consume next fuel item from slots
+                org.bukkit.inventory.ItemStack[] slots = wd.getAllEngineFuelSlots().get(engineIdx);
+                if (slots == null) continue;
+                for (int i = 0; i < slots.length; i++) {
+                    if (slots[i] != null && slots[i].getType() != org.bukkit.Material.AIR) {
+                        int baseBurnTicks = anon.def9a2a4.blockships.customships.EngineMenuGUI.getBurnTime(slots[i].getType());
+                        int newBurnTicks = Math.round(baseBurnTicks * ship.config.fuelBurnMultiplier);
+                        if (newBurnTicks > 0) {
+                            wd.setEngineBurnTicks(engineIdx, newBurnTicks);
+                            Material fuelMat = slots[i].getType();
+                            slots[i].setAmount(slots[i].getAmount() - 1);
+                            if (slots[i].getAmount() <= 0) {
+                                // Return empty bucket for lava buckets (vanilla behavior)
+                                slots[i] = (fuelMat == org.bukkit.Material.LAVA_BUCKET)
+                                    ? new org.bukkit.inventory.ItemStack(org.bukkit.Material.BUCKET)
+                                    : null;
+                            }
+                            fuelChanged = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (fuelChanged) {
+            computeEffectiveStats();
+        }
     }
 
     /**
@@ -82,19 +227,36 @@ public class ShipPhysics {
         Location vehicleLoc = ship.vehicle.getLocation();
         ShipConfig config = ship.config;
 
+        // Tick engine fuel (only for custom ships with engines, while any movement key held).
+        // Note: uses the broad anyMovementPressed (incl. Space/Sprint) because a ship can burn
+        // fuel while ascending/turning, whereas `throttling` below is W/S-only. Both are gated
+        // on hasDriver so a driverless ship with stuck input flags neither moves nor burns fuel.
+        boolean anyMovementPressed = ship.isForwardPressed || ship.isBackwardPressed
+                || ship.isLeftPressed || ship.isRightPressed
+                || ship.isSpacePressed || ship.isSprintPressed;
+        if ("custom".equals(ship.shipType) && ship.config.statsEnabled && ship.hasDriver && anyMovementPressed
+                && ship.model.engineCount > 0 && ship.resolveWheelData() != null) {
+            tickEngineFuel();
+        }
+
+        // Only a real driver produces thrust. Without this, an input flag left stuck true after a
+        // seat loss that skipped VehicleExitEvent (death while seated, forced cross-world teleport)
+        // would drive the ship forever unmanned.
+        boolean throttling = ship.hasDriver && (ship.isForwardPressed || ship.isBackwardPressed);
+
         // Apply acceleration/deceleration based on input state
-        if (ship.isForwardPressed) {
-            currentSpeed = Math.min(currentSpeed + config.acceleration, config.maxSpeed);
-        } else if (ship.isBackwardPressed) {
+        if (throttling && ship.isForwardPressed) {
+            currentSpeed = Math.min(currentSpeed + effectiveAcceleration, effectiveMaxSpeed);
+        } else if (throttling && ship.isBackwardPressed) {
             if (currentSpeed > 0) {
                 currentSpeed = Math.max(currentSpeed - config.activeDeceleration, 0.0f);
             } else {
-                currentSpeed = Math.max(currentSpeed - config.acceleration, -config.maxSpeed);
+                currentSpeed = Math.max(currentSpeed - effectiveAcceleration, -effectiveMaxSpeed);
             }
         }
 
-        // Apply drag based on player presence (unless actively pressing W/S)
-        if (!ship.isForwardPressed && !ship.isBackwardPressed) {
+        // Apply drag when not actively throttling (a driverless ship always drags -> coasts to a stop)
+        if (!throttling) {
             float dragMultiplier;
             if (ship.hasDriver) {
                 dragMultiplier = config.mountedDrag;
@@ -112,13 +274,13 @@ public class ShipPhysics {
             currentSpeed *= dragMultiplier;
         }
 
-        // Stop if speed is very small
-        if (Math.abs(currentSpeed) < config.minMovementThreshold) {
+        // Stop if speed is very small (only when not actively accelerating)
+        if (!throttling && Math.abs(currentSpeed) < config.minMovementThreshold) {
             currentSpeed = 0.0f;
         }
 
-        // Calculate forward direction vector from vehicle yaw
-        float yawRad = (float) Math.toRadians(-ship.vehicle.getYaw());
+        // Calculate forward direction vector from internal yaw
+        float yawRad = (float) Math.toRadians(-currentYaw);
         double forwardX = Math.sin(yawRad);
         double forwardZ = Math.cos(yawRad);
 
@@ -147,38 +309,40 @@ public class ShipPhysics {
             // using actual displacement to match carrier velocity computation.
         }
 
-        // Update rotation based on input state
-        if (ship.isLeftPressed) {
+        // Update rotation based on input state. Gate only the active-turn arms on hasDriver (not
+        // `throttling`) so a driver can still steer with A/D alone; the decay `else` stays always-on
+        // so a driverless ship's spin winds down instead of turning forever.
+        if (ship.hasDriver && ship.isLeftPressed) {
             currentRotationVelocity = Math.max(
-                currentRotationVelocity - config.rotationAcceleration,
-                -config.rotationSpeed
+                currentRotationVelocity - effectiveRotationAcceleration,
+                -effectiveRotationSpeed
             );
-        } else if (ship.isRightPressed) {
+        } else if (ship.hasDriver && ship.isRightPressed) {
             currentRotationVelocity = Math.min(
-                currentRotationVelocity + config.rotationAcceleration,
-                config.rotationSpeed
+                currentRotationVelocity + effectiveRotationAcceleration,
+                effectiveRotationSpeed
             );
         } else {
             // No input - apply momentum decay
             if (currentRotationVelocity > 0) {
                 currentRotationVelocity = Math.max(
-                    currentRotationVelocity - config.rotationDeceleration,
+                    currentRotationVelocity - effectiveRotationDeceleration,
                     0.0f
                 );
             } else if (currentRotationVelocity < 0) {
                 currentRotationVelocity = Math.min(
-                    currentRotationVelocity + config.rotationDeceleration,
+                    currentRotationVelocity + effectiveRotationDeceleration,
                     0.0f
                 );
             }
         }
 
-        // Apply rotation
+        // Apply rotation to internal yaw (vehicle yaw stays frozen at spawnYaw;
+        // visual rotation is handled by display entity transformations)
         if (Math.abs(currentRotationVelocity) > 0.01f) {
-            float newYaw = ship.vehicle.getYaw() + currentRotationVelocity;
-            Location newLoc = ship.vehicle.getLocation();
-            newLoc.setYaw(newYaw);
-            TeleportCompat.teleport(ship.vehicle, newLoc);
+            currentYaw += currentRotationVelocity;
+            if (currentYaw >= 360f) currentYaw -= 360f;
+            else if (currentYaw < 0f) currentYaw += 360f;
         }
 
         // Play movement sounds
@@ -229,7 +393,7 @@ public class ShipPhysics {
             // Proportional approach with damping
             if (Math.abs(yDifference) < 0.1) {
                 currentYVelocity = 0.0f;
-                // Close enough — don't move or teleport. Prevents carrier jitter
+                // Close enough - don't move or teleport. Prevents carrier jitter
                 // for players standing on deck after dismount.
             } else {
                 float targetVelocity = (float) (yDifference * config.buoyancyStrength);
@@ -345,13 +509,13 @@ public class ShipPhysics {
     private void applyAirshipVerticalPhysics() {
         ShipConfig config = ship.config;
 
-        if (ship.isSpacePressed) {
-            currentYVelocity = Math.min(currentYVelocity + config.liftAcceleration, config.maxVerticalSpeed);
+        if (ship.hasDriver && ship.isSpacePressed) {
+            currentYVelocity = Math.min(currentYVelocity + effectiveLiftAcceleration, effectiveMaxVerticalSpeed);
             if (Math.abs(currentSpeed) < config.verticalForwardNudge) {
                 currentSpeed = config.verticalForwardNudge;
             }
-        } else if (ship.isSprintPressed) {
-            currentYVelocity = Math.max(currentYVelocity - config.descendAcceleration, -config.maxVerticalSpeed);
+        } else if (ship.hasDriver && ship.isSprintPressed) {
+            currentYVelocity = Math.max(currentYVelocity - effectiveDescendAcceleration, -effectiveMaxVerticalSpeed);
             if (Math.abs(currentSpeed) < config.verticalForwardNudge) {
                 currentSpeed = config.verticalForwardNudge;
             }
@@ -386,14 +550,16 @@ public class ShipPhysics {
         double y = Math.round(loc.getY() * FINE_GRID_RESOLUTION) / FINE_GRID_RESOLUTION;
         double z = Math.round(loc.getZ() * FINE_GRID_RESOLUTION) / FINE_GRID_RESOLUTION;
 
-        // Snap yaw to nearest 5 degrees
-        float yaw = ShipTags.normalizeYaw(loc.getYaw());
+        // Snap internal yaw to nearest 5 degrees
+        float yaw = ShipTags.normalizeYaw(currentYaw);
         float snappedYaw = Math.round(yaw / 5.0f) * 5.0f;
         if (snappedYaw >= 360) snappedYaw = 0;
+        currentYaw = snappedYaw;
 
         float pitch = loc.getPitch();
 
-        Location snapped = new Location(loc.getWorld(), x, y, z, snappedYaw, pitch);
+        // Keep vehicle yaw frozen - only snap position (visual rotation is via display transforms)
+        Location snapped = new Location(loc.getWorld(), x, y, z, loc.getYaw(), pitch);
         TeleportCompat.teleport(ship.vehicle, snapped);
 
         // Update collision positions to sync with new location
@@ -452,16 +618,18 @@ public class ShipPhysics {
         double y = Math.round(loc.getY());
         double z = Math.round(loc.getZ());
 
-        // Snap yaw to nearest 90 degrees
-        float yaw = ShipTags.normalizeYaw(loc.getYaw());
+        // Snap internal yaw to nearest 90 degrees
+        float yaw = ShipTags.normalizeYaw(currentYaw);
         int cardinal = Math.round(yaw / 90.0f) * 90;
         float snappedYaw = cardinal % 360;
+        currentYaw = snappedYaw;
         float snappedPitch = 0.0f;
 
         // Find players standing on deck BEFORE moving
         Map<Player, Shulker> playersOnDeck = findPlayersOnDeck();
 
-        // Set the new aligned location
+        // Set the new aligned location (update vehicle yaw - ship is stationary,
+        // so no byte-precision jitter risk, and cardinal angles map exactly to bytes)
         Location aligned = new Location(loc.getWorld(), x, y, z, snappedYaw, snappedPitch);
         TeleportCompat.teleport(ship.vehicle, aligned);
 

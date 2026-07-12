@@ -1,6 +1,7 @@
 package anon.def9a2a4.blockships.blockconfig;
 
 import anon.def9a2a4.blockships.BlockShipsPlugin;
+import anon.def9a2a4.blockships.ConfigResources;
 import anon.def9a2a4.blockships.ShipModel;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
@@ -12,10 +13,8 @@ import org.bukkit.block.data.type.Slab;
 import org.bukkit.block.data.type.Stairs;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
-import org.bukkit.configuration.file.YamlConfiguration;
 import org.joml.Vector3f;
 
-import java.io.File;
 import java.util.*;
 import java.util.logging.Logger;
 
@@ -53,15 +52,10 @@ public class BlockConfigManager {
     public void loadConfig() {
         blockPropertiesCache.clear();
 
-        // Load blocks.yml
-        File blocksFile = new File(plugin.getDataFolder(), "blocks.yml");
-
-        // Save default blocks.yml if it doesn't exist
-        if (!blocksFile.exists()) {
-            plugin.saveResource("blocks.yml", false);
-        }
-
-        FileConfiguration blocksConfig = YamlConfiguration.loadConfiguration(blocksFile);
+        // Load blocks.yml from config/ override if present, else straight from the jar.
+        // We deliberately do NOT extract a copy to disk: that copy would go stale and hide
+        // newly-added blocks (e.g. *_shelf) on plugin updates.
+        FileConfiguration blocksConfig = ConfigResources.load(plugin, "blocks.yml");
 
         // Parse all block entries from root level
         for (String key : blocksConfig.getKeys(false)) {
@@ -74,7 +68,6 @@ public class BlockConfigManager {
                 parseBlockEntry(key, blockConfig);
             } catch (Exception e) {
                 logger.warning("Failed to parse block config for '" + key + "': " + e.getMessage());
-                e.printStackTrace();
             }
         }
 
@@ -109,7 +102,6 @@ public class BlockConfigManager {
                 parseBlockEntry(key, blockConfig);
             } catch (Exception e) {
                 logger.warning("Failed to parse block config for '" + key + "': " + e.getMessage());
-                e.printStackTrace();
             }
         }
 

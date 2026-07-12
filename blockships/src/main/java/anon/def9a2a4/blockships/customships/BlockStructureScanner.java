@@ -10,6 +10,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Registry;
+import org.bukkit.Tag;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
@@ -307,9 +308,15 @@ public class BlockStructureScanner {
 
         // Track weight and center of volume (only for blocks with weight)
         int totalWeight = 0;
-        int totalPositiveWeight = 0;  // For health calculation: sum of max(0, weight)
+        int totalMass = 0;  // Sum of max(0, weight) per block - used for health and power ratio
         int weightedBlockCount = 0;
         float sumX = 0, sumY = 0, sumZ = 0;
+
+        // Track sail blocks and engines for ship stats (power-to-mass ratio)
+        int woolCount = 0;
+        int bannerCount = 0;
+        int engineCount = 0;
+        List<Integer> engineBlockIndices = new ArrayList<>();
 
         // Track ship bounds (for all blocks)
         float minY = Float.MAX_VALUE;
@@ -359,12 +366,34 @@ public class BlockStructureScanner {
                 int weight = props.getWeight();
                 totalWeight += weight;
                 if (weight > 0) {
-                    totalPositiveWeight += weight;
+                    totalMass += weight;
                 }
                 weightedBlockCount++;
                 sumX += (float) dx;
                 sumY += (float) dy;
                 sumZ += (float) dz;
+            }
+
+            // Count sail blocks and engines for ship stats
+            boolean isEngine = false;
+            Material blockMaterial = block.getType();
+            if (Tag.WOOL.isTagged(blockMaterial)) {
+                woolCount++;
+            } else if (blockMaterial.name().contains("BANNER")) {
+                bannerCount++;
+            } else if (blockMaterial == Material.BLAST_FURNACE && plugin != null) {
+                // Check PDC for ship engine tag
+                org.bukkit.block.BlockState blockState = block.getState();
+                if (blockState instanceof org.bukkit.block.TileState tileState) {
+                    NamespacedKey engineKey = new NamespacedKey(plugin, "custom_item_id");
+                    String val = tileState.getPersistentDataContainer()
+                        .get(engineKey, org.bukkit.persistence.PersistentDataType.STRING);
+                    if ("ship_engine".equals(val)) {
+                        isEngine = true;
+                        engineCount++;
+                        engineBlockIndices.add(blockIndex);
+                    }
+                }
             }
 
             // Store position to block index mapping (for finding driver seat block)
@@ -380,10 +409,24 @@ public class BlockStructureScanner {
             anon.def9a2a4.blockships.blockconfig.CollisionConfig colliderConfig = props.getCollider();
             ShipModel.CollisionConfig collision;
             if (colliderConfig.isEnabled()) {
+                Vector3f colliderOffset = new Vector3f(colliderConfig.getOffset());
+
+                // Wall heads/skulls: shift the 0.5 shulker toward the wall + up so it
+                // sits where the head renders (see applySkullTransform in ShipInstance).
+                // Gate on Skull state + Directional so only wall heads are shifted (not
+                // other small directional blocks), and on size <= 0.5 so dragon's
+                // full-block collider is left centered.
+                if (block.getState() instanceof org.bukkit.block.Skull
+                        && blockData instanceof org.bukkit.block.data.Directional wallDir
+                        && colliderConfig.getSize() <= 0.5f) {
+                    org.bukkit.util.Vector f = wallDir.getFacing().getDirection();
+                    colliderOffset.set(-(float) f.getX() * 0.25f, 0.25f, -(float) f.getZ() * 0.25f);
+                }
+
                 collision = new ShipModel.CollisionConfig(
                     true,
                     colliderConfig.getSize(),
-                    new Vector3f(colliderConfig.getOffset())
+                    colliderOffset
                 );
             } else {
                 collision = new ShipModel.CollisionConfig(false, 1.0f, new Vector3f(0, 0, 0));
@@ -391,6 +434,9 @@ public class BlockStructureScanner {
 
             // Create raw YAML map (for compatibility)
             Map<String, Object> rawYaml = new HashMap<>();
+            if (isEngine) {
+                rawYaml.put("is_engine", true);
+            }
 
             // Check for storage blocks (chests, furnaces, hoppers, etc.)
             ShipModel.StorageConfig storage = null;
@@ -402,12 +448,51 @@ public class BlockStructureScanner {
                     org.bukkit.inventory.Inventory inv = container.getSnapshotInventory();
                     rawYaml.put("container_items", serializeInventory(inv));
 
+                    // NOTE: the world container is intentionally NOT emptied here. Clearing is
+                    // deferred to removeBlocks() (Pass 0) so that if assembly throws between the
+                    // scan and removeBlocks (e.g. in the ShipInstance constructor), the world
+                    // container keeps its contents -> clean, retryable no-op instead of item loss.
+
                     // Serialize storage config for persistence
                     Map<String, Object> storageMap = new HashMap<>();
                     storageMap.put("type", storage.type.name());
                     storageMap.put("name", storage.name);
                     rawYaml.put("storage", storageMap);
                 }
+            }
+
+            // Check for TileStateInventoryHolder blocks (shelves, chiseled bookshelves)
+            // These implement InventoryHolder but NOT Container, so need separate handling
+            if (block.getState() instanceof io.papermc.paper.block.TileStateInventoryHolder tileInv) {
+                java.util.List<Map<String, Object>> tileItems = serializeInventory(tileInv.getSnapshotInventory());
+                if (!tileItems.isEmpty()) {
+                    rawYaml.put("container_items", tileItems);
+                }
+                // Clearing is deferred to removeBlocks() (Pass 0) - see the Container branch above.
+                // (A plain Container is also a TileStateInventoryHolder, so it re-serializes its
+                // still-full snapshot here over container_items with byte-identical data; harmless.)
+            }
+
+            // Capture sign text for restoration on disassembly
+            if (block.getState() instanceof org.bukkit.block.Sign sign) {
+                Map<String, Object> signData = new HashMap<>();
+                for (org.bukkit.block.sign.Side side : org.bukkit.block.sign.Side.values()) {
+                    org.bukkit.block.sign.SignSide signSide = sign.getSide(side);
+                    java.util.List<String> lines = new java.util.ArrayList<>();
+                    for (net.kyori.adventure.text.Component line : signSide.lines()) {
+                        lines.add(net.kyori.adventure.text.serializer.gson.GsonComponentSerializer
+                            .gson().serialize(line));
+                    }
+                    String key = side.name().toLowerCase();
+                    signData.put(key + "_lines", lines);
+                    // getColor() is @Nullable (Colorable); default to BLACK to avoid an NPE that would abort
+                    // the scan. Restore side (:924-925) already tolerates null.
+                    org.bukkit.DyeColor signColor = signSide.getColor();
+                    signData.put(key + "_color", (signColor != null ? signColor : org.bukkit.DyeColor.BLACK).name());
+                    signData.put(key + "_glowing", signSide.isGlowingText());
+                }
+                signData.put("waxed", sign.isWaxed());
+                rawYaml.put("sign_data", signData);
             }
 
             // Check if this block is a seat (all detected seats are passenger seats)
@@ -445,25 +530,24 @@ public class BlockStructureScanner {
                 rawYaml.put("display_yaw", facingYaw);
             }
 
-            // Capture special block metadata that BlockData can't preserve
-            // Player heads: store skull profile and rotation
-            if (block.getType() == Material.PLAYER_HEAD || block.getType() == Material.PLAYER_WALL_HEAD) {
-                if (block.getState() instanceof org.bukkit.block.Skull) {
-                    org.bukkit.block.Skull skull = (org.bukkit.block.Skull) block.getState();
-                    com.destroystokyo.paper.profile.PlayerProfile profile = skull.getPlayerProfile();
-                    if (profile != null) {
-                        // Serialize the profile to Base64
-                        rawYaml.put("skull_profile", serializeProfile(profile));
-                    }
+            // Capture special block metadata that BlockData can't preserve.
+            // All heads/skulls (player AND mob) render as ItemDisplay + HEAD transform,
+            // so capture their rotation/facing. Only player heads carry a skin profile.
+            if (block.getState() instanceof org.bukkit.block.Skull) {
+                org.bukkit.block.Skull skull = (org.bukkit.block.Skull) block.getState();
+                com.destroystokyo.paper.profile.PlayerProfile profile = skull.getPlayerProfile();
+                if (profile != null) {
+                    // Serialize the profile to Base64 (player heads only)
+                    rawYaml.put("skull_profile", serializeProfile(profile));
+                }
 
-                    // Store rotation or facing
-                    if (blockData instanceof org.bukkit.block.data.Rotatable) {
-                        org.bukkit.block.data.Rotatable rotatable = (org.bukkit.block.data.Rotatable) blockData;
-                        rawYaml.put("skull_rotation", rotatable.getRotation().name());
-                    } else if (blockData instanceof org.bukkit.block.data.Directional) {
-                        org.bukkit.block.data.Directional directional = (org.bukkit.block.data.Directional) blockData;
-                        rawYaml.put("skull_facing", directional.getFacing().name());
-                    }
+                // Store rotation (floor, 16-step) or facing (wall, 4-direction)
+                if (blockData instanceof org.bukkit.block.data.Rotatable) {
+                    org.bukkit.block.data.Rotatable rotatable = (org.bukkit.block.data.Rotatable) blockData;
+                    rawYaml.put("skull_rotation", rotatable.getRotation().name());
+                } else if (blockData instanceof org.bukkit.block.data.Directional) {
+                    org.bukkit.block.data.Directional directional = (org.bukkit.block.data.Directional) blockData;
+                    rawYaml.put("skull_facing", directional.getFacing().name());
                 }
             }
 
@@ -493,6 +577,16 @@ public class BlockStructureScanner {
                         org.bukkit.block.data.Directional directional = (org.bukkit.block.data.Directional) blockData;
                         rawYaml.put("banner_facing", directional.getFacing().name());
                     }
+                }
+            }
+
+            // Persist a block's custom name (anvil-renamed containers, banners, ...) - Nameable tile-entity
+            // NBT that blockdata can't carry. Restored generically in placeBlocks; used as the storage GUI title.
+            if (block.getState() instanceof org.bukkit.Nameable nameable) {
+                net.kyori.adventure.text.Component cn = nameable.customName();
+                if (cn != null) {
+                    rawYaml.put("custom_name",
+                        net.kyori.adventure.text.serializer.gson.GsonComponentSerializer.gson().serialize(cn));
                 }
             }
 
@@ -536,7 +630,7 @@ public class BlockStructureScanner {
 
         // Calculate health from positive block weights (heavier blocks = more health)
         // Blocks with negative/zero weight don't reduce health, just contribute nothing
-        double maxHealth = Math.min(1024.0, Math.max(1.0, totalPositiveWeight));
+        double maxHealth = Math.min(1024.0, Math.max(1.0, totalMass));
         // TODO: healthRegenPerSecond may be modified in the future by properties of the ship
         double healthRegenPerSecond = 1.0;
 
@@ -567,6 +661,10 @@ public class BlockStructureScanner {
         // Detect cannons (dispenser + obsidian behind)
         List<ShipModel.CannonInfo> cannons = detectCannons(parts);
 
+        // Load configurable sail power values
+        int woolPower = plugin.getConfig().getInt("custom-ships.stats.wool-power", 3);
+        int bannerPower = plugin.getConfig().getInt("custom-ships.stats.banner-power", 7);
+
         return new ShipModel(
             parts,
             Collections.emptyList(),  // No items for MVP
@@ -580,11 +678,18 @@ public class BlockStructureScanner {
             maxHealth,
             healthRegenPerSecond,
             totalWeight,
+            totalMass,
             weightedBlockCount,  // Only count blocks with weight for density
             centerOfVolume,
             minY,
             maxY,
-            assemblyYaw  // Store for disassembly rotation calculation
+            assemblyYaw,  // Store for disassembly rotation calculation
+            woolCount,
+            bannerCount,
+            woolPower,
+            bannerPower,
+            engineCount,
+            engineBlockIndices
         );
     }
 
@@ -694,7 +799,7 @@ public class BlockStructureScanner {
             Vector3f rotatedPos = rotatePosition(pos, rotationDelta);
 
             // Round to nearest integer to avoid floating-point precision errors
-            // (e.g., cos(90°) ≈ 6.12e-17 instead of exactly 0 can cause off-by-one block placement)
+            // (e.g., cos(90 deg) ~ 6.12e-17 instead of exactly 0 can cause off-by-one block placement)
             Location blockLoc = wheelLocation.clone().add(
                 Math.round(rotatedPos.x),
                 Math.round(rotatedPos.y),
@@ -703,6 +808,7 @@ public class BlockStructureScanner {
             Block block = blockLoc.getBlock();
             Material existingType = block.getType();
 
+            try {
             // Handle conflicts in force mode
             if (!existingType.isAir() && existingType != Material.WATER && existingType != Material.LAVA) {
                 if (force && FragileBlocks.isFragile(existingType)) {
@@ -774,6 +880,20 @@ public class BlockStructureScanner {
                 }
             }
 
+            // Restore engine PDC tag on blast furnaces
+            if (Boolean.TRUE.equals(part.rawYaml.get("is_engine"))) {
+                org.bukkit.block.BlockState state = block.getState();
+                if (state instanceof org.bukkit.block.TileState tileState) {
+                    BlockShipsPlugin bsPlugin = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
+                    if (bsPlugin != null) {
+                        NamespacedKey engineKey = new NamespacedKey(bsPlugin, "custom_item_id");
+                        tileState.getPersistentDataContainer().set(engineKey,
+                            org.bukkit.persistence.PersistentDataType.STRING, "ship_engine");
+                        tileState.update();
+                    }
+                }
+            }
+
             // Restore container inventories
             // NOTE: Must get a fresh BlockState AFTER setBlockData, and set inventory contents
             // on the snapshot BEFORE calling update(), otherwise the inventory is cleared.
@@ -783,11 +903,77 @@ public class BlockStructureScanner {
                     (java.util.List<Map<String, Object>>) part.rawYaml.get("container_items");
 
                 org.bukkit.block.Container container = (org.bukkit.block.Container) block.getState();
-                org.bukkit.inventory.ItemStack[] items = deserializeInventory(itemsData, container.getSnapshotInventory().getSize());
+                java.util.List<org.bukkit.inventory.ItemStack> overflow = new java.util.ArrayList<>();
+                org.bukkit.inventory.ItemStack[] items = deserializeInventory(itemsData, container.getSnapshotInventory().getSize(), overflow);
 
                 // Set items on the snapshot's inventory, then update to persist
                 container.getSnapshotInventory().setContents(items);
                 container.update();
+                // Drop any overflow (virtual GUI larger than the real block, e.g. a furnace) so it's not lost
+                for (org.bukkit.inventory.ItemStack extra : overflow) {
+                    block.getWorld().dropItemNaturally(block.getLocation().add(0.5, 0.5, 0.5), extra);
+                }
+            }
+
+            // Restore TileStateInventoryHolder blocks (shelves, chiseled bookshelves)
+            // These are NOT Containers, so need separate restoration
+            if (part.rawYaml.containsKey("container_items")
+                    && block.getState() instanceof io.papermc.paper.block.TileStateInventoryHolder tileInv) {
+                @SuppressWarnings("unchecked")
+                java.util.List<Map<String, Object>> itemsData =
+                    (java.util.List<Map<String, Object>>) part.rawYaml.get("container_items");
+
+                java.util.List<org.bukkit.inventory.ItemStack> overflow = new java.util.ArrayList<>();
+                org.bukkit.inventory.ItemStack[] items = deserializeInventory(itemsData, tileInv.getSnapshotInventory().getSize(), overflow);
+                tileInv.getSnapshotInventory().setContents(items);
+                tileInv.update();
+                for (org.bukkit.inventory.ItemStack extra : overflow) {
+                    block.getWorld().dropItemNaturally(block.getLocation().add(0.5, 0.5, 0.5), extra);
+                }
+            }
+
+            // Restore sign text
+            if (part.rawYaml.containsKey("sign_data") && block.getState() instanceof org.bukkit.block.Sign sign) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> signData = (Map<String, Object>) part.rawYaml.get("sign_data");
+                for (org.bukkit.block.sign.Side side : org.bukkit.block.sign.Side.values()) {
+                    org.bukkit.block.sign.SignSide signSide = sign.getSide(side);
+                    String key = side.name().toLowerCase();
+                    @SuppressWarnings("unchecked")
+                    java.util.List<String> lines = (java.util.List<String>) signData.get(key + "_lines");
+                    if (lines != null) {
+                        for (int i = 0; i < lines.size() && i < 4; i++) {
+                            signSide.line(i, net.kyori.adventure.text.serializer.gson.GsonComponentSerializer
+                                .gson().deserialize(lines.get(i)));
+                        }
+                    }
+                    String color = (String) signData.get(key + "_color");
+                    if (color != null) signSide.setColor(org.bukkit.DyeColor.valueOf(color));
+                    Boolean glowing = (Boolean) signData.get(key + "_glowing");
+                    if (glowing != null) signSide.setGlowingText(glowing);
+                }
+                Boolean waxed = (Boolean) signData.get("waxed");
+                if (waxed != null) sign.setWaxed(waxed);
+                sign.update();
+            }
+
+            // Restore a Nameable block's custom name (containers, banners) captured at scan. Separate generic
+            // pass so it fires even for a named block with no items/patterns. Safe double-update: getState()
+            // reads the just-written world state, so setting only the name preserves items/patterns.
+            if (part.rawYaml.containsKey("custom_name")) {
+                org.bukkit.block.BlockState nameState = block.getState();
+                if (nameState instanceof org.bukkit.Nameable n) {
+                    n.customName(net.kyori.adventure.text.serializer.gson.GsonComponentSerializer
+                        .gson().deserialize(String.valueOf(part.rawYaml.get("custom_name"))));
+                    nameState.update();
+                }
+            }
+            } catch (Exception e) {
+                // A block is always placed (setBlockData above) before any throwing metadata restore, so a
+                // bad banner/sign/container value only skips this one block's decoration - the rest of the
+                // ship still places and the ship still fully disassembles + deregisters.
+                org.bukkit.Bukkit.getLogger().warning("[BlockShips] placeBlocks: failed to restore block at "
+                    + blockLoc + ", skipping its metadata: " + e.getMessage());
             }
         }
 
@@ -797,11 +983,14 @@ public class BlockStructureScanner {
     /**
      * Removes blocks that were part of a ship structure.
      * Uses two-pass removal to prevent attached blocks (banners, signs, etc.) from dropping.
+     * Water flows into the freed space because setType(AIR, true) triggers block updates
+     * (may be costly for very large ships).
      *
-     * TODO: Currently uses setType(AIR, false) which disables block updates. Change to
-     * setType(AIR, true) to trigger block updates so water flows into the space left by the ship.
-     * WARNING: This may cause performance issues with many block updates for large ships.
-     * Consider manually filling with water based on Y-level instead.
+     * <p>MUST stay synchronous with the scan that produced {@code model}: scanStructure serializes
+     * container contents but leaves the world containers full, and Pass 0 below empties them just
+     * before removal. That is only safe because no server tick (hence no hopper transfer) occurs
+     * between the scan and this call. Inserting a {@code runTaskLater} between them would turn this
+     * into an item-duplication bug.
      *
      * @param wheelLocation The center location of the structure
      * @param model The ship model containing block positions
@@ -825,6 +1014,25 @@ public class BlockStructureScanner {
                 attachableBlocks.add(blockLoc);
             } else {
                 solidBlocks.add(blockLoc);
+            }
+        }
+
+        // Pass 0: empty container snapshots so the setType(AIR) passes below can't spill their
+        // contents. The contents were already serialized into the model during scanStructure.
+        // Only solid blocks can be containers (no inventory-holding block is attachable). Each
+        // clear is guarded so a failure on one block can't leave a half-cleared / half-removed ship.
+        for (Location loc : solidBlocks) {
+            try {
+                org.bukkit.block.BlockState st = loc.getBlock().getState();
+                if (st instanceof io.papermc.paper.block.TileStateInventoryHolder tsih) {
+                    tsih.getSnapshotInventory().clear();
+                    tsih.update();  // write the emptied state so setType(AIR) can't drop items
+                }
+            } catch (Exception e) {
+                // Static context: no plugin field here. Use the always-available server logger.
+                // Worst case, this one container spills its items on setType - dropped, not deleted.
+                org.bukkit.Bukkit.getLogger().warning("[BlockShips] removeBlocks: failed to clear "
+                    + "container at " + loc + " before removal: " + e.getMessage());
             }
         }
 
@@ -869,7 +1077,12 @@ public class BlockStructureScanner {
             case FURNACE:
             case BLAST_FURNACE:
             case SMOKER:
-                storageType = ShipModel.StorageType.CHEST;  // Furnaces have 3 slots but we'll use CHEST type
+                // Open a real 3-slot furnace GUI in flight (exact match to the block's 3 slots -> no overflow
+                // on disassembly). Smoker/blast furnace render as a furnace GUI (cosmetic; same 3 slots).
+                // Blast-furnace engines also hit this arm, but their storage inventory is inert at runtime
+                // (they use EngineMenuGUI), so it's harmless. Applies to newly assembled ships only; existing
+                // ships keep their persisted CHEST type (the disassembly overflow-drop keeps that safe).
+                storageType = ShipModel.StorageType.FURNACE;
                 name = "Ship Furnace";
                 break;
             case HOPPER:
@@ -913,21 +1126,36 @@ public class BlockStructureScanner {
      * Deserializes an inventory from stored data.
      * Returns an array of ItemStacks that can be set to an inventory.
      */
-    private static org.bukkit.inventory.ItemStack[] deserializeInventory(java.util.List<Map<String, Object>> itemsData, int inventorySize) {
+    /**
+     * Deserializes persisted container items into an array sized to the REAL block inventory.
+     * Items whose stored slot is beyond the real inventory (e.g. a furnace that was shown in flight
+     * as a larger virtual chest) are added to {@code overflowOut} so the caller can drop them to the
+     * world instead of silently destroying them. Slot index is read via Number to tolerate a
+     * Long/Double from a migrated/hand-edited model.
+     */
+    private static org.bukkit.inventory.ItemStack[] deserializeInventory(java.util.List<Map<String, Object>> itemsData, int inventorySize,
+                                                                         java.util.List<org.bukkit.inventory.ItemStack> overflowOut) {
         org.bukkit.inventory.ItemStack[] items = new org.bukkit.inventory.ItemStack[inventorySize];
 
         if (itemsData != null) {
             for (Map<String, Object> itemData : itemsData) {
-                int slot = (Integer) itemData.get("slot");
+                int slot = ((Number) itemData.get("slot")).intValue();
                 byte[] serialized = (byte[]) itemData.get("item");
+                if (serialized == null || slot < 0) continue;
 
-                if (slot >= 0 && slot < inventorySize && serialized != null) {
-                    try {
-                        org.bukkit.inventory.ItemStack item = org.bukkit.inventory.ItemStack.deserializeBytes(serialized);
+                try {
+                    org.bukkit.inventory.ItemStack item = org.bukkit.inventory.ItemStack.deserializeBytes(serialized);
+                    if (item == null) continue;
+                    if (slot < inventorySize) {
                         items[slot] = item;
-                    } catch (Exception e) {
-                        e.printStackTrace();
+                    } else {
+                        // Virtual GUI had more slots than the real block - don't destroy the overflow.
+                        overflowOut.add(item);
                     }
+                } catch (Exception e) {
+                    org.bukkit.Bukkit.getLogger().warning("[BlockShips] Failed to deserialize container item at slot "
+                        + slot + ", dropping it: " + e.getMessage() + ". Please report at "
+                        + anon.def9a2a4.blockships.BlockShipsPlugin.ISSUES_URL);
                 }
             }
         }
@@ -948,7 +1176,9 @@ public class BlockStructureScanner {
                 }
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            org.bukkit.Bukkit.getLogger().warning("[BlockShips] Failed to serialize player head profile, head texture"
+                + " will be lost: " + e.getMessage() + ". Please report at "
+                + anon.def9a2a4.blockships.BlockShipsPlugin.ISSUES_URL);
         }
         return null;
     }
@@ -971,7 +1201,9 @@ public class BlockStructureScanner {
 
             return profile;
         } catch (Exception e) {
-            e.printStackTrace();
+            org.bukkit.Bukkit.getLogger().warning("[BlockShips] Failed to deserialize player head profile, head texture"
+                + " will be lost: " + e.getMessage() + ". Please report at "
+                + anon.def9a2a4.blockships.BlockShipsPlugin.ISSUES_URL);
         }
         return null;
     }
