@@ -19,6 +19,10 @@ repositories {
         name = "papermc"
         url = uri("https://repo.papermc.io/repository/maven-public/")
     }
+    maven {
+        name = "enginehub"
+        url = uri("https://maven.enginehub.org/repo/")
+    }
 }
 
 dependencies {
@@ -26,6 +30,8 @@ dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
     // compileOnly("io.papermc.paper:paper-api:1.21.1-R0.1-SNAPSHOT")
     compileOnly("net.dmulloy2:ProtocolLib:5.4.0")
+    // Optional soft-dependency: region protection integration (never shaded).
+    compileOnly("com.sk89q.worldguard:worldguard-bukkit:7.0.17")
     implementation("org.bstats:bstats-bukkit:3.1.0")
 }
 

@@ -247,6 +247,18 @@ public class ShipWheelManager {
         float assemblyYaw = BlockStructureScanner.blockFaceToYaw(wheelData.getFacing());
         wheelLoc.setYaw(assemblyYaw);
 
+        // WorldGuard: deny assembly if any scanned block sits in a protected region the player can't build
+        // in. This checks EVERY flood-filled cell (removeBlocks would delete them all), closing the
+        // block-laundering exploit (assemble across a border, then force-disassemble to drop the blocks as
+        // items). No force override here — that would defeat the purpose. Members/ops with bypass pass freely.
+        BlockStructureScanner.PlacementConflicts wgConflicts =
+            BlockStructureScanner.validatePlacementArea(wheelLoc, model, assemblyYaw, player);
+        if (wgConflicts.protectedCount > 0) {
+            player.sendMessage("§cCannot assemble — " + wgConflicts.protectedCount
+                + " block(s) are in a protected region you can't build in.");
+            return false;
+        }
+
         // Create a ShipInstance from the model BEFORE removing blocks
         // This allows us to transfer leads while the fence blocks (and LeashHitch) still exist
         // shipType is "custom" for custom block ships
@@ -448,9 +460,10 @@ public class ShipWheelManager {
         Location shipLoc = ship.vehicle.getLocation();
         float currentYaw = ship.physics.currentYaw;
 
-        // Validate placement area (with rotation)
+        // Validate placement area (with rotation). Pass the acting player so WorldGuard-protected cells
+        // they can't build in are counted as conflicts (members/ops with bypass are unaffected).
         BlockStructureScanner.PlacementConflicts conflicts =
-            BlockStructureScanner.validatePlacementArea(shipLoc, model, currentYaw);
+            BlockStructureScanner.validatePlacementArea(shipLoc, model, currentYaw, player);
 
         if (!conflicts.isClear() && !force) {
             // Store conflict info for force option
@@ -464,6 +477,10 @@ public class ShipWheelManager {
                 }
                 if (conflicts.hard > 0) {
                     player.sendMessage("§c  - " + conflicts.hard + " ship block(s) will be lost");
+                }
+                if (conflicts.protectedCount > 0) {
+                    player.sendMessage("§6  - " + conflicts.protectedCount
+                        + " block(s) in a protected region will DROP as items");
                 }
             }
             return false;
@@ -523,8 +540,15 @@ public class ShipWheelManager {
             ship.wheelData.getAllEngineBurnTicks().clear();
         }
 
+        // WorldGuard: decide ONCE whether the wheel-anchor cell is protected, and pass it into placeBlocks
+        // so the head-skip there and the deregister below use the same answer (they can never disagree).
+        Location newWheelLocation = shipLoc.getBlock().getLocation();
+        boolean wgOn = anon.def9a2a4.blockships.integration.WorldGuardHook.get().mightRestrict(newWheelLocation.getWorld());
+        boolean anchorProtected = wgOn && force
+            && anon.def9a2a4.blockships.integration.WorldGuardHook.get().isBuildDenied(newWheelLocation, player);
+
         // Place the blocks back (with rotation)
-        BlockStructureScanner.placeBlocks(shipLoc, model, currentYaw, force);
+        BlockStructureScanner.placeBlocks(shipLoc, model, currentYaw, force, player, anchorProtected);
 
         // Transfer leads from ship's shulkers to fence blocks before destroying ship
         transferLeadsFromShip(ship, model, shipLoc, currentYaw);
@@ -532,8 +556,19 @@ public class ShipWheelManager {
         // Update wheel tracking to new location
         float rotationDelta = currentYaw - model.assemblyYaw;
         BlockFace newFacing = BlockStructureScanner.rotateBlockFace(wheelData.getFacing(), rotationDelta);
-        Location newWheelLocation = shipLoc.getBlock().getLocation();
-        updateWheelLocation(wheelData, newWheelLocation, newFacing);
+        if (anchorProtected) {
+            // The anchor head was NOT placed (protected region). Return the wheel as an item and deregister
+            // the wheel — like breakWheelBlock() but WITHOUT touching the protected cell's block.
+            org.bukkit.World wWorld = newWheelLocation.getWorld();
+            if (wWorld != null && plugin instanceof BlockShipsPlugin bsp) {
+                wWorld.dropItemNaturally(newWheelLocation.clone().add(0.5, 0.5, 0.5),
+                    bsp.getDisplayShip().createShipWheelItem());
+            }
+            placedWheels.remove(locationKey(wheelData.getBlockLocation()));
+            saveAll();
+        } else {
+            updateWheelLocation(wheelData, newWheelLocation, newFacing);
+        }
 
         // Destroy the ship
         Location shipLoc2 = ship.vehicle.getLocation();

@@ -699,13 +699,20 @@ public class BlockStructureScanner {
     public static class PlacementConflicts {
         public final int fragile;
         public final int hard;
+        /** Cells inside a WorldGuard-protected region the player can't build in (dropped as items, not placed). */
+        public final int protectedCount;
 
         public PlacementConflicts(int fragile, int hard) {
-            this.fragile = fragile;
-            this.hard = hard;
+            this(fragile, hard, 0);
         }
 
-        public int total() { return fragile + hard; }
+        public PlacementConflicts(int fragile, int hard, int protectedCount) {
+            this.fragile = fragile;
+            this.hard = hard;
+            this.protectedCount = protectedCount;
+        }
+
+        public int total() { return fragile + hard + protectedCount; }
         public boolean isClear() { return total() == 0; }
     }
 
@@ -718,6 +725,17 @@ public class BlockStructureScanner {
      * @return PlacementConflicts with fragile and hard conflict counts
      */
     public static PlacementConflicts validatePlacementArea(Location wheelLocation, ShipModel model, float currentShipYaw) {
+        return validatePlacementArea(wheelLocation, model, currentShipYaw, null);
+    }
+
+    /**
+     * Validates placement area, additionally treating WorldGuard-protected cells (that {@code player}
+     * cannot build in) as conflicts. {@code player} may be null (crash/system path → checked as a
+     * non-member). Protected cells are counted as {@code protectedCount} and take precedence over
+     * fragile/hard classification.
+     */
+    public static PlacementConflicts validatePlacementArea(Location wheelLocation, ShipModel model, float currentShipYaw,
+                                                           org.bukkit.entity.Player player) {
         // Calculate rotation delta from assembly orientation
         float rotationDelta = currentShipYaw - model.assemblyYaw;
         while (rotationDelta < 0) rotationDelta += 360;
@@ -725,6 +743,10 @@ public class BlockStructureScanner {
 
         int fragile = 0;
         int hard = 0;
+        int protectedCount = 0;
+
+        // O(1) gate: only pay per-cell WorldGuard queries in worlds that actually have regions.
+        boolean wgOn = anon.def9a2a4.blockships.integration.WorldGuardHook.get().mightRestrict(wheelLocation.getWorld());
 
         for (ShipModel.ModelPart part : model.parts) {
             // Extract position from transformation matrix
@@ -740,6 +762,14 @@ public class BlockStructureScanner {
                 Math.round(rotatedPos.y),
                 Math.round(rotatedPos.z)
             );
+
+            // A cell in a protected region takes precedence over terrain classification: on force it
+            // drops as items rather than being placed or destroyed.
+            if (wgOn && anon.def9a2a4.blockships.integration.WorldGuardHook.get().isBuildDenied(blockLoc, player)) {
+                protectedCount++;
+                continue;
+            }
+
             Block block = blockLoc.getBlock();
             Material type = block.getType();
 
@@ -753,7 +783,7 @@ public class BlockStructureScanner {
             }
         }
 
-        return new PlacementConflicts(fragile, hard);
+        return new PlacementConflicts(fragile, hard, protectedCount);
     }
 
     /**
@@ -765,7 +795,11 @@ public class BlockStructureScanner {
      * @return true if placement succeeded, false otherwise
      */
     public static boolean placeBlocks(Location wheelLocation, ShipModel model, float currentShipYaw) {
-        return placeBlocks(wheelLocation, model, currentShipYaw, false);
+        return placeBlocks(wheelLocation, model, currentShipYaw, false, null, false);
+    }
+
+    public static boolean placeBlocks(Location wheelLocation, ShipModel model, float currentShipYaw, boolean force) {
+        return placeBlocks(wheelLocation, model, currentShipYaw, force, null, false);
     }
 
     /**
@@ -776,14 +810,23 @@ public class BlockStructureScanner {
      * @param currentShipYaw The ship's current yaw rotation
      * @param force If true, destroys fragile blocks (grass, flowers, etc.) that are in the way.
      *              Non-fragile conflicting blocks will cause the ship block to be skipped.
+     * @param player The acting player (nullable — crash/system paths), used for WorldGuard checks.
+     * @param anchorProtected Decided once by the caller: if true, the wheel-anchor cell is inside a
+     *              protected region, so its head is SKIPPED here (the caller drops the wheel item and
+     *              deregisters instead). Passing this in — rather than re-querying — keeps the skip and
+     *              the caller's deregister decision in perfect agreement.
      * @return true if placement succeeded, false otherwise
      */
-    public static boolean placeBlocks(Location wheelLocation, ShipModel model, float currentShipYaw, boolean force) {
-        PlacementConflicts conflicts = validatePlacementArea(wheelLocation, model, currentShipYaw);
+    public static boolean placeBlocks(Location wheelLocation, ShipModel model, float currentShipYaw, boolean force,
+                                      org.bukkit.entity.Player player, boolean anchorProtected) {
+        PlacementConflicts conflicts = validatePlacementArea(wheelLocation, model, currentShipYaw, player);
 
         if (!force && !conflicts.isClear()) {
             return false;
         }
+
+        // O(1) gate: only pay per-cell WorldGuard queries in worlds that actually have regions.
+        boolean wgOn = anon.def9a2a4.blockships.integration.WorldGuardHook.get().mightRestrict(wheelLocation.getWorld());
 
         // Calculate rotation delta from assembly orientation
         float rotationDelta = currentShipYaw - model.assemblyYaw;
@@ -809,6 +852,20 @@ public class BlockStructureScanner {
             Material existingType = block.getType();
 
             try {
+            // WorldGuard: the wheel anchor is handled by the caller (drop wheel item + deregister),
+            // so skip placing its head here when protected. Must come first so the wheel is never
+            // routed through dropPartAsItems (which would drop a plain head) or destroyed as terrain.
+            if (isWheelAnchor(blockLoc, wheelLocation)) {
+                if (anchorProtected) continue;   // skip placement, no drop — caller drops the wheel item
+                // else fall through and place the wheel head normally
+            } else if (force && wgOn
+                    && anon.def9a2a4.blockships.integration.WorldGuardHook.get().isBuildDenied(blockLoc, player)) {
+                // Non-anchor cell in a protected region: drop the block (and its contents) as items
+                // instead of writing it into the region, then leave the existing terrain untouched.
+                dropPartAsItems(part, blockLoc);
+                continue;
+            }
+
             // Handle conflicts in force mode
             if (!existingType.isAir() && existingType != Material.WATER && existingType != Material.LAVA) {
                 if (force && FragileBlocks.isFragile(existingType)) {
@@ -978,6 +1035,81 @@ public class BlockStructureScanner {
         }
 
         return true;
+    }
+
+    /** True if this cell is the ship's wheel anchor (local translation (0,0,0) → equals the wheel location). */
+    private static boolean isWheelAnchor(Location blockLoc, Location wheelLocation) {
+        return blockLoc.getBlockX() == wheelLocation.getBlockX()
+            && blockLoc.getBlockY() == wheelLocation.getBlockY()
+            && blockLoc.getBlockZ() == wheelLocation.getBlockZ();
+    }
+
+    /**
+     * Drops a ship block (and its stored container/engine-fuel contents) as items instead of placing it,
+     * used for cells inside a WorldGuard-protected region during a forced disassembly. Preserves custom-item
+     * identity: engines drop as the ship engine item; vanilla blocks drop as their item form (wall-mounted
+     * variants remapped to their floor item). The wheel anchor is never routed here — the caller drops it.
+     */
+    private static void dropPartAsItems(ShipModel.ModelPart part, Location blockLoc) {
+        org.bukkit.World world = blockLoc.getWorld();
+        if (world == null) return;
+        Location drop = blockLoc.clone().add(0.5, 0.5, 0.5);
+
+        // 1) Stored container / engine-fuel contents (synced into the model before placement, so current).
+        if (part.rawYaml.containsKey("container_items")) {
+            @SuppressWarnings("unchecked")
+            java.util.List<Map<String, Object>> itemsData =
+                (java.util.List<Map<String, Object>>) part.rawYaml.get("container_items");
+            if (itemsData != null) {
+                for (Map<String, Object> itemData : itemsData) {
+                    byte[] serialized = (byte[]) itemData.get("item");
+                    if (serialized == null) continue;
+                    try {
+                        org.bukkit.inventory.ItemStack stack = org.bukkit.inventory.ItemStack.deserializeBytes(serialized);
+                        if (stack != null) world.dropItemNaturally(drop, stack);
+                    } catch (Exception e) {
+                        org.bukkit.Bukkit.getLogger().warning("[BlockShips] dropPartAsItems: failed to deserialize a "
+                            + "container item, skipping it: " + e.getMessage());
+                    }
+                }
+            }
+        }
+
+        // 2) The block itself, preserving custom-item identity where it has one.
+        BlockShipsPlugin bsPlugin = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
+        org.bukkit.inventory.ItemStack mainItem = null;
+
+        if (Boolean.TRUE.equals(part.rawYaml.get("is_engine"))
+                && bsPlugin != null && bsPlugin.getDisplayShip() != null) {
+            mainItem = bsPlugin.getDisplayShip().getItemFactory().createItem("ship_engine", "_DEFAULT", null);
+        }
+
+        if (mainItem == null) {
+            // Vanilla block → its item form. Wall-mounted variants have no item; remap to the floor form.
+            Material m = part.block.getMaterial();
+            if (!m.isItem()) {
+                String name = m.name();
+                String remapped = name;
+                if (name.contains("_WALL_HEAD")) remapped = name.replace("_WALL_HEAD", "_HEAD");
+                else if (name.contains("_WALL_SKULL")) remapped = name.replace("_WALL_SKULL", "_SKULL");
+                else if (name.contains("_WALL_BANNER")) remapped = name.replace("_WALL_BANNER", "_BANNER");
+                else if (name.contains("_WALL_SIGN")) remapped = name.replace("_WALL_SIGN", "_SIGN");
+                else if (name.contains("WALL_TORCH")) remapped = name.replace("WALL_TORCH", "TORCH");
+                else if (name.equals("REDSTONE_WIRE")) remapped = "REDSTONE";
+                else if (name.equals("TRIPWIRE")) remapped = "STRING";
+                try {
+                    m = Material.valueOf(remapped);
+                } catch (IllegalArgumentException ignored) { /* fall through to isItem check */ }
+            }
+            if (m.isItem()) {
+                mainItem = new org.bukkit.inventory.ItemStack(m);
+            } else {
+                org.bukkit.Bukkit.getLogger().warning("[BlockShips] dropPartAsItems: no item form for "
+                    + part.block.getMaterial() + " in a protected region; block not dropped.");
+            }
+        }
+
+        if (mainItem != null) world.dropItemNaturally(drop, mainItem);
     }
 
     /**

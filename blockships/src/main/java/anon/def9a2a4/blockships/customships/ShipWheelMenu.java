@@ -217,6 +217,10 @@ public class ShipWheelMenu {
                         lore.add(ChatColor.RED + "" + conflicts.hard + " ship block(s) will be LOST");
                         lore.add(ChatColor.GRAY + "(solid blocks in the way)");
                     }
+                    if (conflicts.protectedCount > 0) {
+                        lore.add(ChatColor.GOLD + "" + conflicts.protectedCount + " block(s) in a protected region");
+                        lore.add(ChatColor.GRAY + "(will drop as items, not placed)");
+                    }
                     lore.add("");
                     lore.add(ChatColor.GRAY + "Click to force disassembly");
                     forceMeta.setLore(lore);

@@ -49,6 +49,9 @@ public class BlockShipsPlugin extends JavaPlugin {
         // Warn if bundled resource files (blocks, items, prefab ships) are outdated
         ConfigValidator.checkForOutdatedResources(this);
 
+        // Install the WorldGuard integration hook (or a no-op) before anything can assemble/disassemble
+        setupWorldGuardHook();
+
         // Load global physics config
         ShipInstance.loadGlobalPhysicsConfig(this);
 
@@ -368,6 +371,38 @@ public class BlockShipsPlugin extends JavaPlugin {
         return total;
     }
 
+    /**
+     * Installs the WorldGuard integration hook (when WorldGuard is present and the integration is enabled
+     * in config) or a no-op hook otherwise. Idempotent — called on enable and on reload, so toggling
+     * {@code plugins.worldguard.enabled} takes effect in both directions. Only touches WorldGuard classes
+     * from inside a {@code Class.forName} guard, so a missing/broken WorldGuard can never abort startup.
+     */
+    private void setupWorldGuardHook() {
+        boolean enabled = getConfig().getBoolean("plugins.worldguard.enabled", true);
+        if (enabled && Bukkit.getPluginManager().getPlugin("WorldGuard") != null) {
+            try {
+                Class.forName("com.sk89q.worldguard.WorldGuard");
+                anon.def9a2a4.blockships.integration.WorldGuardHook.set(
+                    new anon.def9a2a4.blockships.integration.WorldGuardHookImpl());
+                getLogger().info("WorldGuard integration ENABLED: ships now respect region build permissions "
+                    + "(protected-region disassembly drops blocks as items; assembly/placement/breaking denied). "
+                    + "Disable via plugins.worldguard.enabled in config.yml.");
+            } catch (Throwable t) {
+                anon.def9a2a4.blockships.integration.WorldGuardHook.set(
+                    new anon.def9a2a4.blockships.integration.NoOpWorldGuardHook());
+                getLogger().warning("WorldGuard present but its API failed to load; integration disabled: " + t);
+            }
+        } else {
+            anon.def9a2a4.blockships.integration.WorldGuardHook.set(
+                new anon.def9a2a4.blockships.integration.NoOpWorldGuardHook());
+            if (!enabled) {
+                getLogger().info("WorldGuard integration disabled (plugins.worldguard.enabled: false).");
+            } else {
+                getLogger().info("WorldGuard not installed; region protection integration inactive.");
+            }
+        }
+    }
+
     /** Builds a human-readable "ship &lt;uuid&gt; (wheel at &lt;world&gt; x,y,z)" descriptor for console logs. */
     private String describeWheel(ShipWheelData wheelData) {
         Location loc = wheelData.getBlockLocation();
@@ -447,6 +482,8 @@ public class BlockShipsPlugin extends JavaPlugin {
                 }
                 // Reload block configuration
                 BlockConfigManager.getInstance().reloadConfig();
+                // Re-apply the WorldGuard integration (installs impl or no-op per the possibly-toggled config)
+                setupWorldGuardHook();
                 // Reload help book content
                 HelpBookContent.load(this);
                 // Reload special drowned config, and re-sync its event registration with the

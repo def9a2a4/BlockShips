@@ -7,6 +7,16 @@ warn-config-mismatch: true
 # https://github.com/def9a2a4/DynLight
 ship-lights: true
 
+# Integrations with other plugins
+plugins:
+  worldguard:
+    # Respect WorldGuard region build permissions (only active if WorldGuard is installed).
+    # Disassembly: blocks landing in a protected region you can't build in DROP as items instead of
+    #   being placed (you'll be warned first; Force Disassemble still works and drops them).
+    # Assembly / wheel placement / wheel & engine breaking: denied inside a protected region.
+    # Members, ops, and anyone with WorldGuard bypass are unaffected.
+    enabled: true
+
 # Special Drowned Configuration
 # These rare drowned mobs drop ship wheels when killed
 special-drowned:

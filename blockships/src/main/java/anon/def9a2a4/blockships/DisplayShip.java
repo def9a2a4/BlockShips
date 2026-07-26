@@ -1900,6 +1900,16 @@ public class DisplayShip implements Listener {
 
         Player player = event.getPlayer();
 
+        // WorldGuard: this places the wheel head programmatically (not a BlockPlaceEvent), so WG can't see
+        // it natively. Deny planting a wheel in a protected region the player can't build in. Cancel the
+        // event too, so vanilla doesn't fall back to placing the wheel item as a plain player head.
+        anon.def9a2a4.blockships.integration.WorldGuardHook wg = anon.def9a2a4.blockships.integration.WorldGuardHook.get();
+        if (wg.mightRestrict(targetBlock.getWorld()) && wg.isBuildDenied(targetBlock.getLocation(), player)) {
+            player.sendMessage("§cYou can't place a ship wheel in this protected region.");
+            event.setCancelled(true);
+            return;
+        }
+
         // Determine wheel facing direction and set block type + rotation
         BlockFace wheelFacing;
         if (face == BlockFace.UP || face == BlockFace.DOWN) {
@@ -2205,6 +2215,14 @@ public class DisplayShip implements Listener {
         Block block = event.getBlock();
         if (!isShipWheelBlock(block)) return;
 
+        // WorldGuard: this handler cancels + manually breaks the block, so it would otherwise fire even
+        // when WG denied the break for a non-member. Respect build rights: leave the wheel intact.
+        anon.def9a2a4.blockships.integration.WorldGuardHook wgWheel = anon.def9a2a4.blockships.integration.WorldGuardHook.get();
+        if (wgWheel.mightRestrict(block.getWorld()) && wgWheel.isBuildDenied(block.getLocation(), event.getPlayer())) {
+            event.getPlayer().sendMessage("§cYou can't break this ship wheel in this protected region.");
+            return;
+        }
+
         // Cancel event to prevent other plugins (like HeadSmith) from also handling this
         event.setCancelled(true);
 
@@ -2340,6 +2358,9 @@ public class DisplayShip implements Listener {
      */
     @EventHandler
     public void onPlaceShipEngine(BlockPlaceEvent event) {
+        // WorldGuard already blocks the underlying placement natively (this is a real BlockPlaceEvent);
+        // if it was cancelled, don't tag a block that won't exist.
+        if (event.isCancelled()) return;
         ItemStack item = event.getItemInHand();
         if (item.getType() != Material.BLAST_FURNACE || !item.hasItemMeta()) return;
 
@@ -2385,6 +2406,14 @@ public class DisplayShip implements Listener {
     public void onBreakShipEngine(BlockBreakEvent event) {
         Block block = event.getBlock();
         if (!isShipEngine(block)) return;
+
+        // WorldGuard: this handler cancels + manually breaks the block and hands back the engine item, so
+        // it would otherwise fire even when WG denied the break. Respect build rights: leave it intact.
+        anon.def9a2a4.blockships.integration.WorldGuardHook wgEngine = anon.def9a2a4.blockships.integration.WorldGuardHook.get();
+        if (wgEngine.mightRestrict(block.getWorld()) && wgEngine.isBuildDenied(block.getLocation(), event.getPlayer())) {
+            event.getPlayer().sendMessage("§cYou can't break this ship engine in this protected region.");
+            return;
+        }
 
         event.setCancelled(true);
         block.setType(Material.AIR);
