@@ -20,7 +20,13 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bstats.bukkit.Metrics;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.logging.Level;
 
 public class BlockShipsPlugin extends JavaPlugin {
 
@@ -127,16 +133,22 @@ public class BlockShipsPlugin extends JavaPlugin {
     private void sendHelp(CommandSender sender) {
         sender.sendMessage("§6=== BlockShips v" + getDescription().getVersion() + " ===");
         sender.sendMessage("§e/blockships help §7- Show this help message");
-        sender.sendMessage("§e/blockships info §7- Show ship and wheel statistics");
-        sender.sendMessage("§e/blockships dismount §7- Force-dismount from a ship");
-        sender.sendMessage("§e/blockships highlightseats §7- Highlight seats on the ship you're looking at");
-        sender.sendMessage("§e/blockships highlightcolliders §7- Toggle glowing on collider shulkers");
+        if (sender.hasPermission("blockships.info")) {
+            sender.sendMessage("§e/blockships info §7- Show ship and wheel statistics");
+        }
+        if (sender.hasPermission("blockships.dismount")) {
+            sender.sendMessage("§e/blockships dismount §7- Force-dismount from a ship §8(players only)");
+        }
+        if (sender.hasPermission("blockships.highlight")) {
+            sender.sendMessage("§e/blockships highlightseats §7- Highlight seats on the ship you're looking at §8(players only)");
+            sender.sendMessage("§e/blockships highlightcolliders §7- Toggle glowing on collider shulkers §8(players only)");
+        }
         if (sender.hasPermission("blockships.reload")) {
             sender.sendMessage("§e/blockships reload §7- Reload the plugin configuration");
         }
         if (sender.hasPermission("blockships.give")) {
-            sender.sendMessage("§e/blockships give <item> §7- Give yourself a ship wheel or ship kit");
-            sender.sendMessage("§e/blockships spawndrowned §7- Spawn a special drowned at your location");
+            sender.sendMessage("§e/blockships give <item> §7- Give yourself a ship wheel or ship kit §8(players only)");
+            sender.sendMessage("§e/blockships spawndrowned §7- Spawn a special drowned at your location §8(players only)");
         }
         if (sender.hasPermission("blockships.recipes")) {
             sender.sendMessage("§e/blockships recipes [player] §7- Unlock all BlockShips recipes");
@@ -146,6 +158,224 @@ public class BlockShipsPlugin extends JavaPlugin {
             sender.sendMessage("§e/blockships killentities §7- Remove all BlockShips entities from worlds §c§l[DANGEROUS]");
         }
         sender.sendMessage("§7Found a bug? Report it at: §b" + ISSUES_URL);
+    }
+
+    /**
+     * Collects the UUIDs of all persisted ships (loaded + unloaded) from
+     * {@link ShipWorldData}'s in-memory chunk index across every indexed world on disk,
+     * including worlds that aren't currently loaded. No chunk I/O. The returned set
+     * inherently dedupes a UUID that (through corruption) appears in more than one
+     * world's index. Returns an empty set if {@code displayShip} is not yet initialized.
+     */
+    private Set<UUID> collectPersistedShipIds() {
+        if (displayShip == null) {
+            return new HashSet<>();
+        }
+        return displayShip.getShipWorldData().getAllPersistedShipIds();
+    }
+
+    /**
+     * Formats a "needs attention" count: grey when 0 (all clear), red when &gt; 0. A red 0 reads as
+     * a false alarm, so zeros stay neutral. Use only for genuinely attention-worthy figures
+     * (orphaned/loose/orphan-wheel style). Normal "unloaded" counts are an expected steady state and
+     * should stay neutral, not red.
+     */
+    private String attn(int n) {
+        return (n > 0 ? "§c" : "§7") + n;
+    }
+
+    /**
+     * Deduped classification of every placed wheel, shared by {@link #sendStatsBreakdown} and the
+     * destructive-command confirm prompts so their figures agree by construction. All ship counts are
+     * distinct ship UUIDs (a UUID referenced by two wheels counts once); {@link #assembledWheelCount}
+     * is the raw wheel tally, so {@link #duplicateWheelLinks()} exposes duplicate/corrupted links.
+     */
+    private static final class WheelStats {
+        /** Assembled wheel whose ship is registered (loaded) - exactly what force-disassemble acts on. */
+        final Set<UUID> registeredWithWheel = new HashSet<>();
+        /** Assembled wheel whose ship is persisted (chunk index) but not registered - unloaded. */
+        final Set<UUID> unloadedPersisted = new HashSet<>();
+        /** Assembled wheel whose ship is neither registered nor persisted - ship gone (orphan). */
+        final Set<UUID> orphan = new HashSet<>();
+        /** Raw count of assembled wheels (not deduped) - for the duplicate-link check. */
+        int assembledWheelCount = 0;
+        int unassembledLoaded = 0;
+        int unassembledUnloaded = 0;
+
+        /** Extra assembled wheels beyond one-per-ship, i.e. duplicate/corrupted wheel links. */
+        int duplicateWheelLinks() {
+            return assembledWheelCount
+                - (registeredWithWheel.size() + unloadedPersisted.size() + orphan.size());
+        }
+    }
+
+    /** Classifies all placed wheels against the registry and the persisted-ship set. */
+    private WheelStats classifyWheels(Set<UUID> persistedIds) {
+        WheelStats s = new WheelStats();
+        for (ShipWheelData wheel : shipWheelManager.getWheels()) {
+            if (wheel.isAssembled()) {
+                s.assembledWheelCount++;
+                UUID u = wheel.getAssembledShipUUID();
+                if (ShipRegistry.byId(u) != null) {
+                    s.registeredWithWheel.add(u);
+                } else if (persistedIds.contains(u)) {
+                    s.unloadedPersisted.add(u);
+                } else {
+                    s.orphan.add(u);
+                }
+            } else {
+                // Guard against a wheel whose world was unloaded at runtime - isChunkLoaded()
+                // dereferences the world and would otherwise NPE / throw "World unloaded".
+                Location wl = wheel.getBlockLocation();
+                boolean loaded = wl != null && wl.getWorld() != null && wl.isWorldLoaded()
+                    && wl.isChunkLoaded();
+                if (loaded) s.unassembledLoaded++; else s.unassembledUnloaded++;
+            }
+        }
+        return s;
+    }
+
+    /**
+     * Prints the current ship/wheel statistics, split by loaded vs unloaded chunks.
+     * Shared by the "info" subcommand and the confirmation prompts of the destructive
+     * admin commands so admins can see exactly what is currently tracked.
+     *
+     * <p>Correctness model:
+     * <ul>
+     *   <li>Genuinely unloaded ships are <b>not</b> in {@link ShipRegistry} (chunk unload
+     *       unregisters them). The source of truth for persisted (loaded+unloaded) ships is
+     *       {@link ShipWorldData}'s chunk index ({@link #collectPersistedShipIds()}).</li>
+     *   <li>An assembled wheel usually maps 1:1 to a custom {@link ShipInstance}, but a destroyed
+     *       ship can leave the wheel flagged assembled ("orphan wheel"). We classify each assembled
+     *       wheel by registry + persistence membership so counts stay self-consistent. customUnloaded
+     *       is deduped by ship UUID and customLoaded is disjoint from it, so customTotal &lt;=
+     *       totalPersisted in steady state (transient exceptions are clamped - see the derived-figures
+     *       comment below).</li>
+     * </ul>
+     */
+    private void sendStatsBreakdown(CommandSender sender) {
+        Set<UUID> persistedIds = collectPersistedShipIds();
+        sendStatsBreakdown(sender, persistedIds, classifyWheels(persistedIds));
+    }
+
+    /**
+     * Overload for callers (the destructive-command confirm prompts) that have already computed the
+     * persisted-ship set and wheel classification, so the shared figures are computed once per prompt
+     * rather than recomputed here.
+     */
+    private void sendStatsBreakdown(CommandSender sender, Set<UUID> persistedIds, WheelStats wheels) {
+        // Loaded ships come from the registry (authority on what is currently live).
+        int customLoaded = 0, prefabLoaded = 0;
+        for (ShipInstance ship : ShipRegistry.getAllShips()) {
+            if ("custom".equals(ship.shipType)) customLoaded++; else prefabLoaded++;
+        }
+
+        int totalPersisted = persistedIds.size();
+
+        // customUnloaded is a distinct-UUID subset of persistedIds, so it can't exceed persisted
+        // membership.
+        int customUnloaded = wheels.unloadedPersisted.size();
+        int orphanWheels = wheels.orphan.size();
+        int wheelsLoaded = wheels.unassembledLoaded;
+        int wheelsUnloaded = wheels.unassembledUnloaded;
+
+        // Derived figures. customUnloaded is a deduped subset of persistedIds, and customLoaded is
+        // disjoint from it (registered vs not), so in steady state customTotal <= totalPersisted. The
+        // Math.max clamps below are still needed for two transient/edge cases: a just-registered ship
+        // not yet in the chunk index (loaded can momentarily exceed persisted), and a custom ship
+        // persisted in an unloaded chunk whose wheel link was lost (counts here as a prefab -
+        // distinguishing it would need per-ship YAML I/O). Display-only; never crashes.
+        int customTotal = customLoaded + customUnloaded;
+        int prefabTotal = Math.max(0, totalPersisted - customTotal);
+        int prefabUnloaded = Math.max(0, prefabTotal - prefabLoaded);
+        int totalLoaded = customLoaded + prefabLoaded;
+        int totalUnloaded = Math.max(0, totalPersisted - totalLoaded);
+
+        // "unloaded" counts are a normal steady state - keep them neutral (§f), not red.
+        sender.sendMessage("§6=== BlockShips Stats ===");
+        sender.sendMessage("§ePrefab Ships: §f" + prefabTotal + " total §7(§a" + prefabLoaded
+            + " loaded§7, §f" + prefabUnloaded + " unloaded§7)");
+        sender.sendMessage("§eCustom Ships: §f" + customTotal + " total §7(§a" + customLoaded
+            + " loaded§7, §f" + customUnloaded + " unloaded§7)");
+        sender.sendMessage("§eAll Ships: §f" + totalPersisted + " persisted §7(§a" + totalLoaded
+            + " loaded§7, §f" + totalUnloaded + " unloaded§7)");
+        sender.sendMessage("§eUnassembled Wheels: §f" + (wheelsLoaded + wheelsUnloaded)
+            + " total §7(§a" + wheelsLoaded + " loaded§7, §f" + wheelsUnloaded + " unloaded§7)");
+        if (orphanWheels > 0) {
+            sender.sendMessage("§cOrphaned wheel links: §f" + orphanWheels
+                + " §7(ship gone; break the wheel block to clear)");
+        }
+        // Divergence = duplicate/corrupted wheel links (more assembled wheels than distinct ships).
+        // Surface it explicitly rather than let the raw and deduped counts silently disagree.
+        int dupLinks = wheels.duplicateWheelLinks();
+        if (dupLinks > 0) {
+            sender.sendMessage("§c⚠ " + dupLinks + " assembled wheel(s) share a ship link"
+                + " (duplicate/corrupted wheel data) - break the extra wheel block(s).");
+        }
+    }
+
+    /**
+     * Prints a compact summary of BlockShips-tagged entities in currently loaded chunks:
+     * a registered/orphaned/unattributed ship split plus a by-entity-type rollup. Used by the
+     * {@code killentities} confirmation prompt. Returns the total tagged-entity count so callers
+     * can reference it in the warning.
+     *
+     * <p>Only loaded chunks are visible here - {@link World#getEntities()} never loads chunks.
+     */
+    private int sendEntitySummary(CommandSender sender) {
+        Set<UUID> registeredShips = new HashSet<>();
+        Set<UUID> orphanedShips = new HashSet<>();
+        int unattributed = 0;
+        int total = 0;
+        Map<String, Integer> byType = new HashMap<>();
+
+        // Admin-only command: a single-tick scan of every entity in every loaded world is
+        // acceptable here (not run on a hot path).
+        for (World world : Bukkit.getWorlds()) {
+            for (Entity entity : world.getEntities()) {
+                Set<String> tags = entity.getScoreboardTags();
+                if (!ShipTags.isShipEntity(tags)) continue;
+                total++;
+                byType.merge(entity.getType().name(), 1, Integer::sum);
+
+                UUID shipId = ShipTags.extractShipId(tags);
+                if (shipId == null) {
+                    unattributed++;
+                } else if (ShipRegistry.byId(shipId) != null) {
+                    registeredShips.add(shipId);
+                } else {
+                    orphanedShips.add(shipId);
+                }
+            }
+        }
+
+        // Build a "by type" line sorted by count descending.
+        List<Map.Entry<String, Integer>> types = new ArrayList<>(byType.entrySet());
+        types.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+        StringBuilder typeLine = new StringBuilder();
+        for (Map.Entry<String, Integer> e : types) {
+            if (typeLine.length() > 0) typeLine.append("§7, §f");
+            typeLine.append(e.getValue()).append(" §e").append(e.getKey());
+        }
+
+        sender.sendMessage("§eTagged entities in loaded chunks: §f" + total);
+        sender.sendMessage("§7  Ships with entities here — loaded: §a" + registeredShips.size()
+            + "§7, orphaned: " + attn(orphanedShips.size()) + "§7; loose entities: "
+            + attn(unattributed));
+        if (typeLine.length() > 0) {
+            sender.sendMessage("§7  By type: §f" + typeLine);
+        }
+        return total;
+    }
+
+    /** Builds a human-readable "ship &lt;uuid&gt; (wheel at &lt;world&gt; x,y,z)" descriptor for console logs. */
+    private String describeWheel(ShipWheelData wheelData) {
+        Location loc = wheelData.getBlockLocation();
+        String world = (loc != null && loc.getWorld() != null) ? loc.getWorld().getName() : "?";
+        String coords = (loc != null)
+            ? loc.getBlockX() + "," + loc.getBlockY() + "," + loc.getBlockZ()
+            : "?";
+        return "ship " + wheelData.getAssembledShipUUID() + " (wheel at " + world + " " + coords + ")";
     }
 
     /**
@@ -164,7 +394,7 @@ public class BlockShipsPlugin extends JavaPlugin {
             for (Entity e : check.getWorld().getNearbyEntities(check, 1, 1, 1)) {
                 if (!(e instanceof Shulker shulker)) continue;
 
-                java.util.UUID shipId = ShipTags.extractShipId(shulker.getScoreboardTags());
+                UUID shipId = ShipTags.extractShipId(shulker.getScoreboardTags());
                 if (shipId != null) {
                     return ShipRegistry.byId(shipId);
                 }
@@ -192,32 +422,11 @@ public class BlockShipsPlugin extends JavaPlugin {
             }
 
             if (args[0].equalsIgnoreCase("info")) {
-                // Count prefab ships (non-custom) and custom ships
-                int prefabLoaded = 0, prefabUnloaded = 0;
-                int customLoaded = 0, customUnloaded = 0;
-
-                for (ShipInstance ship : ShipRegistry.getAllShips()) {
-                    boolean loaded = ship.vehicle.getLocation().isChunkLoaded();
-                    if ("custom".equals(ship.shipType)) {
-                        if (loaded) customLoaded++; else customUnloaded++;
-                    } else {
-                        if (loaded) prefabLoaded++; else prefabUnloaded++;
-                    }
+                if (!sender.hasPermission("blockships.info")) {
+                    sender.sendMessage("§cYou don't have permission to view BlockShips stats.");
+                    return true;
                 }
-
-                // Count ship wheels not on assembled ships
-                int wheelsLoaded = 0, wheelsUnloaded = 0;
-                for (ShipWheelData wheel : shipWheelManager.getWheels()) {
-                    if (!wheel.isAssembled()) {
-                        boolean loaded = wheel.getBlockLocation().isChunkLoaded();
-                        if (loaded) wheelsLoaded++; else wheelsUnloaded++;
-                    }
-                }
-
-                sender.sendMessage("§6=== BlockShips Info ===");
-                sender.sendMessage("§ePrefab Ships: §a" + prefabLoaded + " loaded§7, §c" + prefabUnloaded + " unloaded");
-                sender.sendMessage("§eShip Wheels: §a" + wheelsLoaded + " loaded§7, §c" + wheelsUnloaded + " unloaded");
-                sender.sendMessage("§eCustom Ships: §a" + customLoaded + " loaded§7, §c" + customUnloaded + " unloaded");
+                sendStatsBreakdown(sender);
                 return true;
             }
 
@@ -240,11 +449,17 @@ public class BlockShipsPlugin extends JavaPlugin {
                 BlockConfigManager.getInstance().reloadConfig();
                 // Reload help book content
                 HelpBookContent.load(this);
-                // Reload special drowned config
+                // Reload special drowned config, and re-sync its event registration with the
+                // (possibly toggled) enabled state - reloadConfig alone leaves a disabled->enabled
+                // flip inert (or an enabled->disabled flip still firing) until a full restart.
                 if (specialDrownedListener != null) {
                     specialDrownedListener.reloadConfig();
+                    org.bukkit.event.HandlerList.unregisterAll(specialDrownedListener);
+                    if (specialDrownedListener.isEnabled()) {
+                        Bukkit.getPluginManager().registerEvents(specialDrownedListener, this);
+                    }
                 }
-                sender.sendMessage("BlockShips config reloaded!");
+                sender.sendMessage("§aBlockShips config reloaded!");
                 return true;
             }
 
@@ -271,7 +486,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                 if (itemType.equals("ship_wheel")) {
                     ItemStack wheel = displayShip.createShipWheelItem();
                     giveOrDrop(player, wheel);
-                    sender.sendMessage("Gave you a ship wheel!");
+                    sender.sendMessage("§aGave you a ship wheel!");
                     return true;
                 }
 
@@ -279,7 +494,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                 if (itemType.equals("captains_manual")) {
                     ItemStack manual = HelpBookContent.createWrittenBook();
                     giveOrDrop(player, manual);
-                    sender.sendMessage("Gave you a Captain's Manual!");
+                    sender.sendMessage("§aGave you a Captain's Manual!");
                     return true;
                 }
 
@@ -287,7 +502,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                 if (getConfig().contains("custom-items." + itemType)) {
                     ItemStack item = displayShip.getItemFactory().createItem(itemType, "_DEFAULT", null);
                     giveOrDrop(player, item);
-                    sender.sendMessage("Gave you a " + itemType + "!");
+                    sender.sendMessage("§aGave you a " + itemType + "!");
                     return true;
                 }
 
@@ -296,7 +511,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                     ItemStack defaultBanner = new ItemStack(Material.WHITE_BANNER);
                     ItemStack shipKit = DisplayShip.createShipKit(itemType, defaultBanner, "SPRUCE", this);
                     giveOrDrop(player, shipKit);
-                    sender.sendMessage("Gave you a " + itemType + " ship kit!");
+                    sender.sendMessage("§aGave you a " + itemType + " ship kit!");
                     return true;
                 }
 
@@ -312,7 +527,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                 }
 
                 if (!sender.hasPermission("blockships.give")) {
-                    sender.sendMessage("§cYou don't have permission to spawn drowned.");
+                    sender.sendMessage("§cYou don't have permission to spawn drowned (requires the give permission).");
                     return true;
                 }
 
@@ -324,7 +539,7 @@ public class BlockShipsPlugin extends JavaPlugin {
 
                 var drowned = specialDrownedListener.spawnSpecialDrowned(player.getLocation());
                 if (drowned != null) {
-                    sender.sendMessage("Spawned a special drowned!");
+                    sender.sendMessage("§aSpawned a special drowned!");
                 } else {
                     sender.sendMessage("§cFailed to spawn special drowned: your location has no valid world.");
                 }
@@ -338,12 +553,12 @@ public class BlockShipsPlugin extends JavaPlugin {
                 }
 
                 if (!sender.hasPermission("blockships.dismount")) {
-                    sender.sendMessage("§cYou don't have permission to use this command.");
+                    sender.sendMessage("§cYou don't have permission to dismount from ships.");
                     return true;
                 }
 
                 if (ShipInstance.dismountPlayer(player)) {
-                    sender.sendMessage("Dismounted from ship.");
+                    sender.sendMessage("§aDismounted from ship.");
                 } else {
                     sender.sendMessage("You are not riding a ship.");
                 }
@@ -353,6 +568,11 @@ public class BlockShipsPlugin extends JavaPlugin {
             if (args[0].equalsIgnoreCase("highlightseats")) {
                 if (!(sender instanceof Player player)) {
                     sender.sendMessage("§cOnly players can use this command.");
+                    return true;
+                }
+
+                if (!sender.hasPermission("blockships.highlight")) {
+                    sender.sendMessage("§cYou don't have permission to use highlight commands.");
                     return true;
                 }
 
@@ -372,16 +592,28 @@ public class BlockShipsPlugin extends JavaPlugin {
                     return true;
                 }
 
+                if (!sender.hasPermission("blockships.highlight")) {
+                    sender.sendMessage("§cYou don't have permission to use highlight commands.");
+                    return true;
+                }
+
                 ShipInstance ship = findLookedAtShip(player);
                 if (ship == null) {
                     sender.sendMessage("§cYou are not looking at a ship.");
                     return true;
                 }
 
-                boolean anyGlowing = ship.colliders.stream().anyMatch(c -> c.entity.isGlowing());
+                if (ship.colliders.isEmpty()) {
+                    sender.sendMessage("§7That ship has no colliders to highlight.");
+                    return true;
+                }
+
+                // Skip invalid (removed) collider entities, mirroring highlightSeats' defensive checks.
+                boolean anyGlowing = ship.colliders.stream()
+                    .anyMatch(c -> c.entity.isValid() && c.entity.isGlowing());
                 boolean newState = !anyGlowing;
                 for (var c : ship.colliders) {
-                    c.entity.setGlowing(newState);
+                    if (c.entity.isValid()) c.entity.setGlowing(newState);
                 }
                 sender.sendMessage(newState ? "§aColliders now glowing." : "§7Collider glow disabled.");
                 return true;
@@ -415,23 +647,40 @@ public class BlockShipsPlugin extends JavaPlugin {
                 int unlockedCount = displayShip.unlockAllRecipes(targetPlayer);
 
                 if (targetPlayer.equals(sender)) {
-                    sender.sendMessage("Unlocked " + unlockedCount + " BlockShips recipe(s)!");
+                    sender.sendMessage("§aUnlocked " + unlockedCount + " BlockShips recipe(s)!");
                 } else {
-                    sender.sendMessage("Unlocked " + unlockedCount + " BlockShips recipe(s) for " + targetPlayer.getName() + "!");
-                    targetPlayer.sendMessage("You have been granted " + unlockedCount + " BlockShips recipe(s)!");
+                    sender.sendMessage("§aUnlocked " + unlockedCount + " BlockShips recipe(s) for " + targetPlayer.getName() + "!");
+                    targetPlayer.sendMessage("§aYou have been granted " + unlockedCount + " BlockShips recipe(s)!");
                 }
                 return true;
             }
 
             if (args[0].equalsIgnoreCase("forcedisassembleall")) {
                 if (!sender.hasPermission("blockships.admin")) {
-                    sender.sendMessage("§cYou don't have permission to use this command.");
+                    sender.sendMessage("§cYou don't have permission to use admin commands.");
                     return true;
                 }
 
                 if (args.length < 2 || !args[1].equalsIgnoreCase("confirm")) {
+                    // Derive the figures from the same classification the stats use, so the "will
+                    // disassemble" count can't disagree with the breakdown printed above. Only assembled
+                    // wheels whose ship is registered are actionable - the disassemble loop below acts
+                    // on exactly that set (registeredWithWheel), custom or prefab.
+                    Set<UUID> persisted = collectPersistedShipIds();
+                    WheelStats ws = classifyWheels(persisted);
+                    int willDisassemble = ws.registeredWithWheel.size();
+                    int untouched = ws.unloadedPersisted.size() + ws.orphan.size();
+
+                    sendStatsBreakdown(sender, persisted, ws);
+                    sender.sendMessage("");
                     sender.sendMessage("§c§l⚠ WARNING ⚠");
-                    sender.sendMessage("§cThis will §lFORCE-DISASSEMBLE ALL ASSEMBLED SHIPS§c!");
+                    sender.sendMessage("§cThis will §lFORCE-DISASSEMBLE§c the §e" + willDisassemble
+                        + "§c currently active ship(s).");
+                    if (untouched > 0) {
+                        sender.sendMessage("§7" + untouched + " assembled wheel(s) are not currently active ("
+                            + ws.unloadedPersisted.size() + " unloaded, " + ws.orphan.size()
+                            + " orphaned - see above) and will be left untouched.");
+                    }
                     sender.sendMessage("");
                     sender.sendMessage("§7Type §e/blockships forcedisassembleall confirm §7to confirm.");
                     return true;
@@ -439,68 +688,233 @@ public class BlockShipsPlugin extends JavaPlugin {
 
                 int count = 0;
                 int failed = 0;
+                int skipped = 0;
+                int saveErrors = 0;
 
-                // Get all wheels and force-disassemble assembled ones
-                // Copy to avoid ConcurrentModificationException (disassembly updates wheel locations)
-                for (ShipWheelData wheelData : new java.util.ArrayList<>(shipWheelManager.getWheels())) {
-                    if (wheelData.isAssembled()) {
-                        // Pass null for player - messages not needed for batch operation
-                        boolean success = shipWheelManager.disassembleShip(null, wheelData, true);
-                        if (success) count++;
-                        else failed++;
+                // Get all wheels and force-disassemble assembled ones.
+                // Copy to avoid ConcurrentModificationException (disassembly updates wheel locations).
+                for (ShipWheelData wheelData : new ArrayList<>(shipWheelManager.getWheels())) {
+                    if (!wheelData.isAssembled()) continue;
+
+                    // Skip ships that are not active (unloaded/gone). Calling disassembleShip on them
+                    // would silently sever the wheel link (ShipWheelManager clears it when the ship
+                    // is not registered), corrupting a ship that still exists in an unloaded chunk.
+                    if (ShipRegistry.byId(wheelData.getAssembledShipUUID()) == null) {
+                        skipped++;
+                        continue;
                     }
+
+                    // Pass null for player - messages not needed for batch operation
+                    String where = describeWheel(wheelData);
+                    ShipWheelManager.DisassembleOutcome outcome = new ShipWheelManager.DisassembleOutcome();
+                    try {
+                        boolean success = shipWheelManager.disassembleShip(null, wheelData, true, outcome);
+                        if (success) {
+                            count++;
+                            // Ship is disassembled in-world, but its on-disk cleanup failed to save.
+                            // The failure is already logged with full context by disassembleShip and
+                            // its callees, so just tally it here (no duplicate caller log line).
+                            if (outcome.persistFailed) saveErrors++;
+                        } else {
+                            failed++;
+                            getLogger().warning("forcedisassembleall: disassembleShip returned false for "
+                                + where);
+                        }
+                    } catch (Exception e) {
+                        failed++;
+                        getLogger().log(Level.WARNING,
+                            "forcedisassembleall: exception disassembling " + where, e);
+                    }
+                }
+
+                getLogger().info(sender.getName() + " ran forcedisassembleall: disassembled " + count
+                    + " ship(s)" + (failed > 0 ? ", " + failed + " failed" : "")
+                    + (saveErrors > 0 ? ", " + saveErrors + " with save errors" : "")
+                    + (skipped > 0 ? ", " + skipped + " skipped (not active)" : ""));
+
+                // disassembleShip mutates in-memory wheel state (clears the link, updates the block
+                // location) but does not persist. Save once here so ship_wheels.yml isn't stale
+                // until an unrelated save fires (a restart in that window would reload wheels flagged
+                // assembled pointing at ships that no longer exist). Gate on count so a no-op run
+                // doesn't rewrite the file.
+                if (count > 0 && !shipWheelManager.saveAll()) {
+                    sender.sendMessage("§cFailed to save wheel state - check the server console for details.");
                 }
 
                 sender.sendMessage("Force-disassembled " + count + " ship(s)" +
                     (failed > 0 ? " (" + failed + " failed)" : ""));
+                if (failed > 0) {
+                    sender.sendMessage("§7" + failed + " ship(s) failed to disassemble - check the server"
+                        + " console for details.");
+                }
+                if (saveErrors > 0) {
+                    sender.sendMessage("§c" + saveErrors + " of those were disassembled but their on-disk"
+                        + " cleanup failed to save - check the server console for details.");
+                }
+                if (skipped > 0) {
+                    sender.sendMessage("§7" + skipped + " assembled wheel(s) were skipped (not active -"
+                        + " unloaded, or the ship no longer exists).");
+                }
                 return true;
             }
 
             if (args[0].equalsIgnoreCase("killentities")) {
                 if (!sender.hasPermission("blockships.admin")) {
-                    sender.sendMessage("§cYou don't have permission to use this command.");
+                    sender.sendMessage("§cYou don't have permission to use admin commands.");
                     return true;
                 }
 
                 if (args.length < 2 || !args[1].equalsIgnoreCase("confirm")) {
+                    Set<UUID> persisted = collectPersistedShipIds();
+                    int registered = ShipRegistry.getAllShips().size();
+                    int unloadedShips = Math.max(0, persisted.size() - registered);
+
+                    sendStatsBreakdown(sender, persisted, classifyWheels(persisted));
+                    sender.sendMessage("");
+                    int taggedEntities = sendEntitySummary(sender);
+                    sender.sendMessage("");
                     sender.sendMessage("§c§l⚠ WARNING ⚠");
-                    sender.sendMessage("§cThis will §lDESTROY ALL BLOCKSHIPS ENTITIES§c in all worlds!");
+                    sender.sendMessage("§cThis will §lDESTROY§c §e" + registered
+                        + "§c registered ship(s) in §lLOADED§c chunks.");
+                    sender.sendMessage("§cAll §e" + taggedEntities
+                        + "§c ship-tagged entity/entities in loaded chunks (including those ships') will be removed.");
+                    if (unloadedShips > 0) {
+                        sender.sendMessage("§7" + unloadedShips + " ship(s) persisted in unloaded chunks will"
+                            + " NOT be removed (load/visit them first).");
+                    }
                     sender.sendMessage("");
                     sender.sendMessage("§7Type §e/blockships killentities confirm §7to confirm.");
                     return true;
                 }
 
                 int removedCount = 0;
+                boolean cleanupFailed = false;
 
-                // Before destroying, collect ship info for YAML cleanup
+                // Before destroying, snapshot each registered ship's id + world. Capture the world
+                // BEFORE destroyAll() removes the vehicle (matches ShipInstance.destroyWithCleanup);
+                // destroyedShipIds scopes the wheel-link cleanup below to ONLY registered ships this
+                // command fully destroys. We deliberately do NOT add swept-entity UUIDs here: a
+                // chunk-straddling ship (root chunk unloaded, a collider in a loaded chunk) is
+                // unregistered but its collider would be swept - clearing its link would sever a ship
+                // that still persists and will recover.
                 List<ShipInstance> shipsToRemove = new ArrayList<>(ShipRegistry.getAllShips());
                 int shipCount = shipsToRemove.size();
-
-                // Destroy all registered ships (cleans up entities)
-                ShipRegistry.destroyAll();
-
-                // Clean up YAML storage for destroyed ships (only loaded chunks)
-                ShipWorldData shipWorldData = displayShip.getShipWorldData();
+                Map<UUID, World> worldById = new HashMap<>();
+                Set<UUID> destroyedShipIds = new HashSet<>();
                 for (ShipInstance ship : shipsToRemove) {
-                    World world = ship.vehicle.getLocation().getWorld();
-                    if (world != null) {
-                        shipWorldData.removeShip(world, ship.id);
+                    destroyedShipIds.add(ship.id);
+                    // ship.vehicle can be null on a failed assembly.
+                    World world = (ship.vehicle != null && ship.vehicle.getLocation() != null)
+                        ? ship.vehicle.getLocation().getWorld() : null;
+                    if (world != null) worldById.put(ship.id, world);
+                }
+
+                // Destroy all registered ships (cleans up entities). Destroy per-ship so one ship's
+                // failure is logged and counted instead of aborting the whole command and leaving the
+                // registry half-cleared (plain ShipRegistry.destroyAll() has no per-ship isolation).
+                int destroyFailed = 0;
+                for (ShipInstance ship : shipsToRemove) {
+                    try {
+                        ship.destroy();
+                    } catch (Exception e) {
+                        destroyFailed++;
+                        // destroy() unregisters as its last step, so a mid-destroy throw would leave a
+                        // phantom entry in the registry (entities swept, but still "loaded"). Force the
+                        // unregister here to restore the old destroyAll() safety net. destroyFailed has
+                        // its own message, so this is NOT folded into cleanupFailed (avoids a duplicate
+                        // "some cleanup failed" line for the same event).
+                        ShipRegistry.unregister(ship);
+                        getLogger().log(Level.SEVERE, "killentities: failed to destroy ship " + ship.id
+                            + " (type=" + ship.shipType + ")", e);
                     }
                 }
-                shipWorldData.saveAllChunkIndices();
 
-                // Then clean up any orphaned entities with ship tags
+                // Clean up YAML storage for destroyed ships (only loaded chunks).
+                if (displayShip != null) {
+                    ShipWorldData shipWorldData = displayShip.getShipWorldData();
+                    for (ShipInstance ship : shipsToRemove) {
+                        World world = worldById.get(ship.id);
+                        if (world == null) {
+                            // Unresolved world (null/invalid vehicle): can't target the per-world YAML,
+                            // so log it rather than skip silently. Failed-assembly ships usually have no
+                            // file, so this is a diagnostic, not counted into cleanupFailed.
+                            getLogger().severe("killentities: skipped YAML cleanup for ship " + ship.id
+                                + " (type=" + ship.shipType + "): world unresolved");
+                            continue;
+                        }
+                        try {
+                            if (!shipWorldData.removeShip(world, ship.id)) cleanupFailed = true;
+                        } catch (Exception e) {
+                            cleanupFailed = true;
+                            getLogger().log(Level.SEVERE, "killentities: YAML cleanup failed for ship " + ship.id
+                                + " (type=" + ship.shipType + ", world=" + world.getName() + ")", e);
+                        }
+                    }
+                    // saveAllChunkIndices() logs SEVERE per world on failure and returns false; check it
+                    // so cleanupFailed reflects a failed chunks.yml write (previously swallowed).
+                    if (!shipWorldData.saveAllChunkIndices()) cleanupFailed = true;
+                } else {
+                    cleanupFailed = true;
+                    getLogger().severe("killentities: displayShip not initialized; skipped YAML cleanup");
+                }
+                // Known limitation (LOW, pre-existing): a queued async metadata/index save can
+                // re-write a just-destroyed ship's .yml / chunk-index entry after this synchronous
+                // cleanup, leaving a leaked file / stale index entry. It self-heals (next chunk load
+                // prunes zero-entity entries; startup validation drops missing-metadata entries) and
+                // never yields a live phantom ship. Inherent to the existing I/O pipeline.
+
+                // Then clean up any remaining ship-tagged entities (orphans + any not removed by
+                // destroy()). Isolate per-entity so one bad remove() doesn't abort the sweep.
                 for (World world : Bukkit.getWorlds()) {
                     for (Entity entity : world.getEntities()) {
                         if (ShipTags.isShipEntity(entity.getScoreboardTags())) {
-                            entity.remove();
-                            removedCount++;
+                            try {
+                                entity.remove();
+                                removedCount++;
+                            } catch (Exception e) {
+                                cleanupFailed = true;
+                                getLogger().log(Level.SEVERE, "killentities: failed to remove tagged entity "
+                                    + entity.getUniqueId() + " (" + entity.getType().name() + ")", e);
+                            }
                         }
                     }
                 }
 
-                sender.sendMessage("Destroyed " + shipCount + " registered ship(s), removed " +
-                    removedCount + " orphaned entity/entities");
+                // Clear wheel links only for the registered ships this command destroyed (see the
+                // destroyedShipIds comment above - swept-entity UUIDs are intentionally excluded so a
+                // recoverable straddling ship's link is never severed). Pre-existing orphan wheels
+                // (ship already gone before this run) are left for manual cleanup and remain visible
+                // via the stats "Orphaned wheel links" line.
+                int clearedLinks = 0;
+                for (ShipWheelData wheel : shipWheelManager.getWheels()) {
+                    if (wheel.isAssembled() && destroyedShipIds.contains(wheel.getAssembledShipUUID())) {
+                        wheel.setAssembledShipUUID(null);
+                        clearedLinks++;
+                    }
+                }
+                if (clearedLinks > 0 && !shipWheelManager.saveAll()) {
+                    cleanupFailed = true;
+                }
+
+                int destroyedOk = shipCount - destroyFailed;
+                getLogger().info(sender.getName() + " ran killentities: destroyed " + destroyedOk + "/"
+                    + shipCount + " registered ship(s), removed " + removedCount
+                    + " stray tagged entity/entities, cleared " + clearedLinks + " wheel link(s)"
+                    + (destroyFailed > 0 ? ", " + destroyFailed + " failed to destroy" : "")
+                    + (cleanupFailed ? " (cleanup had errors)" : ""));
+
+                sender.sendMessage("Destroyed " + destroyedOk + " registered ship(s) and their entities; removed "
+                    + removedCount + " additional tagged entity/entities" + (clearedLinks > 0
+                        ? ", cleared " + clearedLinks + " wheel link(s)" : ""));
+                if (destroyFailed > 0) {
+                    sender.sendMessage("§c" + destroyFailed + " ship(s) failed to destroy - check the server"
+                        + " console for details.");
+                }
+                if (cleanupFailed) {
+                    sender.sendMessage("§cSome cleanup failed - check the server console for details.");
+                }
+                sender.sendMessage("§7Note: only entities in loaded chunks were affected; ships in unloaded"
+                    + " chunks remain.");
                 return true;
             }
 
@@ -559,10 +973,12 @@ public class BlockShipsPlugin extends JavaPlugin {
             // Complete subcommands based on permissions
             List<String> subcommands = new ArrayList<>();
             subcommands.add("help");
-            subcommands.add("info");
-            subcommands.add("dismount");
-            subcommands.add("highlightseats");
-            subcommands.add("highlightcolliders");
+            if (sender.hasPermission("blockships.info")) subcommands.add("info");
+            if (sender.hasPermission("blockships.dismount")) subcommands.add("dismount");
+            if (sender.hasPermission("blockships.highlight")) {
+                subcommands.add("highlightseats");
+                subcommands.add("highlightcolliders");
+            }
             if (sender.hasPermission("blockships.reload")) subcommands.add("reload");
             if (sender.hasPermission("blockships.give")) {
                 subcommands.add("give");

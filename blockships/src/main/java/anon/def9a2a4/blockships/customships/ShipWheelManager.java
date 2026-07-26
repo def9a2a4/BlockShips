@@ -55,8 +55,10 @@ public class ShipWheelManager {
 
     /**
      * Saves all ship wheels to ship_wheels.yml.
+     *
+     * @return true if the file was written successfully, false if saving failed.
      */
-    public void saveAll() {
+    public boolean saveAll() {
         File wheelsFile = new File(plugin.getDataFolder(), WHEELS_FILE);
         org.bukkit.configuration.file.YamlConfiguration config = new org.bukkit.configuration.file.YamlConfiguration();
 
@@ -69,8 +71,10 @@ public class ShipWheelManager {
         try {
             config.save(wheelsFile);
             plugin.getLogger().info("Saved " + wheelList.size() + " ship wheels to " + WHEELS_FILE);
+            return true;
         } catch (Exception e) {
             plugin.getLogger().severe("Failed to save ship wheels: " + e.getMessage());
+            return false;
         }
     }
 
@@ -375,6 +379,17 @@ public class ShipWheelManager {
     }
 
     /**
+     * Result holder that lets batch callers distinguish a disassembly failure (reported via the
+     * method's boolean return) from a persistence failure that happens <em>after</em> the ship has
+     * already been taken apart in-world. A persistence failure does not make disassembly "fail" - the
+     * ship is gone - but the admin still needs to know the on-disk cleanup did not fully succeed.
+     */
+    public static final class DisassembleOutcome {
+        /** Set true if removing the ship's per-world YAML / chunk-index entry failed to save. */
+        public boolean persistFailed = false;
+    }
+
+    /**
      * Disassembles a ship back into blocks.
      */
     public boolean disassembleShip(@Nullable Player player, ShipWheelData wheelData) {
@@ -391,6 +406,21 @@ public class ShipWheelManager {
      * @return true if disassembly succeeded, false otherwise
      */
     public boolean disassembleShip(@Nullable Player player, ShipWheelData wheelData, boolean force) {
+        return disassembleShip(player, wheelData, force, new DisassembleOutcome());
+    }
+
+    /**
+     * Disassembles a ship back into blocks, reporting persistence failures separately.
+     *
+     * @param player The player disassembling the ship
+     * @param wheelData The ship wheel data
+     * @param force If true, destroys fragile blocks (grass, flowers, etc.) in the way.
+     * @param outcome Populated with {@code persistFailed=true} if the post-disassembly YAML /
+     *               chunk-index cleanup failed to save (disassembly itself still succeeded).
+     * @return true if disassembly succeeded, false otherwise
+     */
+    public boolean disassembleShip(@Nullable Player player, ShipWheelData wheelData, boolean force,
+                                   DisassembleOutcome outcome) {
         if (!wheelData.isAssembled()) {
             if (player != null) player.sendMessage("§cNo ship to disassemble!");
             return false;
@@ -512,12 +542,27 @@ public class ShipWheelManager {
         // Nudge nearby players up to prevent clipping into placed blocks
         nudgeNearbyPlayersUp(shipLoc2, ship.config.assemblyNudgeHeight);
 
-        // Remove ship from per-world storage (delete file and chunk index)
+        // Remove ship from per-world storage (delete file and chunk index). The ship is already
+        // gone from the world at this point, so a save failure here does not fail the disassembly -
+        // it is reported separately via outcome.persistFailed (and logged SEVERE by the callees).
         if (plugin instanceof BlockShipsPlugin bsp) {
             org.bukkit.World world = shipLoc.getWorld();
             if (world != null) {
-                bsp.getDisplayShip().getShipWorldData().removeShip(world, ship.id);
-                bsp.getDisplayShip().getShipWorldData().saveAllChunkIndices();
+                ShipWorldData worldData = bsp.getDisplayShip().getShipWorldData();
+                boolean fileOk = worldData.removeShip(world, ship.id);
+                boolean indexOk = worldData.saveAllChunkIndices();
+                if (!fileOk || !indexOk) {
+                    outcome.persistFailed = true;
+                    plugin.getLogger().severe("disassembleShip: persistence cleanup failed for ship "
+                        + ship.id + " (world=" + world.getName() + ")");
+                }
+            } else {
+                // Can't resolve the world, so the per-world YAML / chunk index can't be cleaned. Flag
+                // it as a persistence failure rather than skip silently - the ship is gone in-world but
+                // its on-disk record may linger.
+                outcome.persistFailed = true;
+                plugin.getLogger().warning("disassembleShip: skipped persistence cleanup for ship "
+                    + ship.id + ": world unresolved");
             }
         }
 

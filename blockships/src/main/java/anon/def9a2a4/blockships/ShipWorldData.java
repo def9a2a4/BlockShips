@@ -384,15 +384,21 @@ public class ShipWorldData {
 
     /**
      * Removes a ship from storage completely.
+     *
+     * @return true if the on-disk ship file was removed (or was already absent), false if the file
+     *         still exists after the delete attempt. The in-memory chunk index is always updated.
      */
-    public void removeShip(World world, UUID shipId) {
+    public boolean removeShip(World world, UUID shipId) {
         // Update cache to indicate file no longer exists
         metadataExistsCache.put(world.getName() + ":" + shipId, false);
 
         // Remove ship file
+        boolean fileOk = true;
         File shipFile = getShipFile(world.getName(), shipId);
-        if (shipFile.exists()) {
-            shipFile.delete();
+        if (shipFile.exists() && !shipFile.delete() && shipFile.exists()) {
+            fileOk = false;
+            plugin.getLogger().severe("Failed to delete ship file for " + shipId + " (world="
+                + world.getName() + "): " + shipFile.getAbsolutePath());
         }
 
         // Remove from all chunk indices for this world
@@ -402,6 +408,7 @@ public class ShipWorldData {
             // Clean up empty entries
             worldIndex.entrySet().removeIf(e -> e.getValue().isEmpty());
         }
+        return fileOk;
     }
 
     // ===== Persistence =====
@@ -510,7 +517,8 @@ public class ShipWorldData {
     /**
      * Saves all chunk indices to disk.
      */
-    public void saveAllChunkIndices() {
+    public boolean saveAllChunkIndices() {
+        boolean allOk = true;
         for (Map.Entry<String, Map<String, List<UUID>>> worldEntry : chunkIndices.entrySet()) {
             String worldName = worldEntry.getKey();
             Map<String, List<UUID>> worldIndex = worldEntry.getValue();
@@ -531,9 +539,11 @@ public class ShipWorldData {
             try {
                 config.save(chunksFile);
             } catch (IOException e) {
+                allOk = false;
                 plugin.getLogger().severe("Failed to save chunk index for world " + worldName + ": " + e.getMessage());
             }
         }
+        return allOk;
     }
 
     /**
@@ -562,6 +572,20 @@ public class ShipWorldData {
         Set<UUID> ids = new HashSet<>();
         Map<String, List<UUID>> worldIndex = chunkIndices.get(world.getName());
         if (worldIndex != null) {
+            worldIndex.values().forEach(ids::addAll);
+        }
+        return ids;
+    }
+
+    /**
+     * All persisted ship ids across every indexed world on disk (loaded or not).
+     * Reads the full in-memory chunk index directly, so it sees worlds that exist on
+     * disk but aren't currently loaded (e.g. an unloaded Multiverse world) — unlike
+     * iterating {@link org.bukkit.Bukkit#getWorlds()}. No chunk I/O.
+     */
+    public Set<UUID> getAllPersistedShipIds() {
+        Set<UUID> ids = new HashSet<>();
+        for (Map<String, List<UUID>> worldIndex : chunkIndices.values()) {
             worldIndex.values().forEach(ids::addAll);
         }
         return ids;
