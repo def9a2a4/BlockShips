@@ -201,7 +201,8 @@ public class ItemUtil {
 
     /**
      * Applies a custom texture to a player head item.
-     * Handles Base64 decoding and URL extraction from texture value.
+     * Looks up the configured texture set/variant and applies its base64 texture to the head
+     * (via {@link #applyPlayerHeadTextureFromBase64}).
      *
      * @param meta The SkullMeta to apply texture to
      * @param shipType The ship type (used to look up texture set in config)
@@ -244,6 +245,10 @@ public class ItemUtil {
         }
 
         try {
+            // Validate the value is well-formed base64 before embedding it. setProperty/setPlayerProfile
+            // accept any string without complaint, so a plain URL or corrupted value would otherwise render
+            // a silent blank head; this makes a malformed value throw into the catch below and get logged.
+            java.util.Base64.getDecoder().decode(textureBase64);
             // Deterministic UUID from the texture so identical heads stack and the recipe-book icon is stable.
             UUID profileUuid = UUID.nameUUIDFromBytes(textureBase64.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             com.destroystokyo.paper.profile.PlayerProfile profile = Bukkit.createProfile(profileUuid, null);

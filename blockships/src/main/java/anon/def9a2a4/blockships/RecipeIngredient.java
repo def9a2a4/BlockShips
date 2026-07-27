@@ -251,9 +251,37 @@ class CustomItemIngredient implements RecipeIngredient {
             return new RecipeChoice.MaterialChoice(Material.PLAYER_HEAD);
         }
 
-        // For simplicity: just use MaterialChoice
-        // The PrepareItemCraftEvent validation will check the actual item
-        return new RecipeChoice.MaterialChoice(customItem.getBaseMaterial());
+        // Build an ExactChoice over every craftable variant of this custom item so the recipe book
+        // renders the real (textured) item in the ingredient slot - e.g. actual balloons for the airship
+        // instead of blank player heads - and matches it by full meta. (PrepareItemCraftEvent still does
+        // the final grid validation.) Requires the deterministic head-profile UUID so identical items are
+        // isSimilar; see ItemUtil.applyPlayerHeadTextureFromBase64.
+        java.util.LinkedHashSet<String> variants = new java.util.LinkedHashSet<>();
+        variants.add("_DEFAULT");
+        if (textureManager != null && customItem.getTextureSet() != null) {
+            variants.addAll(textureManager.getVariants(customItem.getTextureSet()));
+        }
+        // A WOOL-sourced item (e.g. balloons) can be any of the 16 dye colours - including ones with no
+        // dedicated texture entry, which fall back to _DEFAULT. Include them all so every craftable colour
+        // still triggers the recipe (otherwise those balloons would silently stop matching).
+        String variantSource = customItem.getVariantSource();
+        if (variantSource != null && variantSource.toUpperCase().contains("WOOL")) {
+            for (org.bukkit.DyeColor color : org.bukkit.DyeColor.values()) {
+                variants.add(color.name());
+            }
+        }
+
+        List<ItemStack> choices = new ArrayList<>();
+        for (String variant : variants) {
+            ItemStack item = customItem.create(variant);
+            if (item != null && item.hasItemMeta()) {
+                choices.add(item);
+            }
+        }
+        if (choices.isEmpty()) {
+            return new RecipeChoice.MaterialChoice(customItem.getBaseMaterial());
+        }
+        return new RecipeChoice.ExactChoice(choices);
     }
 
     public String getCustomItemId() {

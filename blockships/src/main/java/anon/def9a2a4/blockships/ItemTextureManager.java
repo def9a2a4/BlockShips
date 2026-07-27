@@ -105,6 +105,19 @@ public class ItemTextureManager {
     }
 
     /**
+     * Returns the variant keys defined for a texture set (e.g. _DEFAULT, RED, BLUE for BALLOONS),
+     * or an empty set if the set doesn't exist. Used to enumerate a custom item's variants when
+     * building an ExactChoice recipe ingredient so the recipe book renders the real textured item.
+     */
+    public java.util.Set<String> getVariants(String setName) {
+        Map<String, String> set = textureSets.get(setName);
+        if (set == null) {
+            return java.util.Collections.emptySet();
+        }
+        return new java.util.LinkedHashSet<>(set.keySet());
+    }
+
+    /**
      * Reload texture sets from items.yml
      */
     public void reload() {
