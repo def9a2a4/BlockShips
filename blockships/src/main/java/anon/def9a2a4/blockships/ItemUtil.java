@@ -10,8 +10,6 @@ import org.bukkit.inventory.meta.SkullMeta;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
-import java.net.URI;
-import java.net.URL;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -246,24 +244,14 @@ public class ItemUtil {
         }
 
         try {
-            // Decode Base64 to get texture URL (format: {"textures":{"SKIN":{"url":"..."}}}
-            String decoded = new String(Base64.getDecoder().decode(textureBase64));
-
-            // Extract URL from JSON (simple string parsing)
-            int urlStart = decoded.indexOf("\"url\":\"") + 7;
-            int urlEnd = decoded.indexOf("\"", urlStart);
-
-            if (urlStart > 7 && urlEnd > urlStart) {
-                String urlString = decoded.substring(urlStart, urlEnd);
-                URL textureUrl = new URL(urlString);
-
-                // Create player profile with texture
-                var profile = Bukkit.createPlayerProfile(UUID.randomUUID());
-                var textures = profile.getTextures();
-                textures.setSkin(textureUrl);
-                profile.setTextures(textures);
-                meta.setOwnerProfile(profile);
-            }
+            // Deterministic UUID from the texture so identical heads stack and the recipe-book icon is stable.
+            UUID profileUuid = UUID.nameUUIDFromBytes(textureBase64.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            com.destroystokyo.paper.profile.PlayerProfile profile = Bukkit.createProfile(profileUuid, null);
+            // Embed the raw base64 "textures" property directly so the client can render the skin without a
+            // session-server profile lookup. A URL-only profile (setSkin) renders as a blank Steve head in
+            // contexts that never trigger async profile completion - notably the recipe book result icon.
+            profile.setProperty(new com.destroystokyo.paper.profile.ProfileProperty("textures", textureBase64));
+            meta.setPlayerProfile(profile);
         } catch (Exception e) {
             // Silently fail - texture application is optional
             if (plugin != null) {
