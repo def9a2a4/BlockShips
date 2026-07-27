@@ -746,7 +746,10 @@ public class BlockStructureScanner {
         int protectedCount = 0;
 
         // O(1) gate: only pay per-cell WorldGuard queries in worlds that actually have regions.
-        boolean wgOn = anon.def9a2a4.blockships.integration.WorldGuardHook.get().mightRestrict(wheelLocation.getWorld());
+        // Admin toggle: unattended/system paths (player == null) opting into place-anyway see no regions,
+        // so no cell is counted as protected (matches placeBlocks, which places them normally).
+        boolean wgOn = anon.def9a2a4.blockships.integration.WorldGuardHook.get().mightRestrict(wheelLocation.getWorld())
+            && !(player == null && anon.def9a2a4.blockships.integration.WorldGuardHook.get().systemPathPlacesInRegions());
 
         for (ShipModel.ModelPart part : model.parts) {
             // Extract position from transformation matrix
@@ -819,14 +822,20 @@ public class BlockStructureScanner {
      */
     public static boolean placeBlocks(Location wheelLocation, ShipModel model, float currentShipYaw, boolean force,
                                       org.bukkit.entity.Player player, boolean anchorProtected) {
-        PlacementConflicts conflicts = validatePlacementArea(wheelLocation, model, currentShipYaw, player);
-
-        if (!force && !conflicts.isClear()) {
-            return false;
+        // Only the non-force path needs the conflict scan (to abort on any obstruction). Under force the
+        // result is unused, so skip this full O(n) scan — and its per-cell WorldGuard pass — entirely.
+        if (!force) {
+            PlacementConflicts conflicts = validatePlacementArea(wheelLocation, model, currentShipYaw, player);
+            if (!conflicts.isClear()) {
+                return false;
+            }
         }
 
         // O(1) gate: only pay per-cell WorldGuard queries in worlds that actually have regions.
-        boolean wgOn = anon.def9a2a4.blockships.integration.WorldGuardHook.get().mightRestrict(wheelLocation.getWorld());
+        // Admin toggle: unattended/system paths (player == null) that opt into place-anyway skip the drop
+        // routing entirely, so protected cells are placed normally (pre-integration wreck behavior).
+        boolean wgOn = anon.def9a2a4.blockships.integration.WorldGuardHook.get().mightRestrict(wheelLocation.getWorld())
+            && !(player == null && anon.def9a2a4.blockships.integration.WorldGuardHook.get().systemPathPlacesInRegions());
 
         // Calculate rotation delta from assembly orientation
         float rotationDelta = currentShipYaw - model.assemblyYaw;
@@ -1080,7 +1089,8 @@ public class BlockStructureScanner {
         org.bukkit.inventory.ItemStack mainItem = null;
 
         if (Boolean.TRUE.equals(part.rawYaml.get("is_engine"))
-                && bsPlugin != null && bsPlugin.getDisplayShip() != null) {
+                && bsPlugin != null && bsPlugin.getDisplayShip() != null
+                && bsPlugin.getDisplayShip().getItemFactory() != null) {
             mainItem = bsPlugin.getDisplayShip().getItemFactory().createItem("ship_engine", "_DEFAULT", null);
         }
 

@@ -2220,6 +2220,7 @@ public class DisplayShip implements Listener {
         anon.def9a2a4.blockships.integration.WorldGuardHook wgWheel = anon.def9a2a4.blockships.integration.WorldGuardHook.get();
         if (wgWheel.mightRestrict(block.getWorld()) && wgWheel.isBuildDenied(block.getLocation(), event.getPlayer())) {
             event.getPlayer().sendMessage("§cYou can't break this ship wheel in this protected region.");
+            event.setCancelled(true);  // self-cancel; don't rely on WorldGuard's own handler firing
             return;
         }
 
@@ -2412,6 +2413,7 @@ public class DisplayShip implements Listener {
         anon.def9a2a4.blockships.integration.WorldGuardHook wgEngine = anon.def9a2a4.blockships.integration.WorldGuardHook.get();
         if (wgEngine.mightRestrict(block.getWorld()) && wgEngine.isBuildDenied(block.getLocation(), event.getPlayer())) {
             event.getPlayer().sendMessage("§cYou can't break this ship engine in this protected region.");
+            event.setCancelled(true);  // self-cancel; don't rely on WorldGuard's own handler firing
             return;
         }
 

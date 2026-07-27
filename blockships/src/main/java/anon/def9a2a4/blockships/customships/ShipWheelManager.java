@@ -251,12 +251,16 @@ public class ShipWheelManager {
         // in. This checks EVERY flood-filled cell (removeBlocks would delete them all), closing the
         // block-laundering exploit (assemble across a border, then force-disassemble to drop the blocks as
         // items). No force override here — that would defeat the purpose. Members/ops with bypass pass freely.
-        BlockStructureScanner.PlacementConflicts wgConflicts =
-            BlockStructureScanner.validatePlacementArea(wheelLoc, model, assemblyYaw, player);
-        if (wgConflicts.protectedCount > 0) {
-            player.sendMessage("§cCannot assemble — " + wgConflicts.protectedCount
-                + " block(s) are in a protected region you can't build in.");
-            return false;
+        // Gated by mightRestrict so worlds without regions (and servers without WorldGuard) skip the scan
+        // entirely and behave exactly as before this feature.
+        if (anon.def9a2a4.blockships.integration.WorldGuardHook.get().mightRestrict(wheelLoc.getWorld())) {
+            BlockStructureScanner.PlacementConflicts wgConflicts =
+                BlockStructureScanner.validatePlacementArea(wheelLoc, model, assemblyYaw, player);
+            if (wgConflicts.protectedCount > 0) {
+                player.sendMessage("§cCannot assemble — " + wgConflicts.protectedCount
+                    + " block(s) are in a protected region you can't build in.");
+                return false;
+            }
         }
 
         // Create a ShipInstance from the model BEFORE removing blocks
@@ -543,7 +547,10 @@ public class ShipWheelManager {
         // WorldGuard: decide ONCE whether the wheel-anchor cell is protected, and pass it into placeBlocks
         // so the head-skip there and the deregister below use the same answer (they can never disagree).
         Location newWheelLocation = shipLoc.getBlock().getLocation();
-        boolean wgOn = anon.def9a2a4.blockships.integration.WorldGuardHook.get().mightRestrict(newWheelLocation.getWorld());
+        // Admin toggle: for unattended/system paths (player == null) that opt into place-anyway, treat the
+        // world as region-free so blocks (and the wheel anchor) are placed normally instead of dropped.
+        boolean wgOn = anon.def9a2a4.blockships.integration.WorldGuardHook.get().mightRestrict(newWheelLocation.getWorld())
+            && !(player == null && anon.def9a2a4.blockships.integration.WorldGuardHook.get().systemPathPlacesInRegions());
         boolean anchorProtected = wgOn && force
             && anon.def9a2a4.blockships.integration.WorldGuardHook.get().isBuildDenied(newWheelLocation, player);
 
@@ -554,8 +561,6 @@ public class ShipWheelManager {
         transferLeadsFromShip(ship, model, shipLoc, currentYaw);
 
         // Update wheel tracking to new location
-        float rotationDelta = currentYaw - model.assemblyYaw;
-        BlockFace newFacing = BlockStructureScanner.rotateBlockFace(wheelData.getFacing(), rotationDelta);
         if (anchorProtected) {
             // The anchor head was NOT placed (protected region). Return the wheel as an item and deregister
             // the wheel — like breakWheelBlock() but WITHOUT touching the protected cell's block.
@@ -567,6 +572,8 @@ public class ShipWheelManager {
             placedWheels.remove(locationKey(wheelData.getBlockLocation()));
             saveAll();
         } else {
+            float rotationDelta = currentYaw - model.assemblyYaw;
+            BlockFace newFacing = BlockStructureScanner.rotateBlockFace(wheelData.getFacing(), rotationDelta);
             updateWheelLocation(wheelData, newWheelLocation, newFacing);
         }
 

@@ -379,14 +379,19 @@ public class BlockShipsPlugin extends JavaPlugin {
      */
     private void setupWorldGuardHook() {
         boolean enabled = getConfig().getBoolean("plugins.worldguard.enabled", true);
+        boolean systemPlacesAnyway = "place-anyway".equalsIgnoreCase(
+            getConfig().getString("plugins.worldguard.system-disassembly-in-region", "drop-items"));
         if (enabled && Bukkit.getPluginManager().getPlugin("WorldGuard") != null) {
             try {
                 Class.forName("com.sk89q.worldguard.WorldGuard");
+                // Re-arm the fail-open error log so a transient fault before this reload doesn't stay silent.
+                anon.def9a2a4.blockships.integration.WorldGuardHookImpl.resetErrorThrottle();
                 anon.def9a2a4.blockships.integration.WorldGuardHook.set(
-                    new anon.def9a2a4.blockships.integration.WorldGuardHookImpl());
+                    new anon.def9a2a4.blockships.integration.WorldGuardHookImpl(systemPlacesAnyway));
                 getLogger().info("WorldGuard integration ENABLED: ships now respect region build permissions "
                     + "(protected-region disassembly drops blocks as items; assembly/placement/breaking denied). "
-                    + "Disable via plugins.worldguard.enabled in config.yml.");
+                    + "Unattended/crash disassembly in a region: " + (systemPlacesAnyway ? "place-anyway" : "drop-items")
+                    + ". Disable via plugins.worldguard.enabled in config.yml.");
             } catch (Throwable t) {
                 anon.def9a2a4.blockships.integration.WorldGuardHook.set(
                     new anon.def9a2a4.blockships.integration.NoOpWorldGuardHook());

@@ -16,6 +16,12 @@ plugins:
     # Assembly / wheel placement / wheel & engine breaking: denied inside a protected region.
     # Members, ops, and anyone with WorldGuard bypass are unaffected.
     enabled: true
+    # What happens when an UNATTENDED ship (combat/crash death, or /blockships forcedisassembleall)
+    # would place blocks into a protected region. Player-driven Force Disassemble always respects the
+    # acting player's own build permission and ignores this setting.
+    #   drop-items    (default) blocks drop as items - never written into the region (no grief)
+    #   place-anyway            blocks are written into the region anyway (pre-integration wreck behavior)
+    system-disassembly-in-region: drop-items
 
 # Special Drowned Configuration
 # These rare drowned mobs drop ship wheels when killed

@@ -33,6 +33,13 @@ public final class WorldGuardHookImpl implements WorldGuardHook {
 
     private static volatile boolean loggedWgError = false; // one-shot throttle for fail-open logging
 
+    /** Admin policy: when true, system/crash disassembly places blocks into regions instead of dropping them. */
+    private final boolean systemPlacesAnyway;
+
+    public WorldGuardHookImpl(boolean systemPlacesAnyway) {
+        this.systemPlacesAnyway = systemPlacesAnyway;
+    }
+
     @Override
     public boolean isBuildDenied(Location loc, @Nullable Player player) {
         try {
@@ -77,10 +84,20 @@ public final class WorldGuardHookImpl implements WorldGuardHook {
         }
     }
 
+    @Override
+    public boolean systemPathPlacesInRegions() {
+        return systemPlacesAnyway;
+    }
+
     private static void logWgErrorOnce(Throwable t) {
         if (!loggedWgError) {
             loggedWgError = true;
             Bukkit.getLogger().warning("[BlockShips] WorldGuard query failed, failing open: " + t);
         }
+    }
+
+    /** Re-arms the one-shot fail-open log so a later fault is reported again (called on reload). */
+    public static void resetErrorThrottle() {
+        loggedWgError = false;
     }
 }

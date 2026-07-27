@@ -28,6 +28,16 @@ public interface WorldGuardHook {
      */
     boolean mightRestrict(World world);
 
+    /**
+     * Admin policy for UNATTENDED/system disassembly (the {@code player == null} paths: crash/combat
+     * death, {@code forcedisassembleall}) that would place blocks into a protected region.
+     *
+     * @return true if system paths should place blocks anyway (pre-integration wreck behavior);
+     *         false (default) to drop those blocks as items. Player-driven force-disassembly ignores
+     *         this and always respects the acting player's own build permission.
+     */
+    boolean systemPathPlacesInRegions();
+
     // ===== static holder =====
 
     WorldGuardHook[] HOLDER = { new NoOpWorldGuardHook() };

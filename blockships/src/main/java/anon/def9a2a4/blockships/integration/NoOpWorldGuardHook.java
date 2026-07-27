@@ -21,4 +21,10 @@ public final class NoOpWorldGuardHook implements WorldGuardHook {
     public boolean mightRestrict(World world) {
         return false;
     }
+
+    @Override
+    public boolean systemPathPlacesInRegions() {
+        // Irrelevant under NoOp (nothing is ever routed to drops), but keep the safe default.
+        return false;
+    }
 }
