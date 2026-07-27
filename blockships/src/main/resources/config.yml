@@ -216,7 +216,7 @@ custom-items:
         - "WWW"
       ingredients:
         W: ["*_WOOL"]
-        M: [PHANTOM_MEMBRANE]
+        M: [GLOWSTONE]
       result-name: "{VARIANT} Ship Balloon"
       result-item: PLAYER_HEAD
       result-texture-set: BALLOONS
@@ -231,12 +231,12 @@ custom-items:
       pattern:
         - " C "
         - "CGC"
-        - "MCF"
+        - "MCL"
       ingredients:
         C: [COPPER_INGOT]
         G: [GOLD_INGOT]
         M: [COMPASS]
-        F: [BLAST_FURNACE]
+        L: [LEAD]
       result-name: "Ship Wheel"
       result-item: PLAYER_HEAD
       result-texture-set: SHIP_WHEEL_SET
