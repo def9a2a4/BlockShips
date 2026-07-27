@@ -898,7 +898,7 @@ public class ShipWheelManager {
                     float engineBonus = (float) (fueledEngines * config.enginePower) / mass;
                     float ratio = Math.min(nonEngineRatio + engineBonus, 1.0f);
                     int speedPercent = config.sailCapRatio > 0
-                        ? Math.round(ratio / config.sailCapRatio * 100) : 0;
+                        ? Math.round(ratio / config.sailCapRatio * 100) : Math.round(ratio * 100);
 
                     player.sendMessage("§7Sails: §f" + ship.model.woolCount + " wool, " + ship.model.bannerCount + " banners §7(" + sailPower + " pts)");
                     if (ship.model.engineCount > 0) {
@@ -1026,7 +1026,8 @@ public class ShipWheelManager {
             float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
             float engineBonus = (float) (fueledEngineCount * config.enginePower) / shipMass;
             float ratio = Math.min(nonEngineRatio + engineBonus, 1.0f);
-            int speedPercent = Math.round(ratio / config.sailCapRatio * 100);
+            int speedPercent = config.sailCapRatio > 0
+                ? Math.round(ratio / config.sailCapRatio * 100) : Math.round(ratio * 100);
             player.sendMessage("§7Sails: §f" + woolCount + " wool, " + bannerCount + " banners §7(" + sailPower + " pts)");
             if (engineCount > 0) {
                 int unfueled = engineCount - fueledEngineCount;

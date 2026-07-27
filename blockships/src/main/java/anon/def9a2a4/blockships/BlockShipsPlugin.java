@@ -379,8 +379,13 @@ public class BlockShipsPlugin extends JavaPlugin {
      */
     private void setupWorldGuardHook() {
         boolean enabled = getConfig().getBoolean("plugins.worldguard.enabled", true);
-        boolean systemPlacesAnyway = "place-anyway".equalsIgnoreCase(
-            getConfig().getString("plugins.worldguard.system-disassembly-in-region", "drop-items"));
+        String systemDisassembly = getConfig().getString("plugins.worldguard.system-disassembly-in-region", "drop-items");
+        boolean systemPlacesAnyway = "place-anyway".equalsIgnoreCase(systemDisassembly);
+        if (!systemPlacesAnyway && systemDisassembly != null && !systemDisassembly.isBlank()
+                && !"drop-items".equalsIgnoreCase(systemDisassembly)) {
+            getLogger().warning("Unrecognized plugins.worldguard.system-disassembly-in-region '" + systemDisassembly
+                + "'; expected drop-items or place-anyway. Using drop-items.");
+        }
         if (enabled && Bukkit.getPluginManager().getPlugin("WorldGuard") != null) {
             try {
                 Class.forName("com.sk89q.worldguard.WorldGuard");
@@ -995,6 +1000,11 @@ public class BlockShipsPlugin extends JavaPlugin {
         var shipsSection = getConfig().getConfigurationSection("ships");
         if (shipsSection != null) {
             items.addAll(shipsSection.getKeys(false));
+        }
+        // The engine give is gated on the stats system; don't advertise it (help list or tab-complete)
+        // when stats are disabled, since `give ship_engine` would just be refused.
+        if (!getConfig().getBoolean("custom-ships.stats.enabled", false)) {
+            items.remove("ship_engine");
         }
         return new ArrayList<>(items);
     }

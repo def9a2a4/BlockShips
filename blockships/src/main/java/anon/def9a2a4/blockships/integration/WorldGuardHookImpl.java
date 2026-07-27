@@ -45,6 +45,11 @@ public final class WorldGuardHookImpl implements WorldGuardHook {
         return isBuildDenied(loc, player, false);
     }
 
+    // IMPORTANT: callers MUST gate this behind mightRestrict()/mightRestrictFailClosed() first. In a world
+    // with region support disabled (useRegions:false), WorldGuard resolves the query via PermissiveRegionSet,
+    // whose queryValue(BUILD) returns DENY (verified in 7.0.17) — so this method would return true (denied)
+    // EVERYWHERE in such a world. The gate returns false for those worlds and short-circuits the scan, so it
+    // is load-bearing for correctness, not merely an O(1) optimization. Do not call this ungated.
     @Override
     public boolean isBuildDenied(Location loc, @Nullable Player player, boolean failClosedOnError) {
         try {
@@ -95,14 +100,20 @@ public final class WorldGuardHookImpl implements WorldGuardHook {
     @Override
     public boolean mightRestrictFailClosed(World world) {
         try {
-            RegionManager rm = WorldGuard.getInstance().getPlatform().getRegionContainer()
-                    .get(BukkitAdapter.adapt(world));
-            // Region data unavailable (null) → fail closed so the per-cell fail-closed checks still run,
-            // rather than silently skipping the assembly gate during a WG hiccup.
-            return rm == null || rm.size() > 0;
+            com.sk89q.worldedit.world.World weWorld = BukkitAdapter.adapt(world);
+            RegionManager rm = WorldGuard.getInstance().getPlatform().getRegionContainer().get(weWorld);
+            if (rm != null) {
+                return rm.size() > 0; // regions loaded: gate iff any exist (same as mightRestrict)
+            }
+            // rm == null means region support is either DISABLED for this world or FAILED to load - and
+            // get() can't tell them apart. useRegions is the distinguishing signal (what WG's own query
+            // branches on): disabled (false) → no gate, matching mightRestrict and the drop paths; failed
+            // (true) → fail closed, matching WG's FailedLoadRegionSet denying BUILD in the per-cell query
+            // (which our gate would otherwise short-circuit away, reopening the block-laundering exploit).
+            return WorldGuard.getInstance().getPlatform().getGlobalStateManager().get(weWorld).useRegions;
         } catch (Throwable t) {
             logWgErrorOnce(t);
-            return true;
+            return true; // genuine fault → fail closed
         }
     }
 

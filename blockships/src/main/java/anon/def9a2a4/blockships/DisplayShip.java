@@ -2210,7 +2210,7 @@ public class DisplayShip implements Listener {
     /**
      * Event: Handle ship wheel block breaking
      */
-    @EventHandler
+    @EventHandler(priority = org.bukkit.event.EventPriority.HIGHEST)
     public void onShipWheelBreak(BlockBreakEvent event) {
         Block block = event.getBlock();
         if (!isShipWheelBlock(block)) return;
@@ -2407,7 +2407,7 @@ public class DisplayShip implements Listener {
      * Drops the custom ship engine item when a player breaks an engine block.
      * Without this, breaking drops a vanilla blast furnace (losing PDC tag and glint).
      */
-    @EventHandler
+    @EventHandler(priority = org.bukkit.event.EventPriority.HIGHEST)
     public void onBreakShipEngine(BlockBreakEvent event) {
         Block block = event.getBlock();
         if (!isShipEngine(block)) return;

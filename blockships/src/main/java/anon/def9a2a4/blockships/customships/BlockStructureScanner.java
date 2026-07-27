@@ -1079,7 +1079,13 @@ public class BlockStructureScanner {
         // Multi-cell blocks (doors, tall plants, beds) occupy two cells that each carry an item-bearing
         // material. Drop from the primary half only so the item isn't duplicated. The non-primary half
         // has no container contents either, so returning early loses nothing.
+        // NOTE: Stairs and TrapDoor are single-cell Bisected blocks where `half` is an ORIENTATION
+        // (upside-down stairs, top-hung trapdoor), not a stacked second cell - they must NOT be skipped
+        // or they'd silently vanish. Re-check this exclusion list on Minecraft version updates in case a
+        // new single-cell Bisected type is added.
         if (part.block instanceof org.bukkit.block.data.Bisected bisected
+                && !(part.block instanceof org.bukkit.block.data.type.Stairs)
+                && !(part.block instanceof org.bukkit.block.data.type.TrapDoor)
                 && bisected.getHalf() == org.bukkit.block.data.Bisected.Half.TOP) {
             return;
         }
@@ -1154,55 +1160,64 @@ public class BlockStructureScanner {
 
     /** Applies persisted head/banner/custom-name NBT from a part's rawYaml onto its dropped item. */
     private static void applyDroppedItemDecoration(org.bukkit.inventory.ItemStack item, ShipModel.ModelPart part) {
-        org.bukkit.inventory.meta.ItemMeta meta = item.getItemMeta();
-        if (meta == null) return;
-        boolean changed = false;
+        // Belt-and-suspenders: this runs BEFORE the drop, so a cast/parse fault on corrupted or hand-edited
+        // model data must not escape (it would propagate to placeBlocks' per-cell catch and skip the drop,
+        // losing the whole block item). Worst case here is an undecorated drop, never a lost block.
+        try {
+            org.bukkit.inventory.meta.ItemMeta meta = item.getItemMeta();
+            if (meta == null) return;
+            boolean changed = false;
 
-        // Player-head texture
-        if (part.rawYaml.containsKey("skull_profile")
-                && meta instanceof org.bukkit.inventory.meta.SkullMeta skullMeta) {
-            com.destroystokyo.paper.profile.PlayerProfile profile =
-                deserializeProfile((String) part.rawYaml.get("skull_profile"));
-            if (profile != null) {
-                skullMeta.setPlayerProfile(profile);
-                changed = true;
-            }
-        }
-
-        // Banner patterns
-        if (part.rawYaml.containsKey("banner_patterns")
-                && meta instanceof org.bukkit.inventory.meta.BannerMeta bannerMeta) {
-            @SuppressWarnings("unchecked")
-            java.util.List<Map<String, Object>> patternList =
-                (java.util.List<Map<String, Object>>) part.rawYaml.get("banner_patterns");
-            if (patternList != null) {
-                java.util.List<org.bukkit.block.banner.Pattern> patterns = new java.util.ArrayList<>();
-                for (Map<String, Object> patternMap : patternList) {
-                    try {
-                        org.bukkit.DyeColor color = org.bukkit.DyeColor.valueOf((String) patternMap.get("color"));
-                        org.bukkit.block.banner.PatternType patternType = Registry.BANNER_PATTERN.get(
-                            NamespacedKey.minecraft(((String) patternMap.get("pattern")).toLowerCase()));
-                        if (patternType != null) {
-                            patterns.add(new org.bukkit.block.banner.Pattern(color, patternType));
-                        }
-                    } catch (IllegalArgumentException ignored) { /* skip a bad pattern entry */ }
+            // Player-head texture
+            if (part.rawYaml.containsKey("skull_profile")
+                    && meta instanceof org.bukkit.inventory.meta.SkullMeta skullMeta) {
+                com.destroystokyo.paper.profile.PlayerProfile profile =
+                    deserializeProfile((String) part.rawYaml.get("skull_profile"));
+                if (profile != null) {
+                    skullMeta.setPlayerProfile(profile);
+                    changed = true;
                 }
-                bannerMeta.setPatterns(patterns);
-                changed = true;
             }
-        }
 
-        // Custom name (anvil-renamed containers, banners, ...) - stored as a serialized Adventure component.
-        if (part.rawYaml.containsKey("custom_name")) {
-            try {
-                net.kyori.adventure.text.Component name = net.kyori.adventure.text.serializer.gson
-                    .GsonComponentSerializer.gson().deserialize((String) part.rawYaml.get("custom_name"));
-                meta.displayName(name);
-                changed = true;
-            } catch (Exception ignored) { /* leave the name off if it won't deserialize */ }
-        }
+            // Banner patterns
+            if (part.rawYaml.containsKey("banner_patterns")
+                    && meta instanceof org.bukkit.inventory.meta.BannerMeta bannerMeta) {
+                @SuppressWarnings("unchecked")
+                java.util.List<Map<String, Object>> patternList =
+                    (java.util.List<Map<String, Object>>) part.rawYaml.get("banner_patterns");
+                if (patternList != null) {
+                    java.util.List<org.bukkit.block.banner.Pattern> patterns = new java.util.ArrayList<>();
+                    for (Map<String, Object> patternMap : patternList) {
+                        try {
+                            org.bukkit.DyeColor color = org.bukkit.DyeColor.valueOf((String) patternMap.get("color"));
+                            org.bukkit.block.banner.PatternType patternType = Registry.BANNER_PATTERN.get(
+                                NamespacedKey.minecraft(((String) patternMap.get("pattern")).toLowerCase()));
+                            if (patternType != null) {
+                                patterns.add(new org.bukkit.block.banner.Pattern(color, patternType));
+                            }
+                        } catch (IllegalArgumentException ignored) { /* skip a bad pattern entry */ }
+                    }
+                    bannerMeta.setPatterns(patterns);
+                    changed = true;
+                }
+            }
 
-        if (changed) item.setItemMeta(meta);
+            // Custom name (anvil-renamed containers, banners, ...) - stored as a serialized Adventure component.
+            if (part.rawYaml.containsKey("custom_name")) {
+                try {
+                    net.kyori.adventure.text.Component name = net.kyori.adventure.text.serializer.gson
+                        .GsonComponentSerializer.gson().deserialize((String) part.rawYaml.get("custom_name"));
+                    meta.displayName(name);
+                    changed = true;
+                } catch (Exception ignored) { /* leave the name off if it won't deserialize */ }
+            }
+
+            if (changed) item.setItemMeta(meta);
+        } catch (Throwable t) {
+            // Corrupted/hand-edited model data: keep the (undecorated) item rather than losing the drop.
+            org.bukkit.Bukkit.getLogger().warning("[BlockShips] applyDroppedItemDecoration: skipping decoration for a "
+                + item.getType() + " drop (bad model data): " + t);
+        }
     }
 
     /**

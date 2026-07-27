@@ -481,7 +481,8 @@ public class ShipWheelMenu {
                 // Ship stats (simplified - detailed breakdown in stats item below)
                 lore.add("");
                 if (info.statsEnabled) {
-                    int speedPercent = Math.round(info.ratio / info.sailCapRatio * 100);
+                    int speedPercent = info.sailCapRatio > 0
+                        ? Math.round(info.ratio / info.sailCapRatio * 100) : Math.round(info.ratio * 100);
                     String maxTag = info.ratio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
                     lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%" + maxTag);
                     if (speedPercent < 50) {
@@ -583,7 +584,8 @@ public class ShipWheelMenu {
                 lore.add(ChatColor.GRAY + "Power Ratio: " + ChatColor.YELLOW
                     + String.format("%.2f", info.ratio) + ChatColor.GRAY + " / 1.00");
 
-                int speedPercent = Math.round(info.ratio / info.sailCapRatio * 100);
+                int speedPercent = info.sailCapRatio > 0
+                    ? Math.round(info.ratio / info.sailCapRatio * 100) : Math.round(info.ratio * 100);
                 String maxTag = info.ratio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
                 lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%" + maxTag);
               }
