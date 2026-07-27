@@ -1,4 +1,8 @@
-# v0.0.17 - WorldGuard integration & admin command hardening
+# v0.0.17 - tweaks and fixes
+
+- **Cheaper craftable recipes:** the Ship Balloon now uses a glowstone block (was a
+  phantom membrane) and the Ship Wheel uses a lead (was a blast furnace). Custom heads
+  (balloon, wheel, ship kits) also render correctly in the recipe book again.
 
 - **WorldGuard region protection is now respected:** ships that disassemble or crash-land
   inside a WorldGuard-protected region no longer write blocks into it past the region's
@@ -11,10 +15,6 @@
 
 - **New permission nodes:** `blockships.info` (default true) and `blockships.highlight`
   (default op). If you manage permissions explicitly, grant these.
-
-- **Cheaper craftable recipes:** the Ship Balloon now uses a glowstone block (was a
-  phantom membrane) and the Ship Wheel uses a lead (was a blast furnace). Custom heads
-  (balloon, wheel, ship kits) also render correctly in the recipe book again.
 
 
 ---
