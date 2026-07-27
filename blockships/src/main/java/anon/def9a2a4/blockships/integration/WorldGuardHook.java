@@ -23,10 +23,29 @@ public interface WorldGuardHook {
     boolean isBuildDenied(Location loc, @Nullable Player player);
 
     /**
+     * Like {@link #isBuildDenied(Location, Player)}, but controls what happens when the WorldGuard
+     * query itself fails. The assembly gate passes {@code failClosedOnError=true} so a transient WG
+     * fault is treated as "denied" (it must not reopen the block-laundering exploit); the destructive
+     * drop paths keep the two-arg fail-open behavior. Default delegates for the no-op hook.
+     */
+    default boolean isBuildDenied(Location loc, @Nullable Player player, boolean failClosedOnError) {
+        return isBuildDenied(loc, player);
+    }
+
+    /**
      * Cheap O(1) gate: does this world have any regions that could restrict building?
      * Lets callers skip per-cell queries entirely in region-free worlds.
      */
     boolean mightRestrict(World world);
+
+    /**
+     * Fail-closed variant of {@link #mightRestrict(World)} for the assembly gate: returns true also
+     * when region data is unavailable or the query fails, so the per-cell fail-closed checks still run
+     * rather than being skipped. Default delegates for the no-op hook (no WorldGuard = never gates).
+     */
+    default boolean mightRestrictFailClosed(World world) {
+        return mightRestrict(world);
+    }
 
     /**
      * Admin policy for UNATTENDED/system disassembly (the {@code player == null} paths: crash/combat

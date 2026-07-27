@@ -2215,6 +2215,10 @@ public class DisplayShip implements Listener {
         Block block = event.getBlock();
         if (!isShipWheelBlock(block)) return;
 
+        // Respect a break already cancelled by another protection plugin (GriefPrevention/Towny/etc.):
+        // leave the wheel intact instead of manually breaking + dropping it.
+        if (event.isCancelled()) return;
+
         // WorldGuard: this handler cancels + manually breaks the block, so it would otherwise fire even
         // when WG denied the break for a non-member. Respect build rights: leave the wheel intact.
         anon.def9a2a4.blockships.integration.WorldGuardHook wgWheel = anon.def9a2a4.blockships.integration.WorldGuardHook.get();
@@ -2407,6 +2411,10 @@ public class DisplayShip implements Listener {
     public void onBreakShipEngine(BlockBreakEvent event) {
         Block block = event.getBlock();
         if (!isShipEngine(block)) return;
+
+        // Respect a break already cancelled by another protection plugin (GriefPrevention/Towny/etc.):
+        // leave the engine intact instead of manually breaking + handing back the item.
+        if (event.isCancelled()) return;
 
         // WorldGuard: this handler cancels + manually breaks the block and hands back the engine item, so
         // it would otherwise fire even when WG denied the break. Respect build rights: leave it intact.

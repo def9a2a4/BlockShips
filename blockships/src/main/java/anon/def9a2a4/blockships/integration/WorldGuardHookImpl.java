@@ -42,6 +42,11 @@ public final class WorldGuardHookImpl implements WorldGuardHook {
 
     @Override
     public boolean isBuildDenied(Location loc, @Nullable Player player) {
+        return isBuildDenied(loc, player, false);
+    }
+
+    @Override
+    public boolean isBuildDenied(Location loc, @Nullable Player player, boolean failClosedOnError) {
         try {
             RegionContainer container = WorldGuard.getInstance().getPlatform().getRegionContainer();
 
@@ -67,8 +72,8 @@ public final class WorldGuardHookImpl implements WorldGuardHook {
             // to ALLOW. So "denied" == "not explicitly ALLOW". Do NOT use == DENY here.
             return state != StateFlag.State.ALLOW;
         } catch (Throwable t) {
-            logWgErrorOnce(t); // fail-open: a transient WG fault must not destroy a ship or block building
-            return false;
+            logWgErrorOnce(t); // fail-open (or fail-closed for the assembly gate) on a transient WG fault
+            return failClosedOnError;
         }
     }
 
@@ -77,10 +82,27 @@ public final class WorldGuardHookImpl implements WorldGuardHook {
         try {
             RegionManager rm = WorldGuard.getInstance().getPlatform().getRegionContainer()
                     .get(BukkitAdapter.adapt(world)); // @Nullable when region data is unloaded/failed/disabled
+            // NOTE: a world whose only build restriction is WorldGuard's global "deny build by default"
+            // knob with NO regions defined (size()==0) is NOT gated here. Admins wanting BlockShips to
+            // honor a world-wide deny must define a `__global__` region (which counts toward size()).
             return rm != null && rm.size() > 0;
         } catch (Throwable t) {
             logWgErrorOnce(t);
             return false;
+        }
+    }
+
+    @Override
+    public boolean mightRestrictFailClosed(World world) {
+        try {
+            RegionManager rm = WorldGuard.getInstance().getPlatform().getRegionContainer()
+                    .get(BukkitAdapter.adapt(world));
+            // Region data unavailable (null) → fail closed so the per-cell fail-closed checks still run,
+            // rather than silently skipping the assembly gate during a WG hiccup.
+            return rm == null || rm.size() > 0;
+        } catch (Throwable t) {
+            logWgErrorOnce(t);
+            return true;
         }
     }
 

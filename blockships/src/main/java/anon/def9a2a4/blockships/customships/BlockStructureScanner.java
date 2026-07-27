@@ -736,6 +736,15 @@ public class BlockStructureScanner {
      */
     public static PlacementConflicts validatePlacementArea(Location wheelLocation, ShipModel model, float currentShipYaw,
                                                            org.bukkit.entity.Player player) {
+        return validatePlacementArea(wheelLocation, model, currentShipYaw, player, false);
+    }
+
+    /**
+     * @param failClosedOnWgError when true (assembly gate), a WorldGuard fault counts cells as protected
+     *        instead of failing open — so a transient WG error can't reopen the block-laundering exploit.
+     */
+    public static PlacementConflicts validatePlacementArea(Location wheelLocation, ShipModel model, float currentShipYaw,
+                                                           org.bukkit.entity.Player player, boolean failClosedOnWgError) {
         // Calculate rotation delta from assembly orientation
         float rotationDelta = currentShipYaw - model.assemblyYaw;
         while (rotationDelta < 0) rotationDelta += 360;
@@ -747,9 +756,12 @@ public class BlockStructureScanner {
 
         // O(1) gate: only pay per-cell WorldGuard queries in worlds that actually have regions.
         // Admin toggle: unattended/system paths (player == null) opting into place-anyway see no regions,
-        // so no cell is counted as protected (matches placeBlocks, which places them normally).
-        boolean wgOn = anon.def9a2a4.blockships.integration.WorldGuardHook.get().mightRestrict(wheelLocation.getWorld())
-            && !(player == null && anon.def9a2a4.blockships.integration.WorldGuardHook.get().systemPathPlacesInRegions());
+        // so no cell is counted as protected (matches placeBlocks, which places them normally). Under
+        // failClosedOnWgError the gate itself fails closed so a WG fault doesn't skip the whole scan.
+        anon.def9a2a4.blockships.integration.WorldGuardHook wg = anon.def9a2a4.blockships.integration.WorldGuardHook.get();
+        boolean wgOn = (failClosedOnWgError ? wg.mightRestrictFailClosed(wheelLocation.getWorld())
+                                            : wg.mightRestrict(wheelLocation.getWorld()))
+            && !(player == null && wg.systemPathPlacesInRegions());
 
         for (ShipModel.ModelPart part : model.parts) {
             // Extract position from transformation matrix
@@ -768,7 +780,7 @@ public class BlockStructureScanner {
 
             // A cell in a protected region takes precedence over terrain classification: on force it
             // drops as items rather than being placed or destroyed.
-            if (wgOn && anon.def9a2a4.blockships.integration.WorldGuardHook.get().isBuildDenied(blockLoc, player)) {
+            if (wgOn && wg.isBuildDenied(blockLoc, player, failClosedOnWgError)) {
                 protectedCount++;
                 continue;
             }
@@ -1064,6 +1076,18 @@ public class BlockStructureScanner {
         if (world == null) return;
         Location drop = blockLoc.clone().add(0.5, 0.5, 0.5);
 
+        // Multi-cell blocks (doors, tall plants, beds) occupy two cells that each carry an item-bearing
+        // material. Drop from the primary half only so the item isn't duplicated. The non-primary half
+        // has no container contents either, so returning early loses nothing.
+        if (part.block instanceof org.bukkit.block.data.Bisected bisected
+                && bisected.getHalf() == org.bukkit.block.data.Bisected.Half.TOP) {
+            return;
+        }
+        if (part.block instanceof org.bukkit.block.data.type.Bed bed
+                && bed.getPart() == org.bukkit.block.data.type.Bed.Part.HEAD) {
+            return;
+        }
+
         // 1) Stored container / engine-fuel contents (synced into the model before placement, so current).
         if (part.rawYaml.containsKey("container_items")) {
             @SuppressWarnings("unchecked")
@@ -1119,7 +1143,66 @@ public class BlockStructureScanner {
             }
         }
 
-        if (mainItem != null) world.dropItemNaturally(drop, mainItem);
+        if (mainItem != null) {
+            // Carry over head textures, banner patterns, and custom names so a decorated block dropped
+            // in a protected region keeps its identity (the normal place path restores these from the
+            // same rawYaml keys). Sign text can't ride on a vanilla item, so it is not preserved here.
+            applyDroppedItemDecoration(mainItem, part);
+            world.dropItemNaturally(drop, mainItem);
+        }
+    }
+
+    /** Applies persisted head/banner/custom-name NBT from a part's rawYaml onto its dropped item. */
+    private static void applyDroppedItemDecoration(org.bukkit.inventory.ItemStack item, ShipModel.ModelPart part) {
+        org.bukkit.inventory.meta.ItemMeta meta = item.getItemMeta();
+        if (meta == null) return;
+        boolean changed = false;
+
+        // Player-head texture
+        if (part.rawYaml.containsKey("skull_profile")
+                && meta instanceof org.bukkit.inventory.meta.SkullMeta skullMeta) {
+            com.destroystokyo.paper.profile.PlayerProfile profile =
+                deserializeProfile((String) part.rawYaml.get("skull_profile"));
+            if (profile != null) {
+                skullMeta.setPlayerProfile(profile);
+                changed = true;
+            }
+        }
+
+        // Banner patterns
+        if (part.rawYaml.containsKey("banner_patterns")
+                && meta instanceof org.bukkit.inventory.meta.BannerMeta bannerMeta) {
+            @SuppressWarnings("unchecked")
+            java.util.List<Map<String, Object>> patternList =
+                (java.util.List<Map<String, Object>>) part.rawYaml.get("banner_patterns");
+            if (patternList != null) {
+                java.util.List<org.bukkit.block.banner.Pattern> patterns = new java.util.ArrayList<>();
+                for (Map<String, Object> patternMap : patternList) {
+                    try {
+                        org.bukkit.DyeColor color = org.bukkit.DyeColor.valueOf((String) patternMap.get("color"));
+                        org.bukkit.block.banner.PatternType patternType = Registry.BANNER_PATTERN.get(
+                            NamespacedKey.minecraft(((String) patternMap.get("pattern")).toLowerCase()));
+                        if (patternType != null) {
+                            patterns.add(new org.bukkit.block.banner.Pattern(color, patternType));
+                        }
+                    } catch (IllegalArgumentException ignored) { /* skip a bad pattern entry */ }
+                }
+                bannerMeta.setPatterns(patterns);
+                changed = true;
+            }
+        }
+
+        // Custom name (anvil-renamed containers, banners, ...) - stored as a serialized Adventure component.
+        if (part.rawYaml.containsKey("custom_name")) {
+            try {
+                net.kyori.adventure.text.Component name = net.kyori.adventure.text.serializer.gson
+                    .GsonComponentSerializer.gson().deserialize((String) part.rawYaml.get("custom_name"));
+                meta.displayName(name);
+                changed = true;
+            } catch (Exception ignored) { /* leave the name off if it won't deserialize */ }
+        }
+
+        if (changed) item.setItemMeta(meta);
     }
 
     /**

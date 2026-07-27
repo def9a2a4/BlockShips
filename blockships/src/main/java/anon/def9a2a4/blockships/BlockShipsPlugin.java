@@ -542,6 +542,13 @@ public class BlockShipsPlugin extends JavaPlugin {
 
                 // Custom items (ship_engine, balloon, etc.)
                 if (getConfig().contains("custom-items." + itemType)) {
+                    // The engine is inert unless the power-to-mass stats system is enabled; mirror the
+                    // recipe gate (ItemUtil) so it isn't handed out (and appear broken) when stats are off.
+                    if ("ship_engine".equals(itemType)
+                            && !getConfig().getBoolean("custom-ships.stats.enabled", false)) {
+                        sender.sendMessage("§cThe ship engine is disabled (custom-ships.stats.enabled is false).");
+                        return true;
+                    }
                     ItemStack item = displayShip.getItemFactory().createItem(itemType, "_DEFAULT", null);
                     giveOrDrop(player, item);
                     sender.sendMessage("§aGave you a " + itemType + "!");

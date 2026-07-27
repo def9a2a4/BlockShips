@@ -251,11 +251,12 @@ public class ShipWheelManager {
         // in. This checks EVERY flood-filled cell (removeBlocks would delete them all), closing the
         // block-laundering exploit (assemble across a border, then force-disassemble to drop the blocks as
         // items). No force override here — that would defeat the purpose. Members/ops with bypass pass freely.
-        // Gated by mightRestrict so worlds without regions (and servers without WorldGuard) skip the scan
-        // entirely and behave exactly as before this feature.
-        if (anon.def9a2a4.blockships.integration.WorldGuardHook.get().mightRestrict(wheelLoc.getWorld())) {
+        // Gated by mightRestrictFailClosed so worlds without regions (and servers without WorldGuard) skip
+        // the scan entirely, while a transient WG fault fails CLOSED (scan runs, cells count as protected)
+        // so the exploit can't reopen during a WG hiccup.
+        if (anon.def9a2a4.blockships.integration.WorldGuardHook.get().mightRestrictFailClosed(wheelLoc.getWorld())) {
             BlockStructureScanner.PlacementConflicts wgConflicts =
-                BlockStructureScanner.validatePlacementArea(wheelLoc, model, assemblyYaw, player);
+                BlockStructureScanner.validatePlacementArea(wheelLoc, model, assemblyYaw, player, true);
             if (wgConflicts.protectedCount > 0) {
                 player.sendMessage("§cCannot assemble — " + wgConflicts.protectedCount
                     + " block(s) are in a protected region you can't build in.");
@@ -896,7 +897,8 @@ public class ShipWheelManager {
                     float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
                     float engineBonus = (float) (fueledEngines * config.enginePower) / mass;
                     float ratio = Math.min(nonEngineRatio + engineBonus, 1.0f);
-                    int speedPercent = Math.round(ratio / config.sailCapRatio * 100);
+                    int speedPercent = config.sailCapRatio > 0
+                        ? Math.round(ratio / config.sailCapRatio * 100) : 0;
 
                     player.sendMessage("§7Sails: §f" + ship.model.woolCount + " wool, " + ship.model.bannerCount + " banners §7(" + sailPower + " pts)");
                     if (ship.model.engineCount > 0) {
