@@ -336,6 +336,13 @@ public class BlockStructureScanner {
                 }
             }
 
+            // Clear waterlogged state so the stored model never carries water. Whether a
+            // re-placed block ends up waterlogged is decided fresh from the destination cell
+            // at disassembly time (see placeBlocks), never inherited from assembly.
+            if (blockData instanceof org.bukkit.block.data.Waterlogged w && w.isWaterlogged()) {
+                w.setWaterlogged(false);
+            }
+
             // Get block properties from config
             BlockProperties props = configManager.getProperties(block.getType(), blockData);
 
@@ -871,6 +878,7 @@ public class BlockStructureScanner {
             );
             Block block = blockLoc.getBlock();
             Material existingType = block.getType();
+            BlockData existingData = block.getBlockData();
 
             try {
             // WorldGuard: the wheel anchor is handled by the caller (drop wheel item + deregister),
@@ -901,21 +909,34 @@ public class BlockStructureScanner {
 
             // Place the block - prefer stored blockdata string if available (preserves all properties)
             // Also rotate block properties (stair facing, chest facing, etc.)
+            BlockData rotatedData;
             if (part.rawYaml.containsKey("blockdata")) {
                 String blockDataString = (String) part.rawYaml.get("blockdata");
                 try {
                     BlockData originalData = org.bukkit.Bukkit.createBlockData(blockDataString);
-                    BlockData rotatedData = rotateBlockData(originalData, rotationDelta);
-                    block.setBlockData(rotatedData, false);  // false = don't apply physics immediately
+                    rotatedData = rotateBlockData(originalData, rotationDelta);
                 } catch (IllegalArgumentException e) {
                     // Fallback to part.block if string parse fails
-                    BlockData rotatedData = rotateBlockData(part.block, rotationDelta);
-                    block.setBlockData(rotatedData, false);
+                    rotatedData = rotateBlockData(part.block, rotationDelta);
                 }
             } else {
-                BlockData rotatedData = rotateBlockData(part.block, rotationDelta);
-                block.setBlockData(rotatedData, false);
+                rotatedData = rotateBlockData(part.block, rotationDelta);
             }
+
+            // Waterlogging is decided authoritatively by the destination cell, never inherited
+            // from the stored model: clear it first, then set it only when this waterloggable
+            // block is replacing a water *source* (Levelled level 0, not transient flowing water).
+            // This also self-heals old saved ships whose blockdata carried waterlogged=true.
+            if (rotatedData instanceof org.bukkit.block.data.Waterlogged waterlogged) {
+                waterlogged.setWaterlogged(false);
+                if (existingType == Material.WATER
+                        && existingData instanceof org.bukkit.block.data.Levelled lv
+                        && lv.getLevel() == 0) {
+                    waterlogged.setWaterlogged(true);
+                }
+            }
+
+            block.setBlockData(rotatedData, false);  // false = don't apply physics immediately
 
             // Restore special metadata for player heads and banners
             // Note: BlockData rotation is already handled above
