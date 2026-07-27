@@ -12,6 +12,10 @@
 - **New permission nodes:** `blockships.info` (default true) and `blockships.highlight`
   (default op). If you manage permissions explicitly, grant these.
 
+- **Cheaper craftable recipes:** the Ship Balloon now uses a glowstone block (was a
+  phantom membrane) and the Ship Wheel uses a lead (was a blast furnace). Custom heads
+  (balloon, wheel, ship kits) also render correctly in the recipe book again.
+
 
 ---
 
@@ -102,7 +106,59 @@ Now:
 - `highlightcolliders` guarded against empty/invalid colliders; denial wording and
   success-message coloring unified.
 
+### WorldGuard Drop-Path Data Fidelity & Robustness (cb47a01, 2a388d8)
+
+Follow-up review passes on the WorldGuard integration, tightening the drop path and the
+assembly gate:
+
+- **Decorated blocks keep their identity when they drop.** Player-head textures, banner
+  patterns, and custom (anvil-renamed) names are copied onto items dropped into a protected
+  region, on top of the existing engine/wheel custom-item and container-content preservation.
+  (Sign text still can't ride a vanilla item and is not preserved.) Decoration transfer is
+  wrapped so corrupted/hand-edited model data yields an undecorated, logged drop rather than
+  losing the whole block.
+- **No more duplicated or vanished multi-cell blocks.** Door/tall-plant upper halves and bed
+  heads no longer drop a second item; upside-down stairs and top-hung trapdoors (single-cell
+  blocks that merely *look* like a stacked top half) are explicitly kept, so they no longer
+  silently disappear on a protected force-disassembly.
+- **The assembly gate fails closed on a WorldGuard fault.** A transient query error during
+  the assembly scan can no longer reopen the block-laundering exploit; destructive/drop paths
+  still fail open. The gate also distinguishes a world with region support *disabled*
+  (assembly proceeds normally) from region data that *failed to load* (fails closed), instead
+  of blocking assembly in every regions-disabled world.
+- **Breaking a wheel/engine respects other protection plugins.** The break handlers run at
+  `HIGHEST` and bail if the event is already cancelled, instead of manually breaking and
+  dropping after another plugin has denied it.
+- **Misconfiguration no longer renders as garbage.** A `sail-cap-ratio` of `0` no longer
+  displays an `Infinity`/`2147483647%` speed (it falls back to the honest percentage), and an
+  unrecognized `system-disassembly-in-region` value logs a warning and uses `drop-items`.
+- `/blockships give ship_engine` is gated on `custom-ships.stats.enabled` (matching the recipe
+  gate) and hidden from give help + tab-complete when stats are off. Documented that a
+  `__global__` region is required for WorldGuard's world-wide build-deny to be honored.
+
+### Waterlogging Preserved on Disassembly (54eb636)
+
+Ships float, so hull cells sit in water source blocks. A waterloggable block (fence, stairs, slab,
+wall, ...) disassembling back over a water source was previously placed dry, overwriting the water
+and leaving an unnatural air pocket underwater. The destination cell is now authoritative:
+`placeBlocks` clears waterlogged on every waterloggable block and re-sets it only when the target is
+a water **source** (level 0 — transient flowing water is excluded); `scanStructure` clears
+waterlogged at capture so stored ship models never carry water. Because the clear is unconditional,
+this also **self-heals** ships already saved with `waterlogged=true` baked into their block data,
+which would otherwise re-waterlog on dry land forever.
+
 ## Other
 
+- **Recipe tweaks (23c8562):** Ship Balloon now crafts with a glowstone block instead of a
+  phantom membrane (a mob drop that's awkward to farm); Ship Wheel now takes a lead instead of
+  a blast furnace — cheaper for a single wheel and a better nautical fit alongside the compass.
+- **Recipe-book head textures (9a5d013):** custom heads (balloon, ship wheel, ship kits) were
+  showing as blank Steve heads in the recipe book because the result icon never resolved its
+  skin through Mojang's session server. The raw texture is now embedded directly on the
+  profile (on a deterministic, texture-derived UUID so identical heads stack), so these render
+  client-side without a lookup. The same fix now extends to **ingredient slots**: a custom-item
+  ingredient (e.g. the balloons in the airship recipe) is matched with an `ExactChoice` over its
+  craftable variants — every dye colour for wool-sourced items — so the recipe book shows the real
+  textured item instead of a blank head, while still matching by full item meta.
 - README now links to the related [SimpleShips](https://github.com/jemcdevitt/SimpleShips)
   plugin (4de59a1).

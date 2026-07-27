@@ -9,21 +9,33 @@ Other plugins that work nicely with BlockShips:
 
 [![Demo Gif](docs/assets/demo_vid.gif)](docs/assets/demo_vid.webm)
 
-## **WARNING:** THIS PROJECT IS IN PRE-ALPHA. EXPECT BUGS, MISSING FEATURES, AND BREAKING CHANGES. USE AT YOUR OWN RISK, AND BACKUP YOUR WORLD OFTEN. THE DEVELOPER IS NOT RESPONSIBLE FOR ANY DAMAGE CAUSED BY THIS PLUGIN.
 
-![BlockShips](docs/assets/main.png)
+|              the prefab small spruce ship               |                 A small custom ship next to the prefab small spruce ship                 |
+| :-----------------------------------------------------: | :--------------------------------------------------------------------------------------: |
+| ![A prefab small spruce ship](docs/assets/icon_new.png) | ![A small custom ship next to the prefab small spruce ship](docs/assets/small_ships.png) |
+|                                                         |                                                                                          |
+
+![A variety of prefab and custom ships](docs/assets/main.png)
+
+
+**WARNING:** THIS PROJECT IS IN ALPHA. EXPECT BUGS, MISSING FEATURES, AND BREAKING CHANGES. USE AT YOUR OWN RISK, AND BACKUP YOUR WORLD OFTEN. THE DEVELOPER IS NOT RESPONSIBLE FOR ANY DAMAGE CAUSED BY THIS PLUGIN.
+
 
 # Features
 
+Build a ship out of allowed blocks, place a Ship's wheel on it and right click, and click "assemble" in the menu. Your blocks are now a mobile ship! Depending on the density (fully configurable) of the blocks in your ship, your ship might float lower or higher in the water. Use enough "lighter than air" blocks like glowstone, and your ship will be a flying airship.
+
+
 Ships can include:
-- **Functional blocks** - Crafting tables, anvils, enchanting tables work as normal. (furnaces/brewing stands don't yet work)
-- **Seats** - passengers can sit on stairs
-- **Cannons** - a dispenser with a block of obsidian behind it will shoot its contents. fire all through the ship menu, or right click on the obsidian to fire.
+
+- **Functional blocks** - Crafting tables, anvils, enchanting tables work as normal. (furnaces/brewing stands don't fully yet work)
 - **Storage** - Chests, barrels, dispensers, etc remain accessible
+- **Seats** - any stair becomes a passenger seat you can sit on.
 - **Lead points** - Anything leashed to a fence will stay tied to the ship. You can lead things to the ship while its moving. Prefab ships have a single lead point.
-- **Health & damage** - Ships have health, take damage from collisions/attacks, and regenerate over time. Visual and audio feedback on hits.
-- **Movement Sounds** - Movement sounds in water and air (volume configurable in config.yml)
-- **Special drowned** - Rare drowned mobs (5% spawn chance) drop ship wheels as an alternative to crafting
+- **Cannons** - a dispenser with a block of obsidian behind it will shoot its contents. fire all through the ship menu, or right click on the obsidian to fire.
+- **Health & damage** - Ships have health, take damage from collisions/attacks, and regenerate over time. When they run out of health, ships will attempt to place themselves back in the world.
+- **Sounds & effects** - Movement and damage come with visual effects and audio.
+- **Drowned Captain** - Rare drowned mobs spawn carrying ship wheels
 - **Dynamic lighting** - Light-emitting blocks (glowstone, lanterns, torches, etc.) on ships emit dynamic light when [DynLight](https://github.com/def9a2a4/DynLight) is installed (optional)
 
 ## Custom Ships
@@ -41,9 +53,9 @@ Ships can include:
 
 Spawn ready-to-use ships, with customizable banners/colors/wood types:
 
-- **Small Ship** - Fast, lightweight water vessel
-- **Large Ship** - Larger water vessel with more health
-- **Small Airship** - Floats in the air with vertical controls
+- **Small Ship** - Fast, lightweight water vessel. Two seats and a double chest.
+- **Large Ship** - Larger water vessel with more health. Two double chests, many seats.
+- **Small Airship** - Floats in the air with vertical controls. Also two seats and a double chest.
 
 **Command:** `/blockships give <item>` (items: `ship_wheel`, `small_ship`, `large_ship`, `small_airship`)
 
