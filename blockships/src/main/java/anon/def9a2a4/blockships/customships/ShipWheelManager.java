@@ -266,31 +266,47 @@ public class ShipWheelManager {
             }
         }
 
-        // Create a ShipInstance from the model BEFORE removing blocks
-        // This allows us to transfer leads while the fence blocks (and LeashHitch) still exist
-        // shipType is "custom" for custom block ships
-        // Pass empty customization - custom ships use scanned blocks as-is (no wood type replacement)
-        // Display/collision offsets are applied inside ShipInstance based on config
-        ShipInstance ship = null;
-        try {
-            ship = new ShipInstance(plugin, "custom", model, wheelLoc, ShipCustomization.empty());
-            ship.sourceModel = model;  // Store the model for disassembly
+        // Delegate the entity engine to defCoreLib (M1): spawn the vehicle, assemble a driven Mechanism from
+        // the live scanned blocks (this airs them out AND spawns the displays/colliders), and wrap it in a
+        // ShipInstance that skips native entity spawning. shipType "custom"; empty customization (scanned
+        // blocks used as-is). The mechanism's block index i == scan.orderedBlocks() position i, so every
+        // seat/storage/collision index BlockShips derived from the scan stays valid through the Mechanism API.
+        anon.def9a2a4.corelib.MechanismRegistry mechRegistry =
+            anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry();
+        // Full-size (non-marker) ArmorStand so ARMORSTAND_RIDE_OFFSET applies (matches the legacy vehicle).
+        // Spawned at the wheel origin with the assembly yaw so the mechanism's pivot + as-built orientation
+        // align with BlockShips' model (part transforms are relative to this same origin).
+        org.bukkit.entity.ArmorStand vehicle = wheelLoc.getWorld().spawn(wheelLoc, org.bukkit.entity.ArmorStand.class, as -> {
+            as.setInvisible(true);
+            as.setGravity(false);
+            as.setSilent(true);
+            as.setMarker(false);
+            as.setPersistent(true);
+            as.setRotation(assemblyYaw, 0f);
+        });
 
-            // Transfer leads from world to ship's leadable shulkers BEFORE removing blocks
-            // This must happen while the fence blocks still exist (LeashHitch attached to fence)
-            transferLeadsToShip(ship, model, wheelLoc);
+        ShipInstance ship = null;
+        anon.def9a2a4.corelib.Mechanism mechanism = null;
+        try {
+            // Airs out the source blocks + spawns displays/colliders on the vehicle (driven mode: BlockShips
+            // positions the vehicle each tick and calls repositionDriven — see ShipPhysics/tick, M2).
+            mechanism = mechRegistry.assembleMechanism("blockship:custom", scan.orderedBlocks(), vehicle,
+                anon.def9a2a4.corelib.MechanismRegistry.ARMORSTAND_RIDE_OFFSET, true, null);
+            ship = new ShipInstance(plugin, "custom", model, wheelLoc, ShipCustomization.empty(), vehicle, mechanism);
+            ship.sourceModel = model;  // Store the model for disassembly
+            // TODO(M1 seam): lead transfer moves to MechanismRegistry.addPreAirOutListener (the mechanism airs
+            // out the fence blocks itself, so the old pre-removeBlocks transfer window no longer exists).
         } catch (Throwable t) {
-            // Assembly failed before any blocks were removed (removeBlocks is below), so the world
-            // is untouched. Tear down anything already spawned: on a constructor throw the
-            // constructor's own catch already cleaned up (ship stays null); on a leads throw the
-            // ship is fully built but unregistered, so destroy it here. Guard destroy so a cleanup
-            // failure can't mask the original cause in the log.
+            // Roll back: if the mechanism assembled it already aired out the blocks — disassemble to restore
+            // them; otherwise just remove the bare vehicle. Guard cleanup so it can't mask the original cause.
+            if (mechanism != null) {
+                try { mechanism.disassemble(); }
+                catch (Throwable cleanup) { plugin.getLogger().warning("Cleanup after failed assembly also failed: " + cleanup.getMessage()); }
+            } else if (vehicle.isValid()) {
+                vehicle.remove();
+            }
             if (ship != null) {
-                try {
-                    ship.destroy();
-                } catch (Throwable cleanup) {
-                    plugin.getLogger().warning("Cleanup after failed assembly also failed: " + cleanup.getMessage());
-                }
+                try { ship.destroy(); } catch (Throwable ignored) {}
             }
             plugin.getLogger().log(java.util.logging.Level.SEVERE,
                 "Ship assembly failed for " + player.getName(), t);
@@ -303,9 +319,7 @@ public class ShipWheelManager {
                 net.kyori.adventure.text.format.NamedTextColor.RED));
             return false;
         }
-
-        // NOW remove the blocks from the world (after leads are transferred)
-        BlockStructureScanner.removeBlocks(wheelLoc, model);
+        // (No removeBlocks call — assembleMechanism already aired out the source blocks.)
 
         // Nudge nearby players up to prevent falling through during the 1-tick
         // window before collision shulkers are positioned
