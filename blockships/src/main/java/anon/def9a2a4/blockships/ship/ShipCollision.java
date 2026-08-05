@@ -49,10 +49,12 @@ public class ShipCollision {
         workTotalForce.set(0, 0, 0);
         int collisionCount = 0;
 
-        // Terrain collisions: only check if ship is moving or was recently bumped
+        // Terrain collisions: only check if ship is moving or was recently bumped. Iterate the engine-agnostic
+        // collider boxes (M3) so terrain collision works for both native (prefab) and delegated (Mechanism) ships.
         if (isMoving || hasPreviousForce) {
-            for (CollisionBox cb : ship.colliders) {
-                Vector3f terrainForce = calculateTerrainCollisionForce(cb);
+            World world = ship.vehicle.getWorld();
+            for (org.bukkit.util.BoundingBox box : ship.colliderBoxes()) {
+                Vector3f terrainForce = calculateTerrainCollisionForce(box, world);
                 if (terrainForce.lengthSquared() > 0.001f) {
                     workTotalForce.add(terrainForce);
                     collisionCount++;
@@ -203,9 +205,7 @@ public class ShipCollision {
     // Maximum collisions to process per collision box (early termination optimization)
     private static final int MAX_COLLISIONS_PER_BOX = 4;
 
-    private Vector3f calculateTerrainCollisionForce(CollisionBox cb) {
-        org.bukkit.util.BoundingBox shulkerBox = cb.entity.getBoundingBox();
-        World world = cb.entity.getWorld();
+    private Vector3f calculateTerrainCollisionForce(org.bukkit.util.BoundingBox shulkerBox, World world) {
         workTerrainForce.set(0, 0, 0);  // Reuse work vector instead of allocating
         int collisionCount = 0;
         ShipConfig config = ship.config;

@@ -1085,6 +1085,29 @@ public class ShipInstance {
     }
 
     /**
+     * Live world-space collider boxes for this ship, engine-agnostic (M3). For a DELEGATED custom ship
+     * defCoreLib owns the colliders, so read them via the Mechanism block-index read-API; for a native
+     * (prefab/legacy) ship read the shulker boxes directly. Both {@link ShipCollision} and
+     * {@link ShipCollisionCoordinator} consume this so terrain + ship↔ship collision work for either engine.
+     * The returned boxes are snapshots (safe to keep for the current pass).
+     */
+    public java.util.List<org.bukkit.util.BoundingBox> colliderBoxes() {
+        java.util.List<org.bukkit.util.BoundingBox> out = new java.util.ArrayList<>();
+        if (mechanism != null) {
+            int n = mechanism.blockCount();
+            for (int i = 0; i < n; i++) {
+                org.bukkit.util.BoundingBox b = mechanism.getColliderBoxByBlock(i);
+                if (b != null) out.add(b);
+            }
+        } else {
+            for (CollisionBox cb : colliders) {
+                if (cb.entity != null && cb.entity.isValid()) out.add(cb.entity.getBoundingBox());
+            }
+        }
+        return out;
+    }
+
+    /**
      * Calculates the collision detection radius for getNearbyEntities optimization.
      * Uses configured value for prefab ships, or auto-calculates from collider positions.
      */
@@ -1098,14 +1121,25 @@ public class ShipInstance {
         // Auto-calculate using max axis distance from vehicle to farthest collider
         Location center = vehicle.getLocation();
         float maxDist = 0;
-        for (CollisionBox cb : colliders) {
-            Location cbLoc = cb.entity.getLocation();
-            // Use max of axis distances (box distance) - cheaper than manhattan and works with getNearbyEntities
-            float dx = (float) java.lang.Math.abs(center.getX() - cbLoc.getX());
-            float dy = (float) java.lang.Math.abs(center.getY() - cbLoc.getY());
-            float dz = (float) java.lang.Math.abs(center.getZ() - cbLoc.getZ());
-            float dist = java.lang.Math.max(dx, java.lang.Math.max(dy, dz));
-            if (dist > maxDist) maxDist = dist;
+        if (mechanism != null) {
+            // Delegated: measure from the mechanism collider box centers (the shulker list is defCoreLib's).
+            for (org.bukkit.util.BoundingBox b : colliderBoxes()) {
+                float dx = (float) java.lang.Math.abs(center.getX() - b.getCenterX());
+                float dy = (float) java.lang.Math.abs(center.getY() - b.getCenterY());
+                float dz = (float) java.lang.Math.abs(center.getZ() - b.getCenterZ());
+                float dist = java.lang.Math.max(dx, java.lang.Math.max(dy, dz));
+                if (dist > maxDist) maxDist = dist;
+            }
+        } else {
+            for (CollisionBox cb : colliders) {
+                Location cbLoc = cb.entity.getLocation();
+                // Use max of axis distances (box distance) - cheaper than manhattan and works with getNearbyEntities
+                float dx = (float) java.lang.Math.abs(center.getX() - cbLoc.getX());
+                float dy = (float) java.lang.Math.abs(center.getY() - cbLoc.getY());
+                float dz = (float) java.lang.Math.abs(center.getZ() - cbLoc.getZ());
+                float dist = java.lang.Math.max(dx, java.lang.Math.max(dy, dz));
+                if (dist > maxDist) maxDist = dist;
+            }
         }
         // Add padding (2.0 for original getNearbyEntities radius per collider)
         this.collisionRadius = maxDist + 2.0f;
@@ -1287,6 +1321,9 @@ public class ShipInstance {
             // relative to as-built (spawnYaw). repositionDriven also sets the vehicle's client velocity hint,
             // so we SKIP the native setVelocity / position-sync packet / updateCollisionPositions /
             // updateDisplayTransforms below. Keep only persistence chunk-index + previous-state bookkeeping.
+            // M3: the native updateCollisionPositions (which lazily seeds collisionRadius) is skipped for a
+            // delegated ship, so seed it here once from the mechanism collider boxes (used by the coordinator).
+            if (collisionRadius < 0) calculateCollisionRadius();
             mechanism.repositionDriven(physics.currentYaw - spawnYaw);
 
             int nCX = cachedVehicleLoc.getBlockX() >> 4, nCZ = cachedVehicleLoc.getBlockZ() >> 4;

@@ -157,10 +157,12 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
 
     private void checkPairBinned(ShipInstance shipA, ShipInstance shipB,
                                   Location locA, Location locB) {
-        List<CollisionBox> collidersA = shipA.colliders;
-        List<CollisionBox> collidersB = shipB.colliders;
-        int nA = collidersA.size();
-        int nB = collidersB.size();
+        // Engine-agnostic collider boxes (M3): native shulker boxes OR the delegated Mechanism read-API.
+        // Materialize the per-ship snapshots once per pair-check (block-index-keyed; list position arbitrary).
+        List<BoundingBox> boxesA = shipA.colliderBoxes();
+        List<BoundingBox> boxesB = shipB.colliderBoxes();
+        int nA = boxesA.size();
+        int nB = boxesB.size();
         if (nA == 0 || nB == 0) return;
 
         // Compute sweep axis: unit vector from A to B
@@ -190,7 +192,7 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
 
         // Project ship A colliders
         for (int i = 0; i < nA; i++) {
-            BoundingBox bb = collidersA.get(i).entity.getBoundingBox();
+            BoundingBox bb = boxesA.get(i);
             float cx = (float) ((bb.getMinX() + bb.getMaxX()) * 0.5) - originX;
             float cy = (float) ((bb.getMinY() + bb.getMaxY()) * 0.5) - originY;
             float cz = (float) ((bb.getMinZ() + bb.getMaxZ()) * 0.5) - originZ;
@@ -202,7 +204,7 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
 
         // Project ship B colliders
         for (int i = 0; i < nB; i++) {
-            BoundingBox bb = collidersB.get(i).entity.getBoundingBox();
+            BoundingBox bb = boxesB.get(i);
             float cx = (float) ((bb.getMinX() + bb.getMaxX()) * 0.5) - originX;
             float cy = (float) ((bb.getMinY() + bb.getMaxY()) * 0.5) - originY;
             float cz = (float) ((bb.getMinZ() + bb.getMaxZ()) * 0.5) - originZ;
@@ -312,12 +314,10 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
                 int endB = startB + binCountsB[binB];
 
                 for (int ia = startA; ia < endA; ia++) {
-                    CollisionBox cbA = collidersA.get(sortedA[ia]);
-                    BoundingBox boxA = cbA.entity.getBoundingBox();
+                    BoundingBox boxA = boxesA.get(sortedA[ia]);
 
                     for (int ib = startB; ib < endB; ib++) {
-                        CollisionBox cbB = collidersB.get(sortedB[ib]);
-                        BoundingBox boxB = cbB.entity.getBoundingBox();
+                        BoundingBox boxB = boxesB.get(sortedB[ib]);
 
                         if (boxA.overlaps(boxB)) {
                             // Compute penetration depth (min overlap across all axes)
