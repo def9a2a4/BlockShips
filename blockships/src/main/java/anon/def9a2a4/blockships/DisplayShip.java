@@ -1202,6 +1202,12 @@ public class DisplayShip implements Listener {
         ShipInstance inst = ShipRegistry.byId(shipId);
         if (inst == null || !inst.vehicle.isValid()) return;
 
+        // Delegated ships (M4) tag seats via corelib (block-index), not shipseat:{seatIdx}. Recover BlockShips'
+        // seat index from the populated seatShulkers list so direct-seat-click mount + occupancy work.
+        if (seatIndex < 0 && inst.mechanism != null) {
+            seatIndex = inst.seatShulkers.indexOf(shulker);
+        }
+
         // Check if player is holding a ship wheel - show info message
         if (isShipWheel(player.getInventory().getItemInMainHand())) {
             if ("custom".equals(inst.shipType)) {
@@ -1349,8 +1355,10 @@ public class DisplayShip implements Listener {
             // Set camera distance before mounting
             setCameraDistanceOnShulker(availableSeatShulker, getCameraDistanceForShip(inst));
             availableSeatShulker.addPassenger(player);
-            // Mark seat as occupied (extract seat index from shulker tags)
+            // Mark seat as occupied (extract seat index from shulker tags; delegated ships resolve via the
+            // populated seatShulkers list since their seats carry corelib tags, not shipseat:{seatIdx}).
             int idx = ShipTags.extractSeatIndex(availableSeatShulker.getScoreboardTags());
+            if (idx < 0) idx = inst.seatShulkers.indexOf(availableSeatShulker);
             if (idx >= 0) {
                 inst.occupySeat(idx);
             }

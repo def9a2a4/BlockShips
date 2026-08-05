@@ -10,6 +10,10 @@ import java.util.UUID;
  */
 public final class ShipTags {
     public static final String SHIP_PREFIX = "displayship:";
+    /** defCoreLib entity tag prefix. A delegated ship's Mechanism tags its vehicle/collider/seat shulkers
+     *  "corelib:mech:{mechId}:...". Since a delegated ship's id == its mechId, this bridges those tags back
+     *  to the ship (see {@link #extractShipId}). Keep in sync with defCoreLib's MechanismRegistry tag scheme. */
+    public static final String CORELIB_MECH_PREFIX = "corelib:mech:";
     public static final String SEAT_PREFIX = "shipseat:";
     public static final String STORAGE_PREFIX = "storage:";
     public static final String WHEEL_PREFIX = "shipwheel:";
@@ -103,6 +107,18 @@ public final class ShipTags {
                 if (colonIdx > 0) {
                     idPart = idPart.substring(0, colonIdx);
                 }
+                try {
+                    return UUID.fromString(idPart);
+                } catch (IllegalArgumentException e) {
+                    // Invalid UUID format, continue checking
+                }
+            } else if (tag.startsWith(CORELIB_MECH_PREFIX)) {
+                // Delegated-engine bridge (M4): a Mechanism-owned collider/seat shulker carries
+                // "corelib:mech:{mechId}:{i}:collider|seat". A delegated ship's id == its mechId, so return
+                // that so ShipRegistry.byId resolves it in every handler (boarding, damage, exit).
+                String rest = tag.substring(CORELIB_MECH_PREFIX.length());
+                int colonIdx = rest.indexOf(':');
+                String idPart = colonIdx > 0 ? rest.substring(0, colonIdx) : rest;
                 try {
                     return UUID.fromString(idPart);
                 } catch (IllegalArgumentException e) {

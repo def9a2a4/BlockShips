@@ -294,6 +294,7 @@ public class ShipWheelManager {
                 anon.def9a2a4.corelib.MechanismRegistry.ARMORSTAND_RIDE_OFFSET, true, null);
             ship = new ShipInstance(plugin, "custom", model, wheelLoc, ShipCustomization.empty(), vehicle, mechanism);
             ship.sourceModel = model;  // Store the model for disassembly
+            ship.adoptMechanismSeats();  // M4: designate seats on the mechanism + populate seatShulkers
             // TODO(M1 seam): lead transfer moves to MechanismRegistry.addPreAirOutListener (the mechanism airs
             // out the fence blocks itself, so the old pre-removeBlocks transfer window no longer exists).
         } catch (Throwable t) {

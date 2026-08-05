@@ -1970,6 +1970,25 @@ public class ShipInstance {
      * If maxHealth <= 40, health is shown directly (1:1 mapping).
      * If maxHealth > 40, health is scaled to 20 hearts max (40 HP).
      */
+    /**
+     * M4: for a DELEGATED ship, designate its seats on the Mechanism and adopt the resulting seat shulkers
+     * into {@code seatShulkers}, so the existing seat code (boarding, steering = index 0, HP-mirror, dismount)
+     * works unchanged. Block-index parity (mechanism index i == scan index i) makes {@code SeatInfo.blockIndex}
+     * a valid Mechanism block index. A seat only materializes if defCoreLib gave that block a collider (its
+     * shulker is the mount) — tune {@code colliders.yml} if a seat block is missing. No-op for native ships.
+     */
+    public void adoptMechanismSeats() {
+        if (mechanism == null) return;
+        for (int seatIdx = 0; seatIdx < model.seats.size(); seatIdx++) {
+            ShipModel.SeatInfo si = model.seats.get(seatIdx);
+            mechanism.designateSeat(si.blockIndex, si.isDriver);
+            Shulker s = mechanism.seatEntity(si.blockIndex);
+            if (s != null) seatShulkers.set(seatIdx, s);
+        }
+        // Mirror ship HP onto the newly-adopted seat shulkers for the vanilla riding HUD.
+        syncSeatShulkerHealth(vehicle.getHealth());
+    }
+
     public void syncSeatShulkerHealth(double currentHealth) {
         double maxHealth = model.maxHealth;
         double shulkerMaxHealth;
