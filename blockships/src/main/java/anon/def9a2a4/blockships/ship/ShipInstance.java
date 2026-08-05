@@ -1333,6 +1333,25 @@ public class ShipInstance {
             if (collisionRadius < 0) calculateCollisionRadius();
             mechanism.repositionDriven(physics.currentYaw - spawnYaw);
 
+            // Smoothness (native parity): repositionDriven sets only the vehicle's setVelocity dead-reckoning
+            // hint, so the vehicle is tracker-updated every ~3 ticks and rubber-bands against the mechanism's
+            // every-tick collider teleports. Send the same per-tick ENTITY_TELEPORT position-sync packet the
+            // native path uses to force the vehicle's client position every tick (keeping its passenger display
+            // chain locked to the colliders). Same threshold gate as native; compute velocity BEFORE the
+            // bookkeeping below refreshes previousVehicleLocation/previousYaw. Vehicle yaw is frozen at 0 for a
+            // delegated ship (all visual rotation rides the display transform), so cachedVehicleLoc's yaw is the
+            // correct packet yaw. defCoreLib stays ProtocolLib-free; BlockShips owns the packet.
+            if (previousVehicleLocation != null && POSITION_SYNC_ENABLED) {
+                workVehicleVelocity.setX(cachedVehicleLoc.getX() - previousVehicleLocation.getX())
+                    .setY(cachedVehicleLoc.getY() - previousVehicleLocation.getY())
+                    .setZ(cachedVehicleLoc.getZ() - previousVehicleLocation.getZ());
+                double speedSq = workVehicleVelocity.lengthSquared();
+                float yawDelta = java.lang.Math.abs(normalizeAngle(physics.currentYaw - previousYaw));
+                if (speedSq > POSITION_SYNC_THRESHOLD_SQ || yawDelta > 0.1f) {
+                    sendVehiclePositionSync(cachedVehicleLoc, workVehicleVelocity);
+                }
+            }
+
             int nCX = cachedVehicleLoc.getBlockX() >> 4, nCZ = cachedVehicleLoc.getBlockZ() >> 4;
             if ((currentChunkX != nCX || currentChunkZ != nCZ)
                     && plugin instanceof BlockShipsPlugin bsp && bsp.getDisplayShip() != null) {
