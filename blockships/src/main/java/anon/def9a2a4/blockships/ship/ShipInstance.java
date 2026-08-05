@@ -2477,6 +2477,12 @@ public class ShipInstance {
     public void destroy() {
         if (task != null) task.cancel();
         if (idleCheckTask != null) idleCheckTask.cancel();
+        if (mechanism != null) {
+            // Delegated (M1): defCoreLib owns the parent/displays/colliders — tear them down via the Mechanism
+            // (removes entities WITHOUT restoring blocks). Idempotent if disassemble() already ran. The native
+            // lists below are empty for a delegated ship; the external vehicle is still removed at the end.
+            try { mechanism.destroy(); } catch (Throwable ignored) {}
+        }
         if (parent != null) {
             Entity vehicleEntity = parent.getVehicle();
             if (vehicleEntity != null) {

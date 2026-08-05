@@ -518,11 +518,18 @@ public class ShipWheelManager {
         boolean anchorProtected = wgOn && force
             && anon.def9a2a4.blockships.integration.WorldGuardHook.get().isBuildDenied(newWheelLocation, player);
 
-        // Place the blocks back (with rotation)
-        BlockStructureScanner.placeBlocks(shipLoc, model, currentYaw, force, player, anchorProtected);
+        if (ship.mechanism != null) {
+            // Delegated (M1): the Mechanism restores the blocks to the world AND removes its own displays/
+            // colliders. WG drop-routing + lead transfer will be wired via the mechanism's cellPlacePolicy /
+            // beforeEntityRemoval seams (M1 TODO); the external vehicle is removed by ship.destroy() below.
+            ship.mechanism.disassemble();
+        } else {
+            // Place the blocks back (with rotation)
+            BlockStructureScanner.placeBlocks(shipLoc, model, currentYaw, force, player, anchorProtected);
 
-        // Transfer leads from ship's shulkers to fence blocks before destroying ship
-        transferLeadsFromShip(ship, model, shipLoc, currentYaw);
+            // Transfer leads from ship's shulkers to fence blocks before destroying ship
+            transferLeadsFromShip(ship, model, shipLoc, currentYaw);
+        }
 
         // Update wheel tracking to new location
         if (anchorProtected) {
