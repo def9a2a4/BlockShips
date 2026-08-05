@@ -282,7 +282,12 @@ public class ShipWheelManager {
             as.setSilent(true);
             as.setMarker(false);
             as.setPersistent(true);
-            as.setRotation(assemblyYaw, 0f);
+            // Entity yaw MUST be 0: defCoreLib puts ALL rotation into the display transform matrix (its driven
+            // contract), and display-entity passengers inherit the vehicle's entity yaw on 1.21.9+ — a non-zero
+            // yaw here would rotate the displays an extra assemblyYaw while the teleported collider carriers are
+            // unaffected (the "displays 90° off, colliders correct" bug). The ship's facing is carried by the
+            // mechanism instead: spawnYaw = currentYaw = model.assemblyYaw so repositionDriven(relYaw=0) at rest.
+            as.setRotation(0f, 0f);
         });
 
         ShipInstance ship = null;

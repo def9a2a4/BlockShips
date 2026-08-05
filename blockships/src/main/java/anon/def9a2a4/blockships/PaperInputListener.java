@@ -44,9 +44,10 @@ public class PaperInputListener implements Listener {
             return;
         }
 
-        // Only process steering for driver seat
+        // Only process steering for the driver seat. Native ships tag it shipseat:0; delegated ships tag it
+        // corelib:mech:{id}:{i}:driver_seat (no shipseat:), so accept either.
         int seatIndex = ShipTags.extractSeatIndex(tags);
-        if (seatIndex != 0) return;
+        if (seatIndex != 0 && !ShipTags.isCorelibDriverSeat(tags)) return;
 
         ShipInstance ship = ShipRegistry.byId(shipId);
         if (ship == null) return;

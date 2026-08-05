@@ -350,7 +350,8 @@ public class ShipInstance {
         if (providedVehicle != null) {
             // Delegated (M1): adopt the ArmorStand defCoreLib already spawned + mounted the display chain on
             // (tagged corelib:mech:{id}:vehicle). Add the ship-root tag + health attribute so BlockShips'
-            // damage/lookup still resolve it. The caller set its yaw to the assembly yaw; don't re-rotate.
+            // damage/lookup still resolve it. Its entity yaw is 0 (defCoreLib owns rotation via the display
+            // matrix); the ship's heading lives in spawnYaw/currentYaw (seeded from model.assemblyYaw below).
             this.vehicle = providedVehicle;
             this.vehicle.addScoreboardTag(ShipTags.shipRootTag(id));
             org.bukkit.attribute.AttributeInstance maxHealthAttr = this.vehicle.getAttribute(anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth());
@@ -405,9 +406,15 @@ public class ShipInstance {
 
         // Initialize previous state
         this.previousVehicleLocation = vehicle.getLocation().clone();
-        this.previousYaw = vehicle.getYaw();
         this.previousPitch = vehicle.getPitch();
-        this.spawnYaw = ShipTags.normalizeYaw(vehicle.getYaw());
+        // Delegated ships (M1): the vehicle entity yaw is held at 0 (defCoreLib owns rotation via the display
+        // transform matrix), so seed the ship's heading from the model's assembly yaw — NOT the vehicle yaw —
+        // else physics thrust + the display rotation delta would think the ship faces 0°. Native ships keep
+        // reading the frozen vehicle yaw (their display passengers inherit it for rendering).
+        this.spawnYaw = (mechanism != null)
+            ? ShipTags.normalizeYaw(model.assemblyYaw)
+            : ShipTags.normalizeYaw(vehicle.getYaw());
+        this.previousYaw = this.spawnYaw;
         this.physics.currentYaw = this.spawnYaw;
 
         // Initialize chunk tracking for persistence

@@ -133,6 +133,20 @@ public final class ShipTags {
         return extractIntIndex(tags, SEAT_PREFIX);
     }
 
+    /**
+     * Whether these tags mark the DRIVER seat of a delegated (defCoreLib) ship. A delegated seat shulker
+     * carries {@code corelib:mech:{id}:{blockIndex}:driver_seat} (see defCoreLib BasicMechanism.designateSeat)
+     * instead of {@code shipseat:0}, so the steering listeners test this alongside {@code extractSeatIndex==0}.
+     * Reading the (immutable) tag snapshot is thread-safe — usable from the ProtocolLib netty thread, unlike a
+     * cross-thread {@code seatShulkers} list lookup.
+     */
+    public static boolean isCorelibDriverSeat(Set<String> tags) {
+        for (String tag : tags) {
+            if (tag.startsWith(CORELIB_MECH_PREFIX) && tag.endsWith(":driver_seat")) return true;
+        }
+        return false;
+    }
+
     public static int extractStorageIndex(Set<String> tags) {
         return extractIntIndex(tags, STORAGE_PREFIX);
     }

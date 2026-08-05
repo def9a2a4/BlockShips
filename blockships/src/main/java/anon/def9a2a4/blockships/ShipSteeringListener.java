@@ -119,9 +119,10 @@ public class ShipSteeringListener {
                 }
             }
 
-            // Handle steering for driver seat only
+            // Handle steering for driver seat only. Delegated ships tag the driver via corelib:driver_seat
+            // (not shipseat:0); testing the tag snapshot is thread-safe on this netty thread.
             int seatIndex = ShipTags.extractSeatIndex(tags);
-            if (seatIndex == 0) {
+            if (seatIndex == 0 || ShipTags.isCorelibDriverSeat(tags)) {
                 ShipInstance ship = ShipRegistry.byId(shipId);
                 if (ship != null) {
                     // Use version check to determine packet format (avoids reflection per packet)
@@ -174,9 +175,10 @@ public class ShipSteeringListener {
                 return;  // Don't process steering if dismounting
             }
 
-            // Handle steering for driver seat only
+            // Handle steering for driver seat only. Delegated ships tag the driver via corelib:driver_seat
+            // (not shipseat:0); testing the tag snapshot is thread-safe on this netty thread.
             int seatIndex = ShipTags.extractSeatIndex(tags);
-            if (seatIndex == 0) {
+            if (seatIndex == 0 || ShipTags.isCorelibDriverSeat(tags)) {
                 ShipInstance ship = ShipRegistry.byId(shipId);
                 if (ship != null) {
                     boolean forward = (boolean) forwardMethod.invoke(inputObj);
