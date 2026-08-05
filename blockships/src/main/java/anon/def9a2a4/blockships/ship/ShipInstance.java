@@ -1281,6 +1281,29 @@ public class ShipInstance {
         collision.applyResponse();  // Apply collision response
         cachedVehicleLoc = vehicle.getLocation();  // Refresh after physics moved the vehicle
 
+        if (mechanism != null) {
+            // Delegated movement (M2): defCoreLib owns the displays/colliders. physics.update()+applyResponse
+            // already positioned the vehicle this tick; sync the mechanism to it and apply the rotation delta
+            // relative to as-built (spawnYaw). repositionDriven also sets the vehicle's client velocity hint,
+            // so we SKIP the native setVelocity / position-sync packet / updateCollisionPositions /
+            // updateDisplayTransforms below. Keep only persistence chunk-index + previous-state bookkeeping.
+            mechanism.repositionDriven(physics.currentYaw - spawnYaw);
+
+            int nCX = cachedVehicleLoc.getBlockX() >> 4, nCZ = cachedVehicleLoc.getBlockZ() >> 4;
+            if ((currentChunkX != nCX || currentChunkZ != nCZ)
+                    && plugin instanceof BlockShipsPlugin bsp && bsp.getDisplayShip() != null) {
+                bsp.getDisplayShip().getShipWorldData().updateChunkIndex(
+                    cachedVehicleLoc.getWorld(), this.id, currentChunkX, currentChunkZ, nCX, nCZ);
+                currentChunkX = nCX;
+                currentChunkZ = nCZ;
+            }
+            firstTick = false;
+            previousVehicleLocation = cachedVehicleLoc.clone();
+            previousYaw = physics.currentYaw;
+            previousPitch = vehicle.getPitch();
+            return;
+        }
+
         // Set vehicle velocity from actual displacement (after physics + collision response)
         // Must match carrier velocity computation (currentPos - previousPos) so client-side
         // prediction between tracker updates keeps vehicle and carriers in sync
