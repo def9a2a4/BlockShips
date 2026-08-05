@@ -70,6 +70,10 @@ public class ShipInstance {
     public final ShipModel model;
     public final String shipType;  // Ship type identifier (e.g., "smallship", "bigship")
     public ArmorStand vehicle;  // Root entity used for physics (non-final for chunk recovery)
+    // Delegated engine (M1): for CUSTOM ships, defCoreLib owns the displays/colliders/mounting and this
+    // holds the live Mechanism. null for prefab + legacy-recovery ships, which keep the native entity engine
+    // below. When non-null, the native vehicle/parent/display/collider spawn + mount is skipped.
+    public anon.def9a2a4.corelib.Mechanism mechanism;
     private Location cachedVehicleLoc;  // Cached per-tick to avoid redundant getLocation() clones
     public final int driverSeatIndex;  // Index of driver seat (always 0)
     public final UUID id;  // Ship UUID - generated on spawn or restored from state
@@ -301,11 +305,28 @@ public class ShipInstance {
     }
 
     public ShipInstance(JavaPlugin plugin, String shipType, ShipModel model, Location spawnLocation, ShipCustomization customization) {
+        this(plugin, shipType, model, spawnLocation, customization, null, null);
+    }
+
+    /**
+     * Full fresh-spawn ctor. When {@code mechanism != null} (delegated custom ship, M1), defCoreLib owns the
+     * displays/colliders/mounting: {@code providedVehicle} is the ArmorStand the mechanism was assembled on,
+     * and ALL native vehicle/parent/display/collider spawn + mount below is skipped. When both are null this is
+     * the classic native path (prefab ships; and any legacy custom spawn). {@code providedVehicle} must be
+     * non-null iff {@code mechanism} is non-null.
+     */
+    public ShipInstance(JavaPlugin plugin, String shipType, ShipModel model, Location spawnLocation,
+                        ShipCustomization customization,
+                        ArmorStand providedVehicle,
+                        anon.def9a2a4.corelib.Mechanism mechanism) {
         this.plugin = plugin;
         this.shipType = shipType;
         this.model = model;
         this.customization = customization != null ? customization : ShipCustomization.empty();
-        this.id = UUID.randomUUID();
+        this.mechanism = mechanism;
+        // Identity unification (M1): a delegated custom ship shares the Mechanism's UUID so ShipRegistry and
+        // the ship sidecar both key on it (no ship-UUID↔mechId map). Native ships keep a fresh random id.
+        this.id = mechanism != null ? mechanism.id() : UUID.randomUUID();
         this.driverSeatIndex = 0;
 
         // Load all config values
@@ -326,6 +347,18 @@ public class ShipInstance {
         // If any spawn/setup below throws, tear down whatever was already spawned so a failed
         // assembly leaves no orphaned ghost entities (see catch at the end of the spawn sequence).
         try {
+        if (providedVehicle != null) {
+            // Delegated (M1): adopt the ArmorStand defCoreLib already spawned + mounted the display chain on
+            // (tagged corelib:mech:{id}:vehicle). Add the ship-root tag + health attribute so BlockShips'
+            // damage/lookup still resolve it. The caller set its yaw to the assembly yaw; don't re-rotate.
+            this.vehicle = providedVehicle;
+            this.vehicle.addScoreboardTag(ShipTags.shipRootTag(id));
+            org.bukkit.attribute.AttributeInstance maxHealthAttr = this.vehicle.getAttribute(anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth());
+            if (maxHealthAttr != null) {
+                maxHealthAttr.setBaseValue(model.maxHealth);
+            }
+            this.vehicle.setHealth(model.maxHealth);
+        } else {
         this.vehicle = w.spawn(base, ArmorStand.class, as -> {
             as.setInvisible(true);
             as.setGravity(false);
@@ -345,6 +378,7 @@ public class ShipInstance {
             // Force rotation to match spawn location (Bukkit doesn't auto-apply yaw from Location)
             as.setRotation(base.getYaw(), base.getPitch());
         });
+        }
 
         // Seats are now the collision shulkers themselves (no separate ArmorStands)
         // Driver seat is always at index 0 (validated in ShipModel.fromFile)
@@ -380,6 +414,10 @@ public class ShipInstance {
         this.currentChunkX = vehicle.getLocation().getBlockX() >> 4;
         this.currentChunkZ = vehicle.getLocation().getBlockZ() >> 4;
 
+        // ── Native entity engine (prefab + legacy) ────────────────────────────────────────────────
+        // For a DELEGATED custom ship (mechanism != null) defCoreLib already spawned the parent, block/item
+        // displays, and collider shulkers on the vehicle and mounted the chain — skip all of it here.
+        if (mechanism == null) {
         // Spawn displays above the vehicle so they don't flash below ground before
         // being mounted as passengers (1 tick later). Manually tuned offset.
         Location displaySpawnLoc = base.clone().add(0, 2.5, 0);
@@ -932,6 +970,7 @@ public class ShipInstance {
             });
             displays.add(new DisplayInstance(child, new Matrix4f(p.local)));
         }
+        } // end if (mechanism == null): native parent/display/collider spawn
         } catch (Throwable ex) {
             // Assembly failed partway - despawn everything already spawned (vehicle, parent,
             // block/item displays, collider carriers + shulkers) so no invisible ghosts remain,
@@ -944,20 +983,24 @@ public class ShipInstance {
         new BukkitRunnable() {
             @Override
             public void run() {
-                // Mount children to parent
-                for (DisplayInstance di : displays) {
-                    parent.addPassenger(di.entity);
+                // Native mount (prefab + legacy). A delegated custom ship is already mounted by defCoreLib
+                // (parent → vehicle, colliders on carriers), so skip — but still start the tick loop below.
+                if (mechanism == null) {
+                    // Mount children to parent
+                    for (DisplayInstance di : displays) {
+                        parent.addPassenger(di.entity);
+                    }
+                    // Mount parent to vehicle (ArmorStand)
+                    vehicle.addPassenger(parent);
+
+                    // Position collision boxes immediately before starting tick task
+                    // This prevents them from appearing to "jump" when player first interacts
+                    updateCollisionPositions();
+
+                    // Teleport any players who are inside collision shulkers to the top
+                    // (they were standing on real blocks that were removed during assembly)
+                    pushPlayersOutOfColliders();
                 }
-                // Mount parent to vehicle (ArmorStand)
-                vehicle.addPassenger(parent);
-
-                // Position collision boxes immediately before starting tick task
-                // This prevents them from appearing to "jump" when player first interacts
-                updateCollisionPositions();
-
-                // Teleport any players who are inside collision shulkers to the top
-                // (they were standing on real blocks that were removed during assembly)
-                pushPlayersOutOfColliders();
 
                 // Start tick loop
                 task = new BukkitRunnable() {
