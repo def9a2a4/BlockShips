@@ -44,18 +44,15 @@ public class ShipWheelMenu {
         public final int woolCount;
         public final int bannerCount;
         public final int sailPower;
-        public final int engineCount;
-        public final int fueledEngines;
-        public final int enginePowerPerEngine; // power points per engine (from config)
         public final float sailCapRatio; // sail cap threshold (from config, e.g. 0.8)
         public final float sailRatio;  // uncapped sail ratio (before sail cap applied)
-        public final float ratio;      // final ratio (with sail cap + engines)
+        public final float ratio;      // final ratio (with sail cap)
         public final boolean statsEnabled; // whether the power-to-mass stats system is active
 
         public ShipInfo(int blockCount, int totalWeight, int mass, float density, int maxHealth,
                         Integer currentHealth, float surfaceOffset, float airDensity, float waterDensity,
-                        int woolCount, int bannerCount, int sailPower, int engineCount, int fueledEngines,
-                        int enginePowerPerEngine, float sailCapRatio, float sailRatio, float ratio,
+                        int woolCount, int bannerCount, int sailPower,
+                        float sailCapRatio, float sailRatio, float ratio,
                         boolean statsEnabled) {
             this.blockCount = blockCount;
             this.totalWeight = totalWeight;
@@ -69,9 +66,6 @@ public class ShipWheelMenu {
             this.woolCount = woolCount;
             this.bannerCount = bannerCount;
             this.sailPower = sailPower;
-            this.engineCount = engineCount;
-            this.fueledEngines = fueledEngines;
-            this.enginePowerPerEngine = enginePowerPerEngine;
             this.sailCapRatio = sailCapRatio;
             this.sailRatio = sailRatio;
             this.ratio = ratio;
@@ -391,33 +385,24 @@ public class ShipWheelMenu {
         }
 
         // Ship stats - use live ShipInstance data when assembled
-        int woolCount, bannerCount, engineCount, fueledEngines, mass;
+        int woolCount, bannerCount, mass;
         if (wheelData.isAssembled()) {
             ShipInstance ship = ShipRegistry.byId(wheelData.getAssembledShipUUID());
             if (ship != null && ship.model != null) {
                 woolCount = ship.model.woolCount;
                 bannerCount = ship.model.bannerCount;
-                engineCount = ship.model.engineCount;
                 mass = Math.max(1, ship.model.mass);
-                anon.def9a2a4.blockships.customships.ShipWheelData wd = ship.resolveWheelData();
-                fueledEngines = (wd != null)
-                    ? wd.countFueledEngines(ship.model.engineBlockIndices)
-                    : 0;
             } else {
                 // Ship not found (destroyed?) - use detection data
                 woolCount = wheelData.getLastDetectedWoolCount();
                 bannerCount = wheelData.getLastDetectedBannerCount();
-                engineCount = wheelData.getLastDetectedEngineCount();
                 mass = Math.max(1, wheelData.getLastDetectedPositiveWeight());
-                fueledEngines = 0;
             }
         } else {
-            // Unassembled - use detection data; fueled count captured from furnace contents at detect time
+            // Unassembled - use detection data
             woolCount = wheelData.getLastDetectedWoolCount();
             bannerCount = wheelData.getLastDetectedBannerCount();
-            engineCount = wheelData.getLastDetectedEngineCount();
             mass = Math.max(1, wheelData.getLastDetectedPositiveWeight());
-            fueledEngines = wheelData.getLastDetectedFueledEngineCount();
         }
 
         int sailPower = woolCount * config.woolPower + bannerCount * config.bannerPower;
@@ -425,13 +410,12 @@ public class ShipWheelMenu {
         // Compute power ratio
         float sailRatio = (float) (config.basePower + sailPower) / mass;
         float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
-        float engineBonus = (float) (fueledEngines * config.enginePower) / mass;
-        float ratio = Math.min(nonEngineRatio + engineBonus, 1.0f);
+        float ratio = Math.min(nonEngineRatio, 1.0f);
 
         return new ShipInfo(blockCount, totalWeight, mass, density, maxHealth, currentHealth,
                             surfaceOffset, airDensity, waterDensity,
-                            woolCount, bannerCount, sailPower, engineCount, fueledEngines,
-                            config.enginePower, config.sailCapRatio, sailRatio, ratio,
+                            woolCount, bannerCount, sailPower,
+                            config.sailCapRatio, sailRatio, ratio,
                             config.statsEnabled);
     }
 
@@ -555,30 +539,13 @@ public class ShipWheelMenu {
                     }
                 }
 
-                // Engines - always show fueled/unfueled breakdown
-                if (info.engineCount > 0) {
-                    int unfueled = info.engineCount - info.fueledEngines;
-                    if (info.fueledEngines > 0) {
-                        int fueledPts = info.fueledEngines * info.enginePowerPerEngine;
-                        lore.add(ChatColor.GRAY + "Engines: " + ChatColor.GREEN + info.fueledEngines
-                            + ChatColor.GRAY + " (" + fueledPts + " pts)");
-                    }
-                    if (unfueled > 0) {
-                        lore.add(ChatColor.GRAY + "Engines " + ChatColor.RED + "(unfueled)"
-                            + ChatColor.GRAY + ": " + ChatColor.WHITE + unfueled
-                            + ChatColor.GRAY + " (0 pts)");
-                    }
-                }
-
                 lore.add("");
                 lore.add(ChatColor.GRAY + "Mass: " + ChatColor.WHITE + info.mass);
                 // Effective power after caps (matches physics formula):
-                // cappedSailPower = min(basePower + sailPower, sailCapRatio * mass)
-                // + enginePower, capped at 1.0 * mass total
+                // cappedSailPower = min(basePower + sailPower, sailCapRatio * mass), capped at 1.0 * mass total
                 int rawSailPower = config.basePower + info.sailPower;
                 int cappedSailPower = Math.min(rawSailPower, Math.round(info.sailCapRatio * info.mass));
-                int enginePts = info.fueledEngines * info.enginePowerPerEngine;
-                int effectivePower = Math.min(cappedSailPower + enginePts, info.mass);
+                int effectivePower = Math.min(cappedSailPower, info.mass);
                 lore.add(ChatColor.GRAY + "Effective Power: " + ChatColor.WHITE + effectivePower
                     + ChatColor.GRAY + " / " + info.mass + " pts");
                 lore.add(ChatColor.GRAY + "Power Ratio: " + ChatColor.YELLOW
@@ -727,7 +694,7 @@ public class ShipWheelMenu {
         lore.add(ChatColor.GRAY + "WASD to move, Space is up, Sprint is down");
         lore.add(ChatColor.GRAY + "Place ship's wheel on ship and click 'Assemble' (boat)");
         lore.add(ChatColor.GRAY + "Right-click ship to board, Sneak to dismount");
-        lore.add(ChatColor.GRAY + "Sails and engines make you go faster,");
+        lore.add(ChatColor.GRAY + "Sails make you go faster,");
         lore.add(ChatColor.GRAY + "glowstone and other glowing blocks make you float.");
         lore.add(ChatColor.GRAY + "Enough floating blocks -> airship");
         lore.add("");

@@ -77,27 +77,23 @@ custom-ships:
     damping: 0.5
 
   # Ship stats (power-to-mass ratio system)
-  # Sails and engines provide power points; block weights provide mass.
+  # Sails provide power points; block weights provide mass.
   # ratio = power / mass determines ship performance.
   stats:
     # Master switch for the power-to-mass ratio system.
-    # true  = custom ships scale speed/rotation by sails, engines, and mass
+    # true  = custom ships scale speed/rotation by sails and mass
     # false = custom ships ignore composition and use the fixed default stats below
-    #         (sails and engines become cosmetic; restores pre-stats behavior) (default)
+    #         (sails become cosmetic; restores pre-stats behavior) (default)
     # NOTE: disabled by default pending a rework of the stats system in a future update.
     # Feedback on ship stats balance and functionality welcome: https://github.com/def9a2a4/BlockShips/issues/18
     enabled: false
     # Free power points every ship gets (ensures even tiny ships have some base ratio)
     base-power: 2
-    # Power points per fueled engine (unfueled engines contribute 0)
-    engine-power: 30
     # Power points per wool block used as sail
     wool-power: 3
     # Power points per banner block used as sail
     banner-power: 7
-    # Multiplier for fuel burn duration (2.0 = fuel lasts twice as long)
-    fuel-burn-multiplier: 1.0
-    # Sail contribution capped at this ratio (engines needed to push past it)
+    # Sail contribution capped at this ratio
     sail-cap-ratio: 0.8
     # Ratio that maps to current default stats (0.55 max speed, 1.5 rotation, etc.)
     default-ratio: 0.7
@@ -115,9 +111,8 @@ custom-ships:
     cap-rotation-speed: -1
     cap-rotation-acceleration: -1
     cap-rotation-deceleration: -1
-    # Airship vertical stat scaling (density magnitude + engines)
+    # Airship vertical stat scaling (density magnitude)
     vertical-density-scale: 0.3
-    vertical-engine-scale: 0.01
     floor-max-vertical-speed: 0.03
     floor-vertical-acceleration: 0.01
     cap-max-vertical-speed: 0.5

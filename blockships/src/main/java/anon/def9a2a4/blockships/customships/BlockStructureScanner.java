@@ -312,11 +312,13 @@ public class BlockStructureScanner {
         int weightedBlockCount = 0;
         float sumX = 0, sumY = 0, sumZ = 0;
 
-        // Track sail blocks and engines for ship stats (power-to-mass ratio)
+        // Track sail blocks for ship stats (power-to-mass ratio)
         int woolCount = 0;
         int bannerCount = 0;
+        // Engines were an experimental placeholder feature, now removed. These stay as
+        // vestigial always-zero/empty values feeding the (dormant) ShipModel fields.
         int engineCount = 0;
-        List<Integer> engineBlockIndices = new ArrayList<>();
+        List<Integer> engineBlockIndices = java.util.Collections.emptyList();
 
         // Track ship bounds (for all blocks)
         float minY = Float.MAX_VALUE;
@@ -381,26 +383,12 @@ public class BlockStructureScanner {
                 sumZ += (float) dz;
             }
 
-            // Count sail blocks and engines for ship stats
-            boolean isEngine = false;
+            // Count sail blocks for ship stats
             Material blockMaterial = block.getType();
             if (Tag.WOOL.isTagged(blockMaterial)) {
                 woolCount++;
             } else if (blockMaterial.name().contains("BANNER")) {
                 bannerCount++;
-            } else if (blockMaterial == Material.BLAST_FURNACE && plugin != null) {
-                // Check PDC for ship engine tag
-                org.bukkit.block.BlockState blockState = block.getState();
-                if (blockState instanceof org.bukkit.block.TileState tileState) {
-                    NamespacedKey engineKey = new NamespacedKey(plugin, "custom_item_id");
-                    String val = tileState.getPersistentDataContainer()
-                        .get(engineKey, org.bukkit.persistence.PersistentDataType.STRING);
-                    if ("ship_engine".equals(val)) {
-                        isEngine = true;
-                        engineCount++;
-                        engineBlockIndices.add(blockIndex);
-                    }
-                }
             }
 
             // Store position to block index mapping (for finding driver seat block)
@@ -441,9 +429,6 @@ public class BlockStructureScanner {
 
             // Create raw YAML map (for compatibility)
             Map<String, Object> rawYaml = new HashMap<>();
-            if (isEngine) {
-                rawYaml.put("is_engine", true);
-            }
 
             // Check for storage blocks (chests, furnaces, hoppers, etc.)
             ShipModel.StorageConfig storage = null;
@@ -979,20 +964,6 @@ public class BlockStructureScanner {
                 }
             }
 
-            // Restore engine PDC tag on blast furnaces
-            if (Boolean.TRUE.equals(part.rawYaml.get("is_engine"))) {
-                org.bukkit.block.BlockState state = block.getState();
-                if (state instanceof org.bukkit.block.TileState tileState) {
-                    BlockShipsPlugin bsPlugin = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
-                    if (bsPlugin != null) {
-                        NamespacedKey engineKey = new NamespacedKey(bsPlugin, "custom_item_id");
-                        tileState.getPersistentDataContainer().set(engineKey,
-                            org.bukkit.persistence.PersistentDataType.STRING, "ship_engine");
-                        tileState.update();
-                    }
-                }
-            }
-
             // Restore container inventories
             // NOTE: Must get a fresh BlockState AFTER setBlockData, and set inventory contents
             // on the snapshot BEFORE calling update(), otherwise the inventory is cleared.
@@ -1087,10 +1058,10 @@ public class BlockStructureScanner {
     }
 
     /**
-     * Drops a ship block (and its stored container/engine-fuel contents) as items instead of placing it,
+     * Drops a ship block (and its stored container contents) as items instead of placing it,
      * used for cells inside a WorldGuard-protected region during a forced disassembly. Preserves custom-item
-     * identity: engines drop as the ship engine item; vanilla blocks drop as their item form (wall-mounted
-     * variants remapped to their floor item). The wheel anchor is never routed here — the caller drops it.
+     * identity: vanilla blocks drop as their item form (wall-mounted variants remapped to their floor item).
+     * The wheel anchor is never routed here — the caller drops it.
      */
     private static void dropPartAsItems(ShipModel.ModelPart part, Location blockLoc) {
         org.bukkit.World world = blockLoc.getWorld();
@@ -1115,7 +1086,7 @@ public class BlockStructureScanner {
             return;
         }
 
-        // 1) Stored container / engine-fuel contents (synced into the model before placement, so current).
+        // 1) Stored container contents (synced into the model before placement, so current).
         if (part.rawYaml.containsKey("container_items")) {
             @SuppressWarnings("unchecked")
             java.util.List<Map<String, Object>> itemsData =
@@ -1136,16 +1107,9 @@ public class BlockStructureScanner {
         }
 
         // 2) The block itself, preserving custom-item identity where it has one.
-        BlockShipsPlugin bsPlugin = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
         org.bukkit.inventory.ItemStack mainItem = null;
 
-        if (Boolean.TRUE.equals(part.rawYaml.get("is_engine"))
-                && bsPlugin != null && bsPlugin.getDisplayShip() != null
-                && bsPlugin.getDisplayShip().getItemFactory() != null) {
-            mainItem = bsPlugin.getDisplayShip().getItemFactory().createItem("ship_engine", "_DEFAULT", null);
-        }
-
-        if (mainItem == null) {
+        {
             // Vanilla block → its item form. Wall-mounted variants have no item; remap to the floor form.
             Material m = part.block.getMaterial();
             if (!m.isItem()) {
@@ -1340,9 +1304,8 @@ public class BlockStructureScanner {
             case SMOKER:
                 // Open a real 3-slot furnace GUI in flight (exact match to the block's 3 slots -> no overflow
                 // on disassembly). Smoker/blast furnace render as a furnace GUI (cosmetic; same 3 slots).
-                // Blast-furnace engines also hit this arm, but their storage inventory is inert at runtime
-                // (they use EngineMenuGUI), so it's harmless. Applies to newly assembled ships only; existing
-                // ships keep their persisted CHEST type (the disassembly overflow-drop keeps that safe).
+                // Applies to newly assembled ships only; existing ships keep their persisted CHEST type
+                // (the disassembly overflow-drop keeps that safe).
                 storageType = ShipModel.StorageType.FURNACE;
                 name = "Ship Furnace";
                 break;

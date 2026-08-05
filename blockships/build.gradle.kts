@@ -23,6 +23,10 @@ repositories {
         name = "enginehub"
         url = uri("https://maven.enginehub.org/repo/")
     }
+    maven {
+        name = "jitpack"
+        url = uri("https://jitpack.io")
+    }
 }
 
 dependencies {
@@ -32,6 +36,10 @@ dependencies {
     compileOnly("net.dmulloy2:ProtocolLib:5.4.0")
     // Optional soft-dependency: region protection integration (never shaded).
     compileOnly("com.sk89q.worldguard:worldguard-bukkit:7.0.17")
+    // defCoreLib Mechanism engine. compileOnly + runtime `depend:` — NEVER shaded (mirrors
+    // ProtocolLib/WorldGuard; do not relocate anon.def9a2a4.corelib). Local sibling jar during the
+    // integration branch; switch to the JitPack pin `com.github.def9a2a4:defCoreLib:<sha>` at merge.
+    compileOnly(files("../../defCoreLib/bin/defCoreLib-0.4.0.jar"))
     implementation("org.bstats:bstats-bukkit:3.1.0")
 }
 

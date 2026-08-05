@@ -47,7 +47,6 @@ public class ShipConfig {
     // Ship stats (power-to-mass ratio system, custom ships only)
     public final boolean statsEnabled;       // Master switch for the ratio system (default: false)
     public final int basePower;              // Free power points every ship gets (default: 2)
-    public final int enginePower;            // Power points per fueled engine (default: 30)
     public final int woolPower;              // Power points per wool block (default: 3)
     public final int bannerPower;            // Power points per banner block (default: 7)
     public final float fuelBurnMultiplier;   // Multiplier for fuel burn times (default: 1.0)
@@ -140,7 +139,6 @@ public class ShipConfig {
         this.verticalForwardNudge = b.verticalForwardNudge;
         this.statsEnabled = b.statsEnabled;
         this.basePower = b.basePower;
-        this.enginePower = b.enginePower;
         this.woolPower = b.woolPower;
         this.bannerPower = b.bannerPower;
         this.fuelBurnMultiplier = b.fuelBurnMultiplier;
@@ -288,7 +286,6 @@ public class ShipConfig {
             // Ship stats (power-to-mass ratio system)
             .statsEnabled(cfg.getBoolean("custom-ships.stats.enabled", false))
             .basePower(cfg.getInt("custom-ships.stats.base-power", 2))
-            .enginePower(cfg.getInt("custom-ships.stats.engine-power", 30))
             .woolPower(cfg.getInt("custom-ships.stats.wool-power", 3))
             .bannerPower(cfg.getInt("custom-ships.stats.banner-power", 7))
             .fuelBurnMultiplier((float) cfg.getDouble("custom-ships.stats.fuel-burn-multiplier", 1.0))
@@ -365,7 +362,6 @@ public class ShipConfig {
         // Ship stats defaults
         boolean statsEnabled = false;
         int basePower = 2;
-        int enginePower = 30;
         int woolPower = 3;
         int bannerPower = 7;
         float fuelBurnMultiplier = 1.0f;
@@ -441,7 +437,6 @@ public class ShipConfig {
         Builder verticalForwardNudge(float v) { verticalForwardNudge = v; return this; }
         Builder statsEnabled(boolean v) { statsEnabled = v; return this; }
         Builder basePower(int v) { basePower = v; return this; }
-        Builder enginePower(int v) { enginePower = v; return this; }
         Builder woolPower(int v) { woolPower = v; return this; }
         Builder bannerPower(int v) { bannerPower = v; return this; }
         Builder fuelBurnMultiplier(float v) { fuelBurnMultiplier = v; return this; }

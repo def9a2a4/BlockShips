@@ -82,7 +82,7 @@ public class ShipInstance {
     public final List<Shulker> seatShulkers = new ArrayList<>();  // Seat shulkers in order (index 0 = driver)
     private final Set<Integer> occupiedSeatIndices = new HashSet<>();  // Track which seats are occupied
     public Shulker leadableShulker;  // Designated lead attachment point (for prefab ships)
-    public anon.def9a2a4.blockships.customships.ShipWheelData wheelData;  // Reference to wheel data (for engine fuel state, set during assembly)
+    public anon.def9a2a4.blockships.customships.ShipWheelData wheelData;  // Reference to wheel data (set during assembly)
 
     /**
      * Lazily resolves wheelData if not set (e.g., after chunk recovery).
@@ -109,7 +109,6 @@ public class ShipInstance {
     float spawnYaw;  // Track spawn yaw for display rotation delta calculation
     private float metadataYaw = Float.NaN;  // Yaw from per-world metadata (for chunk recovery)
     private int ticksSinceLastMovement = 0;
-    private int engineSmokeTick = 0;  // Counter for throttling engine smoke particles
     private boolean taskStopped = false;
     private boolean firstTick = true; // Force first tick to update positions
 
@@ -367,7 +366,7 @@ public class ShipInstance {
 
         // Compute initial effective stats. For prefab ships this is the final value
         // (config-based, no ratio). For custom ships this is a preliminary computation
-        // with 0 fueled engines; recomputed after wheelData is linked in ShipWheelManager.
+        // recomputed after wheelData is linked in ShipWheelManager.
         this.physics.recomputeStats();
 
         // Initialize previous state
@@ -1237,7 +1236,6 @@ public class ShipInstance {
         collision.detect();  // Detect collisions and accumulate forces
         physics.update();    // Apply physics (movement, rotation, buoyancy)
         collision.applyResponse();  // Apply collision response
-        spawnEngineSmoke();  // Visual feedback for running engines
         cachedVehicleLoc = vehicle.getLocation();  // Refresh after physics moved the vehicle
 
         // Set vehicle velocity from actual displacement (after physics + collision response)
@@ -1387,29 +1385,6 @@ public class ShipInstance {
      *   [2] Set relativeTo (empty = absolute)
      *   [3] boolean onGround
      */
-    /**
-     * Spawns smoke particles at fueled engine positions. Throttled to every 5 ticks.
-     */
-    private void spawnEngineSmoke() {
-        if (!"custom".equals(shipType) || model.engineBlockIndices.isEmpty()) return;
-        if (resolveWheelData() == null || !hasDriver) return;
-        if (++engineSmokeTick % 5 != 0) return;
-
-        for (int engineIdx : model.engineBlockIndices) {
-            if (wheelData.getEngineBurnTicks(engineIdx) <= 0) continue;
-
-            // Find the engine's collision shulker by block index
-            for (CollisionBox box : colliders) {
-                if (box.blockIndex == engineIdx && box.entity != null && box.entity.isValid()) {
-                    Location loc = box.entity.getLocation();
-                    loc.getWorld().spawnParticle(org.bukkit.Particle.CAMPFIRE_COSY_SMOKE,
-                        loc.getX(), loc.getY() + 1.0, loc.getZ(), 0, 0.0, 0.05, 0.0, 1.0);
-                    break;
-                }
-            }
-        }
-    }
-
     private void sendVehiclePositionSync(Location loc, org.bukkit.util.Vector velocity) {
         if (!positionSyncInitialized) {
             positionSyncInitialized = true;
@@ -1999,11 +1974,7 @@ public class ShipInstance {
                 if (config.destroyOnDeath) {
                     // Full destruction: blocks are lost, only stored items drop
                     // Drop inventory contents (chests, barrels, etc.).
-                    // Skip engine blocks: their fuel is dropped exactly once via wheelData below.
-                    // An engine's storages entry is a stale assembly-time snapshot, so dropping it
-                    // here too would duplicate the fuel (and drop the pre-burn amount).
                     for (Map.Entry<Integer, Inventory> storageEntry : storages.entrySet()) {
-                        if (model.engineBlockIndices.contains(storageEntry.getKey())) continue;
                         Inventory storage = storageEntry.getValue();
                         for (ItemStack item : storage.getContents()) {
                             if (item != null && !item.getType().isAir()) {
@@ -2031,14 +2002,6 @@ public class ShipInstance {
                                         // Skip corrupted items
                                     }
                                 }
-                            }
-                        }
-                    }
-                    // Drop engine fuel items
-                    for (ItemStack[] fuelSlots : wheelData.getAllEngineFuelSlots().values()) {
-                        for (ItemStack item : fuelSlots) {
-                            if (item != null && !item.getType().isAir()) {
-                                world.dropItemNaturally(dropLocation, item);
                             }
                         }
                     }
@@ -2372,7 +2335,7 @@ public class ShipInstance {
         // Recompute effective stats. The recovery path previously skipped this, so prefab and
         // sail-only custom ships came back from a chunk reload / server restart stuck at
         // effective*==0 (immovable, can't turn, airships can't ascend/descend). resolveWheelData()
-        // links wheelData for engine'd custom ships (null no-op for prefab/sail-only);
+        // links wheelData for custom ships (null no-op for prefab);
         // recomputeStats() is unconditional and idempotent and handles prefab/custom/stats-disabled.
         resolveWheelData();
         physics.recomputeStats();

@@ -98,16 +98,7 @@ public class ShipPhysics {
         float sailRatio = ship.model.getSailRatio(config.basePower);
         // Apply sail cap: non-engine contribution capped at sailCapRatio
         float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
-        // Count fueled engines from wheel data (engines with active fuel)
-        // Use ship.wheelData directly - all callers guarantee it's set before reaching here.
-        // Avoids circular call: resolveWheelData() -> recomputeStats() -> computeEffectiveStats().
-        anon.def9a2a4.blockships.customships.ShipWheelData wd = ship.wheelData;
-        int fueledEngines = (wd != null)
-            ? wd.countFueledEngines(ship.model.engineBlockIndices)
-            : 0;  // No wheel data = no fuel state = 0 fueled engines
-        float enginePower = fueledEngines * config.enginePower;
-        int mass = Math.max(1, ship.model.mass);
-        float ratio = Math.min(nonEngineRatio + enginePower / mass, 1.0f);
+        float ratio = Math.min(nonEngineRatio, 1.0f);
 
         // Compute horizontal stats
         effectiveMaxSpeed = config.computeStat(ratio, config.maxSpeed,
@@ -125,8 +116,7 @@ public class ShipPhysics {
         if (ship.isAirship) {
             float density = ship.model.getDensity();
             float densityMag = Math.abs(density);
-            float engineVerticalBonus = (mass > 0) ? (enginePower / mass) * config.verticalEngineScale : 0;
-            float verticalRatio = Math.min(densityMag * config.verticalDensityScale + engineVerticalBonus, 1.0f);
+            float verticalRatio = Math.min(densityMag * config.verticalDensityScale, 1.0f);
 
             effectiveMaxVerticalSpeed = config.computeStat(verticalRatio, config.maxVerticalSpeed,
                 config.floorMaxVerticalSpeed, config.capMaxVerticalSpeed);
@@ -141,53 +131,6 @@ public class ShipPhysics {
         }
 
         statsComputed = true;
-    }
-
-    /**
-     * Ticks fuel consumption for all engines. Called once per tick while W is held.
-     * When an engine's burn ticks reach 0, the next fuel item is consumed.
-     * Recomputes effective stats when fuel state changes.
-     */
-    private void tickEngineFuel() {
-        boolean fuelChanged = false;
-        anon.def9a2a4.blockships.customships.ShipWheelData wd = ship.wheelData;
-
-        for (int engineIdx : ship.model.engineBlockIndices) {
-            int burnTicks = wd.getEngineBurnTicks(engineIdx);
-
-            if (burnTicks > 0) {
-                // Burn existing fuel
-                wd.setEngineBurnTicks(engineIdx, burnTicks - 1);
-                if (burnTicks - 1 == 0) fuelChanged = true;
-            } else {
-                // Try to consume next fuel item from slots
-                org.bukkit.inventory.ItemStack[] slots = wd.getAllEngineFuelSlots().get(engineIdx);
-                if (slots == null) continue;
-                for (int i = 0; i < slots.length; i++) {
-                    if (slots[i] != null && slots[i].getType() != org.bukkit.Material.AIR) {
-                        int baseBurnTicks = anon.def9a2a4.blockships.customships.EngineMenuGUI.getBurnTime(slots[i].getType());
-                        int newBurnTicks = Math.round(baseBurnTicks * ship.config.fuelBurnMultiplier);
-                        if (newBurnTicks > 0) {
-                            wd.setEngineBurnTicks(engineIdx, newBurnTicks);
-                            Material fuelMat = slots[i].getType();
-                            slots[i].setAmount(slots[i].getAmount() - 1);
-                            if (slots[i].getAmount() <= 0) {
-                                // Return empty bucket for lava buckets (vanilla behavior)
-                                slots[i] = (fuelMat == org.bukkit.Material.LAVA_BUCKET)
-                                    ? new org.bukkit.inventory.ItemStack(org.bukkit.Material.BUCKET)
-                                    : null;
-                            }
-                            fuelChanged = true;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        if (fuelChanged) {
-            computeEffectiveStats();
-        }
     }
 
     /**
@@ -226,18 +169,6 @@ public class ShipPhysics {
 
         Location vehicleLoc = ship.vehicle.getLocation();
         ShipConfig config = ship.config;
-
-        // Tick engine fuel (only for custom ships with engines, while any movement key held).
-        // Note: uses the broad anyMovementPressed (incl. Space/Sprint) because a ship can burn
-        // fuel while ascending/turning, whereas `throttling` below is W/S-only. Both are gated
-        // on hasDriver so a driverless ship with stuck input flags neither moves nor burns fuel.
-        boolean anyMovementPressed = ship.isForwardPressed || ship.isBackwardPressed
-                || ship.isLeftPressed || ship.isRightPressed
-                || ship.isSpacePressed || ship.isSprintPressed;
-        if ("custom".equals(ship.shipType) && ship.config.statsEnabled && ship.hasDriver && anyMovementPressed
-                && ship.model.engineCount > 0 && ship.resolveWheelData() != null) {
-            tickEngineFuel();
-        }
 
         // Only a real driver produces thrust. Without this, an input flag left stuck true after a
         // seat loss that skipped VehicleExitEvent (death while seated, forced cross-world teleport)

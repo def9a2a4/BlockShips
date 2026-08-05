@@ -5,6 +5,10 @@ build:
 	mkdir -p bin
 	cp blockships/build/libs/BlockShips-*.jar bin
 
+# Sibling defCoreLib Mechanism engine jar — BlockShips depend:s on it at runtime (never shaded), so it
+# must be present in every server's plugins/ dir alongside BlockShips.
+DEFCORELIB_JAR := ../defCoreLib/bin/defCoreLib-*.jar
+
 .PHONY: dump-issues
 dump-issues:
 	bash docs/dump-issues.sh
@@ -20,8 +24,9 @@ clean:
 
 .PHONY: server-plugin-copy
 server-plugin-copy:
-	rm -f server/plugins/BlockShips*.jar
+	rm -f server/plugins/BlockShips*.jar server/plugins/defCoreLib*.jar
 	cp bin/*.jar server/plugins/
+	cp $(DEFCORELIB_JAR) server/plugins/
 
 .PHONY: server-clear-plugin-data
 	rm -rf server/plugins/BlockShips/
@@ -73,6 +78,7 @@ test-server-plugin-copy:
 	rm -rf $(TEST_SERVER_DIR)/plugins/
 	mkdir -p $(TEST_SERVER_DIR)/plugins
 	cp bin/*.jar $(TEST_SERVER_DIR)/plugins/
+	cp $(DEFCORELIB_JAR) $(TEST_SERVER_DIR)/plugins/
 ifeq ($(MINECRAFT_VERSION),1.21.1)
 	cp $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar $(TEST_SERVER_DIR)/plugins/
 endif
