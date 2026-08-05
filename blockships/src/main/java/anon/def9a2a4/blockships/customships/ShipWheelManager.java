@@ -235,12 +235,14 @@ public class ShipWheelManager {
 
         Location wheelLoc = wheelData.getBlockLocation();
 
-        // Scan the structure
-        ShipModel model = BlockStructureScanner.scanStructure(wheelLoc, wheelData.getFacing());
-        if (model == null || model.parts.isEmpty()) {
+        // Scan the structure. Returns the derived model PLUS the live world blocks in parts-index order
+        // (still in the world — air-out is deferred), so the delegated assembler gets block-index parity.
+        BlockStructureScanner.ScanResult scan = BlockStructureScanner.scanStructure(wheelLoc, wheelData.getFacing());
+        if (scan == null || scan.model().parts.isEmpty()) {
             player.sendMessage("§cNo valid ship structure found!");
             return false;
         }
+        ShipModel model = scan.model();
 
         // Set spawn location yaw to match wheel facing direction
         // This ensures the vehicle spawns facing the correct direction

@@ -273,7 +273,15 @@ public class BlockStructureScanner {
      * @param facing The direction the ship wheel is facing
      * @return A ShipModel representing the scanned blocks, or null if scan fails
      */
-    public static ShipModel scanStructure(Location wheelLocation, BlockFace facing) {
+    /**
+     * Result of {@link #scanStructure}: the derived {@link ShipModel} plus the live world blocks that
+     * produced it, in {@code parts}-index order ({@code orderedBlocks.get(i)} corresponds to
+     * {@code model.parts.get(i)}). The blocks are still in the world (air-out is deferred) so a delegated
+     * assembler can consume them with block-index parity.
+     */
+    public record ScanResult(ShipModel model, List<Block> orderedBlocks) {}
+
+    public static ScanResult scanStructure(Location wheelLocation, BlockFace facing) {
         // Get max ship size from config
         BlockShipsPlugin plugin = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
         int maxShipSize = 1000; // Default
@@ -297,6 +305,11 @@ public class BlockStructureScanner {
         }
 
         List<ShipModel.ModelPart> parts = new ArrayList<>();
+        // Live world blocks in the SAME order as parts (orderedBlocks[i] ↔ parts[i]) so a delegated
+        // assembler (defCoreLib assembleMechanism) receives them with block-index parity — the mechanism's
+        // block index i then equals parts index i, keeping every seat/storage/collision index valid.
+        // Blocks are still in the world here (air-out is deferred to removeBlocks — see below).
+        List<Block> orderedBlocks = new ArrayList<>();
         List<ShipModel.SeatInfo> seats = new ArrayList<>();
         BlockConfigManager configManager = BlockConfigManager.getInstance();
 
@@ -583,6 +596,7 @@ public class BlockStructureScanner {
             }
 
             parts.add(new ShipModel.ModelPart(blockData, transform, collision, storage, rawYaml));
+            orderedBlocks.add(block);
             blockIndex++;
         }
 
@@ -657,7 +671,7 @@ public class BlockStructureScanner {
         int woolPower = plugin.getConfig().getInt("custom-ships.stats.wool-power", 3);
         int bannerPower = plugin.getConfig().getInt("custom-ships.stats.banner-power", 7);
 
-        return new ShipModel(
+        ShipModel model = new ShipModel(
             parts,
             Collections.emptyList(),  // No items for MVP
             initialRotation,
@@ -683,6 +697,7 @@ public class BlockStructureScanner {
             engineCount,
             engineBlockIndices
         );
+        return new ScanResult(model, orderedBlocks);
     }
 
     /**
