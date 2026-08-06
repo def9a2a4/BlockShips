@@ -2623,6 +2623,18 @@ public class ShipInstance {
     }
 
     public void destroy() {
+        // Track W (W2): clear the originating wheel's assembled-link so no wheel is left "confused" (believing a
+        // now-dead ship is still assembled → Assemble refuses). This is the central self-heal covering EVERY
+        // destroy() caller (out-of-band vehicle death, the destroyAndDropItem fallback, etc.). Equality-guarded:
+        // never clears a wheel that has since re-linked to a different ship, and no-ops both the assembly-rollback
+        // (link not set yet) and prefab ships (no wheel points at this id). Callers own the subsequent saveAll().
+        anon.def9a2a4.blockships.customships.ShipWheelData wd = wheelData;
+        if (wd == null && plugin instanceof anon.def9a2a4.blockships.BlockShipsPlugin bsp0) {
+            wd = bsp0.getShipWheelManager().getWheelByShipUUID(id);
+        }
+        if (wd != null && id.equals(wd.getAssembledShipUUID())) {
+            wd.setAssembledShipUUID(null);
+        }
         if (task != null) task.cancel();
         if (idleCheckTask != null) idleCheckTask.cancel();
         if (mechanism != null) {
@@ -2930,8 +2942,12 @@ public class ShipInstance {
             return false;
         }
 
-        // Get dispenser inventory
-        Inventory inv = storages.get(cannon.dispenserBlockIndex);
+        // Get dispenser inventory (the ammo). For a delegated ship the native `storages` map is empty — the
+        // dispenser's captured inventory rides on the mechanism, keyed by block index (== dispenserBlockIndex
+        // via the parity invariant). Consuming from it round-trips back to the placed dispenser on disassemble.
+        Inventory inv = (mechanism != null)
+            ? mechanism.getStorage(cannon.dispenserBlockIndex)
+            : storages.get(cannon.dispenserBlockIndex);
         if (inv == null || inv.isEmpty()) {
             return false;
         }

@@ -1399,6 +1399,28 @@ public class DisplayShip implements Listener {
     }
 
     /**
+     * Whether model block index {@code i} is a leadable fence. Mirrors the exact source native uses
+     * ({@code BlockStructureScanner} sets {@code rawYaml["leadable"]=true} from {@code BlockProperties.isLeadable},
+     * and native lead transfer / tagging read that same flag — see {@code ShipInstance} tag-bind and
+     * {@code ShipWheelManager.transferLeadsToShip}). Used to route delegated collider clicks that carry no
+     * native {@code leadable:{i}} tag.
+     */
+    private boolean isModelPartLeadable(ShipInstance inst, int i) {
+        if (i < 0 || i >= inst.model.parts.size()) return false;
+        Map<?, ?> rawYaml = inst.model.parts.get(i).rawYaml;
+        return rawYaml != null && Boolean.TRUE.equals(rawYaml.get("leadable"));
+    }
+
+    /** Whether model block index {@code i} is a cannon obsidian (a {@code CannonInfo.obsidianBlockIndex}). The
+     *  delegated cannon route needs this membership test because the cannon click branch cancels on index alone. */
+    private boolean isDelegatedCannonObsidian(ShipInstance inst, int i) {
+        for (ShipModel.CannonInfo cannon : inst.model.cannons) {
+            if (cannon.obsidianBlockIndex == i) return true;
+        }
+        return false;
+    }
+
+    /**
      * Handles detaching leads from a leadable shulker (fence block on assembled ship).
      * Mimics vanilla fence behavior: first entity attaches to player, rest drop as items.
      */
@@ -1455,9 +1477,16 @@ public class DisplayShip implements Listener {
         UUID shipId = ShipTags.extractShipId(exitTags);
         int seatIndex = ShipTags.extractSeatIndex(exitTags);
 
-        if (shipId != null && seatIndex >= 0) {
+        if (shipId != null) {
             ShipInstance inst = ShipRegistry.byId(shipId);
-            if (inst != null) {
+            // Delegated seats carry corelib:mech:{id}:{i}:seat, not shipseat:{i}, so extractSeatIndex is -1.
+            // Recover the seat index from the populated seatShulkers list (mirrors the mount-side M4 fallback)
+            // so a dismount actually frees the seat — otherwise occupiedSeatIndices/hasDriver stay set and a
+            // phantom driver keeps the delegated ship moving after the rider leaves.
+            if (seatIndex < 0 && inst != null && inst.mechanism != null) {
+                seatIndex = inst.seatShulkers.indexOf(shulker);
+            }
+            if (inst != null && seatIndex >= 0) {
                 inst.freeSeat(seatIndex);
                 // Speed persists - don't reset currentSpeed
 

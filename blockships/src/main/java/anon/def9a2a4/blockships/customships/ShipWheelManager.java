@@ -49,6 +49,37 @@ public class ShipWheelManager {
     public ShipWheelManager(JavaPlugin plugin) {
         this.plugin = plugin;
         this.placedWheels = new HashMap<>();
+        registerLeadsInSeam();
+    }
+
+    /**
+     * M1 seam — leads-in. Registers a ONE-TIME registry pre-air-out listener: during a custom-ship assembly,
+     * defCoreLib airs out the source fences itself, so the only window where a live fence and its collider
+     * shulker coexist is the pre-air-out callback. For each leadable source fence, transfer any entities
+     * leashed to it onto the mechanism's collider shulker (mirrors the native {@link #transferLeadsToShip}).
+     * Registered once (not per-assembly, which would stack duplicate listeners) and filtered by mech type.
+     * Uses the source block MATERIAL for the leadable test (no ShipInstance exists yet) via the same
+     * {@code BlockConfigManager} source the scan uses, and the block-index parity (source list position i ==
+     * mechanism block index i) to reach {@code colliderEntity(i)}.
+     */
+    private void registerLeadsInSeam() {
+        anon.def9a2a4.corelib.MechanismRegistry mechRegistry =
+            anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry();
+        mechRegistry.addPreAirOutListener((mech, sourceBlocks) -> {
+            if (!"blockship:custom".equals(mech.type())) return;
+            BlockConfigManager cfg = BlockConfigManager.getInstance();
+            for (int i = 0; i < sourceBlocks.size(); i++) {
+                Block src = sourceBlocks.get(i);
+                if (src == null || !cfg.getProperties(src.getType()).isLeadable()) continue;
+                List<org.bukkit.entity.Entity> leashed = findEntitiesLeashedToFence(src.getLocation());
+                if (leashed.isEmpty()) continue;
+                Shulker collider = mech.colliderEntity(i);
+                if (collider == null) continue; // leadable fence without a collider → nothing to ride
+                for (org.bukkit.entity.Entity entity : leashed) {
+                    ((io.papermc.paper.entity.Leashable) entity).setLeashHolder(collider);
+                }
+            }
+        });
     }
 
     // ===== Persistence =====
@@ -282,6 +313,11 @@ public class ShipWheelManager {
             as.setSilent(true);
             as.setMarker(false);
             as.setPersistent(true);
+            // Track W (W1): shield the invisible root vehicle from direct damage/removal (lava, fire, explosion
+            // AoE). Ship damage is routed through the collision shulkers (onShulkerDamage → vehicle.setHealth),
+            // which bypasses invulnerability, so cannons/sinking/regen are unaffected; this only removes the
+            // out-of-band root-death vector that leaves the wheel stuck "assembled". destroy()'s remove() still works.
+            as.setInvulnerable(true);
             // Entity yaw MUST be 0: defCoreLib puts ALL rotation into the display transform matrix (its driven
             // contract), and display-entity passengers inherit the vehicle's entity yaw on 1.21.9+ — a non-zero
             // yaw here would rotate the displays an extra assemblyYaw while the teleported collider carriers are
@@ -300,12 +336,18 @@ public class ShipWheelManager {
             ship = new ShipInstance(plugin, "custom", model, wheelLoc, ShipCustomization.empty(), vehicle, mechanism);
             ship.sourceModel = model;  // Store the model for disassembly
             ship.adoptMechanismSeats();  // M4: designate seats on the mechanism + populate seatShulkers
-            // TODO(M1 seam): lead transfer moves to MechanismRegistry.addPreAirOutListener (the mechanism airs
-            // out the fence blocks itself, so the old pre-removeBlocks transfer window no longer exists).
+            // Leads-in is handled by the registry pre-air-out listener (registerLeadsInSeam) — it fires DURING
+            // assembleMechanism above (before the fences are aired out), re-leashing mobs onto the colliders.
         } catch (Throwable t) {
             // Roll back: if the mechanism assembled it already aired out the blocks — disassemble to restore
             // them; otherwise just remove the bare vehicle. Guard cleanup so it can't mask the original cause.
             if (mechanism != null) {
+                // Leads-in may already have fired (pre-air-out), leaving mobs leashed to the colliders. Return
+                // them to the original fences (rotationDelta 0 → original cells) before disassemble deletes the
+                // colliders, else the leads pop. Restoration is to already-validated cells, so no WG policy needed.
+                final anon.def9a2a4.corelib.Mechanism fMech = mechanism;
+                try { mechanism.setBeforeEntityRemoval(() -> transferLeadsFromMechanism(fMech, model, wheelLoc, model.assemblyYaw)); }
+                catch (Throwable ignored) { /* best-effort; don't mask the original failure */ }
                 try { mechanism.disassemble(); }
                 catch (Throwable cleanup) { plugin.getLogger().warning("Cleanup after failed assembly also failed: " + cleanup.getMessage()); }
             } else if (vehicle.isValid()) {
@@ -526,8 +568,74 @@ public class ShipWheelManager {
 
         if (ship.mechanism != null) {
             // Delegated (M1): the Mechanism restores the blocks to the world AND removes its own displays/
-            // colliders. WG drop-routing + lead transfer will be wired via the mechanism's cellPlacePolicy /
-            // beforeEntityRemoval seams (M1 TODO); the external vehicle is removed by ship.destroy() below.
+            // colliders. Wire the three disassembly seams so the delegated teardown reproduces the native
+            // placeBlocks behavior (WG drop-routing + wheel-anchor skip, wall→floor drop remap, leads-out),
+            // then disassemble. The external vehicle is removed by ship.destroy() below.
+            final int anchorX = newWheelLocation.getBlockX();
+            final int anchorY = newWheelLocation.getBlockY();
+            final int anchorZ = newWheelLocation.getBlockZ();
+            final boolean fForce = force;
+            final boolean fWgOn = wgOn;
+            final boolean fAnchorProtected = anchorProtected;
+            final org.bukkit.entity.Player fPlayer = player;
+
+            // Cell placement policy — mirror BlockStructureScanner.placeBlocks:884-896. Compare the anchor by
+            // BLOCK COORDINATES (not Location.equals — that also compares yaw/pitch and never matches).
+            ship.mechanism.setCellPlacePolicy((target, block) -> {
+                if (target.getX() == anchorX && target.getY() == anchorY && target.getZ() == anchorZ) {
+                    // Wheel anchor: SKIP when protected (BlockShips drops the wheel item + deregisters below),
+                    // else PLACE normally.
+                    return fAnchorProtected
+                        ? anon.def9a2a4.corelib.Mechanism.PlaceDecision.SKIP
+                        : anon.def9a2a4.corelib.Mechanism.PlaceDecision.PLACE;
+                }
+                if (fForce && fWgOn && anon.def9a2a4.blockships.integration.WorldGuardHook.get()
+                        .isBuildDenied(target.getLocation(), fPlayer)) {
+                    // Non-anchor cell in a protected region: drop the block instead of writing it.
+                    return anon.def9a2a4.corelib.Mechanism.PlaceDecision.DROP;
+                }
+                return anon.def9a2a4.corelib.Mechanism.PlaceDecision.PLACE;
+            });
+
+            // Drop-item hook — (i) multi-cell dupe guard: drop only the primary half of a 2-cell block (else a
+            // WG-denied bed/door drops twice); (ii) wall→floor material remap for variants with no item form.
+            ship.mechanism.setDropItemHook((mb, defaultDrop) -> {
+                org.bukkit.block.data.BlockData bd = mb.blockData;
+                if (bd instanceof org.bukkit.block.data.Bisected bis
+                        && !(bd instanceof org.bukkit.block.data.type.Stairs)
+                        && !(bd instanceof org.bukkit.block.data.type.TrapDoor)
+                        && bis.getHalf() == org.bukkit.block.data.Bisected.Half.TOP) {
+                    return null; // upper half — primary (bottom) half already dropped
+                }
+                if (bd instanceof org.bukkit.block.data.type.Bed bed
+                        && bed.getPart() == org.bukkit.block.data.type.Bed.Part.HEAD) {
+                    return null; // head half — foot already dropped
+                }
+                if (defaultDrop != null) return defaultDrop; // engine already had an item form
+                String name = bd.getMaterial().name();
+                String remapped = name;
+                if (name.contains("_WALL_HEAD")) remapped = name.replace("_WALL_HEAD", "_HEAD");
+                else if (name.contains("_WALL_SKULL")) remapped = name.replace("_WALL_SKULL", "_SKULL");
+                else if (name.contains("_WALL_BANNER")) remapped = name.replace("_WALL_BANNER", "_BANNER");
+                else if (name.contains("_WALL_SIGN")) remapped = name.replace("_WALL_SIGN", "_SIGN");
+                else if (name.contains("WALL_TORCH")) remapped = name.replace("WALL_TORCH", "TORCH");
+                else if (name.equals("REDSTONE_WIRE")) remapped = "REDSTONE";
+                else if (name.equals("TRIPWIRE")) remapped = "STRING";
+                try {
+                    Material rm = Material.valueOf(remapped);
+                    if (rm.isItem()) return new ItemStack(rm);
+                } catch (IllegalArgumentException ignored) { /* no floor form — suppress */ }
+                return null;
+            });
+
+            // Leads-out — re-leash entities off the collider shulkers onto fresh LeashHitches on the landed
+            // fences, after blocks land but before the colliders are removed (mirror transferLeadsFromShip).
+            final ShipModel fModel = model;
+            final Location fShipLoc = shipLoc.clone();
+            final float fYaw = currentYaw;
+            final anon.def9a2a4.corelib.Mechanism fMech = ship.mechanism;
+            ship.mechanism.setBeforeEntityRemoval(() -> transferLeadsFromMechanism(fMech, fModel, fShipLoc, fYaw));
+
             ship.mechanism.disassemble();
         } else {
             // Place the blocks back (with rotation)
@@ -786,6 +894,53 @@ public class ShipWheelManager {
             // Transfer each leashed entity to the LeashHitch
             for (org.bukkit.entity.Entity entity : leashedEntities) {
                 // Entity is guaranteed to be Leashable from findEntitiesLeashedTo
+                ((io.papermc.paper.entity.Leashable) entity).setLeashHolder(hitch);
+            }
+        }
+    }
+
+    /**
+     * Delegated (M1) leads-out — the {@link Mechanism#setBeforeEntityRemoval} callback body. Identical to
+     * {@link #transferLeadsFromShip} except the collider shulker for a block index comes from the mechanism
+     * ({@code mech.colliderEntity(i)}) rather than the native {@code ship.colliders} list (empty for a
+     * delegated ship). Runs after blocks land but before the mechanism's collider entities are removed.
+     */
+    private void transferLeadsFromMechanism(anon.def9a2a4.corelib.Mechanism mech, ShipModel model,
+                                            Location shipLoc, float currentYaw) {
+        float rotationDelta = currentYaw - model.assemblyYaw;
+        while (rotationDelta < 0) rotationDelta += 360;
+        while (rotationDelta >= 360) rotationDelta -= 360;
+
+        for (int blockIndex = 0; blockIndex < model.parts.size(); blockIndex++) {
+            ShipModel.ModelPart part = model.parts.get(blockIndex);
+            if (!part.rawYaml.containsKey("leadable") || !Boolean.TRUE.equals(part.rawYaml.get("leadable"))) {
+                continue;
+            }
+
+            Shulker shulker = mech.colliderEntity(blockIndex);
+            if (shulker == null || !shulker.isValid()) {
+                continue;
+            }
+
+            List<org.bukkit.entity.Entity> leashedEntities = findEntitiesLeashedTo(shulker);
+            if (leashedEntities.isEmpty()) {
+                continue;
+            }
+
+            org.joml.Vector3f pos = new org.joml.Vector3f();
+            part.local.getTranslation(pos);
+            org.joml.Vector3f rotatedPos = BlockStructureScanner.rotatePosition(pos, rotationDelta);
+            // Round to match placeBlocks / the mechanism's landing cell (both floor + 90°-snap), else a
+            // rotated ship's LeashHitch lands one cell off and the lead pops.
+            Location fenceLoc = shipLoc.clone().add(
+                Math.round(rotatedPos.x), Math.round(rotatedPos.y), Math.round(rotatedPos.z));
+
+            org.bukkit.entity.LeashHitch hitch = fenceLoc.getWorld().spawn(
+                fenceLoc.getBlock().getLocation().add(0.5, 0.5, 0.5),
+                org.bukkit.entity.LeashHitch.class
+            );
+
+            for (org.bukkit.entity.Entity entity : leashedEntities) {
                 ((io.papermc.paper.entity.Leashable) entity).setLeashHolder(hitch);
             }
         }
