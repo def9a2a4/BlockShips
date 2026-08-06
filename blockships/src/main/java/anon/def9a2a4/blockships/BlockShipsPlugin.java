@@ -91,6 +91,11 @@ public class BlockShipsPlugin extends JavaPlugin {
         shipWheelManager = new ShipWheelManager(this);
         shipWheelManager.loadAll();
 
+        // M5: rebuild delegated custom ships whose mechanisms defCoreLib recovered from chunks that loaded
+        // (fired their EntitiesLoadEvent) before this plugin enabled — those recovered events had no listener
+        // yet. Done AFTER loadAll so the wheels are available for stat recomputation on reconstruction.
+        displayShip.forceRecoverDelegatedShips();
+
         // Initialize special drowned listener (spawns drowned holding ship wheels)
         specialDrownedListener = new SpecialDrownedListener(this);
         if (specialDrownedListener.isEnabled()) {

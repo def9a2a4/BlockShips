@@ -66,6 +66,10 @@ public class ShipWheelManager {
         anon.def9a2a4.corelib.MechanismRegistry mechRegistry =
             anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry();
         mechRegistry.addPreAirOutListener((mech, sourceBlocks) -> {
+            // MechanismRegistry has no listener-removal, so on a BlockShips-only reload (CoreLib left running)
+            // this lambda from the previous, now-disabled instance stays registered. Bail if that plugin is
+            // gone — the live instance's listener handles the assembly.
+            if (!plugin.isEnabled()) return;
             if (!"blockship:custom".equals(mech.type())) return;
             BlockConfigManager cfg = BlockConfigManager.getInstance();
             for (int i = 0; i < sourceBlocks.size(); i++) {
@@ -739,13 +743,38 @@ public class ShipWheelManager {
             final anon.def9a2a4.corelib.Mechanism fMech = ship.mechanism;
             ship.mechanism.setBeforeEntityRemoval(() -> transferLeadsFromMechanism(fMech, fModel, fShipLoc, fYaw));
 
-            ship.mechanism.disassemble();
+            // Track W (W3): defCoreLib's disassemble() is idempotent + mostly-complete; a mid-teardown throw is
+            // rare. Do NOT abort (the idempotency latch blocks a clean re-restore) — log and CONTINUE to the
+            // teardown tail (ship.destroy() clears the wheel via W2) so the wheel self-heals rather than sticking.
+            try {
+                ship.mechanism.disassemble();
+            } catch (Throwable t) {
+                plugin.getLogger().log(java.util.logging.Level.SEVERE,
+                    "Delegated disassembly threw for ship " + ship.id + " — completing teardown; some blocks may be missing", t);
+                if (player != null) player.sendMessage(
+                    "§eDisassembly hit an error — the ship was taken down but some blocks may be missing. (see server logs)");
+            }
         } else {
-            // Place the blocks back (with rotation)
-            BlockStructureScanner.placeBlocks(shipLoc, model, currentYaw, force, player, anchorProtected);
+            // Track W (W3): block placement is all-or-abort — on throw leave the ship intact + registered so the
+            // player can retry (do NOT destroy/clear the wheel; that would lose the structure). Fail loud.
+            try {
+                BlockStructureScanner.placeBlocks(shipLoc, model, currentYaw, force, player, anchorProtected);
+            } catch (Throwable t) {
+                plugin.getLogger().log(java.util.logging.Level.SEVERE,
+                    "Disassembly (placeBlocks) failed for ship " + ship.id + " — ship left intact for retry", t);
+                if (player != null) player.sendMessage(
+                    "§cDisassembly failed — the ship is intact; please try again. (see server logs)");
+                return false;
+            }
 
-            // Transfer leads from ship's shulkers to fence blocks before destroying ship
-            transferLeadsFromShip(ship, model, shipLoc, currentYaw);
+            // Leads are best-effort now that blocks are placed — a lead failure must NOT abort (that would leave
+            // placed blocks AND a live ship = duplication).
+            try {
+                transferLeadsFromShip(ship, model, shipLoc, currentYaw);
+            } catch (Throwable t) {
+                plugin.getLogger().log(java.util.logging.Level.WARNING,
+                    "Lead transfer failed during disassembly of " + ship.id + " (blocks already placed)", t);
+            }
         }
 
         // Update wheel tracking to new location

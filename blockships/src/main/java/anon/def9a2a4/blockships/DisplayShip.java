@@ -525,8 +525,10 @@ public class DisplayShip implements Listener {
             if (entityShipId == null) continue;
 
             ShipInstance ship = ShipRegistry.byId(entityShipId);
-            // Skip ships being recovered asynchronously to avoid concurrent modification
-            if (ship != null && !ship.isRecoveryComplete() && !shipsBeingRecovered.contains(entityShipId) && processedIncompleteShips.add(entityShipId)) {
+            // Skip ships being recovered asynchronously to avoid concurrent modification. Also hard-guard
+            // delegated ships (mechanism != null): defCoreLib owns their entities, so native incremental
+            // collection must never run on them (they also keep recoveryComplete=true, so this is defensive).
+            if (ship != null && ship.mechanism == null && !ship.isRecoveryComplete() && !shipsBeingRecovered.contains(entityShipId) && processedIncompleteShips.add(entityShipId)) {
                 ship.collectEntitiesFromChunk(chunk);
             }
         }
@@ -544,6 +546,12 @@ public class DisplayShip implements Listener {
      */
     private void processOrphanCleanup(org.bukkit.Chunk chunk, World world, Set<UUID> failedRecoveryThisEvent) {
         for (Entity e : chunk.getEntities()) {
+            // M5: never reap or native-recover a defCoreLib-owned entity. A delegated ship's vehicle carries
+            // BOTH displayship:{id}:root and corelib:mech:{id}:vehicle, so without this it would be routed to
+            // native recoverShipFromVehicle (which fails — no native parent BlockDisplay). corelib owns the
+            // lifecycle of all corelib:mech:... entities and recovers them itself.
+            if (ShipTags.isCorelibTagged(e.getScoreboardTags())) continue;
+
             UUID entityShipId = ShipTags.extractShipId(e.getScoreboardTags());
             if (entityShipId == null) continue;
 
@@ -2132,6 +2140,9 @@ public class DisplayShip implements Listener {
     @EventHandler
     public void onShipWheelRightClick(PlayerInteractEvent event) {
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+        // Track W (W7): PlayerInteractEvent fires for BOTH hands; only the main hand should open the menu (else
+        // it opens twice). Mirrors the guard on onShulkerClick.
+        if (event.getHand() != EquipmentSlot.HAND) return;
 
         Block block = event.getClickedBlock();
         if (block == null || !isShipWheelBlock(block)) return;

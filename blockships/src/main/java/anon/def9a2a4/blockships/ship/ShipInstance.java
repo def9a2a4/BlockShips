@@ -1426,6 +1426,13 @@ public class ShipInstance {
                     cachedVehicleLoc.getWorld(), this.id, currentChunkX, currentChunkZ, nCX, nCZ);
                 currentChunkX = nCX;
                 currentChunkZ = nCZ;
+                // M5: re-index the mechanism in defCoreLib's own persistence onto the new pivot chunk too, so a
+                // crash MID-VOYAGE recovers the ship where it actually is (corelib recovery keys on the pivot
+                // chunk; assembly-time persist() indexed only the launch chunk). persist() MOVES the entry (D4),
+                // so no bloat. Cheap: only fires on a chunk-boundary crossing.
+                anon.def9a2a4.corelib.MechanismRegistry mr =
+                    anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry();
+                if (mr != null) mr.persist(mechanism);
             }
             // Settle-time collider re-sync (native parity): on the first idle tick after movement,
             // re-track the mechanism's collider carriers so clients discard accumulated tracker drift
