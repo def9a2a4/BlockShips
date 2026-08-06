@@ -483,6 +483,10 @@ public class ShipWheelManager {
         // Link the wheel to the ship
         wheelData.setAssembledShipUUID(ship.id);
         ship.wheelData = wheelData;
+        // Track W (W5): persist the wheel↔ship link immediately (every other mutating path saveAll()s). Without
+        // it, a crash between assembly and a clean onDisable loses the link while ship metadata persists, leaving
+        // a live recovered ship with no wheel (the reverse orphan).
+        saveAll();
 
         ship.physics.recomputeStats();  // Must recompute after wheelData is linked
 
@@ -506,17 +510,20 @@ public class ShipWheelManager {
      * Aligns a ship to the block grid (position and rotation).
      */
     public boolean alignToGrid(Player player, ShipWheelData wheelData) {
-        if (!wheelData.isAssembled()) {
-            player.sendMessage("§cNo ship to align! Assemble a ship first.");
-            return false;
+        // Track W (R0): route through the reconciler — an ORPHAN self-heals rather than silently severing a
+        // still-recoverable (unloaded) ship on a momentary byId==null.
+        WheelResolution wr = resolveWheelState(wheelData);
+        switch (wr.state()) {
+            case NOT_ASSEMBLED -> { player.sendMessage("§cNo ship to align! Assemble a ship first."); return false; }
+            case UNLOADED_RECOVERABLE -> { player.sendMessage("§eShip is still loading — try again in a moment."); return false; }
+            case ORPHAN -> {
+                reconcileOrphan(wheelData);
+                player.sendMessage("§cThat ship was lost — the wheel has been reset. You can assemble again.");
+                return false;
+            }
+            default -> { /* LOADED — proceed */ }
         }
-
-        ShipInstance ship = ShipRegistry.byId(wheelData.getAssembledShipUUID());
-        if (ship == null) {
-            player.sendMessage("§cShip not found!");
-            wheelData.setAssembledShipUUID(null);
-            return false;
-        }
+        ShipInstance ship = wr.ship();
 
         // Align the ship
         ship.alignToGrid();
@@ -568,17 +575,19 @@ public class ShipWheelManager {
      */
     public boolean disassembleShip(@Nullable Player player, ShipWheelData wheelData, boolean force,
                                    DisassembleOutcome outcome) {
-        if (!wheelData.isAssembled()) {
-            if (player != null) player.sendMessage("§cNo ship to disassemble!");
-            return false;
+        // Track W (R0): route through the reconciler — ORPHAN self-heals instead of severing an unloaded ship.
+        WheelResolution wr = resolveWheelState(wheelData);
+        switch (wr.state()) {
+            case NOT_ASSEMBLED -> { if (player != null) player.sendMessage("§cNo ship to disassemble!"); return false; }
+            case UNLOADED_RECOVERABLE -> { if (player != null) player.sendMessage("§eShip is still loading — try again in a moment."); return false; }
+            case ORPHAN -> {
+                reconcileOrphan(wheelData);
+                if (player != null) player.sendMessage("§cThat ship was lost — the wheel has been reset.");
+                return false;
+            }
+            default -> { /* LOADED — proceed */ }
         }
-
-        ShipInstance ship = ShipRegistry.byId(wheelData.getAssembledShipUUID());
-        if (ship == null) {
-            if (player != null) player.sendMessage("§cShip not found!");
-            wheelData.setAssembledShipUUID(null);
-            return false;
-        }
+        ShipInstance ship = wr.ship();
 
         // Get the ship's model
         ShipModel model = ship.sourceModel;

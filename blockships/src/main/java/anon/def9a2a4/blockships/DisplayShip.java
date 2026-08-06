@@ -171,6 +171,11 @@ public class DisplayShip implements Listener {
                     continue;
                 }
 
+                // M5: delegated custom ships are recovered by defCoreLib (recovered MechanismAssembleEvent →
+                // reconstructDelegatedShip), NOT by native recovery — their entities have no native parent
+                // BlockDisplay, so native recoverEntities would fail. Skip; corelib owns them.
+                if ("custom".equals(state.shipType)) continue;
+
                 // Load model and recover
                 ShipModel model = loadModelForState(state);
                 if (model == null) {
@@ -443,6 +448,10 @@ public class DisplayShip implements Listener {
                                     continue;
                                 }
 
+                                // M5: delegated custom ships recover via defCoreLib's recovered
+                                // MechanismAssembleEvent (reconstructDelegatedShip), not native recovery. Skip.
+                                if ("custom".equals(state.shipType)) continue;
+
                                 // Count entities in this chunk only
                                 int entitiesInChunk = countEntitiesInChunk(chunk, shipId);
                                 if (entitiesInChunk == 0) {
@@ -656,6 +665,77 @@ public class DisplayShip implements Listener {
             } catch (Exception e) {
                 plugin.getLogger().warning("Failed to load model file " + modelPath + ": " + e.getMessage());
                 return null;
+            }
+        }
+    }
+
+    // ----- Delegated (defCoreLib) ship recovery (M5) -----
+
+    /**
+     * M5: reconstruct a DELEGATED custom ship when defCoreLib re-recovers its mechanism after a restart or an
+     * in-play chunk reload — both come through here (defCoreLib parks a mechanism when its chunk unloads and
+     * re-recovers it on reload, firing a recovered {@code MechanismAssembleEvent}). Fresh (non-recovered)
+     * assemblies are built directly by ShipWheelManager, so they're ignored here.
+     */
+    @EventHandler
+    public void onMechanismAssemble(anon.def9a2a4.corelib.MechanismAssembleEvent event) {
+        if (!event.isRecovered()) return;
+        if (!"blockship:custom".equals(event.getType())) return;
+        reconstructDelegatedShip(event.getMechanism());
+    }
+
+    /**
+     * Rebuild a {@link ShipInstance} around an already-recovered delegated {@link anon.def9a2a4.corelib.Mechanism}
+     * (idempotent: no-op if the ship is already registered). Main-thread only (recovery fires from EntitiesLoad).
+     * Used by the recovered-event listener and by enable-time forced recovery ({@link #forceRecoverDelegatedShips}).
+     */
+    void reconstructDelegatedShip(anon.def9a2a4.corelib.Mechanism mech) {
+        UUID mechId = mech.id();
+        if (ShipRegistry.byId(mechId) != null) return; // already live
+        org.bukkit.entity.Entity veh = mech.vehicle();
+        if (!(veh instanceof ArmorStand vehicle)) {
+            plugin.getLogger().warning("Delegated ship " + mechId + " recovered without an ArmorStand vehicle; skipping");
+            return;
+        }
+        World world = vehicle.getWorld();
+        ShipPersistence.ShipState state = shipWorldData.loadShipMetadata(world, mechId);
+        if (state == null) {
+            plugin.getLogger().warning("Delegated ship " + mechId + " recovered but its ships/" + mechId
+                + ".yml sidecar is missing; cannot rebuild the ShipInstance");
+            return;
+        }
+        ShipModel model = loadModelForState(state);
+        if (model == null) {
+            plugin.getLogger().warning("Delegated ship " + mechId + " recovered but its model could not be loaded");
+            return;
+        }
+        ShipInstance ship = ShipInstance.fromRecoveredMechanism(plugin, state, model, vehicle, mech);
+        ShipRegistry.register(ship);
+        // Re-link the wheel + recompute stats one tick later: custom-ship stats depend on the wheel, whose PDC
+        // blocks are loaded by ShipWheelManager.loadAll, and resolveWheelData is lazy.
+        new BukkitRunnable() {
+            @Override public void run() {
+                if (ShipRegistry.byId(mechId) != ship) return; // ship replaced/removed meanwhile
+                ship.resolveWheelData();
+                ship.physics.recomputeStats();
+            }
+        }.runTask(plugin);
+        plugin.getLogger().info("Recovered delegated custom ship " + mechId);
+    }
+
+    /**
+     * BS5: at enable, force defCoreLib to recover persisted mechanisms in every already-loaded chunk. Chunks
+     * that loaded during world init (before either plugin enabled) fired their EntitiesLoadEvent before this
+     * listener existed, so their recovered events were missed; driving {@code recoverMechanismsInChunk} here
+     * re-fires them ({@code → onMechanismAssemble → reconstructDelegatedShip}) with wheels already loaded.
+     */
+    public void forceRecoverDelegatedShips() {
+        anon.def9a2a4.corelib.MechanismRegistry mechRegistry =
+            anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry();
+        if (mechRegistry == null) return;
+        for (World world : Bukkit.getWorlds()) {
+            for (org.bukkit.Chunk chunk : world.getLoadedChunks()) {
+                mechRegistry.recoverMechanismsInChunk(chunk);
             }
         }
     }
