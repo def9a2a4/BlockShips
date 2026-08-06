@@ -1208,6 +1208,12 @@ public class DisplayShip implements Listener {
             seatIndex = inst.seatShulkers.indexOf(shulker);
         }
 
+        // Delegated ships (M4) tag colliders only as corelib:mech:{id}:{i}:collider|seat, so the native
+        // block-index extractors above (leadable/cannon/interact/storage) all return -1. Resolve the mechanism
+        // block index once here; the lead/cannon/interact/storage branches below fall back to it for a delegated
+        // ship (parity invariant: mechanism block index == model.parts index). -1 for a native/prefab ship.
+        int mci = (inst.mechanism != null) ? ShipTags.extractCorelibBlockIndex(tags) : -1;
+
         // Check if player is holding a ship wheel - show info message
         if (isShipWheel(player.getInventory().getItemInMainHand())) {
             if ("custom".equals(inst.shipType)) {
@@ -1281,6 +1287,11 @@ public class DisplayShip implements Listener {
         // Check if this shulker is leadable (fence block) - handle lead attach/detach
         // For custom ships: attach to specific fence. For prefab ships: detach from lead point.
         int leadableBlockIndex = ShipTags.extractLeadableIndex(tags);
+        // Delegated fallback: a corelib collider carries no leadable:{i} tag, so consult the model part's
+        // leadable flag (same source native uses — BlockStructureScanner sets it from BlockProperties.isLeadable).
+        if (leadableBlockIndex < 0 && mci >= 0 && isModelPartLeadable(inst, mci)) {
+            leadableBlockIndex = mci;
+        }
         if (leadableBlockIndex >= 0) {
             ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
             List<Entity> leashedEntities = manager.findEntitiesLeashedTo(shulker);
@@ -1305,6 +1316,12 @@ public class DisplayShip implements Listener {
 
         // Check if this shulker is a cannon trigger (obsidian block)
         int cannonObsidianIndex = ShipTags.extractCannonIndex(tags);
+        // Delegated fallback: route mci ONLY when it is genuinely a cannon obsidian (model.cannons membership).
+        // The cannon branch cancels+returns on index alone, so a bare mci (>= 0 for EVERY collider) would swallow
+        // every delegated click and break interact/storage/seat-mount — the membership guard is load-bearing.
+        if (cannonObsidianIndex < 0 && mci >= 0 && isDelegatedCannonObsidian(inst, mci)) {
+            cannonObsidianIndex = mci;
+        }
         if (cannonObsidianIndex >= 0) {
             inst.fireCannonsByObsidian(cannonObsidianIndex);
             e.setCancelled(true);
@@ -1312,9 +1329,12 @@ public class DisplayShip implements Listener {
         }
 
         // Check if this shulker is an interaction block (crafting table, anvil, etc.)
-        if (interactBlockIndex >= 0) {
-            Material blockMaterial = (interactBlockIndex >= 0 && interactBlockIndex < inst.model.parts.size())
-                ? inst.model.parts.get(interactBlockIndex).block.getMaterial() : null;
+        // Delegated fallback: use mci directly — openInteraction self-gates (returns false for a non-interactable
+        // material) so a plain hull/seat block falls through without cancelling.
+        int effInteractIndex = interactBlockIndex >= 0 ? interactBlockIndex : mci;
+        if (effInteractIndex >= 0) {
+            Material blockMaterial = effInteractIndex < inst.model.parts.size()
+                ? inst.model.parts.get(effInteractIndex).block.getMaterial() : null;
             if (blockMaterial != null && InteractionBlockHandler.openInteraction(player, blockMaterial)) {
                 e.setCancelled(true);
                 return;
@@ -1324,6 +1344,16 @@ public class DisplayShip implements Listener {
         // Check if this shulker has storage
         if (storageBlockIndex >= 0) {
             Inventory storage = inst.storages.get(storageBlockIndex);
+            if (storage != null) {
+                player.openInventory(storage);
+                e.setCancelled(true);
+                return;
+            }
+        } else if (mci >= 0 && inst.mechanism != null) {
+            // Delegated: storage lives on the mechanism (inst.storages is empty), keyed by block index. Returns
+            // the live captured container inventory (vanilla chest/barrel/dispenser or custom block); edits
+            // round-trip on disassemble via defCoreLib's container restore.
+            Inventory storage = inst.mechanism.getStorage(mci);
             if (storage != null) {
                 player.openInventory(storage);
                 e.setCancelled(true);

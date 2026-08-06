@@ -1269,6 +1269,28 @@ public class ShipInstance {
     void refreshCarrierTracking() {
         java.util.Collection<Player> tracked = vehicle.getTrackedPlayers();
         if (tracked.isEmpty()) return;
+        if (mechanism != null) {
+            // Delegated (M1): defCoreLib owns the colliders, so the native `colliders` list is empty.
+            // Mirror the native re-track on defCoreLib's collider carriers, located by scoreboard tag
+            // (corelib:mech:{id}:{i}:carrier — ship.id == mechId). Settle is infrequent (this only fires
+            // on a movement->idle transition), so the one-shot nearby scan is cheap. Hiding+showing the
+            // carrier re-sends it and its passenger shulker, re-syncing the solid collision box on clients.
+            String carrierPrefix = "corelib:mech:" + id + ":";
+            double r = (collisionRadius > 0 ? collisionRadius : 32f) + 2.0;
+            for (Entity e : vehicle.getWorld().getNearbyEntities(vehicle.getLocation(), r, r, r)) {
+                if (!e.isValid()) continue;
+                boolean isCarrier = false;
+                for (String tag : e.getScoreboardTags()) {
+                    if (tag.startsWith(carrierPrefix) && tag.endsWith(":carrier")) { isCarrier = true; break; }
+                }
+                if (!isCarrier) continue;
+                for (Player player : tracked) {
+                    player.hideEntity(plugin, e);
+                    player.showEntity(plugin, e);
+                }
+            }
+            return;
+        }
         for (CollisionBox cb : colliders) {
             if (!cb.carrier.isValid()) continue;
             for (Player player : tracked) {
@@ -1359,6 +1381,21 @@ public class ShipInstance {
                     cachedVehicleLoc.getWorld(), this.id, currentChunkX, currentChunkZ, nCX, nCZ);
                 currentChunkX = nCX;
                 currentChunkZ = nCZ;
+            }
+            // Settle-time collider re-sync (native parity): on the first idle tick after movement,
+            // re-track the mechanism's collider carriers so clients discard accumulated tracker drift
+            // that jitters players standing on the deck. The native idle gate (updateCollisionPositions
+            // path) is unreachable here — the delegated branch returns before it — so replicate it.
+            // Evaluate movement BEFORE the previous-state refresh below (hasMovedSinceLastTick reads
+            // previousVehicleLocation/previousYaw/previousPitch). The firstTick short-circuit avoids a
+            // null previousVehicleLocation on the very first tick, mirroring the native !firstTick gate.
+            boolean movedThisTick = firstTick
+                || hasMovedSinceLastTick(cachedVehicleLoc, physics.currentYaw, vehicle.getPitch());
+            if (!movedThisTick) {
+                if (ticksSinceLastMovement == 0) refreshCarrierTracking();
+                ticksSinceLastMovement++;
+            } else {
+                ticksSinceLastMovement = 0;
             }
             firstTick = false;
             previousVehicleLocation = cachedVehicleLoc.clone();
@@ -2439,7 +2476,13 @@ public class ShipInstance {
         previousPitch = vehicle.getPitch();
         // spawnYaw must match vehicle.getYaw() (the frozen NBT yaw the client inherits
         // for display passengers on 1.21.9+). currentYaw from metadata provides the delta.
-        spawnYaw = ShipTags.normalizeYaw(vehicle.getYaw());
+        // Delegated ships (M1): the vehicle yaw is frozen at 0, so seed spawnYaw from the model's
+        // assembly yaw instead — mirroring the fresh-spawn ctor — else rotation mis-baselines after a
+        // restart. (This native recoverEntities path currently produces mechanism==null ships; the guard
+        // is correct-by-construction for when delegated recovery is wired in M5.)
+        spawnYaw = (mechanism != null)
+            ? ShipTags.normalizeYaw(model.assemblyYaw)
+            : ShipTags.normalizeYaw(vehicle.getYaw());
         physics.currentYaw = !Float.isNaN(metadataYaw)
             ? ShipTags.normalizeYaw(metadataYaw)
             : spawnYaw;
@@ -2856,8 +2899,17 @@ public class ShipInstance {
      */
     public void alignToGrid() {
         physics.alignToGrid();
-        spawnYaw = physics.currentYaw;
-        updateDisplayTransforms();
+        if (mechanism == null) {
+            // Native ships: re-baseline spawnYaw to the snapped heading (absorbed by the vehicle's own
+            // entity yaw) and refresh the native display transforms.
+            spawnYaw = physics.currentYaw;
+            updateDisplayTransforms();
+        }
+        // Delegated ships: spawnYaw MUST stay pinned to the as-built assembly yaw. The vehicle yaw is
+        // frozen at 0 and all rotation is (currentYaw - spawnYaw) against construction-time geometry, so
+        // re-baselining spawnYaw would make the next tick's repositionDriven(currentYaw - spawnYaw) evaluate
+        // to a stale delta and snap the whole ship back toward as-built. physics.alignToGrid() already
+        // repositioned the mechanism displays/colliders via repositionDriven, so nothing else is needed.
     }
 
     // ========== Cannon System ==========

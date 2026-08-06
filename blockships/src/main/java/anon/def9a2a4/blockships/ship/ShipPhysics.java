@@ -538,6 +538,46 @@ public class ShipPhysics {
     }
 
     /**
+     * Delegated (defCoreLib) analogue of {@link #findPlayersOnDeck()}. defCoreLib owns the colliders, so
+     * the native {@code colliders} list is empty and the shulkers carry {@code corelib:mech:} tags rather
+     * than {@code shipTag}. Detects deck standers against the mechanism's collider boxes instead, using the
+     * identical horizontal-overlap + feet-height-band test, and returns the matched BLOCK INDEX (stable
+     * across recovery) so {@link #alignToGrid()} can re-query the box after the snap.
+     */
+    private Map<Player, Integer> findPlayersOnDeckDelegated() {
+        Map<Player, Integer> playersOnDeck = new HashMap<>();
+        Location loc = ship.vehicle.getLocation();
+        int n = ship.mechanism.blockCount();
+
+        for (Player player : loc.getWorld().getPlayers()) {
+            if (player.getLocation().distance(loc) > 32) continue;
+
+            org.bukkit.util.BoundingBox playerBox = player.getBoundingBox();
+            double playerFeetY = playerBox.getMinY();
+
+            for (int i = 0; i < n; i++) {
+                org.bukkit.util.BoundingBox box = ship.mechanism.getColliderBoxByBlock(i);
+                if (box == null) continue;  // most block indices have no collider; a shulker may be gone
+
+                boolean withinHorizontalBounds =
+                    playerBox.getMinX() < box.getMaxX() &&
+                    playerBox.getMaxX() > box.getMinX() &&
+                    playerBox.getMinZ() < box.getMaxZ() &&
+                    playerBox.getMaxZ() > box.getMinZ();
+
+                boolean onTop = playerFeetY >= box.getMaxY() - 0.1 && playerFeetY <= box.getMaxY() + 0.3;
+
+                if (withinHorizontalBounds && onTop) {
+                    playersOnDeck.put(player, i);
+                    break;
+                }
+            }
+        }
+
+        return playersOnDeck;
+    }
+
+    /**
      * Snaps ship to block grid (integer coordinates, 90-degree rotation).
      * Handles players standing on deck by teleporting them with the ship.
      */
@@ -555,6 +595,47 @@ public class ShipPhysics {
         float snappedYaw = cardinal % 360;
         currentYaw = snappedYaw;
         float snappedPitch = 0.0f;
+
+        if (ship.mechanism != null) {
+            // Delegated (M1): defCoreLib owns the colliders, so ship.updateCollisionPositions() is a no-op
+            // (empty native `colliders` list) and findPlayersOnDeck's shipTag filter matches nothing. Capture
+            // standers via the mechanism collider boxes, snap the vehicle, reposition the mechanism so its
+            // colliders/displays land on the snapped pose, then re-seat standers onto the snapped colliders.
+            Map<Player, Integer> onDeck = findPlayersOnDeckDelegated();
+
+            Location aligned = new Location(loc.getWorld(), x, y, z, snappedYaw, snappedPitch);
+            TeleportCompat.teleport(ship.vehicle, aligned);
+
+            // Snap the mechanism to the aligned vehicle + snapped heading (relative to the as-built spawnYaw).
+            // spawnYaw stays the assembly baseline — ShipInstance.alignToGrid does NOT re-baseline it for a
+            // delegated ship — so (currentYaw - spawnYaw) is the true snapped orientation. This teleports the
+            // collider carriers synchronously (repositionDriven -> rotate -> repositionColliders).
+            ship.mechanism.repositionDriven(currentYaw - ship.spawnYaw);
+
+            // Teleport standers to their collider's new position, keeping the player's own yaw/pitch.
+            for (Map.Entry<Player, Integer> entry : onDeck.entrySet()) {
+                Player player = entry.getKey();
+                org.bukkit.util.BoundingBox box = ship.mechanism.getColliderBoxByBlock(entry.getValue());
+                if (box == null) continue;  // collider went away between capture and re-query
+                Location playerLoc = player.getLocation();
+                player.teleport(new Location(
+                    aligned.getWorld(),
+                    box.getCenterX(),
+                    box.getMaxY() + ship.config.assemblyNudgeHeight,
+                    box.getCenterZ(),
+                    playerLoc.getYaw(),
+                    playerLoc.getPitch()
+                ));
+            }
+
+            // Reset velocity and rotation (after repositionDriven, which set a setVelocity hint)
+            ship.vehicle.setVelocity(new org.bukkit.util.Vector(0, 0, 0));
+            currentSpeed = 0.0f;
+            currentRotationVelocity = 0.0f;
+            currentYVelocity = 0.0f;
+            collisionForce.set(0, 0, 0);
+            return;
+        }
 
         // Find players standing on deck BEFORE moving
         Map<Player, Shulker> playersOnDeck = findPlayersOnDeck();

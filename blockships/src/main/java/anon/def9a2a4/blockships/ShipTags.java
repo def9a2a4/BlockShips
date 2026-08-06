@@ -147,6 +147,35 @@ public final class ShipTags {
         return false;
     }
 
+    /**
+     * Block index {@code i} from a delegated (defCoreLib) collider/seat shulker tag
+     * {@code corelib:mech:{mechId}:{i}:collider|seat|driver_seat}, or -1 if none. This is the delegated-engine
+     * analog of {@link #extractStorageIndex}/{@link #extractCannonIndex}/{@link #extractInteractIndex} — a
+     * Mechanism-owned shulker carries only the {@code corelib:mech:} tag, so those native extractors return -1
+     * for it, and the click router needs the block index to route via the parity invariant (mechanism block
+     * index == model.parts index). Parsed with {@code indexOf} off the literal prefix (the mechId UUID has no
+     * colons) rather than {@code split}. The vehicle tag {@code corelib:mech:{id}:vehicle} has no second colon
+     * → returns -1. Scans ALL tags and continues past a non-index/parse failure (a driver seat carries
+     * {@code :collider}+{@code :seat}+{@code :driver_seat} at once — all agree on {@code i}).
+     */
+    public static int extractCorelibBlockIndex(Set<String> tags) {
+        for (String tag : tags) {
+            if (!tag.startsWith(CORELIB_MECH_PREFIX)) continue;
+            String rest = tag.substring(CORELIB_MECH_PREFIX.length()); // "{uuid}:{i}:{role}" | "{uuid}:vehicle"
+            int c1 = rest.indexOf(':');
+            if (c1 < 0) continue;
+            String after = rest.substring(c1 + 1);                     // "{i}:{role}" | "vehicle"
+            int c2 = after.indexOf(':');
+            if (c2 < 0) continue;                                      // vehicle tag → no index
+            try {
+                return Integer.parseInt(after.substring(0, c2));
+            } catch (NumberFormatException e) {
+                // Not an index-bearing corelib tag; keep scanning.
+            }
+        }
+        return -1;
+    }
+
     public static int extractStorageIndex(Set<String> tags) {
         return extractIntIndex(tags, STORAGE_PREFIX);
     }
