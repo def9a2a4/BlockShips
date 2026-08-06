@@ -242,22 +242,7 @@ public class ShipInstance {
      * @return A new ShipInstance ready for entity recovery, or null on error
      */
     public static ShipInstance fromState(JavaPlugin plugin, ShipPersistence.ShipState state, ShipModel model) {
-        // Deserialize banner if present
-        ItemStack customBanner = null;
-        if (state.bannerData != null) {
-            try {
-                byte[] bytes = Base64.getDecoder().decode(state.bannerData);
-                customBanner = ItemStack.deserializeBytes(bytes);
-            } catch (Exception e) {
-                plugin.getLogger().warning("Failed to deserialize banner for ship " + state.id + ": " + e.getMessage());
-            }
-        }
-
-        ShipCustomization customization = ShipCustomization.builder()
-            .banner(customBanner)
-            .woodType(state.woodType)
-            .balloonColor(state.balloonColor)
-            .build();
+        ShipCustomization customization = buildCustomizationFromState(plugin, state);
 
         ShipInstance instance = new ShipInstance(plugin, state.shipType, model, customization, state.id);
         instance.metadataYaw = state.yaw;
@@ -267,41 +252,101 @@ public class ShipInstance {
             instance.sourceModel = model;
         }
 
-        // Restore inventory contents
-        if (!state.inventoryData.isEmpty()) {
-            for (Map.Entry<Integer, String> entry : state.inventoryData.entrySet()) {
-                try {
-                    String[] itemStrings = entry.getValue().split("\\|", -1);
-                    ItemStack[] items = new ItemStack[itemStrings.length];
-                    for (int i = 0; i < itemStrings.length; i++) {
-                        if (!itemStrings[i].isEmpty()) {
-                            byte[] bytes = Base64.getDecoder().decode(itemStrings[i]);
-                            items[i] = ItemStack.deserializeBytes(bytes);
-                        } else {
-                            items[i] = null;
-                        }
-                    }
-                    // Create inventory for this block if it exists in model
-                    int blockIdx = entry.getKey();
-                    if (blockIdx < model.parts.size()) {
-                        ShipModel.ModelPart part = model.parts.get(blockIdx);
-                        if (part.storage != null) {
-                            Inventory storage = createStorageInventory(part.storage,
-                                part.rawYaml.get("custom_name") instanceof String cns ? cns : null);
-                            // Cap to the inventory size: `items` is sized from the persisted
-                            // token count, which can exceed the (possibly changed) storage size.
-                            storage.setContents(java.util.Arrays.copyOf(items,
-                                java.lang.Math.min(items.length, storage.getSize())));
-                            instance.storages.put(blockIdx, storage);
-                        }
-                    }
-                } catch (Exception e) {
-                    plugin.getLogger().warning("Failed to deserialize inventory at block " + entry.getKey() + ": " + e.getMessage());
-                }
+        restoreInventoriesFromState(plugin, instance, state, model);
+        return instance;
+    }
+
+    /** Rebuild the ship {@link ShipCustomization} (banner / wood / balloon) from a persisted state. Shared by
+     *  the native {@link #fromState} and the delegated {@link #fromRecoveredMechanism} recovery paths. */
+    private static ShipCustomization buildCustomizationFromState(JavaPlugin plugin, ShipPersistence.ShipState state) {
+        ItemStack customBanner = null;
+        if (state.bannerData != null) {
+            try {
+                byte[] bytes = Base64.getDecoder().decode(state.bannerData);
+                customBanner = ItemStack.deserializeBytes(bytes);
+            } catch (Exception e) {
+                plugin.getLogger().warning("Failed to deserialize banner for ship " + state.id + ": " + e.getMessage());
             }
         }
+        return ShipCustomization.builder()
+            .banner(customBanner)
+            .woodType(state.woodType)
+            .balloonColor(state.balloonColor)
+            .build();
+    }
 
-        return instance;
+    /** Restore persisted block-storage inventories into {@code instance.storages}. Shared by the native and
+     *  delegated recovery paths. (Storage delegation to {@code Mechanism.getStorage} is a later Track-C item;
+     *  recovery keeps the battle-tested sidecar restore to avoid regression.) */
+    private static void restoreInventoriesFromState(JavaPlugin plugin, ShipInstance instance,
+                                                    ShipPersistence.ShipState state, ShipModel model) {
+        if (state.inventoryData.isEmpty()) return;
+        for (Map.Entry<Integer, String> entry : state.inventoryData.entrySet()) {
+            try {
+                String[] itemStrings = entry.getValue().split("\\|", -1);
+                ItemStack[] items = new ItemStack[itemStrings.length];
+                for (int i = 0; i < itemStrings.length; i++) {
+                    if (!itemStrings[i].isEmpty()) {
+                        byte[] bytes = Base64.getDecoder().decode(itemStrings[i]);
+                        items[i] = ItemStack.deserializeBytes(bytes);
+                    } else {
+                        items[i] = null;
+                    }
+                }
+                // Create inventory for this block if it exists in model
+                int blockIdx = entry.getKey();
+                if (blockIdx < model.parts.size()) {
+                    ShipModel.ModelPart part = model.parts.get(blockIdx);
+                    if (part.storage != null) {
+                        Inventory storage = createStorageInventory(part.storage,
+                            part.rawYaml.get("custom_name") instanceof String cns ? cns : null);
+                        // Cap to the inventory size: `items` is sized from the persisted
+                        // token count, which can exceed the (possibly changed) storage size.
+                        storage.setContents(java.util.Arrays.copyOf(items,
+                            java.lang.Math.min(items.length, storage.getSize())));
+                        instance.storages.put(blockIdx, storage);
+                    }
+                }
+            } catch (Exception e) {
+                plugin.getLogger().warning("Failed to deserialize inventory at block " + entry.getKey() + ": " + e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Reconstruct a DELEGATED custom {@link ShipInstance} from a defCoreLib-recovered {@link Mechanism} + the
+     * ship sidecar state, after a restart or chunk reload (fired via a recovered {@code MechanismAssembleEvent}).
+     * The mechanism already owns the recovered vehicle/display/collider/seat entities; this wraps them so
+     * ship-domain logic (physics, steering, health, UI) works again. Sibling of {@link #fromState} (which is
+     * native-only and leaves {@code mechanism} null).
+     */
+    public static ShipInstance fromRecoveredMechanism(JavaPlugin plugin, ShipPersistence.ShipState state,
+                                                      ShipModel model, ArmorStand vehicle,
+                                                      anon.def9a2a4.corelib.Mechanism mechanism) {
+        // The delegated ctor resets vehicle health to model.maxHealth; the ArmorStand persisted its real
+        // health in NBT across the restart/reload, so capture it first and re-apply after (matching native
+        // recovery, which reads health live off the recovered vehicle). Clamp: a model edited between sessions
+        // could make the saved health exceed the new max and setHealth would throw.
+        double savedHealth = vehicle.getHealth();
+        ShipCustomization customization = buildCustomizationFromState(plugin, state);
+
+        ShipInstance inst = new ShipInstance(plugin, state.shipType, model, vehicle.getLocation(),
+            customization, vehicle, mechanism);
+        inst.sourceModel = model;
+        inst.metadataYaw = state.yaw;
+        inst.vehicle.setHealth(java.lang.Math.min(savedHealth, model.maxHealth));
+
+        // Seed the heading from the persisted absolute yaw (spawnYaw stays model.assemblyYaw, so the first
+        // repositionDriven(currentYaw - spawnYaw) reproduces the saved display rotation with no jump). The
+        // delegated ctor already set currentYaw = spawnYaw = assemblyYaw; override with the saved heading.
+        if (!Float.isNaN(state.yaw)) {
+            inst.physics.currentYaw = ShipTags.normalizeYaw(state.yaw);
+            inst.previousYaw = inst.physics.currentYaw;
+        }
+
+        restoreInventoriesFromState(plugin, inst, state, model);
+        inst.adoptMechanismSeatsForRecovery();
+        return inst;
     }
 
     public ShipInstance(JavaPlugin plugin, String shipType, ShipModel model, Location spawnLocation, ShipCustomization customization) {
@@ -2049,6 +2094,24 @@ public class ShipInstance {
             if (s != null) seatShulkers.set(seatIdx, s);
         }
         // Mirror ship HP onto the newly-adopted seat shulkers for the vanilla riding HUD.
+        syncSeatShulkerHealth(vehicle.getHealth());
+    }
+
+    /**
+     * Recovery counterpart of {@link #adoptMechanismSeats}: defCoreLib already RE-designated this mechanism's
+     * seats during recovery (from the persisted shulker tags) and fired onSeatRecovered, so this must NOT call
+     * {@code designateSeat} again — it only reads back the seat shulkers into {@code seatShulkers} and re-mirrors
+     * ship HP. A seat whose shulker is still in a not-yet-loaded neighbour chunk resolves to {@code null} and
+     * stays null (harmless — the same as a seat block with no collider); incremental recovery only finalizes
+     * once the footprint is complete, so this is the rare large-ship edge.
+     */
+    public void adoptMechanismSeatsForRecovery() {
+        if (mechanism == null) return;
+        for (int seatIdx = 0; seatIdx < model.seats.size(); seatIdx++) {
+            ShipModel.SeatInfo si = model.seats.get(seatIdx);
+            Shulker s = mechanism.seatEntity(si.blockIndex);
+            if (s != null) seatShulkers.set(seatIdx, s);
+        }
         syncSeatShulkerHealth(vehicle.getHealth());
     }
 

@@ -336,6 +336,11 @@ public class ShipWheelManager {
             ship = new ShipInstance(plugin, "custom", model, wheelLoc, ShipCustomization.empty(), vehicle, mechanism);
             ship.sourceModel = model;  // Store the model for disassembly
             ship.adoptMechanismSeats();  // M4: designate seats on the mechanism + populate seatShulkers
+            // M5: opt the mechanism into defCoreLib crash-safe persistence (writes its MechanismState + indexes
+            // its pivot chunk) so it's SAVED (not disassembled) at /stop and re-recovered on restart/chunk-reload,
+            // firing a recovered MechanismAssembleEvent that DisplayShip rebuilds this ShipInstance from. After
+            // adoptMechanismSeats so the seat shulker tags are already set when the state snapshot is taken.
+            mechRegistry.persist(mechanism);
             // Leads-in is handled by the registry pre-air-out listener (registerLeadsInSeam) — it fires DURING
             // assembleMechanism above (before the fences are aired out), re-leashing mobs onto the colliders.
         } catch (Throwable t) {

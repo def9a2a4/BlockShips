@@ -197,6 +197,19 @@ public final class ShipTags {
         return extractIntIndex(tags, LEADABLE_PREFIX);
     }
 
+    /**
+     * Whether any tag marks this entity as owned by a defCoreLib mechanism ({@code corelib:mech:...} — the
+     * delegated ship's vehicle, colliders, displays, and seat shulkers). Native recovery/orphan-cleanup must
+     * skip these: defCoreLib owns their lifecycle and recovers them itself, so BlockShips must neither reap
+     * them nor run native (parent-BlockDisplay-based) recovery on them.
+     */
+    public static boolean isCorelibTagged(Set<String> tags) {
+        for (String tag : tags) {
+            if (tag.startsWith(CORELIB_MECH_PREFIX)) return true;
+        }
+        return false;
+    }
+
     public static boolean isShipEntity(Set<String> tags) {
         for (String tag : tags) {
             if (tag.startsWith(SHIP_PREFIX)) {
