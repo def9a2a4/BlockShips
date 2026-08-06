@@ -244,6 +244,84 @@ public class ShipWheelManager {
         return null;
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Wheel↔ship reconciliation (Track W). The wheel's assembledShipUUID must agree with ShipRegistry, the
+    // persisted set, and defCoreLib's mechanism registry, but nothing keeps them in lockstep — so a dead ship
+    // can leave the wheel "confused" (still flagged assembled), and Assemble then refuses. A single authority
+    // derives the real state so a dead ship reads as unassembled WITHOUT scattered imperative clears, and is
+    // the one seam M5 (delegated persistence) later extends.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public enum WheelState {
+        /** No ship linked. */
+        NOT_ASSEMBLED,
+        /** Ship is registered and ticking. */
+        LOADED,
+        /** Linked ship isn't registered but will come back (chunk unloaded / mid-recovery / a live mechanism). */
+        UNLOADED_RECOVERABLE,
+        /** Linked ship is genuinely gone (chunk loaded, unregistered, no live mechanism) — safe to clear/reap. */
+        ORPHAN
+    }
+
+    /** Result of {@link #resolveWheelState}: the derived state plus the live ship when {@code LOADED}. */
+    public record WheelResolution(WheelState state, @Nullable ShipInstance ship) {}
+
+    /**
+     * The authoritative "is this wheel really assembled?" check (Track W R0). Route every assembled-for-action
+     * decision (assemble/align/disassemble/menu) through this instead of trusting the raw {@code isAssembled()}
+     * flag. Pre-M5 a delegated ship cannot rebind once unregistered, so ORPHAN (chunk loaded + no live mechanism)
+     * means genuinely gone. The recoverability branch is the single place M5 extends (add a defCoreLib
+     * persisted-mechanism check there so a parked ship reads UNLOADED_RECOVERABLE instead of ORPHAN).
+     */
+    public WheelResolution resolveWheelState(ShipWheelData wheel) {
+        UUID uuid = wheel.getAssembledShipUUID();
+        if (uuid == null) return new WheelResolution(WheelState.NOT_ASSEMBLED, null);
+        ShipInstance ship = ShipRegistry.byId(uuid);
+        if (ship != null) return new WheelResolution(WheelState.LOADED, ship);
+        // Not registered. Recoverable if the wheel's chunk is unloaded / recovery is pending, or a live mechanism
+        // still exists (an in-session chunk reload can leave the mechanism alive but the ShipInstance unregistered).
+        // Otherwise — chunk loaded (so on-load recovery already ran) and no live mechanism — it is genuinely gone.
+        Location wl = wheel.getBlockLocation();
+        boolean chunkLoaded = wl != null && wl.getWorld() != null
+            && wl.getWorld().isChunkLoaded(wl.getBlockX() >> 4, wl.getBlockZ() >> 4);
+        if (!chunkLoaded || hasLiveMechanism(uuid)) {
+            return new WheelResolution(WheelState.UNLOADED_RECOVERABLE, null);
+        }
+        return new WheelResolution(WheelState.ORPHAN, null);
+    }
+
+    /** True if defCoreLib still has a live (in-memory) mechanism with this id (delegated ships: mechId == ship.id). */
+    private boolean hasLiveMechanism(UUID id) {
+        try {
+            anon.def9a2a4.corelib.MechanismRegistry reg =
+                anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry();
+            return reg != null && reg.byId(id) != null;
+        } catch (Throwable t) {
+            return false;  // CoreLib absent/unloaded → treat as no live mechanism.
+        }
+    }
+
+    /**
+     * Self-heal a wheel that resolved {@link WheelState#ORPHAN}: clear the stale link (persisting it) and reap
+     * ONLY the BlockShips-owned orphan root vehicle ({@code ShipTags.shipRootTag}). Never sweeps
+     * {@code corelib:mech:*} — defCoreLib owns and reaps those itself, guarded by its own recovery/persistence
+     * latches BlockShips cannot replicate.
+     */
+    private void reconcileOrphan(ShipWheelData wheel) {
+        UUID uuid = wheel.getAssembledShipUUID();
+        wheel.setAssembledShipUUID(null);
+        saveAll();
+        if (uuid == null) return;
+        Location near = wheel.getBlockLocation();
+        if (near == null || near.getWorld() == null) return;
+        String rootTag = anon.def9a2a4.blockships.ShipTags.shipRootTag(uuid);
+        for (org.bukkit.entity.Entity e : near.getWorld().getEntities()) {
+            if (e instanceof org.bukkit.entity.ArmorStand && e.getScoreboardTags().contains(rootTag)) {
+                e.remove();
+            }
+        }
+    }
+
     /**
      * Updates the tracked location of a wheel after disassembly at a new position.
      * Removes old map entry and adds new one.
@@ -259,9 +337,20 @@ public class ShipWheelManager {
      * Assembles a custom ship from blocks around the wheel.
      */
     public boolean assembleShip(Player player, ShipWheelData wheelData) {
-        if (wheelData.isAssembled()) {
+        // Track W (R0): resolve the REAL state, not the raw flag. A LOADED/loading ship blocks re-assembly; an
+        // ORPHAN (stale link from an out-of-band ship death) self-heals here so the player can assemble again —
+        // this is the fix for the "wheel confused about assembled, Assemble refuses" symptom.
+        WheelResolution wr = resolveWheelState(wheelData);
+        if (wr.state() == WheelState.LOADED) {
             player.sendMessage("§cThis wheel already has an assembled ship!");
             return false;
+        }
+        if (wr.state() == WheelState.UNLOADED_RECOVERABLE) {
+            player.sendMessage("§eThis wheel's ship is still loading — try again in a moment.");
+            return false;
+        }
+        if (wr.state() == WheelState.ORPHAN) {
+            reconcileOrphan(wheelData);
         }
 
         Location wheelLoc = wheelData.getBlockLocation();
