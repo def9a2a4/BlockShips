@@ -825,6 +825,38 @@ public class BlockShipsPlugin extends JavaPlugin {
                 return true;
             }
 
+            if (args[0].equalsIgnoreCase("forceclearwheel")) {
+                // F1c — escape hatch for a wheel stuck 'loading' (UNLOADED_RECOVERABLE) by a ship that can never
+                // rebind (e.g. reconstructDelegatedShip bailed on a missing sidecar). Bypasses the recoverable
+                // check for the ONE targeted wheel. Admin-gated; confirm-gated.
+                if (!sender.hasPermission("blockships.admin")) {
+                    sender.sendMessage("§cYou don't have permission to use admin commands.");
+                    return true;
+                }
+                if (!(sender instanceof org.bukkit.entity.Player p)) {
+                    sender.sendMessage("§cThis command must be run by a player (it targets the nearest wheel).");
+                    return true;
+                }
+                ShipWheelData target = shipWheelManager.getNearestWheel(p.getLocation(), 16.0);
+                if (target == null) {
+                    sender.sendMessage("§cNo placed ship wheel found within 16 blocks.");
+                    return true;
+                }
+                if (args.length < 2 || !args[1].equalsIgnoreCase("confirm")) {
+                    Location bl = target.getBlockLocation();
+                    sender.sendMessage("§eNearest wheel: §7" + bl.getBlockX() + ", " + bl.getBlockY() + ", "
+                        + bl.getBlockZ() + " §e(assembled=" + target.isAssembled() + ").");
+                    sender.sendMessage("§c§l⚠ §cForce-clear bypasses the recoverable check: it UNLINKS the wheel and "
+                        + "reaps its orphan root vehicle. Use ONLY for a wheel stuck 'loading' by an unrecoverable ship.");
+                    sender.sendMessage("§7Type §e/blockships forceclearwheel confirm §7to confirm.");
+                    return true;
+                }
+                shipWheelManager.forceClearWheelLink(target);
+                getLogger().info(sender.getName() + " force-cleared wheel at " + target.getBlockLocation());
+                sender.sendMessage("§aWheel force-cleared. You can now re-assemble.");
+                return true;
+            }
+
             if (args[0].equalsIgnoreCase("killentities")) {
                 if (!sender.hasPermission("blockships.admin")) {
                     sender.sendMessage("§cYou don't have permission to use admin commands.");
@@ -1054,6 +1086,7 @@ public class BlockShipsPlugin extends JavaPlugin {
             if (sender.hasPermission("blockships.recipes")) subcommands.add("recipes");
             if (sender.hasPermission("blockships.admin")) {
                 subcommands.add("forcedisassembleall");
+                subcommands.add("forceclearwheel");
                 subcommands.add("killentities");
             }
 
@@ -1078,7 +1111,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                         completions.add(player.getName());
                     }
                 }
-            } else if ((subcommand.equals("forcedisassembleall") || subcommand.equals("killentities"))
+            } else if ((subcommand.equals("forcedisassembleall") || subcommand.equals("killentities") || subcommand.equals("forceclearwheel"))
                     && sender.hasPermission("blockships.admin")) {
                 // Complete with "confirm" for dangerous commands
                 if ("confirm".startsWith(args[1].toLowerCase())) {

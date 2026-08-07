@@ -1848,6 +1848,25 @@ public class DisplayShip implements Listener {
     }
 
     /**
+     * The wheel shulker (the block at local (0,0,0)), engine-agnostic: the native `colliders` list for a prefab
+     * ship, or the Mechanism-owned collider for a delegated ship (whose `colliders` list is empty). Returns null
+     * if not found. `base` == `part.local`, so the (0,0,0) search is identical across engines.
+     */
+    private Shulker findWheelShulker(ShipInstance ship) {
+        if (ship.mechanism != null) {
+            for (int i = 0; i < ship.model.parts.size(); i++) {
+                ship.model.parts.get(i).local.getTranslation(workWheelTranslation);
+                if (Math.abs(workWheelTranslation.x) < 0.01f && Math.abs(workWheelTranslation.y) < 0.01f && Math.abs(workWheelTranslation.z) < 0.01f) {
+                    return ship.mechanism.colliderEntity(i);
+                }
+            }
+            return null;
+        }
+        CollisionBox wheel = findWheelCollider(ship);
+        return wheel != null ? wheel.entity : null;
+    }
+
+    /**
      * Plays a damage sound at the given location.
      */
     private void playDamageSound(Location location) {
