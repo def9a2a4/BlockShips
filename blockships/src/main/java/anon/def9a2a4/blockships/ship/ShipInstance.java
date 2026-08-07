@@ -1945,16 +1945,19 @@ public class ShipInstance {
 
         double seatTopY = seatLoc.getY() + getShulkerHeight(seatShulker);
 
-        // Scan nearby colliders for the highest top surface that overlaps horizontally
+        // Scan nearby colliders for the highest top surface that overlaps horizontally. Use the engine-agnostic
+        // colliderBoxes() (world-space boxes for both engines, null/invalid already filtered) so this works for a
+        // delegated ship too — its native `colliders` list is empty, which previously made this a no-op and
+        // dropped the player just above the seat (clip risk). getMinY()/getMaxY() are the real box bounds
+        // (more accurate than the assumed shulker height).
         double highestTopY = seatTopY;
         double horizontalThreshold = 0.8; // half player width + half shulker width
-        for (CollisionBox cb : colliders) {
-            Location cbLoc = cb.entity.getLocation();
-            double dx = java.lang.Math.abs(cbLoc.getX() - seatLoc.getX());
-            double dz = java.lang.Math.abs(cbLoc.getZ() - seatLoc.getZ());
-            double cbBottomY = cbLoc.getY();
+        for (org.bukkit.util.BoundingBox b : colliderBoxes()) {
+            double dx = java.lang.Math.abs(b.getCenterX() - seatLoc.getX());
+            double dz = java.lang.Math.abs(b.getCenterZ() - seatLoc.getZ());
+            double cbBottomY = b.getMinY();
             if (dx < horizontalThreshold && dz < horizontalThreshold && cbBottomY <= seatTopY + 1.8) {
-                double cbTopY = cbLoc.getY() + getShulkerHeight(cb.entity);
+                double cbTopY = b.getMaxY();
                 if (cbTopY > highestTopY) {
                     highestTopY = cbTopY;
                 }
@@ -2023,7 +2026,12 @@ public class ShipInstance {
         }
 
         Set<String> tags = shulker.getScoreboardTags();
-        if (!ShipTags.isShipEntity(tags)) {
+        // Resolve the ship from the shulker tags. extractShipId is corelib-aware, so this covers BOTH a native
+        // seat (displayship:) and a delegated seat (corelib:mech:) — the old isShipEntity gate matched only the
+        // native prefix, so forced dismount silently no-op'd on delegated ships (a passenger could get stuck).
+        // The byId != null check also rejects a foreign corelib mechanism's shulker (pipes/railbound/etc.).
+        UUID sid = ShipTags.extractShipId(tags);
+        if (sid == null || ShipRegistry.byId(sid) == null) {
             return false;
         }
 
