@@ -536,7 +536,10 @@ public class DisplayShip implements Listener {
         // PART 3: Orphan cleanup - only if no async recovery is pending
         // (If async recovery is pending, orphan cleanup runs after it completes)
         if (shipsToRecover.isEmpty()) {
-            processOrphanCleanup(chunk, world, Collections.emptySet());
+            // Must be a mutable set: recoverShipFromVehicle records failures via .add().
+            // Collections.emptySet() would throw UnsupportedOperationException on any
+            // recoverable failure branch, aborting the whole ChunkLoadEvent handler.
+            processOrphanCleanup(chunk, world, new HashSet<>());
         }
     }
 
