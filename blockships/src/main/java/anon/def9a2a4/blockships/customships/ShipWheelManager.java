@@ -288,11 +288,19 @@ public class ShipWheelManager {
         Location wl = wheel.getBlockLocation();
         boolean chunkLoaded = wl != null && wl.getWorld() != null
             && wl.getWorld().isChunkLoaded(wl.getBlockX() >> 4, wl.getBlockZ() >> 4);
-        if (!chunkLoaded || hasLiveMechanism(uuid)) {
+        // F1: also treat a ship in BlockShips' persisted set as recoverable. M5 delegated persistence/recovery
+        // means a persisted-but-not-yet-recovered ship is absent from activeMechanisms (so hasLiveMechanism is
+        // false) yet WILL rebind via MechanismAssembleEvent — reaping it here would destroy a live-recoverable
+        // ship. This does NOT strand a genuinely-dead ship: every death routes through ShipInstance.destroy()
+        // (W2) which nulls the link → NOT_ASSEMBLED above → this branch is unreached; and removeShip prunes the
+        // persisted set. (Same source classifyWheels uses, so the two authorities agree.)
+        if (!chunkLoaded || hasLiveMechanism(uuid) || isPersistedShip(uuid)) {
             return new WheelResolution(WheelState.UNLOADED_RECOVERABLE, null);
         }
         return new WheelResolution(WheelState.ORPHAN, null);
     }
+
+    private boolean coreLibFaultLogged = false;
 
     /** True if defCoreLib still has a live (in-memory) mechanism with this id (delegated ships: mechId == ship.id). */
     private boolean hasLiveMechanism(UUID id) {
@@ -301,8 +309,24 @@ public class ShipWheelManager {
                 anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry();
             return reg != null && reg.byId(id) != null;
         } catch (Throwable t) {
-            return false;  // CoreLib absent/unloaded → treat as no live mechanism.
+            // F1b — fail CLOSED for a reaping decision: a transient CoreLib fault must NOT bias toward ORPHAN/reap.
+            // Treat as "recoverable, don't reap". Log once so a PERMANENT CoreLib-absent fault is diagnosable.
+            if (!coreLibFaultLogged) {
+                coreLibFaultLogged = true;
+                plugin.getLogger().log(java.util.logging.Level.WARNING,
+                    "hasLiveMechanism: defCoreLib query failed; treating wheels as recoverable (not reaping). "
+                    + "If defCoreLib is permanently unavailable, unrecoverable wheels will read as 'loading'.", t);
+            }
+            return true;
         }
+    }
+
+    /** True if this id is in BlockShips' persisted chunk index (any world). Mirrors {@code collectPersistedShipIds}. */
+    private boolean isPersistedShip(UUID id) {
+        if (!(plugin instanceof BlockShipsPlugin bsp)) return false;
+        DisplayShip ds = bsp.getDisplayShip();
+        if (ds == null) return false;
+        return ds.getShipWorldData().getAllPersistedShipIds().contains(id);
     }
 
     /**

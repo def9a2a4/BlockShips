@@ -1708,6 +1708,10 @@ public class DisplayShip implements Listener {
         // Check if this shulker belongs to a ship
         UUID shipId = ShipTags.extractShipId(shulker.getScoreboardTags());
         if (shipId == null) return;
+        // extractShipId now resolves any corelib:mech: entity, including foreign mechanisms owned by sibling
+        // plugins (pipes/railbound/etc.). Only suppress drops for a real BlockShips ship — matches every other
+        // shulker handler's byId guard and keeps this from reaching into another plugin's entities.
+        if (ShipRegistry.byId(shipId) == null) return;
 
         // Clear all drops - ship colliders should never drop items
         e.getDrops().clear();
