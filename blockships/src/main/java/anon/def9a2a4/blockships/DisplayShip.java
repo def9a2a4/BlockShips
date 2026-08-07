@@ -1816,10 +1816,10 @@ public class DisplayShip implements Listener {
      * Color interpolates from grey (full health) to red (zero health).
      */
     private void spawnWheelHealthParticles(ShipInstance ship, double healthPercent) {
-        CollisionBox wheelCollider = findWheelCollider(ship);
-        if (wheelCollider == null || wheelCollider.entity == null || !wheelCollider.entity.isValid()) return;
+        Shulker wheel = findWheelShulker(ship);
+        if (wheel == null || !wheel.isValid()) return;
 
-        Location wheelLoc = wheelCollider.entity.getLocation().add(0, 0.5, 0);
+        Location wheelLoc = wheel.getLocation().add(0, 0.5, 0);
         World world = wheelLoc.getWorld();
         if (world == null) return;
 
@@ -1910,6 +1910,33 @@ public class DisplayShip implements Listener {
         player.sendMessage("§eHealth: §f" + String.format("%.1f", inst.vehicle.getHealth()) + "/" +
                           String.format("%.1f", maxHealthValue));
         player.sendMessage("§eSpeed: §f" + String.format("%.3f", inst.physics.currentSpeed));
+
+        // Delegated ships have no native `colliders` list — the Mechanism owns the collider shulkers. Resolve the
+        // block index from the corelib tag (same as the interaction router) and read the box/part detail from the
+        // mechanism + model instead of scanning `inst.colliders` (which is empty and would print nothing).
+        if (inst.mechanism != null) {
+            int i = ShipTags.extractCorelibBlockIndex(shulker.getScoreboardTags());
+            org.bukkit.util.BoundingBox box = i >= 0 ? inst.mechanism.getColliderBoxByBlock(i) : null;
+            ShipModel.ModelPart part = (i >= 0 && i < inst.model.parts.size()) ? inst.model.parts.get(i) : null;
+            if (box == null || part == null) {
+                player.sendMessage("§c(No mechanism collider for this shulker)");
+                return;
+            }
+            player.sendMessage("");
+            player.sendMessage("§b--- Collision Box (delegated) ---");
+            player.sendMessage("§eBlock Index: §f" + i);
+            player.sendMessage("§eSize: §f" + part.collision.size);
+            player.sendMessage("§eOffset: §f[" + part.collision.offset.x + ", " +
+                              part.collision.offset.y + ", " + part.collision.offset.z + "]");
+            player.sendMessage("§eWorld Box: §f[" +
+                              String.format("%.2f", box.getMinX()) + ".." + String.format("%.2f", box.getMaxX()) + ", " +
+                              String.format("%.2f", box.getMinY()) + ".." + String.format("%.2f", box.getMaxY()) + ", " +
+                              String.format("%.2f", box.getMinZ()) + ".." + String.format("%.2f", box.getMaxZ()) + "]");
+            player.sendMessage("");
+            player.sendMessage("§b--- Original YAML ---");
+            FormatUtil.formatYamlToChat(player, part.rawYaml, "");
+            return;
+        }
 
         // Find the CollisionBox for this shulker
         CollisionBox matchedBox = null;

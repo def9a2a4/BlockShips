@@ -351,6 +351,30 @@ public class ShipWheelManager {
     }
 
     /**
+     * Admin escape hatch (F1c): unconditionally clear a wheel's assembled link + reap its orphan root vehicle,
+     * bypassing the recoverability check. For a wheel stuck {@code UNLOADED_RECOVERABLE} by a ship that can never
+     * rebind (e.g. a missing sidecar / model-deserialize failure in reconstructDelegatedShip). Admin-gated by the
+     * command; players cannot reach it (the menu defers on UNLOADED_RECOVERABLE).
+     */
+    public void forceClearWheelLink(ShipWheelData wheel) {
+        reconcileOrphan(wheel);
+    }
+
+    /** The nearest placed wheel to {@code loc} within {@code radius} blocks (same world), or null. */
+    public ShipWheelData getNearestWheel(Location loc, double radius) {
+        if (loc == null || loc.getWorld() == null) return null;
+        ShipWheelData best = null;
+        double bestSq = radius * radius;
+        for (ShipWheelData w : placedWheels.values()) {
+            Location bl = w.getBlockLocation();
+            if (bl == null || bl.getWorld() == null || !bl.getWorld().equals(loc.getWorld())) continue;
+            double d = bl.distanceSquared(loc);
+            if (d <= bestSq) { bestSq = d; best = w; }
+        }
+        return best;
+    }
+
+    /**
      * Updates the tracked location of a wheel after disassembly at a new position.
      * Removes old map entry and adds new one.
      */
