@@ -654,6 +654,52 @@ public class DisplayShip implements Listener {
     }
 
     /**
+     * Attempts to recover an unregistered native ship when a player interacts with one of its
+     * entities, using the clicked entity as a search anchor for the ship's root ArmorStand.
+     *
+     * <p>Native recovery is otherwise only driven by {@link #onChunkLoad}, which fires on the
+     * chunk load <em>transition</em> - a ship whose vehicle chunk is already loaded but whose
+     * parent display wasn't found sits broken until an unload/reload cycle. An interaction means
+     * the player is adjacent (so the parent's chunk is loaded), making recovery likely to succeed.
+     *
+     * @return the now-registered {@link ShipInstance} if recovery succeeded, otherwise null.
+     */
+    private ShipInstance attemptInteractionRecovery(UUID shipId, Shulker anchor) {
+        // Delegated (defCoreLib) ships recover via their own path (onMechanismAssemble /
+        // forceRecoverDelegatedShips) and must NOT be routed into native recovery - mirror the
+        // corelib guard in processOrphanCleanup so we never fight corelib for entity ownership.
+        if (ShipTags.isCorelibTagged(anchor.getScoreboardTags())) return null;
+        // Reuse the chunk-load recovery guard: bail if recovery is already in flight for this ship.
+        if (!shipsBeingRecovered.add(shipId)) return null;
+        try {
+            Location at = anchor.getLocation();
+            String rootTag = ShipTags.shipRootTag(shipId);
+            ArmorStand vehicle = null;
+            for (Entity e : at.getWorld().getNearbyEntities(at, 32, 32, 32)) {
+                if (e instanceof ArmorStand as
+                        && e.getScoreboardTags().contains(rootTag)
+                        && !ShipTags.isCorelibTagged(e.getScoreboardTags())) {
+                    vehicle = as;
+                    break;
+                }
+            }
+            if (vehicle == null) {
+                plugin.getLogger().fine("Interaction recovery: no vehicle found near click for ship " + shipId);
+                return null;
+            }
+            recoverShipFromVehicle(vehicle.getWorld(), vehicle.getLocation().getChunk(),
+                                   shipId, vehicle, new HashSet<>());
+        } finally {
+            shipsBeingRecovered.remove(shipId);
+        }
+        ShipInstance recovered = ShipRegistry.byId(shipId);
+        if (recovered != null) {
+            plugin.getLogger().info("Ship " + shipId + " recovered via player interaction");
+        }
+        return recovered;
+    }
+
+    /**
      * Loads the appropriate ShipModel for a saved ship state.
      */
     private ShipModel loadModelForState(ShipPersistence.ShipState state) {
