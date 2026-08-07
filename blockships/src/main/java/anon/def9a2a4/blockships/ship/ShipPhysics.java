@@ -551,6 +551,7 @@ public class ShipPhysics {
 
         for (Player player : loc.getWorld().getPlayers()) {
             if (player.getLocation().distance(loc) > 32) continue;
+            if (player.getVehicle() != null) continue;  // seated riders (delegated seats ARE colliders) ride the shulker; don't re-teleport/eject them
 
             org.bukkit.util.BoundingBox playerBox = player.getBoundingBox();
             double playerFeetY = playerBox.getMinY();
@@ -603,7 +604,13 @@ public class ShipPhysics {
             // colliders/displays land on the snapped pose, then re-seat standers onto the snapped colliders.
             Map<Player, Integer> onDeck = findPlayersOnDeckDelegated();
 
-            Location aligned = new Location(loc.getWorld(), x, y, z, snappedYaw, snappedPitch);
+            // Delegated vehicle entity yaw MUST stay frozen at 0 — display passengers inherit it (1.21.9+)
+            // and defCoreLib's addDrivenBaseOffset treats the display matrix translation as world-space
+            // because the parent yaw is 0. All visual heading rides repositionDriven(currentYaw - spawnYaw)
+            // below; setting the entity yaw to a cardinal would permanently rotate the displays off the
+            // colliders. (Native re-baselines spawnYaw + updateDisplayTransforms, so it CAN set the entity
+            // yaw; the delegated path deliberately does not re-baseline — mirror snapToFineGrid: keep loc's yaw.)
+            Location aligned = new Location(loc.getWorld(), x, y, z, loc.getYaw(), snappedPitch);
             TeleportCompat.teleport(ship.vehicle, aligned);
 
             // Snap the mechanism to the aligned vehicle + snapped heading (relative to the as-built spawnYaw).
