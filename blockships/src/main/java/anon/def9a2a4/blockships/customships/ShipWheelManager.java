@@ -324,7 +324,7 @@ public class ShipWheelManager {
     /** True if this id is in BlockShips' persisted chunk index (any world). Mirrors {@code collectPersistedShipIds}. */
     private boolean isPersistedShip(UUID id) {
         if (!(plugin instanceof BlockShipsPlugin bsp)) return false;
-        DisplayShip ds = bsp.getDisplayShip();
+        var ds = bsp.getDisplayShip();
         if (ds == null) return false;
         return ds.getShipWorldData().getAllPersistedShipIds().contains(id);
     }
@@ -851,6 +851,9 @@ public class ShipWheelManager {
 
         // Unlink from wheel
         wheelData.setAssembledShipUUID(null);
+        // F4: persist the relocated wheel + cleared link now (both branches). Without this a crash before the next
+        // save reloads ship_wheels.yml with the OLD location still flagged assembled at an already-deleted sidecar.
+        saveAll();
 
         if (player != null) player.sendMessage("§aShip disassembled!");
         return true;
@@ -881,6 +884,25 @@ public class ShipWheelManager {
      * The wheel block is at position (0,0,0) relative to the ship origin.
      */
     private void tagShipWheelCollider(ShipInstance ship, Location wheelLoc) {
+        // Delegated ships have no native `colliders` (the Mechanism owns the collider shulkers). Find the wheel
+        // block — the unique model part at local translation (0,0,0), the flood-fill seed; base == part.local so
+        // this is the same search the native branch does — and tag its engine collider shulker so a non-sneak
+        // right-click on the wheel opens the ship menu, matching native.
+        if (ship.mechanism != null) {
+            for (int i = 0; i < ship.model.parts.size(); i++) {
+                org.joml.Vector3f translation = new org.joml.Vector3f();
+                ship.model.parts.get(i).local.getTranslation(translation);
+                if (Math.abs(translation.x) < 0.01f && Math.abs(translation.y) < 0.01f && Math.abs(translation.z) < 0.01f) {
+                    org.bukkit.entity.Shulker shulker = ship.mechanism.colliderEntity(i);
+                    if (shulker != null && shulker.isValid()) {
+                        shulker.addScoreboardTag(ShipTags.wheelTag(wheelLoc));
+                    }
+                    break;
+                }
+            }
+            return;
+        }
+
         // Find the collision shulker at the wheel position (block index 0 should be the wheel)
         // We need to iterate through colliders to find the one at position (0,0,0)
         for (CollisionBox collider : ship.colliders) {

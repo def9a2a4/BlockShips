@@ -719,6 +719,12 @@ public class DisplayShip implements Listener {
         }
         ShipInstance ship = ShipInstance.fromRecoveredMechanism(plugin, state, model, vehicle, mech);
         ShipRegistry.register(ship);
+        // F5: re-add to BlockShips' chunk index (parity with the native recovery paths). addToChunkIndex is
+        // idempotent, so this is safe when loadAllChunkIndices already holds the entry; it closes the narrow
+        // crash-lost-index window and keeps the chunk key fresh at the recovered position.
+        Location recoveredLoc = vehicle.getLocation();
+        shipWorldData.addToChunkIndex(world, mechId, recoveredLoc.getBlockX() >> 4, recoveredLoc.getBlockZ() >> 4);
+        shipWorldData.saveAllChunkIndices();
         // Re-link the wheel + recompute stats one tick later: custom-ship stats depend on the wheel, whose PDC
         // blocks are loaded by ShipWheelManager.loadAll, and resolveWheelData is lazy.
         new BukkitRunnable() {
