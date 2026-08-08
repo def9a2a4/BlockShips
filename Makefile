@@ -1,13 +1,9 @@
 
 .PHONY: build
 build:
-	cd blockships && gradle shadowJar
+	cd blockships && gradle shadowJar $(GRADLE_DEFCORELIB_ARGS)
 	mkdir -p bin
 	cp blockships/build/libs/BlockShips-*.jar bin
-
-# Sibling defCoreLib Mechanism engine jar — BlockShips depend:s on it at runtime (never shaded), so it
-# must be present in every server's plugins/ dir alongside BlockShips.
-DEFCORELIB_JAR := ../defCoreLib/bin/defCoreLib-*.jar
 
 .PHONY: dump-issues
 dump-issues:
@@ -23,7 +19,7 @@ clean:
 
 
 .PHONY: server-plugin-copy
-server-plugin-copy:
+server-plugin-copy: defcorelib-jar
 	rm -f server/plugins/BlockShips*.jar server/plugins/defCoreLib*.jar
 	cp bin/*.jar server/plugins/
 	cp $(DEFCORELIB_JAR) server/plugins/
@@ -58,6 +54,65 @@ DOWNLOAD_CACHE := .download-cache
 SERVER_VARIANT ?= paper
 MINECRAFT_VERSION ?= 1.21.11
 
+# =============================================================================
+# defCoreLib — compile-time dependency AND runtime `depend: [DefCoreLib]` plugin
+# =============================================================================
+# The pinned ref lives in blockships/gradle.properties (Gradle reads it as a project property; we
+# scrape the same line). BlockShips refuses to enable without the DefCoreLib plugin jar in plugins/,
+# so both CI (test-server-*) and the local loop (server-*) need it.
+#
+#   make build                        compile + run against the JitPack pin (CI behaviour)
+#   make build DEFCORELIB_LOCAL=1     compile + run against ../defCoreLib/bin (co-development)
+#   make build DEFCORELIB_REF=abc1234 try another pinned ref without editing the file
+#
+# One switch drives both sides on purpose — you can't compile against the pin and run against the
+# sibling jar (or vice versa) by accident.
+REPO_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+DEFCORELIB_REF ?= $(shell sed -n 's/^[[:space:]]*defCoreLibRef[[:space:]]*=[[:space:]]*//p' \
+	$(REPO_ROOT)/blockships/gradle.properties)
+ifeq ($(strip $(DEFCORELIB_REF)),)
+$(error defCoreLibRef not found in blockships/gradle.properties — cannot resolve defCoreLib)
+endif
+
+DEFCORELIB_LOCAL ?=
+DEFCORELIB_CACHED_JAR  := $(DOWNLOAD_CACHE)/plugins/defCoreLib-$(DEFCORELIB_REF).jar
+DEFCORELIB_JITPACK_URL := https://jitpack.io/com/github/def9a2a4/defCoreLib/$(DEFCORELIB_REF)/defCoreLib-$(DEFCORELIB_REF).jar
+# sibling shadow jar only — never the `-plain` thin jar (Paper: "Ambiguous plugin name 'DefCoreLib'")
+DEFCORELIB_SIBLING_JAR := $(firstword $(filter-out %-plain.jar,\
+	$(wildcard $(REPO_ROOT)/../defCoreLib/bin/defCoreLib-*.jar)))
+
+ifeq ($(DEFCORELIB_LOCAL),)
+DEFCORELIB_JAR         := $(DEFCORELIB_CACHED_JAR)
+DEFCORELIB_JAR_DEP     := $(DEFCORELIB_CACHED_JAR)
+GRADLE_DEFCORELIB_ARGS := -PdefCoreLibRef=$(DEFCORELIB_REF)
+else
+DEFCORELIB_JAR         := $(DEFCORELIB_SIBLING_JAR)
+DEFCORELIB_JAR_DEP     :=
+GRADLE_DEFCORELIB_ARGS := -PdefCoreLibLocal
+endif
+
+# Cache key includes the ref, so bumping the pin invalidates the cached jar automatically.
+$(DEFCORELIB_CACHED_JAR):
+	@mkdir -p $(DOWNLOAD_CACHE)/plugins
+	@echo "Fetching DefCoreLib $(DEFCORELIB_REF) from JitPack..."
+	curl -fSL --connect-timeout 30 --max-time 900 \
+		--retry 5 --retry-delay 15 --retry-all-errors \
+		-o $@.part "$(DEFCORELIB_JITPACK_URL)"
+	@unzip -l $@.part | grep -q 'plugin.yml' || { \
+		echo "ERROR: $(DEFCORELIB_JITPACK_URL) did not return a plugin jar."; \
+		echo "  Is the JitPack build for $(DEFCORELIB_REF) warm?"; \
+		echo "  curl -s https://jitpack.io/api/builds/com.github.def9a2a4/defCoreLib/$(DEFCORELIB_REF)"; \
+		rm -f $@.part; exit 1; }
+	@mv $@.part $@
+
+.PHONY: defcorelib-jar
+defcorelib-jar: $(DEFCORELIB_JAR_DEP)
+	@test -n "$(DEFCORELIB_JAR)" && test -f "$(DEFCORELIB_JAR)" || { \
+		echo "ERROR: DefCoreLib runtime jar not found: '$(DEFCORELIB_JAR)'"; \
+		echo "  DEFCORELIB_LOCAL='$(DEFCORELIB_LOCAL)'  DEFCORELIB_REF='$(DEFCORELIB_REF)'"; \
+		echo "  (local mode: run 'make build' in the defCoreLib checkout first)"; exit 1; }
+	@echo "DefCoreLib runtime jar: $(DEFCORELIB_JAR)"
+
 $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar:
 	@mkdir -p $(DOWNLOAD_CACHE)/plugins
 	curl -L -o $@ https://github.com/dmulloy2/ProtocolLib/releases/download/5.4.0/ProtocolLib.jar
@@ -71,10 +126,10 @@ $(DOWNLOAD_CACHE)/plugins/ViaBackwards.jar:
 	curl -L -o $@ https://github.com/ViaVersion/ViaBackwards/releases/download/5.7.1/ViaBackwards-5.7.1.jar
 
 .PHONY: test-server-download-to-cache
-test-server-download-to-cache: $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar $(DOWNLOAD_CACHE)/plugins/ViaVersion.jar $(DOWNLOAD_CACHE)/plugins/ViaBackwards.jar
+test-server-download-to-cache: $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar $(DOWNLOAD_CACHE)/plugins/ViaVersion.jar $(DOWNLOAD_CACHE)/plugins/ViaBackwards.jar $(DEFCORELIB_JAR_DEP)
 
 .PHONY: test-server-plugin-copy
-test-server-plugin-copy:
+test-server-plugin-copy: defcorelib-jar
 	rm -rf $(TEST_SERVER_DIR)/plugins/
 	mkdir -p $(TEST_SERVER_DIR)/plugins
 	cp bin/*.jar $(TEST_SERVER_DIR)/plugins/
