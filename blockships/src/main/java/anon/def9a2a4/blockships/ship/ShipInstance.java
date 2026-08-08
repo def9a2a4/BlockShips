@@ -471,15 +471,6 @@ public class ShipInstance {
             : this.spawnYaw;
         if (delegatedPrefab) this.previousYaw = this.physics.currentYaw;
 
-        // P7.R2: a delegated PREFAB ship's storage is a VIRTUAL inventory defined by the model — block-free
-        // assembly gives defCoreLib no world container to capture, and the native storage-creation loop below is
-        // skipped (mechanism != null). Populate `storages` from the model here so chests open, persist, and drop
-        // via the same machinery as native prefab ships. Runs before restoreInventoriesFromState on the recovery
-        // path (fromRecoveredMechanism ctor's at :333, restore at :347), which then overlays saved contents.
-        // Custom delegated ships keep `storages` empty (they resolve storage through mechanism.getStorage), so
-        // this is gated on delegatedPrefab.
-        if (delegatedPrefab) populateDelegatedPrefabStorages();
-
         // Initialize chunk tracking for persistence
         this.currentChunkX = vehicle.getLocation().getBlockX() >> 4;
         this.currentChunkZ = vehicle.getLocation().getBlockZ() >> 4;
@@ -2207,28 +2198,6 @@ public class ShipInstance {
      * {@code createInventory} overload, which has no multiple-of-9 restriction that the
      * size-based overload enforces (assembling a hopper would otherwise throw).
      */
-    /**
-     * Populates {@link #storages} for a delegated PREFAB ship from its model parts. Mirrors the native
-     * storage-creation loop (see the mechanism==null branch of the full ctor) minus the entity work: block-free
-     * assembly gives defCoreLib no world container to capture, so the virtual inventory is authored here from
-     * each part's {@link ShipModel.StorageConfig}. Idempotent — skips indices already present.
-     *
-     * <p>Index parity is load-bearing: {@code storages} is keyed by {@code model.parts} index, which equals the
-     * collider's corelib block index (buildPrefabParts emits block parts first and in order), so the interaction
-     * handler's {@code mci} resolves here.
-     *
-     * <p>Unlike the native loop this does NOT honor a {@code container_items} rawYaml pre-fill — none of the
-     * current prefab models define one. If a future prefab model ships pre-filled containers, add that restore.
-     */
-    private void populateDelegatedPrefabStorages() {
-        for (int i = 0; i < model.parts.size(); i++) {
-            ShipModel.ModelPart p = model.parts.get(i);
-            if (p.storage == null || storages.containsKey(i)) continue;
-            storages.put(i, createStorageInventory(p.storage,
-                p.rawYaml.get("custom_name") instanceof String cns ? cns : null));
-        }
-    }
-
     private static Inventory createStorageInventory(ShipModel.StorageConfig sc, String customNameGson) {
         net.kyori.adventure.text.Component title;
         if (customNameGson != null) {

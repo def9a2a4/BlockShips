@@ -1695,16 +1695,12 @@ public class DisplayShip implements Listener {
                 return;
             }
         } else if (mci >= 0 && inst.mechanism != null) {
-            // Delegated storage, keyed by block index (== model.parts index). Two sources, in priority order:
-            //  1) inst.storages — a delegated PREFAB ship's VIRTUAL inventory (populated from the model in the
-            //     ShipInstance ctor; block-free assembly captures no world container). This is also the recovery
-            //     path: restoreInventoriesFromState refills inst.storages, so it MUST be consulted here.
-            //  2) mechanism.getStorage(mci) — a delegated CUSTOM ship's live captured world container.
-            // ORDER IS LOAD-BEARING (do not flip): a custom ship's inst.storages is empty, so get() returns null
-            // and it falls through to the mechanism; a prefab has no mechanism-captured storage. Round-trips on
-            // disassemble via inst.storages persistence (prefab) / defCoreLib's container restore (custom).
-            Inventory storage = inst.storages.get(mci);
-            if (storage == null) storage = inst.mechanism.getStorage(mci);
+            // Delegated: storage lives on the mechanism (inst.storages is empty), keyed by block index. Returns
+            // the live captured container inventory (vanilla chest/barrel/dispenser or custom block); edits
+            // round-trip on disassemble via defCoreLib's container restore. Prefab container parts also route
+            // here — assembleFromParts builds a typed inventory from the PartSpec storageType and getStorage
+            // returns it (persisted + rebuilt on recovery by defCoreLib).
+            Inventory storage = inst.mechanism.getStorage(mci);
             if (storage != null) {
                 player.openInventory(storage);
                 e.setCancelled(true);
