@@ -2747,6 +2747,18 @@ public class ShipInstance {
         if (task != null) task.cancel();
         if (idleCheckTask != null) idleCheckTask.cancel();
         if (mechanism != null) {
+            // Delegated safe-dismount: mechanism.destroy() below removes the seat shulkers via Entity.remove(),
+            // which ejects any seated player IN PLACE without firing VehicleExitEvent — so the safe-position
+            // teleport + fall-distance reset would be skipped. Mirror the native removePassenger→VehicleExitEvent
+            // path (see the colliders loop below, which is empty for a delegated ship) over seatShulkers, and do
+            // it BEFORE tearing the mechanism down while the seats still exist and the ship is still registered.
+            for (Shulker seat : seatShulkers) {
+                if (seat != null && seat.isValid()) {
+                    for (Entity passenger : seat.getPassengers()) {
+                        if (passenger instanceof Player p) seat.removePassenger(p);
+                    }
+                }
+            }
             // Delegated (M1): defCoreLib owns the parent/displays/colliders — tear them down via the Mechanism
             // (removes entities WITHOUT restoring blocks). Idempotent if disassemble() already ran. The native
             // lists below are empty for a delegated ship; the external vehicle is still removed at the end.
