@@ -1330,9 +1330,13 @@ public class DisplayShip implements Listener {
             }
             reg.persist(mechanism); // crash-safe: survives restart + chunk reload via the M5 path
         } catch (Throwable t) {
+            // Rollback. assembleFromParts BORROWS the vehicle (ownsVehicle=false), so mechanism.destroy() only
+            // strips the vehicle's tag and leaves the ArmorStand alive — the final unconditional remove kills it.
+            // If ship != null, ship.destroy() already removed the vehicle (isValid-guarded), so the trailing
+            // remove no-ops. Must not skip vehicle removal when mechanism != null but the ShipInstance ctor threw.
             if (mechanism != null) { try { mechanism.destroy(); } catch (Throwable ignored) {} }
-            else if (vehicle.isValid()) vehicle.remove();
-            if (ship != null) { try { ship.destroy(); } catch (Throwable ignored) {} }
+            if (ship != null)      { try { ship.destroy();      } catch (Throwable ignored) {} }
+            if (vehicle.isValid()) vehicle.remove();
             plugin.getLogger().log(java.util.logging.Level.SEVERE,
                 "Delegated prefab assembly failed for " + shipType + "; using native engine.", t);
             return null;
@@ -1677,10 +1681,16 @@ public class DisplayShip implements Listener {
                 return;
             }
         } else if (mci >= 0 && inst.mechanism != null) {
-            // Delegated: storage lives on the mechanism (inst.storages is empty), keyed by block index. Returns
-            // the live captured container inventory (vanilla chest/barrel/dispenser or custom block); edits
-            // round-trip on disassemble via defCoreLib's container restore.
-            Inventory storage = inst.mechanism.getStorage(mci);
+            // Delegated storage, keyed by block index (== model.parts index). Two sources, in priority order:
+            //  1) inst.storages — a delegated PREFAB ship's VIRTUAL inventory (populated from the model in the
+            //     ShipInstance ctor; block-free assembly captures no world container). This is also the recovery
+            //     path: restoreInventoriesFromState refills inst.storages, so it MUST be consulted here.
+            //  2) mechanism.getStorage(mci) — a delegated CUSTOM ship's live captured world container.
+            // ORDER IS LOAD-BEARING (do not flip): a custom ship's inst.storages is empty, so get() returns null
+            // and it falls through to the mechanism; a prefab has no mechanism-captured storage. Round-trips on
+            // disassemble via inst.storages persistence (prefab) / defCoreLib's container restore (custom).
+            Inventory storage = inst.storages.get(mci);
+            if (storage == null) storage = inst.mechanism.getStorage(mci);
             if (storage != null) {
                 player.openInventory(storage);
                 e.setCancelled(true);
