@@ -10,8 +10,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        minecraft: ['1.21.1', '1.21.4', '1.21.8', '1.21.10', '1.21.11', '26.1.2', '26.2']
-        # minecraft: ['1.21.1', '1.21.11']
+        # DefCoreLib is 1.21.11+, and BlockShips hard-`depend:`s on it — on older servers DefCoreLib
+        # fails to enable and takes BlockShips down with it. Keep this in step with defCoreLib's own
+        # matrix (defCoreLib/.github/workflows/server-test.yml).
+        minecraft: ['1.21.11', '26.1.2', '26.2']
         server: ['paper', 'purpur']
 
     name: ${{ matrix.server }} ${{ matrix.minecraft }}
