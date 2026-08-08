@@ -99,7 +99,7 @@ public final class ShipModel {
         org.joml.Vector3f t = new org.joml.Vector3f();
         for (int i = 0; i < parts.size(); i++) {
             parts.get(i).local.getTranslation(t);
-            if (Math.abs(t.x) < 0.01f && Math.abs(t.y) < 0.01f && Math.abs(t.z) < 0.01f) {
+            if (java.lang.Math.abs(t.x) < 0.01f && java.lang.Math.abs(t.y) < 0.01f && java.lang.Math.abs(t.z) < 0.01f) {
                 return i;
             }
         }

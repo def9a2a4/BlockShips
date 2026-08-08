@@ -1407,6 +1407,28 @@ public class ShipInstance {
             // M3: the native updateCollisionPositions (which lazily seeds collisionRadius) is skipped for a
             // delegated ship, so seed it here once from the mechanism collider boxes (used by the coordinator).
             if (collisionRadius < 0) calculateCollisionRadius();
+
+            // Item 1 (deck physics): when the ship RISES this tick, lift deck-standers with it BEFORE the colliders
+            // move. repositionDriven → repositionColliders teleports the shulkers up by dy; carryRidersUp detects a
+            // stander off the shulker's CURRENT top face, so it must run while the shulker is still under their feet
+            // (otherwise it overshoots and misses them for dy > 0.05). Use the ACTUAL vehicle Y-delta — NOT
+            // physics.currentYVelocity, which applyResponse has already mutated to next tick's value. Seated riders
+            // are excluded inside carryRidersUp (they're passengers, already lifted by their seat). Gate on a real
+            // rise + a player near the ship so a large/airship isn't scanning colliders every ascending tick empty.
+            if (previousVehicleLocation != null && cachedVehicleLoc.getWorld() != null
+                    && cachedVehicleLoc.getWorld().equals(previousVehicleLocation.getWorld())) {
+                double dy = cachedVehicleLoc.getY() - previousVehicleLocation.getY();
+                if (dy > 0.02) {
+                    double r = (collisionRadius > 0 ? collisionRadius : PLAYER_PROXIMITY_RADIUS) + 4.0;
+                    double rSq = r * r;
+                    boolean near = false;
+                    for (Player pl : cachedVehicleLoc.getWorld().getPlayers()) {
+                        if (pl.getLocation().distanceSquared(cachedVehicleLoc) <= rSq) { near = true; break; }
+                    }
+                    if (near) mechanism.carryRidersUp(dy);
+                }
+            }
+
             mechanism.repositionDriven(physics.currentYaw - spawnYaw);
 
             // Smoothness (native parity): repositionDriven sets only the vehicle's setVelocity dead-reckoning

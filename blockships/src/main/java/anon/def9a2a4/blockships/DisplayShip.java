@@ -675,7 +675,10 @@ public class DisplayShip implements Listener {
             Location at = anchor.getLocation();
             String rootTag = ShipTags.shipRootTag(shipId);
             ArmorStand vehicle = null;
-            for (Entity e : at.getWorld().getNearbyEntities(at, 32, 32, 32)) {
+            // 64-block sweep (wider than recoverEntities' 32) because it is centered on the clicked
+            // collider, which can sit far from the ship's root on a large hull. This path only runs
+            // on interaction with an unregistered ship, so the larger scan almost never fires.
+            for (Entity e : at.getWorld().getNearbyEntities(at, 64, 64, 64)) {
                 if (e instanceof ArmorStand as
                         && e.getScoreboardTags().contains(rootTag)
                         && !ShipTags.isCorelibTagged(e.getScoreboardTags())) {
@@ -1238,8 +1241,17 @@ public class DisplayShip implements Listener {
                 .textureManager(textureManager)
                 .build();
 
-        // Create ship instance (ShipInstance detects airship type from config automatically)
-        ShipInstance instance = new ShipInstance(plugin, shipType, shipModel, spawnAt, customization);
+        // Create ship instance (ShipInstance detects airship type from config automatically).
+        // P7.C: behind the interim flag, assemble prefab ships as DELEGATED defCoreLib mechanisms; default
+        // (and any assembly failure) falls back to the battle-tested native engine.
+        ShipInstance instance = null;
+        if (plugin.getConfig().getBoolean("ships.delegate-prefab", false)
+                && Bukkit.getPluginManager().isPluginEnabled("DefCoreLib")) {
+            instance = spawnDelegatedPrefab(shipType, shipModel, spawnAt, customization);
+        }
+        if (instance == null) {
+            instance = new ShipInstance(plugin, shipType, shipModel, spawnAt, customization);
+        }
         ShipRegistry.register(instance);
 
         // Register with per-world storage for chunk recovery
@@ -1253,6 +1265,159 @@ public class DisplayShip implements Listener {
             hand.setAmount(hand.getAmount() - 1);
             p.getInventory().setItemInMainHand(hand);
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // P7.C: delegated prefab assembly (prefab ship → defCoreLib block-free mechanism)
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Spawn a PREFAB ship as a DELEGATED defCoreLib mechanism (block-free assembly) instead of the native
+     * entity engine. Builds a {@code PartSpec} list from the {@link ShipModel} + customization using the
+     * EXACT native transform composition (so the delegated render matches native by construction), assembles
+     * a driven block-free mechanism, and wraps it in a delegated {@link ShipInstance}. Returns {@code null}
+     * on failure (caller falls back to native). See the Phase 7 plan for the transform derivation.
+     */
+    private ShipInstance spawnDelegatedPrefab(String shipType, ShipModel model, Location spawnAt,
+                                              ShipCustomization customization) {
+        // A Y-axis mechanism cannot render a non-identity rotation-matrix (holds for all current models).
+        if (!model.rotationTransform.equals(new org.joml.Matrix3f())) {
+            plugin.getLogger().warning("Delegated prefab " + shipType + ": non-identity rotation-matrix "
+                + "unsupported by the Y-axis mechanism; using native engine.");
+            return null;
+        }
+        anon.def9a2a4.corelib.MechanismRegistry reg =
+            anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry();
+
+        // Vehicle: full-size ArmorStand (rideOffset 1.975 applies), entity yaw FORCED to 0 so display
+        // passengers don't double-rotate by the heading (heading rides the mechanism transform). The
+        // delegated ShipInstance ctor adds the ship-root tag + health.
+        ArmorStand vehicle = spawnAt.getWorld().spawn(spawnAt.clone(), ArmorStand.class, as -> {
+            as.setInvisible(true);
+            as.setGravity(false);
+            as.setSilent(true);
+            as.setPersistent(true);
+            as.setMarker(false);
+            as.setRotation(0f, 0f);
+            as.customName(net.kyori.adventure.text.Component.empty());
+            as.setCustomNameVisible(false);
+        });
+
+        anon.def9a2a4.corelib.Mechanism mechanism = null;
+        ShipInstance ship = null;
+        try {
+            mechanism = reg.assembleFromParts("blockship:prefab", buildPrefabParts(model, customization),
+                vehicle, anon.def9a2a4.corelib.MechanismRegistry.ARMORSTAND_RIDE_OFFSET);
+            ship = new ShipInstance(plugin, shipType, model, spawnAt, customization, vehicle, mechanism);
+            ship.adoptMechanismSeats();
+            // Leadable: wire the single leadable shulker from its model-part collider (prefab convenience;
+            // the interaction handler's per-collider model-part fallback covers the general case).
+            for (int i = 0; i < model.parts.size(); i++) {
+                if (Boolean.TRUE.equals(model.parts.get(i).rawYaml.get("leadable"))) {
+                    ship.leadableShulker = mechanism.colliderEntity(i);
+                    break;
+                }
+            }
+            reg.persist(mechanism); // crash-safe: survives restart + chunk reload via the M5 path
+        } catch (Throwable t) {
+            if (mechanism != null) { try { mechanism.destroy(); } catch (Throwable ignored) {} }
+            else if (vehicle.isValid()) vehicle.remove();
+            if (ship != null) { try { ship.destroy(); } catch (Throwable ignored) {} }
+            plugin.getLogger().log(java.util.logging.Level.SEVERE,
+                "Delegated prefab assembly failed for " + shipType + "; using native engine.", t);
+            return null;
+        }
+        return ship;
+    }
+
+    /** Translate a prefab {@link ShipModel} + customization into a defCoreLib PartSpec list using the exact
+     *  native transform composition. Block parts FIRST + in order (block index i == model.parts index i ==
+     *  SeatInfo.blockIndex), then standalone item parts (banners/sails/balloon). See the Phase 7 plan. */
+    private java.util.List<anon.def9a2a4.corelib.MechanismRegistry.PartSpec> buildPrefabParts(
+            ShipModel model, ShipCustomization customization) {
+        org.joml.Matrix4f ri = new org.joml.Matrix4f()
+            .rotateY((float) Math.toRadians(model.initialRotation.x))
+            .rotateX((float) Math.toRadians(model.initialRotation.y))
+            .rotateZ((float) Math.toRadians(model.initialRotation.z));
+
+        java.util.List<anon.def9a2a4.corelib.MechanismRegistry.PartSpec> parts = new java.util.ArrayList<>();
+        // Block parts (must stay first + in order — seat/collider block indices reference model.parts).
+        for (ShipModel.ModelPart p : model.parts) {
+            // localTransform = R_i · T(Po) · L · T(+0.5): the trailing +0.5 cancels the engine's BlockDisplay
+            // -0.5 corner shift exactly (for any rotation/scale in L).
+            org.joml.Matrix4f lt = new org.joml.Matrix4f(ri)
+                .mul(new org.joml.Matrix4f().translation(model.positionOffset))
+                .mul(p.local)
+                .mul(new org.joml.Matrix4f().translation(0.5f, 0.5f, 0.5f));
+            anon.def9a2a4.corelib.CollisionConfig col;
+            if (p.collision.enable) {
+                // collision.offset = R_i·(Co − Po + b − 0.5·L₃ₓ₃·(1,1,1)) + (0,+0.5,0): reconcile the engine's
+                // display↔collider frame (Po→Co, re-inject b, undo the baked +0.5 and the engine's fixed -0.5Y).
+                org.joml.Vector3f l3 = p.local.transformDirection(
+                    new org.joml.Vector3f(1, 1, 1), new org.joml.Vector3f());
+                org.joml.Vector3f inner = new org.joml.Vector3f(model.collisionOffset)
+                    .sub(model.positionOffset).add(p.collision.offset).sub(l3.mul(0.5f));
+                org.joml.Vector3f off = ri.transformDirection(inner, new org.joml.Vector3f()).add(0f, 0.5f, 0f);
+                col = new anon.def9a2a4.corelib.CollisionConfig(true, p.collision.size, off);
+            } else {
+                col = anon.def9a2a4.corelib.CollisionConfig.NONE;
+            }
+            parts.add(anon.def9a2a4.corelib.MechanismRegistry.PartSpec.block(
+                customizedPrefabBlock(p, customization), lt, col));
+        }
+        // Standalone item parts (banners/sails/balloon) — AFTER all block parts so indices never shift.
+        for (ShipModel.ItemPart p : model.items) {
+            org.joml.Matrix4f lt = new org.joml.Matrix4f(ri)
+                .mul(new org.joml.Matrix4f().translation(model.positionOffset))
+                .mul(p.local); // item primaries skip the -0.5 corner shift — no +0.5 here
+            parts.add(anon.def9a2a4.corelib.MechanismRegistry.PartSpec.display(
+                customizedPrefabItem(p, customization), p.displayMode, lt,
+                anon.def9a2a4.corelib.CollisionConfig.NONE));
+        }
+        return parts;
+    }
+
+    /** Wood-type-customized {@link org.bukkit.block.data.BlockData} for a prefab block part (mirrors the
+     *  native prefab path in ShipInstance). */
+    private org.bukkit.block.data.BlockData customizedPrefabBlock(ShipModel.ModelPart p,
+                                                                  ShipCustomization customization) {
+        String blockName = String.valueOf(p.rawYaml.get("block"));
+        String name = customization.getWoodType() != null
+            ? WoodTypeUtil.replaceWoodType(blockName, customization.getWoodType()) : blockName;
+        Object propsObj = p.rawYaml.get("properties");
+        if (propsObj instanceof java.util.Map<?, ?> props && !props.isEmpty()) {
+            StringBuilder s = new StringBuilder("minecraft:").append(name.toLowerCase()).append("[");
+            boolean first = true;
+            for (java.util.Map.Entry<?, ?> e : props.entrySet()) {
+                if (!first) s.append(",");
+                s.append(e.getKey()).append("=").append(e.getValue());
+                first = false;
+            }
+            s.append("]");
+            return Bukkit.createBlockData(s.toString());
+        }
+        return Bukkit.createBlockData(Material.valueOf(name));
+    }
+
+    /** Customization-applied ItemStack for a prefab item part (custom banner / balloon color; mirrors native). */
+    private ItemStack customizedPrefabItem(ShipModel.ItemPart p, ShipCustomization customization) {
+        ItemStack item = p.item.clone();
+        if (customization.getCustomBanner() != null && item.getType().name().endsWith("_BANNER")) {
+            item = customization.getCustomBanner().clone();
+        }
+        if (customization.getBalloonColor() != null && customization.getTextureManager() != null
+                && item.getType() == Material.PLAYER_HEAD && item.hasItemMeta()) {
+            org.bukkit.inventory.meta.ItemMeta meta = item.getItemMeta();
+            if (meta instanceof org.bukkit.inventory.meta.SkullMeta skull) {
+                String tex = customization.getTextureManager()
+                    .getTexture("BALLOONS", customization.getBalloonColor());
+                if (tex != null) {
+                    ItemUtil.applyPlayerHeadTextureFromBase64(skull, tex, plugin);
+                    item.setItemMeta(meta);
+                }
+            }
+        }
+        return item;
     }
 
     @EventHandler
