@@ -14,9 +14,10 @@ jobs:
       # wipe the defCoreLib checkout below if that landed in the workspace ahead of it.
       - uses: actions/checkout@v4
 
-      # blockships/gradle.properties is the single source of truth for which defCoreLib we build
-      # against — Gradle reads it natively, the Makefile scrapes it, and so do we. `tr -d '\r'`
-      # guards a CRLF checkout, which would otherwise smuggle a carriage return into the ref.
+      # blockships/gradle.properties records which defCoreLib commit CI builds against. This job is
+      # its only reader — local builds use the sibling checkout and ignore it — so it rots silently
+      # unless bumped with `make defcorelib-pin`. `tr -d '\r'` guards a CRLF checkout, which would
+      # otherwise smuggle a carriage return into the ref and into every path derived from it.
       - name: Resolve defCoreLib ref
         id: defcorelib
         run: |
