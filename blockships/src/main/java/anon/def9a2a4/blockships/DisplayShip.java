@@ -1882,7 +1882,13 @@ public class DisplayShip implements Listener {
         if (shipId == null) return;
 
         ShipInstance inst = ShipRegistry.byId(shipId);
-        if (inst == null || !inst.vehicle.isValid()) return;
+        if (inst == null) {
+            // Unregistered native ship: hitting it is a second interaction trigger for recovery
+            // (chunk-load only fires on the load transition), mirroring the shulker-click hook.
+            inst = attemptInteractionRecovery(shipId, shulker);
+            if (inst == null) return;   // couldn't recover: same no-op as before
+        }
+        if (!inst.vehicle.isValid()) return;
 
         // Ignore drowning damage - ships don't take drowning damage
         // Set air to max int so this rarely fires again

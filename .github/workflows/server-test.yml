@@ -45,6 +45,15 @@ jobs:
           name: BlockShips
           path: bin/
 
+      # Built from source by the `build` job (see checks.yml) rather than fetched from JitPack.
+      # It lands under the exact name the Makefile expects for the pinned ref, so
+      # test-server-download-all sees the cached file and skips its JitPack fetch entirely.
+      - name: Download defCoreLib JAR
+        uses: actions/download-artifact@v4
+        with:
+          name: defCoreLib
+          path: .download-cache/plugins/
+
       - name: Download server and plugins
         run: make test-server-download-all SERVER_VARIANT=${{ matrix.server }} MINECRAFT_VERSION=${{ matrix.minecraft }}
 
