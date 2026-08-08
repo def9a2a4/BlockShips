@@ -460,7 +460,16 @@ public class ShipInstance {
             ? ShipTags.normalizeYaw(model.assemblyYaw)
             : ShipTags.normalizeYaw(vehicle.getYaw());
         this.previousYaw = this.spawnYaw;
-        this.physics.currentYaw = this.spawnYaw;
+        // P7.C: a DELEGATED PREFAB ship carries its heading in the spawn Location yaw, not in the model
+        // (model.assemblyYaw==0 for prefab, unlike custom where assemblyYaw IS the heading). So its rotation
+        // baseline spawnYaw stays 0 but currentYaw must start at the placement heading; rotate() then spins
+        // the mechanism by (currentYaw − spawnYaw) = the heading. (Recovery re-overrides currentYaw from the
+        // persisted absolute yaw.) Custom delegated + native ships keep currentYaw == spawnYaw.
+        boolean delegatedPrefab = mechanism != null && !"custom".equals(shipType);
+        this.physics.currentYaw = delegatedPrefab
+            ? ShipTags.normalizeYaw(spawnLocation.getYaw())
+            : this.spawnYaw;
+        if (delegatedPrefab) this.previousYaw = this.physics.currentYaw;
 
         // Initialize chunk tracking for persistence
         this.currentChunkX = vehicle.getLocation().getBlockX() >> 4;
