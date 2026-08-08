@@ -773,6 +773,7 @@ public class DisplayShip implements Listener {
             return;
         }
         ShipInstance ship = ShipInstance.fromRecoveredMechanism(plugin, state, model, vehicle, mech);
+        ship.applyInitialDrivenPose(); // render the saved heading on frame 1 (no one-tick yaw flash)
         ShipRegistry.register(ship);
         // F5: re-add to BlockShips' chunk index (parity with the native recovery paths). addToChunkIndex is
         // idempotent, so this is safe when loadAllChunkIndices already holds the entry; it closes the narrow
@@ -789,7 +790,8 @@ public class DisplayShip implements Listener {
                 ship.physics.recomputeStats();
             }
         }.runTask(plugin);
-        plugin.getLogger().info("Recovered delegated custom ship " + mechId);
+        plugin.getLogger().info("Recovered delegated " + ("custom".equals(state.shipType) ? "custom" : "prefab")
+            + " ship " + mechId);
     }
 
     /**
@@ -1329,6 +1331,7 @@ public class DisplayShip implements Listener {
                 }
             }
             reg.persist(mechanism); // crash-safe: survives restart + chunk reload via the M5 path
+            ship.applyInitialDrivenPose(); // render the placement heading on frame 1 (no one-tick yaw flash)
         } catch (Throwable t) {
             // Rollback. assembleFromParts BORROWS the vehicle (ownsVehicle=false), so mechanism.destroy() only
             // strips the vehicle's tag and leaves the ArmorStand alive — the final unconditional remove kills it.
@@ -1376,8 +1379,19 @@ public class DisplayShip implements Listener {
             } else {
                 col = anon.def9a2a4.corelib.CollisionConfig.NONE;
             }
-            parts.add(anon.def9a2a4.corelib.MechanismRegistry.PartSpec.block(
-                customizedPrefabBlock(p, customization), lt, col));
+            if (p.storage != null) {
+                // Typed, named cargo: the engine builds + persists the inventory (getStorage routes to it).
+                // invType null => a size-based CHEST/BARREL/double-chest; pass CHEST so createTypedInventory
+                // sizes by slots (27/54) rather than typing.
+                org.bukkit.event.inventory.InventoryType it = p.storage.type.invType != null
+                    ? p.storage.type.invType : org.bukkit.event.inventory.InventoryType.CHEST;
+                parts.add(anon.def9a2a4.corelib.MechanismRegistry.PartSpec.block(
+                    customizedPrefabBlock(p, customization), lt, col,
+                    it, p.storage.type.slots, p.storage.name));
+            } else {
+                parts.add(anon.def9a2a4.corelib.MechanismRegistry.PartSpec.block(
+                    customizedPrefabBlock(p, customization), lt, col));
+            }
         }
         // Standalone item parts (banners/sails/balloon) — AFTER all block parts so indices never shift.
         for (ShipModel.ItemPart p : model.items) {

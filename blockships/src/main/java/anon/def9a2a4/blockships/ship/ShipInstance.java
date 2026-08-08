@@ -2144,6 +2144,19 @@ public class ShipInstance {
     }
 
     /**
+     * P7.R4: render the correct heading on the FIRST frame after spawn/recovery. The physics tick calls
+     * {@code mechanism.repositionDriven(currentYaw − spawnYaw)} every tick, but until that first tick a delegated
+     * PREFAB display sits at {@code spawnYaw} (== {@code model.assemblyYaw}, i.e. 0 for a prefab) — a one-frame
+     * flash for any non-zero placement/saved heading. Applying it once here removes the flash. No-op for a
+     * non-delegated ship; a no-op rotation (relYaw==0) for custom ships (currentYaw == spawnYaw). Idempotent with
+     * the tick — {@code repositionDriven} is absolute-from-spawn, not incremental.
+     */
+    public void applyInitialDrivenPose() {
+        if (mechanism == null) return;
+        mechanism.repositionDriven(physics.currentYaw - spawnYaw);
+    }
+
+    /**
      * Recovery counterpart of {@link #adoptMechanismSeats}: defCoreLib already RE-designated this mechanism's
      * seats during recovery (from the persisted shulker tags) and fired onSeatRecovered, so this must NOT call
      * {@code designateSeat} again — it only reads back the seat shulkers into {@code seatShulkers} and re-mirrors

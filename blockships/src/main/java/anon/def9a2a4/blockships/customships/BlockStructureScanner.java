@@ -1329,9 +1329,14 @@ public class BlockStructureScanner {
                 name = "Ship Hopper";
                 break;
             case DROPPER:
-            case DISPENSER:
                 storageType = ShipModel.StorageType.DROPPER;
                 name = "Ship Dropper";
+                break;
+            case DISPENSER:
+                // Its own type now so it opens the real 3x3 dispenser GUI (previously folded into DROPPER,
+                // a 1x9 chest row). Same 9 slots -> no overflow on disassembly.
+                storageType = ShipModel.StorageType.DISPENSER;
+                name = "Ship Dispenser";
                 break;
             default:
                 return null;  // Not a recognized storage type

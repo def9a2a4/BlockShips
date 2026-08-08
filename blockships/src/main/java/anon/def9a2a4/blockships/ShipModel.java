@@ -491,7 +491,10 @@ public final class ShipModel {
     public enum StorageType {
         CHEST(27, null),
         DOUBLE_CHEST(54, null),
-        DROPPER(9, null),
+        // Real 3x3 dropper/dispenser GUIs (9 slots) so a dropper/dispenser block in flight opens its true
+        // grid, not a 1x9 chest row. Exact size match -> zero overflow on disassembly.
+        DROPPER(9, org.bukkit.event.inventory.InventoryType.DROPPER),
+        DISPENSER(9, org.bukkit.event.inventory.InventoryType.DISPENSER),
         HOPPER(5, org.bukkit.event.inventory.InventoryType.HOPPER),
         // Real 3-slot furnace GUI for furnace/smoker/blast-furnace blocks in flight. Exact size match to the
         // real block -> zero overflow on disassembly. Result slot is take-only (correct furnace behaviour);
@@ -536,7 +539,7 @@ public final class ShipModel {
                 storageType = StorageType.valueOf(typeStr);
             } catch (IllegalArgumentException e) {
                 throw new IllegalArgumentException("Invalid storage type: " + typeStr +
-                    ". Valid types: CHEST, DOUBLE_CHEST, DROPPER, HOPPER, FURNACE");
+                    ". Valid types: CHEST, DOUBLE_CHEST, DROPPER, DISPENSER, HOPPER, FURNACE");
             }
 
             // Read name (optional, defaults to storage type name)
