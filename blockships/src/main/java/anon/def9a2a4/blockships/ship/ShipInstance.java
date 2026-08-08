@@ -1144,17 +1144,12 @@ public class ShipInstance {
      * The returned boxes are snapshots (safe to keep for the current pass).
      */
     public java.util.List<org.bukkit.util.BoundingBox> colliderBoxes() {
+        // Delegated engine: let core snapshot its colliders directly (O(collider-count), fresh list) instead
+        // of walking blockCount() with a per-index lookup here.
+        if (mechanism != null) return mechanism.colliderBoxes();
         java.util.List<org.bukkit.util.BoundingBox> out = new java.util.ArrayList<>();
-        if (mechanism != null) {
-            int n = mechanism.blockCount();
-            for (int i = 0; i < n; i++) {
-                org.bukkit.util.BoundingBox b = mechanism.getColliderBoxByBlock(i);
-                if (b != null) out.add(b);
-            }
-        } else {
-            for (CollisionBox cb : colliders) {
-                if (cb.entity != null && cb.entity.isValid()) out.add(cb.entity.getBoundingBox());
-            }
+        for (CollisionBox cb : colliders) {
+            if (cb.entity != null && cb.entity.isValid()) out.add(cb.entity.getBoundingBox());
         }
         return out;
     }
