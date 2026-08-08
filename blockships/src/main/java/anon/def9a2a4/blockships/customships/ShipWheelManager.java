@@ -56,7 +56,7 @@ public class ShipWheelManager {
      * M1 seam — leads-in. Registers a ONE-TIME registry pre-air-out listener: during a custom-ship assembly,
      * defCoreLib airs out the source fences itself, so the only window where a live fence and its collider
      * shulker coexist is the pre-air-out callback. For each leadable source fence, transfer any entities
-     * leashed to it onto the mechanism's collider shulker (mirrors the native {@link #transferLeadsToShip}).
+     * leashed to it onto the mechanism's collider shulker (mirrors the native leads-in transfer).
      * Registered once (not per-assembly, which would stack duplicate listeners) and filtered by mech type.
      * Uses the source block MATERIAL for the leadable test (no ShipInstance exists yet) via the same
      * {@code BlockConfigManager} source the scan uses, and the block-index parity (source list position i ==
@@ -733,6 +733,9 @@ public class ShipWheelManager {
             final boolean fWgOn = wgOn;
             final boolean fAnchorProtected = anchorProtected;
             final org.bukkit.entity.Player fPlayer = player;
+            // F6: net yaw applied to blockData at landing (same transform placeBlocks/the engine snap to), used to
+            // rotate a bed's assembly-frame facing into its WORLD facing so the 2-cell partner cell is correct.
+            final float fRotationDelta = currentYaw - model.assemblyYaw;
 
             // Cell placement policy — mirror BlockStructureScanner.placeBlocks:884-896. Compare the anchor by
             // BLOCK COORDINATES (not Location.equals — that also compares yaw/pitch and never matches).
@@ -744,10 +747,34 @@ public class ShipWheelManager {
                         ? anon.def9a2a4.corelib.Mechanism.PlaceDecision.SKIP
                         : anon.def9a2a4.corelib.Mechanism.PlaceDecision.PLACE;
                 }
-                if (fForce && fWgOn && anon.def9a2a4.blockships.integration.WorldGuardHook.get()
-                        .isBuildDenied(target.getLocation(), fPlayer)) {
-                    // Non-anchor cell in a protected region: drop the block instead of writing it.
-                    return anon.def9a2a4.corelib.Mechanism.PlaceDecision.DROP;
+                if (fForce && fWgOn) {
+                    boolean denied = anon.def9a2a4.blockships.integration.WorldGuardHook.get()
+                        .isBuildDenied(target.getLocation(), fPlayer);
+                    // F6: a 2-cell block (bed/door) must share ONE fate across both cells, or a WG border running
+                    // between them places one half and drops the other — and the DropItemHook then suppresses the
+                    // second half's drop, LOSING it. If EITHER cell is denied, DROP both (the hook drops exactly one
+                    // item for the pair). Doors/bisected: partner is vertical (rotation-immune). Bed: partner is in
+                    // the rotated facing (blockData is assembly-frame; rotate it by the net landing yaw).
+                    if (!denied && block != null) {
+                        org.bukkit.block.data.BlockData bd = block.blockData;
+                        org.bukkit.block.Block partner = null;
+                        if (bd instanceof org.bukkit.block.data.Bisected bis
+                                && !(bd instanceof org.bukkit.block.data.type.Stairs)
+                                && !(bd instanceof org.bukkit.block.data.type.TrapDoor)) {
+                            partner = target.getRelative(0,
+                                bis.getHalf() == org.bukkit.block.data.Bisected.Half.TOP ? -1 : 1, 0);
+                        } else if (bd instanceof org.bukkit.block.data.type.Bed bed) {
+                            org.bukkit.block.BlockFace f =
+                                BlockStructureScanner.rotateBlockFace(bed.getFacing(), fRotationDelta);
+                            partner = target.getRelative(
+                                bed.getPart() == org.bukkit.block.data.type.Bed.Part.FOOT ? f : f.getOppositeFace());
+                        }
+                        if (partner != null && anon.def9a2a4.blockships.integration.WorldGuardHook.get()
+                                .isBuildDenied(partner.getLocation(), fPlayer)) {
+                            denied = true;
+                        }
+                    }
+                    if (denied) return anon.def9a2a4.corelib.Mechanism.PlaceDecision.DROP;
                 }
                 return anon.def9a2a4.corelib.Mechanism.PlaceDecision.PLACE;
             });
@@ -944,46 +971,6 @@ public class ShipWheelManager {
                     shulker.addScoreboardTag(ShipTags.wheelTag(wheelLoc));
                 }
                 break;
-            }
-        }
-    }
-
-    /**
-     * Transfers leads from world entities to ship's leadable shulkers.
-     * Called during assembly BEFORE blocks are removed, while fence blocks still exist.
-     *
-     * @param ship The newly created ship instance
-     * @param model The ship model containing leadable block info
-     * @param wheelLoc The wheel location (origin for block positions)
-     */
-    private void transferLeadsToShip(ShipInstance ship, ShipModel model, Location wheelLoc) {
-        // Iterate through model parts to find leadable blocks
-        for (int blockIndex = 0; blockIndex < model.parts.size(); blockIndex++) {
-            ShipModel.ModelPart part = model.parts.get(blockIndex);
-
-            // Check if this block is leadable
-            if (!part.rawYaml.containsKey("leadable") || !Boolean.TRUE.equals(part.rawYaml.get("leadable"))) {
-                continue;
-            }
-
-            // Find the shulker for this block index
-            Shulker targetShulker = findShulkerByBlockIndex(ship, blockIndex);
-            if (targetShulker == null) {
-                continue;
-            }
-
-            // Calculate the fence block's world location
-            org.joml.Vector3f pos = new org.joml.Vector3f();
-            part.local.getTranslation(pos);
-            Location fenceLoc = wheelLoc.clone().add(pos.x, pos.y, pos.z);
-
-            // Find entities leashed to this fence block (via LeashHitch) and transfer them
-            List<org.bukkit.entity.Entity> leashedEntities = findEntitiesLeashedToFence(fenceLoc);
-
-            for (org.bukkit.entity.Entity entity : leashedEntities) {
-                // Transfer the lead to the shulker (entity is guaranteed to be Leashable from findEntitiesLeashedToFence)
-                io.papermc.paper.entity.Leashable leashable = (io.papermc.paper.entity.Leashable) entity;
-                leashable.setLeashHolder(targetShulker);
             }
         }
     }

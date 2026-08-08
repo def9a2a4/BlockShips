@@ -171,10 +171,12 @@ public class DisplayShip implements Listener {
                     continue;
                 }
 
-                // M5: delegated custom ships are recovered by defCoreLib (recovered MechanismAssembleEvent →
-                // reconstructDelegatedShip), NOT by native recovery — their entities have no native parent
-                // BlockDisplay, so native recoverEntities would fail. Skip; corelib owns them.
-                if ("custom".equals(state.shipType)) continue;
+                // Delegated ships (custom OR prefab, P7.C) are recovered by defCoreLib (recovered
+                // MechanismAssembleEvent → reconstructDelegatedShip), NOT by native recovery — their entities
+                // have no native parent BlockDisplay, so native recoverEntities would fail. Skip; corelib owns
+                // them. A delegated ship's root ArmorStand carries a corelib:mech tag (delegated prefab keeps
+                // the same shipType as native prefab, so key off the tag, not the type).
+                if ("custom".equals(state.shipType) || ShipTags.isCorelibTagged(entity.getScoreboardTags())) continue;
 
                 // Load model and recover
                 ShipModel model = loadModelForState(state);
@@ -740,7 +742,8 @@ public class DisplayShip implements Listener {
     @EventHandler
     public void onMechanismAssemble(anon.def9a2a4.corelib.MechanismAssembleEvent event) {
         if (!event.isRecovered()) return;
-        if (!"blockship:custom".equals(event.getType())) return;
+        // Delegated custom ("blockship:custom") AND delegated prefab ("blockship:prefab", P7.C) both rebuild here.
+        if (!"blockship:custom".equals(event.getType()) && !"blockship:prefab".equals(event.getType())) return;
         reconstructDelegatedShip(event.getMechanism());
     }
 
@@ -1254,11 +1257,18 @@ public class DisplayShip implements Listener {
         }
         ShipRegistry.register(instance);
 
-        // Register with per-world storage for chunk recovery
+        // Register with per-world storage for chunk recovery. The ship-level sidecar (ships/{id}.yml) is
+        // written for both engines (delegated recovery reads it in reconstructDelegatedShip). The native
+        // chunk INDEX is written only for the native engine — a delegated ship (mechanism != null) recovers
+        // via defCoreLib's own persistence + the recovered MechanismAssembleEvent, so indexing it would make
+        // native onChunkLoad recovery try (and fail) to rebuild it. (Delegated custom ships are indexed by
+        // ShipWheelManager and skipped by the native `"custom"` gate; delegated prefab is simply not indexed.)
         Location loc = instance.vehicle.getLocation();
         shipWorldData.saveShipMetadata(instance);
-        shipWorldData.addToChunkIndex(loc.getWorld(), instance.id, loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
-        shipWorldData.saveAllChunkIndices();
+        if (instance.mechanism == null) {
+            shipWorldData.addToChunkIndex(loc.getWorld(), instance.id, loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
+            shipWorldData.saveAllChunkIndices();
+        }
 
         // Consume one kit
         if (p.getGameMode() != GameMode.CREATIVE) {
@@ -1719,7 +1729,7 @@ public class DisplayShip implements Listener {
      * Whether model block index {@code i} is a leadable fence. Mirrors the exact source native uses
      * ({@code BlockStructureScanner} sets {@code rawYaml["leadable"]=true} from {@code BlockProperties.isLeadable},
      * and native lead transfer / tagging read that same flag — see {@code ShipInstance} tag-bind and
-     * {@code ShipWheelManager.transferLeadsToShip}). Used to route delegated collider clicks that carry no
+     * {@code ShipWheelManager}'s leads-in seam). Used to route delegated collider clicks that carry no
      * native {@code leadable:{i}} tag.
      */
     private boolean isModelPartLeadable(ShipInstance inst, int i) {
