@@ -331,8 +331,13 @@ public class BlockShipsPlugin extends JavaPlugin {
      * <p>Only loaded chunks are visible here - {@link World#getEntities()} never loads chunks.
      */
     private int sendEntitySummary(CommandSender sender) {
-        Set<UUID> registeredShips = new HashSet<>();
+        // Split ships (and their entities) by shipType — Prefab (native engine) vs Custom (delegated/defCoreLib
+        // engine) — matching the "Prefab Ships / Custom Ships" vocabulary sendStatsBreakdown prints just above.
+        Set<UUID> prefabShips = new HashSet<>();
+        Set<UUID> customShips = new HashSet<>();
         Set<UUID> orphanedShips = new HashSet<>();
+        int prefabEnt = 0;
+        int customEnt = 0;
         int unattributed = 0;
         int total = 0;
         Map<String, Integer> byType = new HashMap<>();
@@ -342,17 +347,32 @@ public class BlockShipsPlugin extends JavaPlugin {
         for (World world : Bukkit.getWorlds()) {
             for (Entity entity : world.getEntities()) {
                 Set<String> tags = entity.getScoreboardTags();
-                if (!ShipTags.isShipEntity(tags)) continue;
+                boolean nativeTag = ShipTags.isShipEntity(tags);      // displayship: (prefab, and a delegated ship's vehicle)
+                boolean corelibTag = ShipTags.isCorelibTagged(tags);  // corelib:mech: (a delegated ship's colliders/seats/displays)
+                if (!nativeTag && !corelibTag) continue;              // not a BlockShips entity
+
+                UUID shipId = ShipTags.extractShipId(tags);
+                ShipInstance ship = shipId != null ? ShipRegistry.byId(shipId) : null;
+                // This guard does TWO jobs — keep both: (1) exclude a FOREIGN corelib mechanism (pipes/railbound)
+                // whose shulker never resolves to a registered BlockShips ship; (2) drop an ORPHANED delegated
+                // ship's corelib colliders (unregistered → its corelib entities are indistinguishable from a
+                // foreign mechanism's; the orphan is still detected via its displayship: vehicle below). Do NOT
+                // relax this to count byId==null corelib entities, or it starts reaping/counting sibling plugins.
+                if (corelibTag && !nativeTag && ship == null) continue;
+
                 total++;
                 byType.merge(entity.getType().name(), 1, Integer::sum);
 
-                UUID shipId = ShipTags.extractShipId(tags);
                 if (shipId == null) {
                     unattributed++;
-                } else if (ShipRegistry.byId(shipId) != null) {
-                    registeredShips.add(shipId);
+                } else if (ship == null) {
+                    orphanedShips.add(shipId);                        // displayship-tagged: a real BlockShips ship, now gone
+                } else if ("custom".equals(ship.shipType)) {
+                    customShips.add(shipId);
+                    customEnt++;
                 } else {
-                    orphanedShips.add(shipId);
+                    prefabShips.add(shipId);
+                    prefabEnt++;
                 }
             }
         }
@@ -366,10 +386,13 @@ public class BlockShipsPlugin extends JavaPlugin {
             typeLine.append(e.getValue()).append(" §e").append(e.getKey());
         }
 
-        sender.sendMessage("§eTagged entities in loaded chunks: §f" + total);
-        sender.sendMessage("§7  Ships with entities here — loaded: §a" + registeredShips.size()
-            + "§7, orphaned: " + attn(orphanedShips.size()) + "§7; loose entities: "
-            + attn(unattributed));
+        sender.sendMessage("§eBlockShips entities in loaded chunks: §f" + total);
+        sender.sendMessage("§7  Prefab (native) ships here: §a" + prefabShips.size()
+            + "§7 (§f" + prefabEnt + "§7 entities)");
+        sender.sendMessage("§7  Custom (delegated) ships here: §a" + customShips.size()
+            + "§7 (§f" + customEnt + "§7 entities)");
+        sender.sendMessage("§7  Orphaned ships: " + attn(orphanedShips.size())
+            + "§7; loose entities: " + attn(unattributed));
         if (typeLine.length() > 0) {
             sender.sendMessage("§7  By type: §f" + typeLine);
         }
@@ -900,8 +923,13 @@ public class BlockShipsPlugin extends JavaPlugin {
                 int shipCount = shipsToRemove.size();
                 Map<UUID, World> worldById = new HashMap<>();
                 Set<UUID> destroyedShipIds = new HashSet<>();
+                // Split by shipType for the report (same axis as sendEntitySummary / sendStatsBreakdown):
+                // Prefab == native engine, Custom == delegated/defCoreLib engine.
+                int prefabShipCount = 0;
+                int customShipCount = 0;
                 for (ShipInstance ship : shipsToRemove) {
                     destroyedShipIds.add(ship.id);
+                    if ("custom".equals(ship.shipType)) customShipCount++; else prefabShipCount++;
                     // ship.vehicle can be null on a failed assembly.
                     World world = (ship.vehicle != null && ship.vehicle.getLocation() != null)
                         ? ship.vehicle.getLocation().getWorld() : null;
@@ -966,7 +994,16 @@ public class BlockShipsPlugin extends JavaPlugin {
                 // destroy()). Isolate per-entity so one bad remove() doesn't abort the sweep.
                 for (World world : Bukkit.getWorlds()) {
                     for (Entity entity : world.getEntities()) {
-                        if (ShipTags.isShipEntity(entity.getScoreboardTags())) {
+                        Set<String> tags = entity.getScoreboardTags();
+                        // displayship: orphan sweep, PLUS a DEFENSIVE corelib sweep scoped to ships THIS command
+                        // just destroyed. The corelib arm is normally a no-op — mechanism.destroy() already removed
+                        // every corelib entity synchronously — and is load-bearing only if removeAllEntities() threw
+                        // mid-teardown and leaked. destroyedShipIds holds ship.id == mechId, so it NEVER touches a
+                        // foreign mechanism (mechId not in the set) nor a recoverable straddling ship (unregistered →
+                        // not destroyed → not in the set). Loaded chunks only, like the rest of this command.
+                        boolean sweep = ShipTags.isShipEntity(tags)
+                            || (ShipTags.isCorelibTagged(tags) && destroyedShipIds.contains(ShipTags.extractShipId(tags)));
+                        if (sweep) {
                             try {
                                 entity.remove();
                                 removedCount++;
@@ -996,15 +1033,16 @@ public class BlockShipsPlugin extends JavaPlugin {
                 }
 
                 int destroyedOk = shipCount - destroyFailed;
+                String shipSplit = "(" + prefabShipCount + " prefab, " + customShipCount + " custom)";
                 getLogger().info(sender.getName() + " ran killentities: destroyed " + destroyedOk + "/"
-                    + shipCount + " registered ship(s), removed " + removedCount
+                    + shipCount + " registered ship(s) " + shipSplit + ", removed " + removedCount
                     + " stray tagged entity/entities, cleared " + clearedLinks + " wheel link(s)"
                     + (destroyFailed > 0 ? ", " + destroyFailed + " failed to destroy" : "")
                     + (cleanupFailed ? " (cleanup had errors)" : ""));
 
-                sender.sendMessage("Destroyed " + destroyedOk + " registered ship(s) and their entities; removed "
-                    + removedCount + " additional tagged entity/entities" + (clearedLinks > 0
-                        ? ", cleared " + clearedLinks + " wheel link(s)" : ""));
+                sender.sendMessage("Destroyed " + destroyedOk + " registered ship(s) " + shipSplit
+                    + " and their entities; removed " + removedCount + " additional tagged entity/entities"
+                    + (clearedLinks > 0 ? ", cleared " + clearedLinks + " wheel link(s)" : ""));
                 if (destroyFailed > 0) {
                     sender.sendMessage("§c" + destroyFailed + " ship(s) failed to destroy - check the server"
                         + " console for details.");

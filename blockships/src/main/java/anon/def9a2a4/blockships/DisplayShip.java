@@ -1912,13 +1912,8 @@ public class DisplayShip implements Listener {
      */
     private Shulker findWheelShulker(ShipInstance ship) {
         if (ship.mechanism != null) {
-            for (int i = 0; i < ship.model.parts.size(); i++) {
-                ship.model.parts.get(i).local.getTranslation(workWheelTranslation);
-                if (Math.abs(workWheelTranslation.x) < 0.01f && Math.abs(workWheelTranslation.y) < 0.01f && Math.abs(workWheelTranslation.z) < 0.01f) {
-                    return ship.mechanism.colliderEntity(i);
-                }
-            }
-            return null;
+            int i = ship.model.wheelPartIndex();
+            return i >= 0 ? ship.mechanism.colliderEntity(i) : null;
         }
         CollisionBox wheel = findWheelCollider(ship);
         return wheel != null ? wheel.entity : null;

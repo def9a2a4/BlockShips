@@ -912,16 +912,18 @@ public class ShipWheelManager {
         // block — the unique model part at local translation (0,0,0), the flood-fill seed; base == part.local so
         // this is the same search the native branch does — and tag its engine collider shulker so a non-sneak
         // right-click on the wheel opens the ship menu, matching native.
+        //
+        // Recovery dependency: this tag survives a restart only because defCoreLib collider shulkers are
+        // setPersistent(true) and RE-ADOPTED (not respawned) on recovery, so the tag rides the shulker's
+        // region-file entity NBT — NOT the MechanismState snapshot. That's why tagging AFTER mechRegistry.persist()
+        // is correct (don't "fix" the ordering) and why reconstructDelegatedShip deliberately does not re-tag. If
+        // defCoreLib ever respawns fresh colliders on recovery, this branch (or reconstructDelegatedShip) must re-tag.
         if (ship.mechanism != null) {
-            for (int i = 0; i < ship.model.parts.size(); i++) {
-                org.joml.Vector3f translation = new org.joml.Vector3f();
-                ship.model.parts.get(i).local.getTranslation(translation);
-                if (Math.abs(translation.x) < 0.01f && Math.abs(translation.y) < 0.01f && Math.abs(translation.z) < 0.01f) {
-                    org.bukkit.entity.Shulker shulker = ship.mechanism.colliderEntity(i);
-                    if (shulker != null && shulker.isValid()) {
-                        shulker.addScoreboardTag(ShipTags.wheelTag(wheelLoc));
-                    }
-                    break;
+            int i = ship.model.wheelPartIndex();
+            if (i >= 0) {
+                org.bukkit.entity.Shulker shulker = ship.mechanism.colliderEntity(i);
+                if (shulker != null && shulker.isValid()) {
+                    shulker.addScoreboardTag(ShipTags.wheelTag(wheelLoc));
                 }
             }
             return;

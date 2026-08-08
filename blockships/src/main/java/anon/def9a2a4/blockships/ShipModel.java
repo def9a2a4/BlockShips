@@ -90,6 +90,23 @@ public final class ShipModel {
     }
 
     /**
+     * Index of the wheel part — the flood-fill seed, the unique part whose {@code local} translation is at the
+     * model origin (≈ 0,0,0). Returns -1 if no part sits at the origin (e.g. a prefab model). Block cells are
+     * ≥1 apart so the 0.01 tolerance matches exactly one part. Used to resolve the wheel collider/shulker on a
+     * delegated ship (its native {@code colliders} list is empty).
+     */
+    public int wheelPartIndex() {
+        org.joml.Vector3f t = new org.joml.Vector3f();
+        for (int i = 0; i < parts.size(); i++) {
+            parts.get(i).local.getTranslation(t);
+            if (Math.abs(t.x) < 0.01f && Math.abs(t.y) < 0.01f && Math.abs(t.z) < 0.01f) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Calculates the ship's density (weight / block count).
      */
     public float getDensity() {
