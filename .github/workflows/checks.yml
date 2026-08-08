@@ -34,9 +34,9 @@ jobs:
       # Checked out at `main` with full history, then moved to the pinned ref by `git checkout` below,
       # rather than passing the ref to the action directly: actions/checkout only treats `ref:` as a
       # commit when it is a full 40- (or 64-) hex SHA, and looks anything shorter up as a branch then
-      # a tag before failing. defCoreLibRef is a short SHA because its two other consumers — the
-      # JitPack coordinate in build.gradle.kts and the JitPack URL in the Makefile — need JitPack's
-      # canonical short form. One property, one format, and the checkout adapts.
+      # a tag before failing. defCoreLibRef is a short SHA by convention (`make defcorelib-pin` writes
+      # `git rev-parse --short HEAD`), and this job is its only consumer — local builds compile
+      # against the sibling checkout and ignore the pin entirely.
       - name: Check out defCoreLib
         uses: actions/checkout@v4
         with:
@@ -82,7 +82,7 @@ jobs:
           echo "Staged $src -> $dest"
 
       - name: Build
-        run: cd blockships && gradle build --no-daemon -PdefCoreLibLocal="$DEFCORELIB_JAR"
+        run: cd blockships && gradle build --no-daemon -PdefCoreLibJar="$DEFCORELIB_JAR"
 
       - name: Upload JAR artifact
         uses: actions/upload-artifact@v4

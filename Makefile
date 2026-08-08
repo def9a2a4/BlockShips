@@ -1,6 +1,6 @@
 
 .PHONY: build
-build:
+build: $(DEFCORELIB_BUILD_DEP)
 	cd blockships && gradle shadowJar $(GRADLE_DEFCORELIB_ARGS)
 	mkdir -p bin
 	cp blockships/build/libs/BlockShips-*.jar bin
@@ -57,61 +57,64 @@ MINECRAFT_VERSION ?= 1.21.11
 # =============================================================================
 # defCoreLib — compile-time dependency AND runtime `depend: [DefCoreLib]` plugin
 # =============================================================================
-# The pinned ref lives in blockships/gradle.properties (Gradle reads it as a project property; we
-# scrape the same line). BlockShips refuses to enable without the DefCoreLib plugin jar in plugins/,
-# so both CI (test-server-*) and the local loop (server-*) need it.
+# BlockShips refuses to enable without the DefCoreLib plugin jar in plugins/, so both CI
+# (test-server-*) and the local loop (server-*) need a jar, not just a classpath entry. There is no
+# published artifact to fetch — it always comes from a checkout on disk:
 #
-#   make build                        compile + run against the JitPack pin (CI behaviour)
-#   make build DEFCORELIB_LOCAL=1     compile + run against ../defCoreLib/bin (co-development)
-#   make build DEFCORELIB_REF=abc1234 try another pinned ref without editing the file
+#   make build                             build ../defCoreLib, compile + run against it (default)
+#   make build DEFCORELIB_DIR=/other/repo   ... using a checkout somewhere else
+#   make build DEFCORELIB_JAR=/abs/x.jar    use that exact jar; skips the sibling build (CI does this)
 #
-# One switch drives both sides on purpose — you can't compile against the pin and run against the
-# sibling jar (or vice versa) by accident.
+# One switch drives both sides on purpose — you can't compile against one engine build and run
+# against another by accident.
+#
+# blockships/gradle.properties still pins a defCoreLib ref, but nothing here reads it: it is CI's
+# alone (.github/workflows/checks.yml clones and builds that commit). Bump it with `make defcorelib-pin`.
 REPO_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
-DEFCORELIB_REF ?= $(shell sed -n 's/^[[:space:]]*defCoreLibRef[[:space:]]*=[[:space:]]*//p' \
-	$(REPO_ROOT)/blockships/gradle.properties)
-ifeq ($(strip $(DEFCORELIB_REF)),)
-$(error defCoreLibRef not found in blockships/gradle.properties — cannot resolve defCoreLib)
-endif
+DEFCORELIB_DIR ?= $(REPO_ROOT)/../defCoreLib
 
-DEFCORELIB_LOCAL ?=
-DEFCORELIB_CACHED_JAR  := $(DOWNLOAD_CACHE)/plugins/defCoreLib-$(DEFCORELIB_REF).jar
-DEFCORELIB_JITPACK_URL := https://jitpack.io/com/github/def9a2a4/defCoreLib/$(DEFCORELIB_REF)/defCoreLib-$(DEFCORELIB_REF).jar
-# sibling shadow jar only — never the `-plain` thin jar (Paper: "Ambiguous plugin name 'DefCoreLib'")
-DEFCORELIB_SIBLING_JAR := $(firstword $(filter-out %-plain.jar,\
-	$(wildcard $(REPO_ROOT)/../defCoreLib/bin/defCoreLib-*.jar)))
-
-ifeq ($(DEFCORELIB_LOCAL),)
-DEFCORELIB_JAR         := $(DEFCORELIB_CACHED_JAR)
-DEFCORELIB_JAR_DEP     := $(DEFCORELIB_CACHED_JAR)
-GRADLE_DEFCORELIB_ARGS := -PdefCoreLibRef=$(DEFCORELIB_REF)
+# An explicit DEFCORELIB_JAR (command line or environment) short-circuits the sibling entirely —
+# that is what lets CI run with no defCoreLib checkout next to the repo.
+ifeq ($(strip $(DEFCORELIB_JAR)),)
+DEFCORELIB_BUILD_DEP   := defcorelib-build
+GRADLE_DEFCORELIB_ARGS  = -PdefCoreLibDir=$(DEFCORELIB_DIR)
+# Recursive `=`, NOT `:=` — the wildcard has to run after defcorelib-build has produced the jar.
+# shadow jar only, never the `-plain` thin jar (Paper: "Ambiguous plugin name 'DefCoreLib'").
+DEFCORELIB_JAR          = $(firstword $(filter-out %-plain.jar,\
+	$(wildcard $(DEFCORELIB_DIR)/bin/defCoreLib-*.jar)))
 else
-DEFCORELIB_JAR         := $(DEFCORELIB_SIBLING_JAR)
-DEFCORELIB_JAR_DEP     :=
-GRADLE_DEFCORELIB_ARGS := -PdefCoreLibLocal
+DEFCORELIB_BUILD_DEP   :=
+GRADLE_DEFCORELIB_ARGS  = -PdefCoreLibJar=$(DEFCORELIB_JAR)
 endif
 
-# Cache key includes the ref, so bumping the pin invalidates the cached jar automatically.
-$(DEFCORELIB_CACHED_JAR):
-	@mkdir -p $(DOWNLOAD_CACHE)/plugins
-	@echo "Fetching DefCoreLib $(DEFCORELIB_REF) from JitPack..."
-	curl -fSL --connect-timeout 30 --max-time 900 \
-		--retry 5 --retry-delay 15 --retry-all-errors \
-		-o $@.part "$(DEFCORELIB_JITPACK_URL)"
-	@unzip -l $@.part | grep -q 'plugin.yml' || { \
-		echo "ERROR: $(DEFCORELIB_JITPACK_URL) did not return a plugin jar."; \
-		echo "  Is the JitPack build for $(DEFCORELIB_REF) warm?"; \
-		echo "  curl -s https://jitpack.io/api/builds/com.github.def9a2a4/defCoreLib/$(DEFCORELIB_REF)"; \
-		rm -f $@.part; exit 1; }
-	@mv $@.part $@
+.PHONY: defcorelib-build
+defcorelib-build:
+	@test -d "$(DEFCORELIB_DIR)" || { \
+		echo "ERROR: no defCoreLib checkout at $(DEFCORELIB_DIR)"; \
+		echo "  git clone git@github.com:def9a2a4/defCoreLib.git $(DEFCORELIB_DIR)"; \
+		echo "  or point elsewhere: make <target> DEFCORELIB_DIR=/path/to/defCoreLib"; \
+		echo "  or use a prebuilt jar: make <target> DEFCORELIB_JAR=/abs/path/to.jar"; exit 1; }
+	$(MAKE) -C $(DEFCORELIB_DIR) build
 
 .PHONY: defcorelib-jar
-defcorelib-jar: $(DEFCORELIB_JAR_DEP)
+defcorelib-jar: $(DEFCORELIB_BUILD_DEP)
 	@test -n "$(DEFCORELIB_JAR)" && test -f "$(DEFCORELIB_JAR)" || { \
 		echo "ERROR: DefCoreLib runtime jar not found: '$(DEFCORELIB_JAR)'"; \
-		echo "  DEFCORELIB_LOCAL='$(DEFCORELIB_LOCAL)'  DEFCORELIB_REF='$(DEFCORELIB_REF)'"; \
-		echo "  (local mode: run 'make build' in the defCoreLib checkout first)"; exit 1; }
+		echo "  DEFCORELIB_DIR='$(DEFCORELIB_DIR)'"; exit 1; }
 	@echo "DefCoreLib runtime jar: $(DEFCORELIB_JAR)"
+
+# Bump the ref CI builds against to the sibling checkout's current HEAD. Local builds ignore the
+# pin, so it rots silently without this.
+.PHONY: defcorelib-pin
+defcorelib-pin:
+	@cd $(DEFCORELIB_DIR) && sha=$$(git rev-parse --short HEAD) && { \
+		git diff-index --quiet HEAD -- || \
+			echo "WARNING: $(DEFCORELIB_DIR) has uncommitted changes — they are NOT in $$sha"; \
+		git merge-base --is-ancestor HEAD @{u} 2>/dev/null || \
+			echo "WARNING: $$sha is not on the upstream branch — CI clones from GitHub and will fail to check it out"; \
+		sed -i "s/^defCoreLibRef=.*/defCoreLibRef=$$sha/" $(REPO_ROOT)/blockships/gradle.properties; \
+		echo "pinned defCoreLib $$sha"; \
+	}
 
 $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar:
 	@mkdir -p $(DOWNLOAD_CACHE)/plugins
@@ -126,7 +129,7 @@ $(DOWNLOAD_CACHE)/plugins/ViaBackwards.jar:
 	curl -L -o $@ https://github.com/ViaVersion/ViaBackwards/releases/download/5.7.1/ViaBackwards-5.7.1.jar
 
 .PHONY: test-server-download-to-cache
-test-server-download-to-cache: $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar $(DOWNLOAD_CACHE)/plugins/ViaVersion.jar $(DOWNLOAD_CACHE)/plugins/ViaBackwards.jar $(DEFCORELIB_JAR_DEP)
+test-server-download-to-cache: $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar $(DOWNLOAD_CACHE)/plugins/ViaVersion.jar $(DOWNLOAD_CACHE)/plugins/ViaBackwards.jar $(DEFCORELIB_BUILD_DEP)
 
 .PHONY: test-server-plugin-copy
 test-server-plugin-copy: defcorelib-jar

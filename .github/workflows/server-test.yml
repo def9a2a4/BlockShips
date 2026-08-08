@@ -45,14 +45,23 @@ jobs:
           name: BlockShips
           path: bin/
 
-      # Built from source by the `build` job (see checks.yml) rather than fetched from JitPack.
-      # It lands under the exact name the Makefile expects for the pinned ref, so
-      # test-server-download-all sees the cached file and skips its JitPack fetch entirely.
+      # Built from source at the pinned ref by the `build` job (see checks.yml). BlockShips has a
+      # hard `depend: [DefCoreLib]`, so every matrix cell needs the plugin jar in plugins/.
       - name: Download defCoreLib JAR
         uses: actions/download-artifact@v4
         with:
           name: defCoreLib
           path: .download-cache/plugins/
+
+      # There is no defCoreLib checkout in this workspace, so hand the Makefile the jar explicitly —
+      # that is what stops it trying to build a sibling. Make reads DEFCORELIB_JAR straight from the
+      # environment, so the `make test-server-*` steps below need no arguments of their own.
+      - name: Point the build at the downloaded defCoreLib jar
+        run: |
+          jar=$(ls "$PWD"/.download-cache/plugins/defCoreLib-*.jar | grep -v -- '-plain' | head -1)
+          [ -n "$jar" ] || { echo "no defCoreLib jar in the downloaded artifact"; exit 1; }
+          echo "DEFCORELIB_JAR=$jar" >> "$GITHUB_ENV"
+          echo "Using $jar"
 
       - name: Download server and plugins
         run: make test-server-download-all SERVER_VARIANT=${{ matrix.server }} MINECRAFT_VERSION=${{ matrix.minecraft }}

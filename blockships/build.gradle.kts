@@ -23,50 +23,38 @@ repositories {
         name = "enginehub"
         url = uri("https://maven.enginehub.org/repo/")
     }
-    maven {
-        name = "jitpack"
-        url = uri("https://jitpack.io")
-    }
 }
 
 // --- defCoreLib source selection ---------------------------------------------------------------
 // Mechanism engine. compileOnly + runtime `depend:` — NEVER shaded (mirrors ProtocolLib/WorldGuard;
 // do not relocate anon.def9a2a4.corelib).
 //
-// Default is the JitPack build pinned by `defCoreLibRef` in gradle.properties. The repo-root
-// Makefile reads that same property to fetch the runtime plugin jar, so a clean clone and CI
-// compile and run against the identical build with no sibling checkout on disk.
+// Always a jar on disk — there is no published artifact to resolve, by design. Two ways in:
+//   -PdefCoreLibDir=/path/to/checkout   newest <dir>/bin/defCoreLib-*.jar  (default: the sibling)
+//   -PdefCoreLibJar=/abs/path/to.jar    that exact jar; wins over defCoreLibDir
 //
-// Co-developing both repos? Opt in explicitly — never auto-detected, because a build that silently
-// changes its dependency based on what happens to sit next to it on disk is how CI broke:
-//   gradle shadowJar -PdefCoreLibLocal                   newest ../../defCoreLib/bin/defCoreLib-*.jar
-//   gradle shadowJar -PdefCoreLibLocal=/abs/path/to.jar  a specific jar
-//   make build DEFCORELIB_LOCAL=1                        flips the Makefile's runtime copy too
-val defCoreLibRef = (findProperty("defCoreLibRef") as String?)?.takeIf { it.isNotBlank() }
-    ?: error("defCoreLibRef is not set — expected it in blockships/gradle.properties")
+// `make build` rebuilds the sibling checkout first and passes -PdefCoreLibDir, so the compile
+// classpath and the runtime plugin jar it copies into plugins/ are the same build — you cannot
+// compile against one engine and run against another by accident. CI has no sibling on disk: it
+// clones defCoreLib at the ref pinned in gradle.properties, builds it, and passes -PdefCoreLibJar.
+val defCoreLibDir = (findProperty("defCoreLibDir") as String?)?.takeIf { it.isNotBlank() }
+    ?: "../../defCoreLib"
 
-val defCoreLibLocal =
-    if (hasProperty("defCoreLibLocal")) property("defCoreLibLocal").toString() else null
+val defCoreLibJarProp = (findProperty("defCoreLibJar") as String?)?.takeIf { it.isNotBlank() }
 
-val defCoreLibDependency: Any = if (defCoreLibLocal == null) {
-    logger.lifecycle("defCoreLib: JitPack pin com.github.def9a2a4:defCoreLib:$defCoreLibRef")
-    "com.github.def9a2a4:defCoreLib:$defCoreLibRef"
+val defCoreLibJar = if (defCoreLibJarProp != null) {
+    file(defCoreLibJarProp)
 } else {
-    val jar = if (defCoreLibLocal.isNotBlank()) {
-        file(defCoreLibLocal)
-    } else {
-        // shadow jar only — `-plain` is the thin jar and carries none of the shaded deps
-        fileTree("../../defCoreLib/bin") {
-            include("defCoreLib-*.jar")
-            exclude("*-plain.jar")
-        }.files.maxByOrNull { it.lastModified() }
-            ?: error("-PdefCoreLibLocal: no defCoreLib-*.jar in ../../defCoreLib/bin — " +
-                     "run `make build` in the defCoreLib checkout first")
-    }
-    require(jar.isFile) { "-PdefCoreLibLocal: $jar does not exist" }
-    logger.lifecycle("defCoreLib: LOCAL $jar  (NOT the pinned CI build $defCoreLibRef)")
-    files(jar)
+    // shadow jar only — `-plain` is the thin jar and carries none of the shaded deps
+    fileTree("$defCoreLibDir/bin") {
+        include("defCoreLib-*.jar")
+        exclude("*-plain.jar")
+    }.files.maxByOrNull { it.lastModified() }
+        ?: error("no defCoreLib-*.jar in $defCoreLibDir/bin — run `make build` in the defCoreLib " +
+                 "checkout first, or pass -PdefCoreLibJar=/abs/path/to.jar")
 }
+require(defCoreLibJar.isFile) { "defCoreLib jar does not exist: $defCoreLibJar" }
+logger.lifecycle("defCoreLib: $defCoreLibJar")
 
 dependencies {
     // compileOnly("io.papermc.paper:paper-api:26.1.2.build.60-stable")
@@ -76,7 +64,7 @@ dependencies {
     // Optional soft-dependency: region protection integration (never shaded).
     compileOnly("com.sk89q.worldguard:worldguard-bukkit:7.0.17")
     // defCoreLib Mechanism engine — see the source selection block above.
-    compileOnly(defCoreLibDependency)
+    compileOnly(files(defCoreLibJar))
     implementation("org.bstats:bstats-bukkit:3.1.0")
 }
 
