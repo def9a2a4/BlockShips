@@ -1343,7 +1343,16 @@ public class DisplayShip implements Listener {
         if (shipId == null) return;
 
         ShipInstance inst = ShipRegistry.byId(shipId);
-        if (inst == null || !inst.vehicle.isValid()) return;
+        if (inst == null) {
+            // Unregistered native ship: recovery may not have run yet (chunk-load only fires on the
+            // load transition). Try to recover it now that the player is here, then fall through.
+            inst = attemptInteractionRecovery(shipId, shulker);
+            if (inst == null) {
+                e.setCancelled(true); // consume the click like the other ship-interaction branches
+                return;
+            }
+        }
+        if (!inst.vehicle.isValid()) return;
 
         // Delegated ships (M4) tag seats via corelib (block-index), not shipseat:{seatIdx}. Recover BlockShips'
         // seat index from the populated seatShulkers list so direct-seat-click mount + occupancy work.
