@@ -484,16 +484,7 @@ public class ShipInstance {
         Location displaySpawnLoc = base.clone().add(0, 2.5, 0);
 
         // Spawn invisible parent display for rotation control
-        parent = w.spawn(displaySpawnLoc, BlockDisplay.class, d -> {
-            d.setBlock(Bukkit.createBlockData(Material.AIR));
-            d.setInterpolationDuration(config.displayInterpolationDuration);
-            d.setTeleportDuration(0);  // Position comes from passenger chain, not teleports
-            d.setViewRange(64f);
-            d.setPersistent(true);
-            d.setGravity(false);
-            d.addScoreboardTag(ShipTags.shipTag(this.id));
-            d.addScoreboardTag(ShipTags.PARENT_TAG);
-        });
+        parent = spawnParentDisplay(w, displaySpawnLoc);
 
         // Pre-compute dynlight tags for shulkers: build position index, check occlusion, resolve neighbor fallback
         Map<Integer, Integer> shulkerLightTags = new HashMap<>();
