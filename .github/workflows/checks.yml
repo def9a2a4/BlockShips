@@ -30,13 +30,27 @@ jobs:
       # consumable here as soon as it is pushed — no third-party build to wait on first.
       # def9a2a4/defCoreLib is public, so the default GITHUB_TOKEN suffices; if it ever goes private
       # this needs a PAT/deploy key, and that secret would break CI for fork PRs.
+      #
+      # Checked out at `main` with full history, then moved to the pinned ref by `git checkout` below,
+      # rather than passing the ref to the action directly: actions/checkout only treats `ref:` as a
+      # commit when it is a full 40- (or 64-) hex SHA, and looks anything shorter up as a branch then
+      # a tag before failing. defCoreLibRef is a short SHA because its two other consumers — the
+      # JitPack coordinate in build.gradle.kts and the JitPack URL in the Makefile — need JitPack's
+      # canonical short form. One property, one format, and the checkout adapts.
       - name: Check out defCoreLib
         uses: actions/checkout@v4
         with:
           repository: def9a2a4/defCoreLib
-          ref: ${{ steps.defcorelib.outputs.ref }}
+          ref: main
+          fetch-depth: 0
           path: defcorelib
           persist-credentials: false
+
+      - name: Pin defCoreLib to ${{ steps.defcorelib.outputs.ref }}
+        working-directory: defcorelib
+        run: |
+          git checkout --detach "${{ steps.defcorelib.outputs.ref }}"
+          git --no-pager log -1 --format='defCoreLib pinned at %H%n%s'
 
       - name: Set up Java 21
         uses: actions/setup-java@v4
