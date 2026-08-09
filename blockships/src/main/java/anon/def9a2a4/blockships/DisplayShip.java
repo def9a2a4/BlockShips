@@ -299,46 +299,6 @@ public class DisplayShip implements Listener {
         }
     }
 
-    /**
-     * Processes orphan cleanup for entities in a chunk.
-     * Handles unregistered ships by either recovering them or removing orphaned entities.
-     */
-    private void processOrphanCleanup(org.bukkit.Chunk chunk, World world, Set<UUID> failedRecoveryThisEvent) {
-        for (Entity e : chunk.getEntities()) {
-            // M5: never reap or native-recover a defCoreLib-owned entity. A delegated ship's vehicle carries
-            // BOTH displayship:{id}:root and corelib:mech:{id}:vehicle, so without this it would be routed to
-            // native recoverShipFromVehicle (which fails — no native parent BlockDisplay). corelib owns the
-            // lifecycle of all corelib:mech:... entities and recovers them itself.
-            if (ShipTags.isCorelibTagged(e.getScoreboardTags())) continue;
-
-            UUID entityShipId = ShipTags.extractShipId(e.getScoreboardTags());
-            if (entityShipId == null) continue;
-
-            ShipInstance ship = ShipRegistry.byId(entityShipId);
-            if (ship != null) continue; // Already registered
-
-            // Skip if we already tried to recover this ship
-            if (failedRecoveryThisEvent.contains(entityShipId)) {
-                continue;
-            }
-
-            if (!shipWorldData.hasMetadata(world, entityShipId)) {
-                // No metadata - truly orphaned, remove entity
-                e.remove();
-                plugin.getLogger().fine("Removed orphaned entity " + e.getType() + " for deleted ship " + entityShipId);
-            } else if (ShipTags.isRoot(e.getScoreboardTags()) && e instanceof ArmorStand) {
-                // Found vehicle for unregistered ship with metadata - attempt recovery
-                if (shipsBeingRecovered.add(entityShipId)) {
-                    try {
-                        recoverShipFromVehicle(world, chunk, entityShipId, (ArmorStand) e, failedRecoveryThisEvent);
-                    } finally {
-                        shipsBeingRecovered.remove(entityShipId);
-                    }
-                }
-            }
-        }
-    }
-
     // ─────────────────────────────────────────────────────────────────────────────
     // Native → delegated MIGRATION (M-A). Converts released 0.0.17 NATIVE ships (custom + prefab) into delegated
     // defCoreLib mechanisms on chunk-load + at enable, preserving the ship id. Lazy per-chunk + per-ship footprint
@@ -476,89 +436,6 @@ public class DisplayShip implements Listener {
                         && holder.equals(l.getLeashHolder()))) {
             holder.getWorld().dropItemNaturally(holder.getLocation(), new ItemStack(org.bukkit.Material.LEAD));
             ((io.papermc.paper.entity.Leashable) nearby).setLeashHolder(null);
-        }
-    }
-
-    /**
-     * Counts ship entities in a chunk without modifying any state.
-     */
-    private int countEntitiesInChunk(org.bukkit.Chunk chunk, UUID shipId) {
-        String shipTagPrefix = ShipTags.shipTag(shipId);
-        int count = 0;
-        for (Entity e : chunk.getEntities()) {
-            for (String tag : e.getScoreboardTags()) {
-                if (tag.startsWith(shipTagPrefix)) {
-                    count++;
-                    break;
-                }
-            }
-        }
-        return count;
-    }
-
-    /**
-     * Recovers a ship starting from its vehicle entity.
-     * Used when ship entities are found in a chunk that isn't in the chunk index.
-     * @param failedRecoveryThisEvent Set to track ships that fail recovery (prevents duplicate attempts)
-     */
-    private void recoverShipFromVehicle(World world, org.bukkit.Chunk chunk, UUID shipId, ArmorStand vehicle, Set<UUID> failedRecoveryThisEvent) {
-        // Load metadata
-        ShipPersistence.ShipState state = shipWorldData.loadShipMetadata(world, shipId);
-        if (state == null) {
-            plugin.getLogger().fine("Ship " + shipId + " has vehicle but no metadata - removing orphan");
-            vehicle.remove();
-            return;
-        }
-
-        // Load model
-        ShipModel model = loadModelForState(state);
-        if (model == null) {
-            plugin.getLogger().warning("Could not load model for ship " + shipId);
-            // Permanent failure: count toward give-up (prefab still drops its kit item without a model).
-            if (!maybeGiveUpOnRecovery(world, shipId, vehicle, state, null)) {
-                failedRecoveryThisEvent.add(shipId);
-            }
-            return;
-        }
-
-        // Create ShipInstance
-        ShipInstance ship = ShipInstance.fromState(plugin, state, model);
-        if (ship == null) {
-            plugin.getLogger().warning("Failed to create ShipInstance for " + shipId);
-            // Permanent failure: count toward give-up (model is available, so custom ships disassemble).
-            if (!maybeGiveUpOnRecovery(world, shipId, vehicle, state, model)) {
-                failedRecoveryThisEvent.add(shipId);
-            }
-            return;
-        }
-
-        // Set expected entity count
-        ship.setExpectedEntityCount(state.entityCount);
-
-        // Recover entities
-        if (!ship.recoverEntities(chunk)) {
-            plugin.getLogger().warning("Failed to recover ship " + shipId + " from vehicle - will retry on next chunk load");
-            failedRecoveryThisEvent.add(shipId);
-            return;
-        }
-
-        // A5: migrate a fully-recovered native prefab ship to delegated before registering it.
-        if (convertNativeToDelegated(ship, state) != null) {
-            shipWorldData.clearRecoveryFailure(world, shipId);
-            return;
-        }
-
-        // Register and update chunk index
-        ShipRegistry.register(ship);
-        shipWorldData.clearRecoveryFailure(world, shipId);  // success: reset any accumulated give-up count
-        Location loc = vehicle.getLocation();
-        shipWorldData.addToChunkIndex(world, shipId, loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
-        shipWorldData.saveAllChunkIndices();
-
-        if (!ship.isRecoveryComplete()) {
-            plugin.getLogger().info("Ship " + shipId + " recovered from moved location - waiting for more chunks");
-        } else {
-            plugin.getLogger().info("Ship " + shipId + " recovered from moved location at " + chunk.getX() + "," + chunk.getZ());
         }
     }
 
@@ -2037,7 +1914,7 @@ public class DisplayShip implements Listener {
         if (inst == null) {
             // Unregistered native ship: hitting it is a second interaction trigger for recovery
             // (chunk-load only fires on the load transition), mirroring the shulker-click hook.
-            inst = attemptInteractionRecovery(shipId, shulker);
+            inst = attemptInteractionMigration(shipId, shulker);
             if (inst == null) return;   // couldn't recover: same no-op as before
         }
         if (!inst.vehicle.isValid()) return;
@@ -2130,7 +2007,7 @@ public class DisplayShip implements Listener {
         ShipInstance inst = ShipRegistry.byId(shipId);
         if (inst == null) {
             // Unregistered native ship: a projectile hit is a third recovery trigger (like click/melee).
-            inst = attemptInteractionRecovery(shipId, shulker);
+            inst = attemptInteractionMigration(shipId, shulker);
             if (inst == null) return;
         }
         if (!inst.vehicle.isValid()) return;
