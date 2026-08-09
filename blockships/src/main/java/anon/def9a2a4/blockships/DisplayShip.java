@@ -408,180 +408,40 @@ public class DisplayShip implements Listener {
     public void onChunkLoad(ChunkLoadEvent event) {
         org.bukkit.Chunk chunk = event.getChunk();
         World world = event.getWorld();
-        int chunkX = chunk.getX();
-        int chunkZ = chunk.getZ();
-        long chunkKey = chunk.getChunkKey();
 
-        // PART 0 (migration): convert any persisted NATIVE ship (released 0.0.17, both custom + prefab) whose root
-        // is in this chunk into a delegated mechanism, BEFORE native recovery runs. A migrated ship registers +
-        // re-indexes as delegated, so PART 1's byId check skips it. (During this staged phase the native engine is
-        // still present, so a failed migration falls through to native recovery below.)
+        // Migrate any persisted NATIVE ship (released 0.0.17, custom + prefab) whose root is in this chunk into a
+        // delegated mechanism — the only engine. Delegated ships recover via defCoreLib's recovered
+        // MechanismAssembleEvent (onMechanismAssemble → reconstructDelegatedShip); nothing native remains to
+        // recover here.
         migrateNativeShipsInChunk(world, chunk);
 
-        // PART 1: Normal recovery for ships indexed in this chunk (async file I/O)
-        List<UUID> shipIds = shipWorldData.getShipsInChunk(world, chunkX, chunkZ);
+        // Reap leftover native entity stragglers (an already-migrated ship's reap-fail leftovers, or a truly
+        // orphaned no-sidecar entity). A ship still PENDING migration (sidecar present + not migrated, root in an
+        // unloaded chunk) is left untouched for its own migration.
+        reapStragglerEntities(world, chunk);
+    }
 
-        // Filter to ships that need recovery
-        List<UUID> shipsToRecover = new ArrayList<>();
-        for (UUID shipId : shipIds) {
-            if (ShipRegistry.byId(shipId) == null && shipsBeingRecovered.add(shipId)) {
-                shipsToRecover.add(shipId);
+    /** Blind reaper (M-D): remove native entity stragglers in a chunk — {@code displayship:*}, non-corelib, whose
+     *  ship is not live AND whose sidecar is absent (orphan) or migrated (delegated). Never touches a delegated
+     *  ship's entities (corelib-tagged) or a ship still pending migration (sidecar present + not migrated). Runs on
+     *  every chunk-load + at enable, permanently, so multi-chunk reap-fail leftovers get swept when their chunk loads. */
+    private void reapStragglerEntities(World world, org.bukkit.Chunk chunk) {
+        Map<UUID, Boolean> reapDecision = new HashMap<>();
+        for (Entity e : new java.util.ArrayList<>(java.util.Arrays.asList(chunk.getEntities()))) {
+            Set<String> tags = e.getScoreboardTags();
+            if (ShipTags.isCorelibTagged(tags)) continue;      // delegated — owned by defCoreLib
+            UUID shipId = ShipTags.extractShipId(tags);
+            if (shipId == null) continue;                       // not a ship entity
+            if (ShipRegistry.byId(shipId) != null) continue;    // belongs to a live ship — leave
+            Boolean reap = reapDecision.get(shipId);
+            if (reap == null) {
+                ShipPersistence.ShipState st = shipWorldData.loadShipMetadata(world, shipId);
+                reap = (st == null) || st.migrated;             // orphan (no sidecar) or already-delegated straggler
+                reapDecision.put(shipId, reap);
             }
-        }
-
-        if (!shipsToRecover.isEmpty()) {
-            // Mark chunk as having pending recovery
-            chunksBeingRecovered.add(chunkKey);
-
-            // Load all metadata asynchronously in parallel
-            List<CompletableFuture<ShipPersistence.ShipState>> futures = shipsToRecover.stream()
-                .map(id -> shipWorldData.loadShipMetadataAsync(world, id))
-                .toList();
-
-            // When all loads complete, sync back to main thread for entity operations
-            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                .thenRun(() -> {
-                    // Run entity recovery on main thread
-                    Bukkit.getScheduler().runTask(plugin, () -> {
-                        // Check if chunk was unloaded while we were loading
-                        if (!chunksBeingRecovered.remove(chunkKey) || !chunk.isLoaded()) {
-                            // Chunk unloaded - cleanup and skip recovery
-                            shipsToRecover.forEach(shipsBeingRecovered::remove);
-                            return;
-                        }
-
-                        Set<UUID> failedRecovery = new HashSet<>();
-
-                        for (int i = 0; i < shipsToRecover.size(); i++) {
-                            UUID shipId = shipsToRecover.get(i);
-                            try {
-                                // Re-check chunk state before each ship recovery (chunk could unload mid-loop)
-                                if (!chunk.isLoaded()) {
-                                    plugin.getLogger().fine("Chunk unloaded during recovery loop - aborting remaining ships");
-                                    // Clean up remaining ships (current ship's finally block will handle itself)
-                                    for (int j = i + 1; j < shipsToRecover.size(); j++) {
-                                        shipsBeingRecovered.remove(shipsToRecover.get(j));
-                                    }
-                                    return;
-                                }
-
-                                // Skip if already registered (another chunk may have recovered it)
-                                if (ShipRegistry.byId(shipId) != null) {
-                                    continue;
-                                }
-
-                                ShipPersistence.ShipState state;
-                                try {
-                                    state = futures.get(i).join();
-                                } catch (Exception e) {
-                                    plugin.getLogger().warning("Failed to load metadata for ship " + shipId + ": " + e.getMessage());
-                                    failedRecovery.add(shipId);
-                                    continue;
-                                }
-                                if (state == null) {
-                                    shipWorldData.removeFromChunkIndex(world, shipId, chunkX, chunkZ);
-                                    continue;
-                                }
-
-                                // M5: delegated custom ships recover via defCoreLib's recovered
-                                // MechanismAssembleEvent (reconstructDelegatedShip), not native recovery. Skip.
-                                if ("custom".equals(state.shipType)) continue;
-
-                                // A5: a migrated (delegated) prefab keeps its prefab shipType, but its entities are
-                                // corelib-tagged and owned by defCoreLib's recovery — skip native recovery for it.
-                                if (chunkHasCorelibEntity(chunk, shipId)) continue;
-
-                                // Count entities in this chunk only
-                                int entitiesInChunk = countEntitiesInChunk(chunk, shipId);
-                                if (entitiesInChunk == 0) {
-                                    plugin.getLogger().fine("Ship " + shipId + " not in indexed chunk - removing stale index entry");
-                                    shipWorldData.removeFromChunkIndex(world, shipId, chunkX, chunkZ);
-                                    continue;
-                                }
-
-                                // Load model
-                                ShipModel model = loadModelForState(state);
-                                if (model == null) {
-                                    plugin.getLogger().warning("Could not load model for ship " + shipId + " (type: " + state.shipType + ")");
-                                    failedRecovery.add(shipId);
-                                    continue;
-                                }
-
-                                // Create ShipInstance from state
-                                ShipInstance ship = ShipInstance.fromState(plugin, state, model);
-                                if (ship == null) {
-                                    plugin.getLogger().warning("Failed to create ShipInstance for " + shipId);
-                                    failedRecovery.add(shipId);
-                                    continue;
-                                }
-
-                                ship.setExpectedEntityCount(state.entityCount);
-
-                                // Try to recover entities (re-check chunk state first)
-                                if (!chunk.isLoaded()) {
-                                    plugin.getLogger().fine("Chunk unloaded before entity recovery for " + shipId);
-                                    failedRecovery.add(shipId);
-                                    continue;
-                                }
-                                boolean recovered = ship.recoverEntities(chunk);
-                                if (!recovered) {
-                                    plugin.getLogger().info("Ship " + shipId + " vehicle not in this chunk - will recover when vehicle chunk loads");
-                                    shipWorldData.removeFromChunkIndex(world, shipId, chunkX, chunkZ);
-                                    failedRecovery.add(shipId);
-                                    continue;
-                                }
-
-                                // A5: migrate a fully-recovered native prefab ship to delegated before registering.
-                                if (convertNativeToDelegated(ship, state) != null) continue;
-
-                                ShipRegistry.register(ship);
-
-                                if (!ship.isRecoveryComplete()) {
-                                    plugin.getLogger().info("Ship " + shipId + " partially recovered - waiting for more chunks");
-                                } else {
-                                    plugin.getLogger().info("Recovered ship " + shipId + " from chunk load at " + chunkX + "," + chunkZ);
-                                }
-                            } catch (Exception e) {
-                                // recoverEntities (and other per-ship work) is otherwise unguarded here - a
-                                // throw would skip the rest of this chunk's batch. Skip just this ship.
-                                plugin.getLogger().warning("Failed to recover ship " + shipId + ", skipping: " + e.getMessage());
-                                failedRecovery.add(shipId);
-                            } finally {
-                                shipsBeingRecovered.remove(shipId);
-                            }
-                        }
-
-                        // Run orphan cleanup after async recovery completes (only if chunk still loaded)
-                        if (chunk.isLoaded()) {
-                            processOrphanCleanup(chunk, world, failedRecovery);
-                        }
-                    });
-                });
-        }
-
-        // PART 2: Immediate incremental recovery for already-registered incomplete ships
-        // (This runs synchronously since it doesn't involve file I/O)
-        Set<UUID> processedIncompleteShips = new HashSet<>();
-        for (Entity e : chunk.getEntities()) {
-            UUID entityShipId = ShipTags.extractShipId(e.getScoreboardTags());
-            if (entityShipId == null) continue;
-
-            ShipInstance ship = ShipRegistry.byId(entityShipId);
-            // Skip ships being recovered asynchronously to avoid concurrent modification. Also hard-guard
-            // delegated ships (mechanism != null): defCoreLib owns their entities, so native incremental
-            // collection must never run on them (they also keep recoveryComplete=true, so this is defensive).
-            if (ship != null && ship.mechanism == null && !ship.isRecoveryComplete() && !shipsBeingRecovered.contains(entityShipId) && processedIncompleteShips.add(entityShipId)) {
-                ship.collectEntitiesFromChunk(chunk);
-            }
-        }
-
-        // PART 3: Orphan cleanup - only if no async recovery is pending
-        // (If async recovery is pending, orphan cleanup runs after it completes)
-        if (shipsToRecover.isEmpty()) {
-            // Must be a mutable set: recoverShipFromVehicle records failures via .add().
-            // Collections.emptySet() would throw UnsupportedOperationException on any
-            // recoverable failure branch, aborting the whole ChunkLoadEvent handler.
-            processOrphanCleanup(chunk, world, new HashSet<>());
+            if (!reap) continue;                                // pending migration — leave for migrateNativeShip
+            dropLeadsAndDetach(e);
+            e.remove();
         }
     }
 
@@ -1574,31 +1434,22 @@ public class DisplayShip implements Listener {
                 .textureManager(textureManager)
                 .build();
 
-        // Create ship instance (ShipInstance detects airship type from config automatically).
-        // P7.C: behind the interim flag, assemble prefab ships as DELEGATED defCoreLib mechanisms; default
-        // (and any assembly failure) falls back to the battle-tested native engine.
-        ShipInstance instance = null;
-        if (plugin.getConfig().getBoolean("ships.delegate-prefab", false)
-                && Bukkit.getPluginManager().isPluginEnabled("DefCoreLib")) {
-            instance = spawnDelegatedPrefab(shipType, shipModel, spawnAt, customization);
-        }
+        // Assemble the prefab ship as a DELEGATED defCoreLib mechanism (the only engine). No native fallback:
+        // if assembly fails (or the model is unsupported), refuse the spawn and DO NOT consume the kit.
+        ShipInstance instance = spawnDelegatedPrefab(shipType, shipModel, spawnAt, customization);
         if (instance == null) {
-            instance = new ShipInstance(plugin, shipType, shipModel, spawnAt, customization);
+            p.sendMessage(net.kyori.adventure.text.Component.text(
+                    "Couldn't assemble that ship right now — please try again.",
+                    net.kyori.adventure.text.format.NamedTextColor.RED));
+            plugin.getLogger().warning("Delegated assembly returned null for " + shipType
+                + "; kit not consumed, no ship spawned.");
+            return;
         }
         ShipRegistry.register(instance);
 
-        // Register with per-world storage for chunk recovery. The ship-level sidecar (ships/{id}.yml) is
-        // written for both engines (delegated recovery reads it in reconstructDelegatedShip). The native
-        // chunk INDEX is written only for the native engine — a delegated ship (mechanism != null) recovers
-        // via defCoreLib's own persistence + the recovered MechanismAssembleEvent, so indexing it would make
-        // native onChunkLoad recovery try (and fail) to rebuild it. (Delegated custom ships are indexed by
-        // ShipWheelManager and skipped by the native `"custom"` gate; delegated prefab is simply not indexed.)
-        Location loc = instance.vehicle.getLocation();
+        // Ship-level sidecar (ships/{id}.yml) — delegated recovery reads it in reconstructDelegatedShip. Delegated
+        // ships are NOT added to the native chunk index (they recover via defCoreLib's own persistence).
         shipWorldData.saveShipMetadata(instance);
-        if (instance.mechanism == null) {
-            shipWorldData.addToChunkIndex(loc.getWorld(), instance.id, loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
-            shipWorldData.saveAllChunkIndices();
-        }
 
         // Consume one kit
         if (p.getGameMode() != GameMode.CREATIVE) {
