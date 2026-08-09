@@ -257,7 +257,7 @@ public class DisplayShip implements Listener {
     }
 
     /** Blind reaper (M-D): remove native entity stragglers in a chunk — {@code displayship:*}, non-corelib, whose
-     *  ship is not live AND whose sidecar is absent (orphan) or migrated (delegated). Never touches a delegated
+     *  whose sidecar is absent (orphan) or migrated (delegated). Never touches a delegated
      *  ship's entities (corelib-tagged) or a ship still pending migration (sidecar present + not migrated). Runs on
      *  every chunk-load + at enable, permanently, so multi-chunk reap-fail leftovers get swept when their chunk loads. */
     private void reapStragglerEntities(World world, org.bukkit.Chunk chunk) {
@@ -267,7 +267,10 @@ public class DisplayShip implements Listener {
             if (ShipTags.isCorelibTagged(tags)) continue;      // delegated — owned by defCoreLib
             UUID shipId = ShipTags.extractShipId(tags);
             if (shipId == null) continue;                       // not a ship entity
-            if (ShipRegistry.byId(shipId) != null) continue;    // belongs to a live ship — leave
+            // Do NOT skip when ShipRegistry.byId(shipId) != null: a migrated ship's leftover NATIVE parts
+            // (non-corelib — this entity) carry the SAME id as the now-delegated live ship, so a byId hit here means
+            // "straggler of a migrated ship", not "leave it alone". The migrated-sidecar check below is what
+            // distinguishes those (reap) from a still-pending native ship (leave for migrateNativeShip).
             Boolean reap = reapDecision.get(shipId);
             if (reap == null) {
                 ShipPersistence.ShipState st = shipWorldData.loadShipMetadata(world, shipId);

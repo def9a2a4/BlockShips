@@ -78,7 +78,14 @@ tasks {
         }
     }
 
+    // The thin jar is never usable: bstats is relocated in shadowJar only, so running this one dies at
+    // onEnable on a NoClassDefFoundError. It also had NO classifier while shadowJar sets "", so both
+    // wrote build/libs/BlockShips-<version>.jar and clobbered each other — invisible to `make build`
+    // (shadowJar only) but hit by CI's `gradle build`, which runs both. Disabled rather than given a
+    // `-plain` classifier: a second jar would match the upload glob and `cp bin/*.jar`, and Paper then
+    // reports "Ambiguous plugin name". Nothing consumes it — no test sources, nothing published.
     jar {
+        enabled = false
         archiveBaseName.set("BlockShips")
         manifest {
             attributes["paperweight-mappings-namespace"] = "mojang"

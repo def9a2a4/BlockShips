@@ -336,8 +336,9 @@ public class BlockShipsPlugin extends JavaPlugin {
      * <p>Only loaded chunks are visible here - {@link World#getEntities()} never loads chunks.
      */
     private int sendEntitySummary(CommandSender sender) {
-        // Split ships (and their entities) by shipType — Prefab (native engine) vs Custom (delegated/defCoreLib
-        // engine) — matching the "Prefab Ships / Custom Ships" vocabulary sendStatsBreakdown prints just above.
+        // Split ships (and their entities) by shipType — Prefab (kit-spawned from a model) vs Custom
+        // (player-built) — matching the "Prefab Ships / Custom Ships" vocabulary sendStatsBreakdown prints
+        // just above. NOT an engine split: both kinds run on defCoreLib mechanisms.
         Set<UUID> prefabShips = new HashSet<>();
         Set<UUID> customShips = new HashSet<>();
         Set<UUID> orphanedShips = new HashSet<>();

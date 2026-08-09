@@ -2461,12 +2461,6 @@ public class ShipInstance {
      */
     public void alignToGrid() {
         physics.alignToGrid();
-        if (mechanism == null) {
-            // Native ships: re-baseline spawnYaw to the snapped heading (absorbed by the vehicle's own
-            // entity yaw) and refresh the native display transforms.
-            spawnYaw = physics.currentYaw;
-            updateDisplayTransforms();
-        }
         // Delegated ships: spawnYaw MUST stay pinned to the as-built assembly yaw. The vehicle yaw is
         // frozen at 0 and all rotation is (currentYaw - spawnYaw) against construction-time geometry, so
         // re-baselining spawnYaw would make the next tick's repositionDriven(currentYaw - spawnYaw) evaluate
