@@ -2339,6 +2339,10 @@ public class ShipInstance {
                     // Drop lead items for any entities leashed to ship shulkers.
                     // In disassemble mode, transferLeadsFromShip() preserves leads by moving them to
                     // fence posts. Here we just drop the lead items so players don't lose them silently.
+                    // Native ships only, again because `colliders` is empty for a delegated one. A delegated
+                    // ship falls back to Paper's own tickLeash, which drops one lead when the holder shulker is
+                    // removed — the same net result, but implicit rather than owned here, and NOT via the
+                    // leads-out seam (Mechanism.destroy() deliberately skips the beforeEntityRemoval hook).
                     for (CollisionBox cb : colliders) {
                         if (cb.entity == null || !cb.entity.isValid()) continue;
                         for (org.bukkit.entity.Entity nearby : cb.entity.getWorld().getNearbyEntities(

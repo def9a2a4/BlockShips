@@ -1165,6 +1165,29 @@ public class ShipWheelManager {
     }
 
     /**
+     * DEATH-drop of leads for a delegated ship being DESTROYED (not disassembled): drop one lead item per leashed
+     * mob at its holder and detach it BEFORE the mechanism's collider shulkers are removed by {@code destroy()}.
+     * The detach is load-bearing — without it Paper's {@code tickLeash} drops a SECOND lead when the holder is
+     * removed. Holders are sourced from the mechanism's collider shulkers ({@code colliderEntity(i)} over
+     * {@code blockCount()}), which covers both a custom ship's fence-leashed mobs and a prefab ship's leadable
+     * shulker (which is itself one of the colliders). Death drops the lead here rather than transferring it to a
+     * fence hitch (as {@code transferLeadsFromMechanism} does on disassembly), since a destroyed ship has no
+     * landing. No-op for a null mechanism (a native ship, whose own {@code destroyAndDropItem} loop handles leads).
+     */
+    public void dropLeadsOnDeath(anon.def9a2a4.corelib.Mechanism mechanism, org.bukkit.World world) {
+        if (mechanism == null || world == null) return;
+        for (int i = 0; i < mechanism.blockCount(); i++) {
+            org.bukkit.entity.Shulker holder = mechanism.colliderEntity(i);
+            if (holder == null || !holder.isValid()) continue;
+            for (org.bukkit.entity.Entity e : findEntitiesLeashedTo(holder)) {
+                world.dropItemNaturally(holder.getLocation(),
+                        new org.bukkit.inventory.ItemStack(org.bukkit.Material.LEAD));
+                ((io.papermc.paper.entity.Leashable) e).setLeashHolder(null);
+            }
+        }
+    }
+
+    /**
      * Detects and previews which blocks would be included in a ship.
      * Shows block count, total weight, and spawns particles to visualize the ship.
      */
