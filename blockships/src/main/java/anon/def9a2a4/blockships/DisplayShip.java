@@ -115,20 +115,16 @@ public class DisplayShip implements Listener {
     }
 
     /**
-     * Scans all loaded chunks for ship entities that aren't registered in ShipRegistry.
-     * This handles: spawn chunks that never unload, server restart, pre-migration ships.
+     * At enable, migrate any persisted NATIVE ship (released 0.0.17) in an already-loaded chunk (spawn chunks that
+     * never unload) into a delegated mechanism, and reap stragglers. Delegated ships recover via defCoreLib
+     * (forceRecoverDelegatedShips + the recovered MechanismAssembleEvent), not here.
      */
     private void recoverUnregisteredShips() {
-        int recovered = 0;
         for (World world : Bukkit.getWorlds()) {
             for (org.bukkit.Chunk chunk : world.getLoadedChunks()) {
-                // Migrate native ships first (they register as delegated, so native recovery then skips them).
                 migrateNativeShipsInChunk(world, chunk);
-                recovered += recoverUnregisteredShipsInChunk(chunk);
+                reapStragglerEntities(world, chunk);
             }
-        }
-        if (recovered > 0) {
-            plugin.getLogger().info("Recovered " + recovered + " unregistered ship(s) on startup");
         }
     }
 
@@ -553,6 +549,16 @@ public class DisplayShip implements Listener {
         } finally {
             releaseFootprint(world, forced);
         }
+    }
+
+    /** Interaction fallback: a player clicked a ship collider whose ship isn't registered. The player is here, so
+     *  this chunk is loaded — migrate any native ship rooted in it now and return the (now delegated) instance, or
+     *  null if none/failed. (Chunk-load migration normally handles this first; this covers the rare miss.) */
+    private ShipInstance attemptInteractionMigration(UUID shipId, Shulker anchor) {
+        ShipInstance live = ShipRegistry.byId(shipId);
+        if (live != null) return live;
+        migrateNativeShipsInChunk(anchor.getWorld(), anchor.getLocation().getChunk());
+        return ShipRegistry.byId(shipId);
     }
 
     /** Force-load the chunks the ship's model footprint spans (root position + model x/z extent, +1 chunk margin
@@ -1805,9 +1811,9 @@ public class DisplayShip implements Listener {
 
         ShipInstance inst = ShipRegistry.byId(shipId);
         if (inst == null) {
-            // Unregistered native ship: recovery may not have run yet (chunk-load only fires on the
-            // load transition). Try to recover it now that the player is here, then fall through.
-            inst = attemptInteractionRecovery(shipId, shulker);
+            // Unregistered ship: migration may not have run yet (the player is here, so this chunk is loaded).
+            // Migrate any native ship rooted in this chunk now, then fall through.
+            inst = attemptInteractionMigration(shipId, shulker);
             if (inst == null) {
                 e.setCancelled(true); // consume the click like the other ship-interaction branches
                 return;
