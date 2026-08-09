@@ -182,14 +182,6 @@ sounds:
   # Volume multiplier for ship-to-ship collision sounds (0.0 = disabled, 1.0 = normal)
   ship-collision-volume: 0.15
 
-# Native ship recovery (global)
-recovery:
-  # How many failed recovery attempts before BlockShips gives up on a ship and
-  # restores it: prefab ships drop as their kit item, custom (block-built) ships
-  # are disassembled back into world blocks. "none" = never give up (retry
-  # indefinitely on every chunk load).
-  give-up-after: 20
-
 # Ship-to-ship collision settings (global)
 collision:
   # Enable/disable ship-to-ship collision detection (disable for performance on busy servers)
