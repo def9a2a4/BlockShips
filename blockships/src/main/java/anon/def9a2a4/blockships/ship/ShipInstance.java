@@ -258,7 +258,7 @@ public class ShipInstance {
 
     /** Rebuild the ship {@link ShipCustomization} (banner / wood / balloon) from a persisted state. Shared by
      *  the native {@link #fromState} and the delegated {@link #fromRecoveredMechanism} recovery paths. */
-    private static ShipCustomization buildCustomizationFromState(JavaPlugin plugin, ShipPersistence.ShipState state) {
+    public static ShipCustomization buildCustomizationFromState(JavaPlugin plugin, ShipPersistence.ShipState state) {
         ItemStack customBanner = null;
         if (state.bannerData != null) {
             try {
@@ -2153,6 +2153,29 @@ public class ShipInstance {
     }
 
     /**
+     * Finalize a freshly-assembled MIGRATED ship (native→delegated). The mechanism + delegated {@link ShipInstance}
+     * are already built by {@code DisplayShip.spawnDelegatedFromModel} (seats designated, mechanism persisted). This
+     * adds the recovery-style state the fresh-spawn path doesn't seed:
+     * <ul>
+     *   <li>{@code sourceModel} — so the re-saved sidecar persists {@code model_data} for later delegated recovery
+     *       of a custom ship (defCoreLib rebuilds the mechanism; BlockShips rebuilds the model from the sidecar);</li>
+     *   <li>{@code currentYaw} — from the persisted absolute heading ({@code state.yaw}); the delegated custom ctor
+     *       leaves currentYaw == spawnYaw (assemblyYaw), so a turned ship must be re-seeded;</li>
+     *   <li>inventory contents — overlaid onto the mechanism-owned inventories (see {@link #restoreInventoriesFromState});</li>
+     *   <li>the driven pose is re-applied so frame 1 renders at the saved heading.</li>
+     * </ul>
+     */
+    public void finalizeMigration(ShipPersistence.ShipState state) {
+        this.sourceModel = model;
+        if (!Float.isNaN(state.yaw)) {
+            physics.currentYaw = ShipTags.normalizeYaw(state.yaw);
+            previousYaw = physics.currentYaw;
+        }
+        restoreInventoriesFromState(plugin, this, state, model);
+        applyInitialDrivenPose();
+    }
+
+    /**
      * Recovery counterpart of {@link #adoptMechanismSeats}: defCoreLib already RE-designated this mechanism's
      * seats during recovery (from the persisted shulker tags) and fired onSeatRecovered, so this must NOT call
      * {@code designateSeat} again — it only reads back the seat shulkers into {@code seatShulkers} and re-mirrors
@@ -2265,6 +2288,10 @@ public class ShipInstance {
                 List<Location> explosionLocations = new ArrayList<>();
                 explosionLocations.add(vehicle.getLocation().clone()); // Always include root/wheel location
 
+                // `colliders` is populated for a NATIVE ship only — a delegated ship's collider entities belong
+                // to the mechanism — so a delegated ship scatters no secondary explosions and gets just the
+                // root one above. Cosmetic, and accepted: the alternative is reaching across the engine
+                // boundary for entities purely to place particles.
                 java.util.Random random = new java.util.Random();
                 for (CollisionBox collider : colliders) {
                     if (collider.entity != null && collider.entity.isValid()) {
@@ -2275,8 +2302,23 @@ public class ShipInstance {
                 }
 
                 if (config.destroyOnDeath) {
-                    // Full destruction: blocks are lost, only stored items drop
-                    // Drop inventory contents (chests, barrels, etc.).
+                    // Full destruction: blocks are lost, only stored items drop.
+                    //
+                    // CARGO-DROP OWNERSHIP — which engine backs this ship decides who drops:
+                    //   native    (mechanism == null): `storages` holds the live inventories, so this loop is
+                    //                                  the ONLY drop and must run.
+                    //   delegated (mechanism != null): `storages` is always EMPTY — its spawn-time writer sits
+                    //                                  inside the `if (mechanism == null)` guard — because a
+                    //                                  delegated ship's cargo lives on the mechanism. The engine
+                    //                                  drops it from Mechanism.destroy(), reached below via
+                    //                                  destroyWithCleanup(). Per BasicMechanism's contract, for
+                    //                                  a block-free mechanism the engine is the SINGLE drop
+                    //                                  authority and a consumer must NOT also drop or items
+                    //                                  duplicate — so this loop no-opping for delegated is
+                    //                                  correct, not a gap. Do not "fix" it by re-adding a
+                    //                                  helper that reads the mechanism's inventories here.
+                    // The clear() is what keeps this safe either way: an inventory drained here cannot be
+                    // dropped again by anything downstream still holding a reference to it.
                     for (Map.Entry<Integer, Inventory> storageEntry : storages.entrySet()) {
                         Inventory storage = storageEntry.getValue();
                         for (ItemStack item : storage.getContents()) {
@@ -2286,28 +2328,14 @@ public class ShipInstance {
                         }
                         storage.clear();
                     }
-                    // Drop TileStateInventoryHolder items (shelves, chiseled bookshelves)
-                    // These aren't in the storages map - their items are serialized in rawYaml
-                    for (ShipModel.ModelPart part : sourceModel.parts) {
-                        if (part.storage == null && part.rawYaml.containsKey("container_items")) {
-                            @SuppressWarnings("unchecked")
-                            java.util.List<java.util.Map<String, Object>> itemsData =
-                                (java.util.List<java.util.Map<String, Object>>) part.rawYaml.get("container_items");
-                            for (java.util.Map<String, Object> itemData : itemsData) {
-                                byte[] serialized = (byte[]) itemData.get("item");
-                                if (serialized != null) {
-                                    try {
-                                        ItemStack item = ItemStack.deserializeBytes(serialized);
-                                        if (item != null && !item.getType().isAir()) {
-                                            world.dropItemNaturally(dropLocation, item);
-                                        }
-                                    } catch (Exception e) {
-                                        // Skip corrupted items
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    // Shelves / chiseled bookshelves are deliberately NOT dropped here. They used to be — read
+                    // out of this model's own scan copy (rawYaml "container_items", the parts carrying no
+                    // `storage`) — back when nothing else covered them. defCoreLib now captures every
+                    // non-Container TileStateInventoryHolder into its block-entity snapshot (`bs_tsih_items`)
+                    // and drops it from Mechanism.destroy(), so re-dropping the scan copy here produced TWO of
+                    // every book. Unlike the loop above there was no clear() that could have de-duplicated it:
+                    // rawYaml is a detached snapshot, not the live inventory.
+                    //
                     // Drop lead items for any entities leashed to ship shulkers.
                     // In disassemble mode, transferLeadsFromShip() preserves leads by moving them to
                     // fence posts. Here we just drop the lead items so players don't lose them silently.

@@ -171,6 +171,11 @@ public class ShipWorldData {
         YamlConfiguration config = new YamlConfiguration();
         config.set("id", ship.id.toString());
         config.set("ship_type", ship.shipType);
+        // Engine marker: a delegated (mechanism) ship's sidecar carries migrated=true so the migration reader can
+        // distinguish it from a legacy native (0.0.17) sidecar (which never had this key). See ShipState.migrated.
+        if (ship.mechanism != null) {
+            config.set("migrated", true);
+        }
 
         // Model path for prefab ships
         String modelPath = plugin.getConfig().getString("ships." + ship.shipType + ".model-path");
@@ -331,7 +336,7 @@ public class ShipWorldData {
             ? (float) config.getDouble("current_yaw") : Float.NaN;
 
         // Create ShipState without position (position comes from recovered vehicle)
-        return new ShipPersistence.ShipState(
+        ShipPersistence.ShipState state = new ShipPersistence.ShipState(
             UUID.fromString(id),
             shipType,
             modelPath,
@@ -345,6 +350,8 @@ public class ShipWorldData {
             modelData,
             entityCount
         );
+        state.migrated = config.getBoolean("migrated", false);
+        return state;
     }
 
     /**

@@ -122,6 +122,8 @@ public class DisplayShip implements Listener {
         int recovered = 0;
         for (World world : Bukkit.getWorlds()) {
             for (org.bukkit.Chunk chunk : world.getLoadedChunks()) {
+                // Migrate native ships first (they register as delegated, so native recovery then skips them).
+                migrateNativeShipsInChunk(world, chunk);
                 recovered += recoverUnregisteredShipsInChunk(chunk);
             }
         }
@@ -410,6 +412,12 @@ public class DisplayShip implements Listener {
         int chunkZ = chunk.getZ();
         long chunkKey = chunk.getChunkKey();
 
+        // PART 0 (migration): convert any persisted NATIVE ship (released 0.0.17, both custom + prefab) whose root
+        // is in this chunk into a delegated mechanism, BEFORE native recovery runs. A migrated ship registers +
+        // re-indexes as delegated, so PART 1's byId check skips it. (During this staged phase the native engine is
+        // still present, so a failed migration falls through to native recovery below.)
+        migrateNativeShipsInChunk(world, chunk);
+
         // PART 1: Normal recovery for ships indexed in this chunk (async file I/O)
         List<UUID> shipIds = shipWorldData.getShipsInChunk(world, chunkX, chunkZ);
 
@@ -614,6 +622,136 @@ public class DisplayShip implements Listener {
                     }
                 }
             }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Native → delegated MIGRATION (M-A). Converts released 0.0.17 NATIVE ships (custom + prefab) into delegated
+    // defCoreLib mechanisms on chunk-load + at enable, preserving the ship id. Lazy per-chunk + per-ship footprint
+    // force-load so multi-chunk ships reap completely. Ordering: migrate (reads pose from the root, force-loads the
+    // footprint) THEN reap the native entity graph — never reap before migration (the root holds the position).
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /** Migrate every persisted NATIVE ship whose root ArmorStand is in this loaded chunk. */
+    private void migrateNativeShipsInChunk(World world, org.bukkit.Chunk chunk) {
+        // Snapshot: migration + reap mutate entities, so don't iterate a live view.
+        for (Entity e : new java.util.ArrayList<>(java.util.Arrays.asList(chunk.getEntities()))) {
+            if (!(e instanceof ArmorStand root)) continue;
+            Set<String> tags = root.getScoreboardTags();
+            if (ShipTags.isCorelibTagged(tags)) continue;   // delegated vehicle — not ours
+            if (!ShipTags.isRoot(tags)) continue;            // only the ship root ArmorStand
+            UUID shipId = ShipTags.extractShipId(tags);
+            if (shipId == null) continue;
+            try {
+                migrateNativeShip(world, shipId, root);
+            } catch (Throwable t) {
+                plugin.getLogger().log(java.util.logging.Level.SEVERE,
+                    "Error migrating native ship " + shipId + "; leaving native entities for retry.", t);
+            }
+        }
+    }
+
+    /** Migrate one native ship (custom or prefab) → delegated, preserving its id. Idempotent: an already-delegated
+     *  ship (live registry OR migrated-marker sidecar) is a reap-failed straggler → reap-only, never re-assemble. */
+    private void migrateNativeShip(World world, UUID shipId, ArmorStand root) {
+        ShipInstance live = ShipRegistry.byId(shipId);
+        if (live != null && live.mechanism != null) {   // already delegated (race / straggler) — reap the old graph
+            reapNativeEntities(shipId, root);
+            return;
+        }
+        ShipPersistence.ShipState state = shipWorldData.loadShipMetadata(world, shipId);
+        if (state == null) return;                       // no sidecar — orphan cleanup's job, not migration's
+        if (state.migrated) {                            // delegated sidecar — this native root is a straggler
+            reapNativeEntities(shipId, root);
+            return;
+        }
+        ShipModel model = loadModelForState(state);
+        if (model == null) {
+            plugin.getLogger().warning("Cannot migrate ship " + shipId + " (model unavailable); leaving native.");
+            return;
+        }
+        java.util.List<long[]> forced = forceLoadFootprint(world, root.getLocation(), model);
+        try {
+            Location pose = root.getLocation().clone();
+            if (!Float.isNaN(state.yaw)) pose.setYaw(state.yaw);
+            ShipCustomization customization = ShipInstance.buildCustomizationFromState(plugin, state);
+            ShipInstance ship = spawnDelegatedFromModel(shipId, state.shipType, model, pose, customization);
+            if (ship == null) {
+                plugin.getLogger().severe("Migration failed for ship " + shipId
+                    + "; native entities left in place for retry on next load.");
+                return;
+            }
+            ship.finalizeMigration(state);
+            ShipRegistry.register(ship);
+            shipWorldData.saveShipMetadata(ship);        // re-persist as delegated (writes the migrated marker)
+            Location rl = root.getLocation();
+            shipWorldData.removeFromChunkIndex(world, shipId, rl.getBlockX() >> 4, rl.getBlockZ() >> 4);
+            shipWorldData.saveAllChunkIndices();
+            reapNativeEntities(shipId, root);            // AFTER successful migration (ordering is load-bearing)
+            plugin.getLogger().info("Migrated native " + state.shipType + " ship " + shipId
+                + " to the delegated engine.");
+        } finally {
+            releaseFootprint(world, forced);
+        }
+    }
+
+    /** Force-load the chunks the ship's model footprint spans (root position + model x/z extent, +1 chunk margin
+     *  for colliders overhanging block edges) so migration + reap see ALL of the ship's entities across chunk
+     *  boundaries. Returns the {cx,cz} of chunks we ticketed, to release afterwards. */
+    private java.util.List<long[]> forceLoadFootprint(World world, Location rootLoc, ShipModel model) {
+        float minX = 0, maxX = 0, minZ = 0, maxZ = 0;
+        for (ShipModel.ModelPart p : model.parts) {
+            float x = p.local.m30(), z = p.local.m32();
+            minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+            minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+        }
+        int cx0 = ((rootLoc.getBlockX() + (int) Math.floor(minX)) >> 4) - 1;
+        int cx1 = ((rootLoc.getBlockX() + (int) Math.ceil(maxX)) >> 4) + 1;
+        int cz0 = ((rootLoc.getBlockZ() + (int) Math.floor(minZ)) >> 4) - 1;
+        int cz1 = ((rootLoc.getBlockZ() + (int) Math.ceil(maxZ)) >> 4) + 1;
+        java.util.List<long[]> forced = new java.util.ArrayList<>();
+        for (int cx = cx0; cx <= cx1; cx++) {
+            for (int cz = cz0; cz <= cz1; cz++) {
+                if (!world.isChunkLoaded(cx, cz)) {
+                    world.addPluginChunkTicket(cx, cz, plugin);
+                    forced.add(new long[]{cx, cz});
+                }
+            }
+        }
+        return forced;
+    }
+
+    private void releaseFootprint(World world, java.util.List<long[]> forced) {
+        for (long[] c : forced) {
+            world.removePluginChunkTicket((int) c[0], (int) c[1], plugin);
+        }
+    }
+
+    /** Reap the native entity graph ({@code displayship:{id}:*}, non-corelib) for a migrated/straggler ship across
+     *  its (now force-loaded) footprint. Drops leads on any leash-holder collider first (mirrors the native
+     *  lead-drop so leashed mobs aren't silently lost — the lead item returns to the world). */
+    private void reapNativeEntities(UUID shipId, ArmorStand root) {
+        String shipTagPrefix = ShipTags.shipTag(shipId);
+        for (Entity e : root.getWorld().getNearbyEntities(root.getLocation(), 64, 64, 64)) {
+            Set<String> tags = e.getScoreboardTags();
+            if (ShipTags.isCorelibTagged(tags)) continue;   // never touch delegated entities
+            boolean mine = false;
+            for (String t : tags) { if (t.startsWith(shipTagPrefix)) { mine = true; break; } }
+            if (!mine) continue;
+            dropLeadsAndDetach(e);
+            e.remove();
+        }
+        if (root.isValid()) root.remove();
+    }
+
+    /** Drop + detach any leads whose holder is {@code holder} (a native collider being reaped), mirroring the
+     *  native ship-destroy lead-drop (ShipInstance) so Paper's tickLeash doesn't double-drop when the holder goes. */
+    private void dropLeadsAndDetach(Entity holder) {
+        for (Entity nearby : holder.getWorld().getNearbyEntities(holder.getLocation(), 12, 12, 12,
+                n -> n instanceof io.papermc.paper.entity.Leashable l && l.isLeashed()
+                        && holder.equals(l.getLeashHolder()))) {
+            holder.getWorld().dropItemNaturally(holder.getLocation(), new ItemStack(org.bukkit.Material.LEAD));
+            ((io.papermc.paper.entity.Leashable) nearby).setLeashHolder(null);
         }
     }
 
@@ -863,6 +1001,7 @@ public class DisplayShip implements Listener {
      */
     private ShipInstance convertNativeToDelegated(ShipInstance nativeShip, ShipPersistence.ShipState state) {
         if (!plugin.getConfig().getBoolean("ships.migrate-native", true)) return null;
+        if (!Bukkit.getPluginManager().isPluginEnabled("DefCoreLib")) return null; // delegation needs the engine
         if (nativeShip.mechanism != null) return null;              // already delegated
         if ("custom".equals(nativeShip.shipType)) return null;      // custom ships are delegated via ShipWheelManager
         if (!nativeShip.isRecoveryComplete()) return null;          // only convert a fully-recovered ship
