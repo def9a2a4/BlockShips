@@ -2228,47 +2228,6 @@ public class ShipInstance {
     }
 
     /**
-     * The storage inventories to drop when this ship is destroyed, regardless of engine. Delegated ships hold
-     * their live container inventories on the mechanism ({@code inst.storages} is empty for them — storage is
-     * put there only by the native spawn block and by recovery, which no-ops for delegated ships); native ships
-     * hold them in {@code inst.storages}. Iterating the mechanism here also covers cannon-ammo dispenser blocks,
-     * which are ordinary storage blocks. Without this a delegated ship's cargo is silently discarded on death.
-     */
-    private List<Inventory> storagesToDrop() {
-        if (mechanism != null) {
-            List<Inventory> out = new ArrayList<>();
-            int n = mechanism.blockCount();
-            for (int i = 0; i < n; i++) {
-                Inventory inv = mechanism.getStorage(i);
-                if (inv != null) out.add(inv);
-            }
-            return out;
-        }
-        return new ArrayList<>(storages.values());
-    }
-
-    /**
-     * The live collider shulker entities for this ship, regardless of engine (mechanism colliders for a
-     * delegated ship, {@code inst.colliders} carriers for a native ship). Used for lead-drop and explosion
-     * placement on death so a delegated ship (whose {@code inst.colliders} is empty) is handled.
-     */
-    private List<org.bukkit.entity.Entity> colliderEntitiesForDrop() {
-        List<org.bukkit.entity.Entity> out = new ArrayList<>();
-        if (mechanism != null) {
-            int n = mechanism.blockCount();
-            for (int i = 0; i < n; i++) {
-                Shulker s = mechanism.colliderEntity(i);
-                if (s != null) out.add(s);
-            }
-        } else {
-            for (CollisionBox cb : colliders) {
-                if (cb.entity != null) out.add(cb.entity);
-            }
-        }
-        return out;
-    }
-
-    /**
      * Destroys the ship and drops the appropriate item at the ship's location.
      * For custom ships (block assembly), drops a ship wheel item.
      * For prefab ships, drops a ship kit with customization data.
@@ -2297,19 +2256,19 @@ public class ShipInstance {
                 explosionLocations.add(vehicle.getLocation().clone()); // Always include root/wheel location
 
                 java.util.Random random = new java.util.Random();
-                for (org.bukkit.entity.Entity collider : colliderEntitiesForDrop()) {
-                    if (collider.isValid()) {
+                for (CollisionBox collider : colliders) {
+                    if (collider.entity != null && collider.entity.isValid()) {
                         if (random.nextDouble() < 0.2) { // 20% chance
-                            explosionLocations.add(collider.getLocation().clone());
+                            explosionLocations.add(collider.entity.getLocation().clone());
                         }
                     }
                 }
 
                 if (config.destroyOnDeath) {
                     // Full destruction: blocks are lost, only stored items drop
-                    // Drop inventory contents (chests, barrels, etc.). Engine-agnostic: a delegated ship's
-                    // storage lives on the mechanism, not the empty inst.storages map.
-                    for (Inventory storage : storagesToDrop()) {
+                    // Drop inventory contents (chests, barrels, etc.).
+                    for (Map.Entry<Integer, Inventory> storageEntry : storages.entrySet()) {
+                        Inventory storage = storageEntry.getValue();
                         for (ItemStack item : storage.getContents()) {
                             if (item != null && !item.getType().isAir()) {
                                 world.dropItemNaturally(dropLocation, item);
@@ -2342,14 +2301,14 @@ public class ShipInstance {
                     // Drop lead items for any entities leashed to ship shulkers.
                     // In disassemble mode, transferLeadsFromShip() preserves leads by moving them to
                     // fence posts. Here we just drop the lead items so players don't lose them silently.
-                    for (org.bukkit.entity.Entity holder : colliderEntitiesForDrop()) {
-                        if (!holder.isValid()) continue;
-                        for (org.bukkit.entity.Entity nearby : holder.getWorld().getNearbyEntities(
-                                holder.getLocation(), 12, 12, 12,
+                    for (CollisionBox cb : colliders) {
+                        if (cb.entity == null || !cb.entity.isValid()) continue;
+                        for (org.bukkit.entity.Entity nearby : cb.entity.getWorld().getNearbyEntities(
+                                cb.entity.getLocation(), 12, 12, 12,
                                 e -> e instanceof io.papermc.paper.entity.Leashable l
                                         && l.isLeashed()
-                                        && holder.equals(l.getLeashHolder()))) {
-                            world.dropItemNaturally(holder.getLocation(),
+                                        && cb.entity.equals(l.getLeashHolder()))) {
+                            world.dropItemNaturally(cb.entity.getLocation(),
                                     new ItemStack(org.bukkit.Material.LEAD));
                             // Detach the leash to prevent Paper's tickLeash from dropping a second lead
                             // when the shulker holder is removed by destroy()
@@ -2389,10 +2348,9 @@ public class ShipInstance {
         }
 
         // Prefab ships (or fallback for custom ships if disassembly failed):
-        // Drop all inventory contents first. Engine-agnostic: a delegated ship's storage lives on the
-        // mechanism, not the empty inst.storages map.
+        // Drop all inventory contents first
         if (world != null) {
-            for (Inventory storage : storagesToDrop()) {
+            for (Inventory storage : storages.values()) {
                 for (ItemStack item : storage.getContents()) {
                     if (item != null && !item.getType().isAir()) {
                         world.dropItemNaturally(dropLocation, item);

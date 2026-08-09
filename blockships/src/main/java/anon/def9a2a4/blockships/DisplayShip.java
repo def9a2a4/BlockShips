@@ -634,7 +634,10 @@ public class DisplayShip implements Listener {
         ShipModel model = loadModelForState(state);
         if (model == null) {
             plugin.getLogger().warning("Could not load model for ship " + shipId);
-            failedRecoveryThisEvent.add(shipId);
+            // Permanent failure: count toward give-up (prefab still drops its kit item without a model).
+            if (!maybeGiveUpOnRecovery(world, shipId, vehicle, state, null)) {
+                failedRecoveryThisEvent.add(shipId);
+            }
             return;
         }
 
@@ -642,7 +645,10 @@ public class DisplayShip implements Listener {
         ShipInstance ship = ShipInstance.fromState(plugin, state, model);
         if (ship == null) {
             plugin.getLogger().warning("Failed to create ShipInstance for " + shipId);
-            failedRecoveryThisEvent.add(shipId);
+            // Permanent failure: count toward give-up (model is available, so custom ships disassemble).
+            if (!maybeGiveUpOnRecovery(world, shipId, vehicle, state, model)) {
+                failedRecoveryThisEvent.add(shipId);
+            }
             return;
         }
 
@@ -658,6 +664,7 @@ public class DisplayShip implements Listener {
 
         // Register and update chunk index
         ShipRegistry.register(ship);
+        shipWorldData.clearRecoveryFailure(world, shipId);  // success: reset any accumulated give-up count
         Location loc = vehicle.getLocation();
         shipWorldData.addToChunkIndex(world, shipId, loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
         shipWorldData.saveAllChunkIndices();
@@ -667,6 +674,77 @@ public class DisplayShip implements Listener {
         } else {
             plugin.getLogger().info("Ship " + shipId + " recovered from moved location at " + chunk.getX() + "," + chunk.getZ());
         }
+    }
+
+    /**
+     * Records a permanent recovery failure and, once the configured threshold is reached, gives up
+     * on the ship by restoring it (prefab -> kit item, custom -> world blocks, corrupt custom ->
+     * wheel item) and reaping its leftover entities/metadata. Returns true if it gave up (the ship
+     * is gone), false if it should keep retrying.
+     */
+    private boolean maybeGiveUpOnRecovery(World world, UUID shipId, ArmorStand vehicle, ShipPersistence.ShipState state, ShipModel model) {
+        int count = shipWorldData.bumpRecoveryFailure(world, shipId);
+        if (recoveryGiveUpAfter < 0 || count < recoveryGiveUpAfter) {
+            return false;
+        }
+        giveUpRecovery(world, shipId, vehicle, state, model, count);
+        return true;
+    }
+
+    /**
+     * Restores a ship BlockShips has given up recovering, then reaps its entities and metadata.
+     * Prefab ships drop their kit item; custom ships are disassembled back into world blocks (or,
+     * if their model is corrupt, drop the ship wheel). Mirrors {@code ShipInstance.destroyAndDropItem}.
+     */
+    private void giveUpRecovery(World world, UUID shipId, ArmorStand vehicle, ShipPersistence.ShipState state, ShipModel model, int count) {
+        Location loc = vehicle.getLocation();
+        boolean custom = "custom".equals(state.shipType);
+        String action;
+        try {
+            if (!custom) {
+                // Prefab: not player-placed blocks -> drop the kit item (no model required).
+                ItemStack kit = createShipKit(state.shipType, null, state.woodType, plugin);
+                world.dropItemNaturally(loc, kit);
+                action = "dropped kit item";
+            } else if (model != null) {
+                // Custom, model available: disassemble back into world blocks. We skip alignToGrid (no
+                // live instance), so pre-floor the anchor and snap yaw to the nearest 90 degrees.
+                Location anchor = loc.getBlock().getLocation();
+                float yaw = snapYawTo90(state.yaw);
+                anon.def9a2a4.blockships.customships.BlockStructureScanner.placeBlocks(anchor, model, yaw, true, null, false);
+                action = "disassembled into world blocks";
+            } else {
+                // Custom with corrupt model: no blocks to place and no kit item -> drop the wheel.
+                world.dropItemNaturally(loc, createShipWheelItem());
+                action = "dropped ship wheel (corrupt model)";
+            }
+        } catch (Throwable t) {
+            plugin.getLogger().log(java.util.logging.Level.SEVERE,
+                "Give-up restore threw for ship " + shipId + " - reaping entities anyway", t);
+            action = "restore failed";
+        }
+
+        // Reap leftover entities: ship.destroy()'s entity lists are unreliable without full recovery,
+        // so sweep by tag (matches the recovery scan and /blockships killentities).
+        String shipTag = ShipTags.shipTag(shipId);
+        for (Entity e : world.getEntities()) {
+            for (String tag : e.getScoreboardTags()) {
+                if (tag.startsWith(shipTag)) {
+                    e.remove();
+                    break;
+                }
+            }
+        }
+        shipWorldData.removeShip(world, shipId);
+        shipWorldData.saveAllChunkIndices();
+
+        plugin.getLogger().warning("Ship " + shipId + " gave up after " + count + " failed recoveries - " + action
+            + " at " + loc.getWorld().getName() + " " + loc.getBlockX() + "," + loc.getBlockY() + "," + loc.getBlockZ());
+    }
+
+    private static float snapYawTo90(float yaw) {
+        if (Float.isNaN(yaw)) return 0f;
+        return Math.round(yaw / 90f) * 90f;
     }
 
     /**
