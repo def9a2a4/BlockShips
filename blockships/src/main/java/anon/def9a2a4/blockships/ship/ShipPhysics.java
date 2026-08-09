@@ -498,46 +498,6 @@ public class ShipPhysics {
     }
 
     /**
-     * Finds players standing on this ship's shulkers.
-     * @return Map of player to the shulker they're standing on
-     */
-    public Map<Player, Shulker> findPlayersOnDeck() {
-        Map<Player, Shulker> playersOnDeck = new HashMap<>();
-        Location loc = ship.vehicle.getLocation();
-        String shipTag = ShipTags.shipTag(ship.id);
-
-        for (Player player : loc.getWorld().getPlayers()) {
-            if (player.getLocation().distance(loc) > 32) continue;
-
-            for (Entity nearby : player.getNearbyEntities(2, 2, 2)) {
-                if (!(nearby instanceof Shulker shulker)) continue;
-                if (!shulker.getScoreboardTags().contains(shipTag)) continue;
-
-                org.bukkit.util.BoundingBox playerBox = player.getBoundingBox();
-                org.bukkit.util.BoundingBox shulkerBox = shulker.getBoundingBox();
-
-                double playerFeetY = playerBox.getMinY();
-                double shulkerTopY = shulkerBox.getMaxY();
-
-                boolean withinHorizontalBounds =
-                    playerBox.getMinX() < shulkerBox.getMaxX() &&
-                    playerBox.getMaxX() > shulkerBox.getMinX() &&
-                    playerBox.getMinZ() < shulkerBox.getMaxZ() &&
-                    playerBox.getMaxZ() > shulkerBox.getMinZ();
-
-                boolean onTop = playerFeetY >= shulkerTopY - 0.1 && playerFeetY <= shulkerTopY + 0.3;
-
-                if (withinHorizontalBounds && onTop) {
-                    playersOnDeck.put(player, shulker);
-                    break;
-                }
-            }
-        }
-
-        return playersOnDeck;
-    }
-
-    /**
      * Delegated (defCoreLib) analogue of {@link #findPlayersOnDeck()}. defCoreLib owns the colliders, so
      * the native {@code colliders} list is empty and the shulkers carry {@code corelib:mech:} tags rather
      * than {@code shipTag}. Detects deck standers against the mechanism's collider boxes instead, using the
@@ -643,39 +603,5 @@ public class ShipPhysics {
             collisionForce.set(0, 0, 0);
             return;
         }
-
-        // Find players standing on deck BEFORE moving
-        Map<Player, Shulker> playersOnDeck = findPlayersOnDeck();
-
-        // Set the new aligned location (update vehicle yaw - ship is stationary,
-        // so no byte-precision jitter risk, and cardinal angles map exactly to bytes)
-        Location aligned = new Location(loc.getWorld(), x, y, z, snappedYaw, snappedPitch);
-        TeleportCompat.teleport(ship.vehicle, aligned);
-
-        // Update collision positions immediately
-        ship.updateCollisionPositions();
-
-        // Teleport players to their shulker's new position
-        for (Map.Entry<Player, Shulker> entry : playersOnDeck.entrySet()) {
-            Player player = entry.getKey();
-            Shulker shulker = entry.getValue();
-            Location shulkerLoc = shulker.getLocation();
-            Location playerLoc = player.getLocation();
-            player.teleport(new Location(
-                shulkerLoc.getWorld(),
-                shulkerLoc.getX(),
-                shulker.getBoundingBox().getMaxY() + ship.config.assemblyNudgeHeight,
-                shulkerLoc.getZ(),
-                playerLoc.getYaw(),
-                playerLoc.getPitch()
-            ));
-        }
-
-        // Reset velocity and rotation
-        ship.vehicle.setVelocity(new org.bukkit.util.Vector(0, 0, 0));
-        currentSpeed = 0.0f;
-        currentRotationVelocity = 0.0f;
-        currentYVelocity = 0.0f;
-        collisionForce.set(0, 0, 0);
     }
 }

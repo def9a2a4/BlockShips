@@ -300,10 +300,19 @@ public class DisplayShip implements Listener {
             try {
                 migrateNativeShip(world, shipId, root);
             } catch (Throwable t) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE,
+                logMigrationFailureOnce(shipId, java.util.logging.Level.SEVERE,
                     "Error migrating native ship " + shipId + "; leaving native entities for retry.", t);
             }
         }
+    }
+
+    /** Logs a migration failure at most once per ship (until it migrates), so a permanently-unmigratable ship
+     *  — model/config gone, engine down — doesn't repeat the same warning on every chunk load. Cleared on a
+     *  successful migration so a genuinely-new failure later still surfaces. */
+    private void logMigrationFailureOnce(UUID shipId, java.util.logging.Level level, String msg, Throwable t) {
+        if (!migrationFailureLogged.add(shipId)) return;
+        if (t != null) plugin.getLogger().log(level, msg, t);
+        else plugin.getLogger().log(level, msg);
     }
 
     /** Migrate one native ship (custom or prefab) → delegated, preserving its id. Idempotent: an already-delegated
@@ -335,7 +344,8 @@ public class DisplayShip implements Listener {
         }
         ShipModel model = loadModelForState(state);
         if (model == null) {
-            plugin.getLogger().warning("Cannot migrate ship " + shipId + " (model unavailable); leaving native.");
+            logMigrationFailureOnce(shipId, java.util.logging.Level.WARNING,
+                "Cannot migrate ship " + shipId + " (model unavailable); leaving native.", null);
             return;
         }
         java.util.List<long[]> forced = forceLoadFootprint(world, root.getLocation(), model);
@@ -349,8 +359,8 @@ public class DisplayShip implements Listener {
             java.util.Map<Integer, org.bukkit.inventory.ItemStack[]> cargo = ShipInstance.decodeCargo(state);
             ShipInstance ship = spawnDelegatedFromModel(shipId, state.shipType, model, pose, customization, cargo);
             if (ship == null) {
-                plugin.getLogger().severe("Migration failed for ship " + shipId
-                    + "; native entities left in place for retry on next load.");
+                logMigrationFailureOnce(shipId, java.util.logging.Level.SEVERE,
+                    "Migration failed for ship " + shipId + "; native entities left in place for retry on next load.", null);
                 return;
             }
             ship.finalizeMigration(state);
@@ -360,6 +370,7 @@ public class DisplayShip implements Listener {
             shipWorldData.removeFromChunkIndex(world, shipId, rl.getBlockX() >> 4, rl.getBlockZ() >> 4);
             shipWorldData.saveAllChunkIndices();
             reapNativeEntities(shipId, root);            // AFTER successful migration (ordering is load-bearing)
+            migrationFailureLogged.remove(shipId);       // success: allow a future genuinely-new failure to log again
             plugin.getLogger().info("Migrated native " + state.shipType + " ship " + shipId
                 + " to the delegated engine.");
         } finally {
@@ -1726,8 +1737,8 @@ public class DisplayShip implements Listener {
 
         ShipInstance inst = ShipRegistry.byId(shipId);
         if (inst == null) {
-            // Unregistered native ship: hitting it is a second interaction trigger for recovery
-            // (chunk-load only fires on the load transition), mirroring the shulker-click hook.
+            // Unregistered native ship: hitting it triggers migration to the delegated engine
+            // (chunk-load only fires on the load transition), like the shulker-click hook.
             inst = attemptInteractionMigration(shipId, shulker);
             if (inst == null) return;   // couldn't recover: same no-op as before
         }
@@ -1820,7 +1831,7 @@ public class DisplayShip implements Listener {
 
         ShipInstance inst = ShipRegistry.byId(shipId);
         if (inst == null) {
-            // Unregistered native ship: a projectile hit is a third recovery trigger (like click/melee).
+            // Unregistered native ship: a projectile hit triggers migration too (like click/melee).
             inst = attemptInteractionMigration(shipId, shulker);
             if (inst == null) return;
         }
