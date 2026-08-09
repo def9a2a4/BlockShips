@@ -102,12 +102,8 @@ public class DisplayShip implements Listener {
         // Load chunk indices from per-world storage
         shipWorldData.loadAllChunkIndices();
 
-        // Check for legacy ships.yml and migrate if needed
-        if (persistence.hasLegacyData()) {
-            migrateLegacyShipData();
-        }
-
-        // Scan loaded chunks for unregistered ships (handles spawn chunks, server restart)
+        // Migrate any native ships in already-loaded chunks (spawn chunks) + reap stragglers. Delegated ships
+        // recover via defCoreLib's forced recovery + recovered MechanismAssembleEvent.
         recoverUnregisteredShips();
 
         // Start periodic save task for ships in always-loaded chunks (spawn chunks)
@@ -126,99 +122,6 @@ public class DisplayShip implements Listener {
                 reapStragglerEntities(world, chunk);
             }
         }
-    }
-
-    /**
-     * Scans a chunk for ship root entities that aren't registered and recovers them.
-     * @return Number of ships recovered
-     */
-    private int recoverUnregisteredShipsInChunk(org.bukkit.Chunk chunk) {
-        int recovered = 0;
-
-        for (Entity entity : chunk.getEntities()) {
-            if (!(entity instanceof ArmorStand)) continue;
-
-            Set<String> tags = entity.getScoreboardTags();
-            UUID shipId = null;
-            boolean isRoot = false;
-
-            // Look for root tag: "displayship:{uuid}:root"
-            for (String tag : tags) {
-                if (tag.startsWith(ShipTags.SHIP_PREFIX) && tag.endsWith(":root")) {
-                    String idPart = tag.substring(ShipTags.SHIP_PREFIX.length(), tag.length() - 5);
-                    try {
-                        shipId = UUID.fromString(idPart);
-                        isRoot = true;
-                        break;
-                    } catch (IllegalArgumentException e) {
-                        continue;
-                    }
-                }
-            }
-
-            if (!isRoot || shipId == null) continue;
-            if (ShipRegistry.byId(shipId) != null) continue;  // Already registered
-
-            // Check if this ship is already being recovered (prevent concurrent recovery)
-            if (!shipsBeingRecovered.add(shipId)) {
-                continue;
-            }
-
-            try {
-                // Found unregistered ship root - check if we have saved metadata
-                ShipPersistence.ShipState state = shipWorldData.loadShipMetadata(chunk.getWorld(), shipId);
-
-                if (state == null) {
-                    // No metadata - can't recover without knowing ship type
-                    plugin.getLogger().warning("Found orphaned ship root " + shipId + " with no metadata - cannot recover");
-                    continue;
-                }
-
-                // Delegated ships (custom OR prefab, P7.C) are recovered by defCoreLib (recovered
-                // MechanismAssembleEvent → reconstructDelegatedShip), NOT by native recovery — their entities
-                // have no native parent BlockDisplay, so native recoverEntities would fail. Skip; corelib owns
-                // them. A delegated ship's root ArmorStand carries a corelib:mech tag (delegated prefab keeps
-                // the same shipType as native prefab, so key off the tag, not the type).
-                if ("custom".equals(state.shipType) || ShipTags.isCorelibTagged(entity.getScoreboardTags())) continue;
-
-                // Load model and recover
-                ShipModel model = loadModelForState(state);
-                if (model == null) {
-                    plugin.getLogger().warning("Failed to load model for orphaned ship " + shipId);
-                    continue;
-                }
-
-                ShipInstance ship = ShipInstance.fromState(plugin, state, model);
-                if (ship == null) {
-                    plugin.getLogger().warning("Failed to create ShipInstance for orphaned ship " + shipId);
-                    continue;
-                }
-
-                if (ship.recoverEntities(chunk)) {
-                    // A5: migrate a fully-recovered native prefab ship to delegated before registering it.
-                    ShipInstance migrated = convertNativeToDelegated(ship, state);
-                    if (migrated != null) { recovered++; continue; }
-
-                    ShipRegistry.register(ship);
-
-                    // Ensure ship is in chunk index
-                    Location loc = ship.vehicle.getLocation();
-                    shipWorldData.addToChunkIndex(chunk.getWorld(), ship.id,
-                        loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
-                    shipWorldData.saveAllChunkIndices();
-
-                    plugin.getLogger().info("Recovered unregistered ship " + shipId + " in chunk " + chunk.getX() + "," + chunk.getZ());
-                    recovered++;
-                }
-            } catch (Exception e) {
-                // Never let one bad ship abort recovery of the rest of the startup sweep.
-                plugin.getLogger().warning("Failed to recover ship " + shipId + ", skipping: " + e.getMessage());
-            } finally {
-                shipsBeingRecovered.remove(shipId);
-            }
-        }
-
-        return recovered;
     }
 
     /**
@@ -242,51 +145,6 @@ public class DisplayShip implements Listener {
                 shipWorldData.saveAllChunkIndicesAsync();
             }
         }.runTaskTimer(plugin, 20L * 60, 20L * 60);  // Every 60 seconds
-    }
-
-    public void loadShips() {
-        persistence.loadAll();
-    }
-
-    public void saveShips() {
-        persistence.saveAll();
-    }
-
-    /**
-     * Migrates ship data from legacy ships.yml to per-world YAML storage.
-     * This is a one-time migration that runs when the plugin detects ships.yml exists.
-     */
-    private void migrateLegacyShipData() {
-        plugin.getLogger().info("Migrating ship data from ships.yml to per-world storage...");
-
-        // Load all ships using the old persistence system
-        // This spawns them as entities with fresh references
-        persistence.loadAll();
-
-        int migrated = 0;
-        for (ShipInstance ship : ShipRegistry.getAllShips()) {
-            Location loc = ship.vehicle.getLocation();
-            World world = loc.getWorld();
-            if (world == null) continue;
-
-            // Save ship metadata to per-world storage
-            shipWorldData.saveShipMetadata(ship);
-
-            // Add to chunk index
-            int chunkX = loc.getBlockX() >> 4;
-            int chunkZ = loc.getBlockZ() >> 4;
-            shipWorldData.addToChunkIndex(world, ship.id, chunkX, chunkZ);
-
-            migrated++;
-        }
-
-        // Save all chunk indices to disk
-        shipWorldData.saveAllChunkIndices();
-
-        // Delete the old ships.yml file
-        persistence.clear();
-
-        plugin.getLogger().info("Migration complete: " + migrated + " ships migrated to per-world storage");
     }
 
     public void reload() {
