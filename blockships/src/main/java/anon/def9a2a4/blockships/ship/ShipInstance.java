@@ -275,9 +275,11 @@ public class ShipInstance {
             .build();
     }
 
-    /** Restore persisted block-storage inventories into {@code instance.storages}. Shared by the native and
-     *  delegated recovery paths. (Storage delegation to {@code Mechanism.getStorage} is a later Track-C item;
-     *  recovery keeps the battle-tested sidecar restore to avoid regression.) */
+    /** Restore persisted block-storage inventory contents. Shared by the native and delegated recovery/migration
+     *  paths. For a DELEGATED ship (mechanism != null) storage is mechanism-owned (built empty by
+     *  {@code createTypedInventory} at assembly), so overlay saved contents ONTO {@code mechanism.getStorage(i)} —
+     *  {@code instance.storages} stays empty and the interaction/drop paths read the mechanism. For a NATIVE ship
+     *  create the inventory into {@code instance.storages} as before. */
     private static void restoreInventoriesFromState(JavaPlugin plugin, ShipInstance instance,
                                                     ShipPersistence.ShipState state, ShipModel model) {
         if (state.inventoryData.isEmpty()) return;
@@ -298,13 +300,21 @@ public class ShipInstance {
                 if (blockIdx < model.parts.size()) {
                     ShipModel.ModelPart part = model.parts.get(blockIdx);
                     if (part.storage != null) {
-                        Inventory storage = createStorageInventory(part.storage,
-                            part.rawYaml.get("custom_name") instanceof String cns ? cns : null);
+                        Inventory storage;
+                        if (instance.mechanism != null) {
+                            // Delegated: overlay onto the mechanism's inventory (do NOT create into instance.storages,
+                            // which is dead for delegated ships). Null = model/mechanism index mismatch; skip.
+                            storage = instance.mechanism.getStorage(blockIdx);
+                            if (storage == null) continue;
+                        } else {
+                            storage = createStorageInventory(part.storage,
+                                part.rawYaml.get("custom_name") instanceof String cns ? cns : null);
+                            instance.storages.put(blockIdx, storage);
+                        }
                         // Cap to the inventory size: `items` is sized from the persisted
                         // token count, which can exceed the (possibly changed) storage size.
                         storage.setContents(java.util.Arrays.copyOf(items,
                             java.lang.Math.min(items.length, storage.getSize())));
-                        instance.storages.put(blockIdx, storage);
                     }
                 }
             } catch (Exception e) {

@@ -5,6 +5,7 @@ import anon.def9a2a4.blockships.customships.ShipWheelManager;
 import anon.def9a2a4.blockships.customships.ShipWheelMenu;
 import anon.def9a2a4.blockships.util.AttributeCompat;
 import anon.def9a2a4.blockships.ship.CollisionBox;
+import anon.def9a2a4.blockships.ship.CustomShipRender;
 import anon.def9a2a4.blockships.ship.ShipInstance;
 import org.bukkit.*;
 import org.bukkit.block.Block;
@@ -84,17 +85,7 @@ public class DisplayShip implements Listener {
         // nothing is extracted to disk.
 
         // Recovery give-up threshold: "none" (disabled) or an attempt count.
-        String giveUpRaw = plugin.getConfig().getString("recovery.give-up-after", "none");
-        if ("none".equalsIgnoreCase(giveUpRaw)) {
-            recoveryGiveUpAfter = -1;
-        } else {
-            try {
-                recoveryGiveUpAfter = Integer.parseInt(giveUpRaw.trim());
-            } catch (NumberFormatException e) {
-                plugin.getLogger().warning("Invalid recovery.give-up-after '" + giveUpRaw + "' - using 'none' (never give up)");
-                recoveryGiveUpAfter = -1;
-            }
-        }
+        loadRecoveryConfig();
 
         // Load item textures from items.yml
         textureManager.load();
@@ -206,6 +197,10 @@ public class DisplayShip implements Listener {
                 }
 
                 if (ship.recoverEntities(chunk)) {
+                    // A5: migrate a fully-recovered native prefab ship to delegated before registering it.
+                    ShipInstance migrated = convertNativeToDelegated(ship, state);
+                    if (migrated != null) { recovered++; continue; }
+
                     ShipRegistry.register(ship);
 
                     // Ensure ship is in chunk index
@@ -300,7 +295,23 @@ public class DisplayShip implements Listener {
         textureManager.reload();
         loadShipModels();
         registerRecipes();
+        loadRecoveryConfig();
         plugin.getLogger().info("DisplayShip reloaded with " + shipModels.size() + " ship type(s)");
+    }
+
+    /** Parses recovery.give-up-after ("none" = disabled, else an attempt count). Called on enable and reload. */
+    private void loadRecoveryConfig() {
+        String giveUpRaw = plugin.getConfig().getString("recovery.give-up-after", "none");
+        if ("none".equalsIgnoreCase(giveUpRaw)) {
+            recoveryGiveUpAfter = -1;
+        } else {
+            try {
+                recoveryGiveUpAfter = Integer.parseInt(giveUpRaw.trim());
+            } catch (NumberFormatException e) {
+                plugin.getLogger().warning("Invalid recovery.give-up-after '" + giveUpRaw + "' - using 'none' (never give up)");
+                recoveryGiveUpAfter = -1;
+            }
+        }
     }
 
     private void loadShipModels() {
@@ -468,6 +479,10 @@ public class DisplayShip implements Listener {
                                 // MechanismAssembleEvent (reconstructDelegatedShip), not native recovery. Skip.
                                 if ("custom".equals(state.shipType)) continue;
 
+                                // A5: a migrated (delegated) prefab keeps its prefab shipType, but its entities are
+                                // corelib-tagged and owned by defCoreLib's recovery — skip native recovery for it.
+                                if (chunkHasCorelibEntity(chunk, shipId)) continue;
+
                                 // Count entities in this chunk only
                                 int entitiesInChunk = countEntitiesInChunk(chunk, shipId);
                                 if (entitiesInChunk == 0) {
@@ -507,6 +522,9 @@ public class DisplayShip implements Listener {
                                     failedRecovery.add(shipId);
                                     continue;
                                 }
+
+                                // A5: migrate a fully-recovered native prefab ship to delegated before registering.
+                                if (convertNativeToDelegated(ship, state) != null) continue;
 
                                 ShipRegistry.register(ship);
 
@@ -659,6 +677,12 @@ public class DisplayShip implements Listener {
         if (!ship.recoverEntities(chunk)) {
             plugin.getLogger().warning("Failed to recover ship " + shipId + " from vehicle - will retry on next chunk load");
             failedRecoveryThisEvent.add(shipId);
+            return;
+        }
+
+        // A5: migrate a fully-recovered native prefab ship to delegated before registering it.
+        if (convertNativeToDelegated(ship, state) != null) {
+            shipWorldData.clearRecoveryFailure(world, shipId);
             return;
         }
 
@@ -821,6 +845,69 @@ public class DisplayShip implements Listener {
                 return null;
             }
         }
+    }
+
+    /**
+     * A5: convert a freshly-recovered, fully-recovered, NOT-yet-registered NATIVE prefab ship into a delegated
+     * defCoreLib mechanism in place — same id, pose, customization, and cargo. Returns the delegated (registered +
+     * chunk-indexed) ShipInstance on success, or null to mean "leave it native" (the caller then registers the
+     * native ship as usual, entities intact). MUST be called before the native ship is registered, because
+     * assembleFromParts requires the id not be live ({@link ShipRegistry#byId} null).
+     *
+     * <p>Order (assemble-before-teardown): capture → assemble delegated (with cargo) + persist → rewrite the
+     * sidecar from the (empty-storages) delegated ship so its {@code inventoryData} is cleared and the mechanism
+     * becomes the single cargo source → destroy the native entities → register + index the delegated ship. A crash
+     * before persist leaves the native ship fully intact (sidecar untouched); a crash after persist but before the
+     * native teardown leaves recoverable delegated state plus (harmless, cosmetic) leftover native entities that a
+     * later load resolves.
+     */
+    private ShipInstance convertNativeToDelegated(ShipInstance nativeShip, ShipPersistence.ShipState state) {
+        if (!plugin.getConfig().getBoolean("ships.migrate-native", true)) return null;
+        if (nativeShip.mechanism != null) return null;              // already delegated
+        if ("custom".equals(nativeShip.shipType)) return null;      // custom ships are delegated via ShipWheelManager
+        if (!nativeShip.isRecoveryComplete()) return null;          // only convert a fully-recovered ship
+        ShipModel model = loadModelForState(state);
+        if (model == null) return null;
+        if (!model.rotationTransform.equals(new org.joml.Matrix3f())) return null; // Y-axis mechanism can't render it
+
+        java.util.UUID id = nativeShip.id;
+        World world = nativeShip.vehicle.getWorld();
+        // Capture everything BEFORE teardown.
+        Location pose = nativeShip.vehicle.getLocation().clone();
+        pose.setYaw((float) nativeShip.physics.currentYaw);
+        ShipCustomization customization = nativeShip.customization;
+        java.util.Map<Integer, org.bukkit.inventory.ItemStack[]> cargo = new java.util.HashMap<>();
+        for (java.util.Map.Entry<Integer, org.bukkit.inventory.Inventory> e : nativeShip.storages.entrySet()) {
+            cargo.put(e.getKey(), e.getValue().getContents().clone());
+        }
+
+        // Assemble the delegated ship FIRST (its id is free — native isn't registered), loading cargo pre-persist.
+        ShipInstance delegated = spawnDelegatedFromModel(id, nativeShip.shipType, model, pose, customization, cargo);
+        if (delegated == null) return null; // assembly refused/failed → keep the native ship
+
+        // Rewrite the sidecar from the delegated ship: its inst.storages is empty → inventoryData is cleared, so
+        // the mechanism (persisted by defCoreLib) is the single source of truth for cargo (no divergent copy).
+        shipWorldData.saveShipMetadata(delegated);
+        // Tear down the old native entities (root/displays/colliders); destroy() leaves the sidecar + chunk index.
+        try { nativeShip.destroy(); } catch (Throwable ignored) {}
+
+        ShipRegistry.register(delegated);
+        Location loc = delegated.vehicle.getLocation();
+        shipWorldData.addToChunkIndex(world, id, loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
+        shipWorldData.saveAllChunkIndices();
+        plugin.getLogger().info("Migrated native prefab ship " + id + " to a delegated mechanism");
+        return delegated;
+    }
+
+    /** A5: true if the chunk holds an entity belonging to corelib mechanism {@code shipId} — i.e. the ship is
+     *  already delegated (migrated or native-never), so native recovery must skip it (mirrors the per-entity
+     *  guard used by recoverUnregisteredShipsInChunk). */
+    private boolean chunkHasCorelibEntity(org.bukkit.Chunk chunk, UUID shipId) {
+        for (Entity e : chunk.getEntities()) {
+            Set<String> tags = e.getScoreboardTags();
+            if (ShipTags.isCorelibTagged(tags) && shipId.equals(ShipTags.extractShipId(tags))) return true;
+        }
+        return false;
     }
 
     // ----- Delegated (defCoreLib) ship recovery (M5) -----
@@ -1394,10 +1481,34 @@ public class DisplayShip implements Listener {
      */
     private ShipInstance spawnDelegatedPrefab(String shipType, ShipModel model, Location spawnAt,
                                               ShipCustomization customization) {
-        // A Y-axis mechanism cannot render a non-identity rotation-matrix (holds for all current models).
+        return spawnDelegatedFromModel(null, shipType, model, spawnAt, customization);
+    }
+
+    /**
+     * Spawn a ship as a DELEGATED defCoreLib mechanism (block-free assembly) from a {@link ShipModel} + pose. Shared
+     * by the fresh prefab kit spawn ({@code id == null} → a random mechanism id) and the native→delegated migration
+     * ({@code id != null} → the mechanism keeps the original ship id via defCoreLib's id-preserving overload). Builds
+     * a {@code PartSpec} list — prefab models via {@link #buildPrefabParts}, custom (player-built) models via
+     * {@link #buildCustomParts} — assembles a driven block-free mechanism, and wraps it in a delegated
+     * {@link ShipInstance}. Returns {@code null} on failure (the caller decides fallback/retry).
+     */
+    private ShipInstance spawnDelegatedFromModel(java.util.UUID id, String shipType, ShipModel model, Location pose,
+                                                 ShipCustomization customization) {
+        return spawnDelegatedFromModel(id, shipType, model, pose, customization, null);
+    }
+
+    /** As above, plus an optional {@code cargo} map (block index → ItemStack[]) loaded into the mechanism's
+     *  storage BEFORE it is persisted — used by the native→delegated migration to carry a native ship's captured
+     *  chest contents across (block index i == model.parts index i == mechanism block index i). */
+    private ShipInstance spawnDelegatedFromModel(java.util.UUID id, String shipType, ShipModel model, Location pose,
+                                                 ShipCustomization customization,
+                                                 java.util.Map<Integer, org.bukkit.inventory.ItemStack[]> cargo) {
+        boolean custom = "custom".equals(shipType);
+        // A Y-axis mechanism cannot render a non-identity rotation-matrix. Custom models are always identity
+        // (BlockStructureScanner); prefab models could in principle carry one (none shipped do).
         if (!model.rotationTransform.equals(new org.joml.Matrix3f())) {
-            plugin.getLogger().warning("Delegated prefab " + shipType + ": non-identity rotation-matrix "
-                + "unsupported by the Y-axis mechanism; using native engine.");
+            plugin.getLogger().warning("Delegated " + shipType + ": non-identity rotation-matrix unsupported by the "
+                + "Y-axis mechanism; skipping delegation.");
             return null;
         }
         anon.def9a2a4.corelib.MechanismRegistry reg =
@@ -1406,7 +1517,7 @@ public class DisplayShip implements Listener {
         // Vehicle: full-size ArmorStand (rideOffset 1.975 applies), entity yaw FORCED to 0 so display
         // passengers don't double-rotate by the heading (heading rides the mechanism transform). The
         // delegated ShipInstance ctor adds the ship-root tag + health.
-        ArmorStand vehicle = spawnAt.getWorld().spawn(spawnAt.clone(), ArmorStand.class, as -> {
+        ArmorStand vehicle = pose.getWorld().spawn(pose.clone(), ArmorStand.class, as -> {
             as.setInvisible(true);
             as.setGravity(false);
             as.setSilent(true);
@@ -1420,20 +1531,37 @@ public class DisplayShip implements Listener {
         anon.def9a2a4.corelib.Mechanism mechanism = null;
         ShipInstance ship = null;
         try {
-            mechanism = reg.assembleFromParts("blockship:prefab", buildPrefabParts(model, customization),
-                vehicle, anon.def9a2a4.corelib.MechanismRegistry.ARMORSTAND_RIDE_OFFSET);
-            ship = new ShipInstance(plugin, shipType, model, spawnAt, customization, vehicle, mechanism);
+            String type = custom ? "blockship:custom" : "blockship:prefab";
+            java.util.List<anon.def9a2a4.corelib.MechanismRegistry.PartSpec> specs =
+                custom ? buildCustomParts(model) : buildPrefabParts(model, customization);
+            float rideOffset = anon.def9a2a4.corelib.MechanismRegistry.ARMORSTAND_RIDE_OFFSET;
+            mechanism = (id != null)
+                ? reg.assembleFromParts(id, type, specs, vehicle, rideOffset)
+                : reg.assembleFromParts(type, specs, vehicle, rideOffset);
+            ship = new ShipInstance(plugin, shipType, model, pose, customization, vehicle, mechanism);
             ship.adoptMechanismSeats();
-            // Leadable: wire the single leadable shulker from its model-part collider (prefab convenience;
-            // the interaction handler's per-collider model-part fallback covers the general case).
+            // Leadable: wire the single leadable shulker from its model-part collider (convenience; the
+            // interaction handler's per-collider model-part fallback covers the general case).
             for (int i = 0; i < model.parts.size(); i++) {
                 if (Boolean.TRUE.equals(model.parts.get(i).rawYaml.get("leadable"))) {
                     ship.leadableShulker = mechanism.colliderEntity(i);
                     break;
                 }
             }
+            // Migration: load carried-over native cargo into the freshly assembled (empty) typed inventories
+            // BEFORE persist, so defCoreLib snapshots the contents. Without this, migration would spawn empty
+            // chests and the native cargo would be lost.
+            if (cargo != null) {
+                for (java.util.Map.Entry<Integer, org.bukkit.inventory.ItemStack[]> e : cargo.entrySet()) {
+                    org.bukkit.inventory.Inventory inv = mechanism.getStorage(e.getKey());
+                    org.bukkit.inventory.ItemStack[] items = e.getValue();
+                    if (inv != null && items != null) {
+                        inv.setContents(java.util.Arrays.copyOf(items, inv.getSize()));
+                    }
+                }
+            }
             reg.persist(mechanism); // crash-safe: survives restart + chunk reload via the M5 path
-            ship.applyInitialDrivenPose(); // render the placement heading on frame 1 (no one-tick yaw flash)
+            ship.applyInitialDrivenPose(); // render the heading on frame 1 (no one-tick yaw flash)
         } catch (Throwable t) {
             // Rollback. assembleFromParts BORROWS the vehicle (ownsVehicle=false), so mechanism.destroy() only
             // strips the vehicle's tag and leaves the ArmorStand alive — the final unconditional remove kills it.
@@ -1443,10 +1571,58 @@ public class DisplayShip implements Listener {
             if (ship != null)      { try { ship.destroy();      } catch (Throwable ignored) {} }
             if (vehicle.isValid()) vehicle.remove();
             plugin.getLogger().log(java.util.logging.Level.SEVERE,
-                "Delegated prefab assembly failed for " + shipType + "; using native engine.", t);
+                "Delegated assembly failed for " + shipType + ".", t);
             return null;
         }
         return ship;
+    }
+
+    /** Translate a CUSTOM (player-built) {@link ShipModel} into a defCoreLib PartSpec list. Mirrors the native
+     *  custom display loop: block parts carry their FULL persisted BlockData ({@code part.block}, so stairs/logs/
+     *  slabs/doors keep their state) with a {@code display_yaw} rotation baked in; heads/skulls and banners become
+     *  ItemDisplay parts (via {@link CustomShipRender}) with their captured NBT + HEAD/FIXED transform. Parts stay
+     *  in {@code model.parts} order so the block index == collider/seat index. Transforms are vehicle-relative
+     *  ({@code p.local}); the mechanism supplies the ride-offset (== the native customDisplayOffset) and the heading
+     *  (via currentYaw), so no initialRotation/positionOffset/displayOffset is baked in here. */
+    private java.util.List<anon.def9a2a4.corelib.MechanismRegistry.PartSpec> buildCustomParts(ShipModel model) {
+        java.util.List<anon.def9a2a4.corelib.MechanismRegistry.PartSpec> parts = new java.util.ArrayList<>();
+        for (int i = 0; i < model.parts.size(); i++) {
+            ShipModel.ModelPart p = model.parts.get(i);
+            // Collider frame: mirror buildPrefabParts' reconciliation with initialRotation=identity, Po=0.
+            anon.def9a2a4.corelib.CollisionConfig col;
+            if (p.collision.enable) {
+                org.joml.Vector3f l3 = p.local.transformDirection(
+                    new org.joml.Vector3f(1, 1, 1), new org.joml.Vector3f());
+                org.joml.Vector3f off = new org.joml.Vector3f(p.collision.offset).sub(l3.mul(0.5f)).add(0f, 0.5f, 0f);
+                col = new anon.def9a2a4.corelib.CollisionConfig(true, p.collision.size, off);
+            } else {
+                col = anon.def9a2a4.corelib.CollisionConfig.NONE;
+            }
+
+            if (CustomShipRender.isItemDisplayPart(p.rawYaml)) {
+                // Head/skull or banner → ItemDisplay part (no +0.5 corner shift; skull/banner transform applied).
+                org.joml.Matrix4f lt = CustomShipRender.applyDisplayTransform(new org.joml.Matrix4f(p.local), p.rawYaml);
+                parts.add(anon.def9a2a4.corelib.MechanismRegistry.PartSpec.display(
+                    CustomShipRender.buildDisplayItem(p.rawYaml, plugin, i),
+                    CustomShipRender.displayMode(p.rawYaml), lt, col));
+                continue;
+            }
+
+            // Normal block part: full-fidelity BlockData from part.block; +0.5 cancels the BlockDisplay corner
+            // shift; display_yaw (chest-style directional) baked about the block centre before the +0.5.
+            org.joml.Matrix4f lt = new org.joml.Matrix4f(p.local);
+            CustomShipRender.applyDisplayYaw(lt, p.rawYaml);
+            lt.mul(new org.joml.Matrix4f().translation(0.5f, 0.5f, 0.5f));
+            if (p.storage != null) {
+                org.bukkit.event.inventory.InventoryType it = p.storage.type.invType != null
+                    ? p.storage.type.invType : org.bukkit.event.inventory.InventoryType.CHEST;
+                parts.add(anon.def9a2a4.corelib.MechanismRegistry.PartSpec.block(
+                    p.block, lt, col, it, p.storage.type.slots, p.storage.name));
+            } else {
+                parts.add(anon.def9a2a4.corelib.MechanismRegistry.PartSpec.block(p.block, lt, col));
+            }
+        }
+        return parts;
     }
 
     /** Translate a prefab {@link ShipModel} + customization into a defCoreLib PartSpec list using the exact
