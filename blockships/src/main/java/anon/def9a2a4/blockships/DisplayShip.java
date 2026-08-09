@@ -344,7 +344,11 @@ public class DisplayShip implements Listener {
             Location pose = root.getLocation().clone();
             if (!Float.isNaN(state.yaw)) pose.setYaw(state.yaw);
             ShipCustomization customization = ShipInstance.buildCustomizationFromState(plugin, state);
-            ShipInstance ship = spawnDelegatedFromModel(shipId, state.shipType, model, pose, customization);
+            // #2: load the native cargo into the mechanism's typed inventories BEFORE reg.persist (via the 6-arg
+            // overload) so the first crash-safe snapshot holds it — not a later re-snapshot. finalizeMigration no
+            // longer restores inventories.
+            java.util.Map<Integer, org.bukkit.inventory.ItemStack[]> cargo = ShipInstance.decodeCargo(state);
+            ShipInstance ship = spawnDelegatedFromModel(shipId, state.shipType, model, pose, customization, cargo);
             if (ship == null) {
                 plugin.getLogger().severe("Migration failed for ship " + shipId
                     + "; native entities left in place for retry on next load.");

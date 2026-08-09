@@ -96,6 +96,11 @@ public class BlockShipsPlugin extends JavaPlugin {
         // yet. Done AFTER loadAll so the wheels are available for stat recomputation on reconstruction.
         displayShip.forceRecoverDelegatedShips();
 
+        // Migrate any released-0.0.17 NATIVE ships in already-loaded (spawn) chunks into delegated mechanisms.
+        // Runs AFTER forceRecoverDelegatedShips so corelib has already recovered delegated ships (byId set) before
+        // the migration idempotency probe — shrinks the crash-mid-migration re-spawn window (#3).
+        displayShip.migrateLoadedChunks();
+
         // Initialize special drowned listener (spawns drowned holding ship wheels)
         specialDrownedListener = new SpecialDrownedListener(this);
         if (specialDrownedListener.isEnabled()) {

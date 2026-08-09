@@ -2154,16 +2154,17 @@ public class ShipInstance {
 
     /**
      * Finalize a freshly-assembled MIGRATED ship (native→delegated). The mechanism + delegated {@link ShipInstance}
-     * are already built by {@code DisplayShip.spawnDelegatedFromModel} (seats designated, mechanism persisted). This
-     * adds the recovery-style state the fresh-spawn path doesn't seed:
+     * are already built by {@code DisplayShip.spawnDelegatedFromModel} (seats designated, cargo loaded PRE-persist,
+     * mechanism persisted). This adds the recovery-style state the fresh-spawn path doesn't seed:
      * <ul>
      *   <li>{@code sourceModel} — so the re-saved sidecar persists {@code model_data} for later delegated recovery
      *       of a custom ship (defCoreLib rebuilds the mechanism; BlockShips rebuilds the model from the sidecar);</li>
      *   <li>{@code currentYaw} — from the persisted absolute heading ({@code state.yaw}); the delegated custom ctor
      *       leaves currentYaw == spawnYaw (assemblyYaw), so a turned ship must be re-seeded;</li>
-     *   <li>inventory contents — overlaid onto the mechanism-owned inventories (see {@link #restoreInventoriesFromState});</li>
      *   <li>the driven pose is re-applied so frame 1 renders at the saved heading.</li>
      * </ul>
+     * Inventory contents are NOT restored here — they are loaded into the mechanism's typed inventories BEFORE
+     * {@code reg.persist} via the cargo path (#2), so the first crash-safe snapshot already holds them.
      */
     public void finalizeMigration(ShipPersistence.ShipState state) {
         this.sourceModel = model;
@@ -2171,8 +2172,31 @@ public class ShipInstance {
             physics.currentYaw = ShipTags.normalizeYaw(state.yaw);
             previousYaw = physics.currentYaw;
         }
-        restoreInventoriesFromState(plugin, this, state, model);
         applyInitialDrivenPose();
+    }
+
+    /** Decode a persisted sidecar's {@code inventoryData} (block index → "|"-joined Base64 ItemStacks) into a cargo
+     *  map (block index → ItemStack[]) for loading into a migrated mechanism's typed inventories BEFORE persist (#2),
+     *  so migrated chest contents survive a hard crash rather than depending on a later re-snapshot. Block index i ==
+     *  model.parts index i == mechanism block index i. */
+    public static Map<Integer, ItemStack[]> decodeCargo(ShipPersistence.ShipState state) {
+        Map<Integer, ItemStack[]> cargo = new HashMap<>();
+        if (state.inventoryData == null) return cargo;
+        for (Map.Entry<Integer, String> entry : state.inventoryData.entrySet()) {
+            try {
+                String[] itemStrings = entry.getValue().split("\\|", -1);
+                ItemStack[] items = new ItemStack[itemStrings.length];
+                for (int i = 0; i < itemStrings.length; i++) {
+                    if (!itemStrings[i].isEmpty()) {
+                        items[i] = ItemStack.deserializeBytes(Base64.getDecoder().decode(itemStrings[i]));
+                    }
+                }
+                cargo.put(entry.getKey(), items);
+            } catch (Exception e) {
+                // Skip a corrupt block's cargo rather than abort the whole migration.
+            }
+        }
+        return cargo;
     }
 
     /**
