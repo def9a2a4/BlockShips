@@ -67,6 +67,7 @@ public class DisplayShip implements Listener {
     private final Set<UUID> shipsBeingRecovered = Collections.synchronizedSet(new HashSet<>());  // Prevent concurrent recovery
     private final Set<Long> chunksBeingRecovered = ConcurrentHashMap.newKeySet();  // Track chunks with pending async recovery
     private final org.joml.Vector3f workWheelTranslation = new org.joml.Vector3f();  // Reusable for findWheelCollider
+    private int recoveryGiveUpAfter = -1;  // recovery.give-up-after; -1 = never give up ("none")
 
     public DisplayShip(JavaPlugin plugin) {
         this.plugin = plugin;

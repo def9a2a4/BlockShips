@@ -566,6 +566,44 @@ public class ShipWorldData {
     }
 
     /**
+     * Increments and persists this ship's recovery-failure counter, returning the new count.
+     * Read/modify/write directly on the yml because recovery failures happen with no live
+     * ShipInstance (so buildShipMetadataConfig can't be used). Returns 0 if there is no metadata
+     * file (nothing to count against). A normal healthy save rewrites the yml without this key,
+     * so the counter naturally clears when a ship recovers and is next saved.
+     */
+    public int bumpRecoveryFailure(World world, UUID shipId) {
+        File shipFile = getShipFile(world.getName(), shipId);
+        if (!shipFile.exists()) return 0;
+        YamlConfiguration config = YamlConfiguration.loadConfiguration(shipFile);
+        int count = config.getInt("recovery_failure_count", 0) + 1;
+        config.set("recovery_failure_count", count);
+        try {
+            config.save(shipFile);
+        } catch (IOException e) {
+            plugin.getLogger().warning("Failed to persist recovery_failure_count for ship " + shipId + ": " + e.getMessage());
+        }
+        return count;
+    }
+
+    /**
+     * Clears this ship's recovery-failure counter (called after a successful recovery so a run of
+     * transient misses never accumulates toward give-up). No-op if there is no metadata file.
+     */
+    public void clearRecoveryFailure(World world, UUID shipId) {
+        File shipFile = getShipFile(world.getName(), shipId);
+        if (!shipFile.exists()) return;
+        YamlConfiguration config = YamlConfiguration.loadConfiguration(shipFile);
+        if (!config.contains("recovery_failure_count")) return;
+        config.set("recovery_failure_count", null);
+        try {
+            config.save(shipFile);
+        } catch (IOException e) {
+            plugin.getLogger().warning("Failed to clear recovery_failure_count for ship " + shipId + ": " + e.getMessage());
+        }
+    }
+
+    /**
      * Gets all ship UUIDs known in a world (from chunk indices).
      */
     public Set<UUID> getAllShipIds(World world) {
