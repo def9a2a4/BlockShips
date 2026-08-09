@@ -68,7 +68,6 @@ public class DisplayShip implements Listener {
     private final Set<UUID> shipsBeingRecovered = Collections.synchronizedSet(new HashSet<>());  // Prevent concurrent recovery
     private final Set<Long> chunksBeingRecovered = ConcurrentHashMap.newKeySet();  // Track chunks with pending async recovery
     private final org.joml.Vector3f workWheelTranslation = new org.joml.Vector3f();  // Reusable for findWheelCollider
-    private int recoveryGiveUpAfter = -1;  // recovery.give-up-after; -1 = never give up ("none")
 
     public DisplayShip(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -84,8 +83,6 @@ public class DisplayShip implements Listener {
         // Item textures and prefab models are read from the jar (or a config/ override) on demand;
         // nothing is extracted to disk.
 
-        // Recovery give-up threshold: "none" (disabled) or an attempt count.
-        loadRecoveryConfig();
 
         // Load item textures from items.yml
         textureManager.load();
@@ -151,23 +148,7 @@ public class DisplayShip implements Listener {
         textureManager.reload();
         loadShipModels();
         registerRecipes();
-        loadRecoveryConfig();
         plugin.getLogger().info("DisplayShip reloaded with " + shipModels.size() + " ship type(s)");
-    }
-
-    /** Parses recovery.give-up-after ("none" = disabled, else an attempt count). Called on enable and reload. */
-    private void loadRecoveryConfig() {
-        String giveUpRaw = plugin.getConfig().getString("recovery.give-up-after", "none");
-        if ("none".equalsIgnoreCase(giveUpRaw)) {
-            recoveryGiveUpAfter = -1;
-        } else {
-            try {
-                recoveryGiveUpAfter = Integer.parseInt(giveUpRaw.trim());
-            } catch (NumberFormatException e) {
-                plugin.getLogger().warning("Invalid recovery.give-up-after '" + giveUpRaw + "' - using 'none' (never give up)");
-                recoveryGiveUpAfter = -1;
-            }
-        }
     }
 
     private void loadShipModels() {
