@@ -83,6 +83,19 @@ public class DisplayShip implements Listener {
         // Item textures and prefab models are read from the jar (or a config/ override) on demand;
         // nothing is extracted to disk.
 
+        // Recovery give-up threshold: "none" (disabled) or an attempt count.
+        String giveUpRaw = plugin.getConfig().getString("recovery.give-up-after", "none");
+        if ("none".equalsIgnoreCase(giveUpRaw)) {
+            recoveryGiveUpAfter = -1;
+        } else {
+            try {
+                recoveryGiveUpAfter = Integer.parseInt(giveUpRaw.trim());
+            } catch (NumberFormatException e) {
+                plugin.getLogger().warning("Invalid recovery.give-up-after '" + giveUpRaw + "' - using 'none' (never give up)");
+                recoveryGiveUpAfter = -1;
+            }
+        }
+
         // Load item textures from items.yml
         textureManager.load();
 
