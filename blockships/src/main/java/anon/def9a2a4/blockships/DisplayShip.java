@@ -66,6 +66,7 @@ public class DisplayShip implements Listener {
     private final Map<UUID, Long> lastShulkerInteraction = new HashMap<>();  // Cooldown for preventing double-entry
     private final Set<UUID> shipsBeingRecovered = Collections.synchronizedSet(new HashSet<>());  // Prevent concurrent recovery
     private final Set<Long> chunksBeingRecovered = ConcurrentHashMap.newKeySet();  // Track chunks with pending async recovery
+    private final Set<UUID> migrationFailureLogged = ConcurrentHashMap.newKeySet();  // Warn-once per ship so an unmigratable ship doesn't spam every chunk load
     private final org.joml.Vector3f workWheelTranslation = new org.joml.Vector3f();  // Reusable for findWheelCollider
 
     public DisplayShip(JavaPlugin plugin) {
