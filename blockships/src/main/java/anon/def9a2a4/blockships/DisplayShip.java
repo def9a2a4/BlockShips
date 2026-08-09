@@ -99,9 +99,9 @@ public class DisplayShip implements Listener {
         // Load chunk indices from per-world storage
         shipWorldData.loadAllChunkIndices();
 
-        // Migrate any native ships in already-loaded chunks (spawn chunks) + reap stragglers. Delegated ships
-        // recover via defCoreLib's forced recovery + recovered MechanismAssembleEvent.
-        recoverUnregisteredShips();
+        // NOTE: native-ship migration (migrateLoadedChunks) runs LATER in BlockShipsPlugin enable — AFTER
+        // forceRecoverDelegatedShips() — so corelib has already recovered delegated ships (setting byId) before
+        // the migration idempotency probe runs, shrinking the crash-mid-migration re-spawn window (#3).
 
         // Start periodic save task for ships in always-loaded chunks (spawn chunks)
         startPeriodicSaveTask();
@@ -110,9 +110,10 @@ public class DisplayShip implements Listener {
     /**
      * At enable, migrate any persisted NATIVE ship (released 0.0.17) in an already-loaded chunk (spawn chunks that
      * never unload) into a delegated mechanism, and reap stragglers. Delegated ships recover via defCoreLib
-     * (forceRecoverDelegatedShips + the recovered MechanismAssembleEvent), not here.
+     * (forceRecoverDelegatedShips + the recovered MechanismAssembleEvent), not here. Called by BlockShipsPlugin
+     * AFTER forceRecoverDelegatedShips so corelib has recovered delegated ships before the migration probe runs.
      */
-    private void recoverUnregisteredShips() {
+    public void migrateLoadedChunks() {
         for (World world : Bukkit.getWorlds()) {
             for (org.bukkit.Chunk chunk : world.getLoadedChunks()) {
                 migrateNativeShipsInChunk(world, chunk);
@@ -307,7 +308,8 @@ public class DisplayShip implements Listener {
     }
 
     /** Migrate one native ship (custom or prefab) → delegated, preserving its id. Idempotent: an already-delegated
-     *  ship (live registry OR migrated-marker sidecar) is a reap-failed straggler → reap-only, never re-assemble. */
+     *  ship — live BlockShips registry, migrated-marker sidecar, OR corelib live/persisted state — is a reap-failed
+     *  straggler → reap-only, never re-assemble (re-assembling a corelib-owned id duplicates the mechanism). */
     private void migrateNativeShip(World world, UUID shipId, ArmorStand root) {
         ShipInstance live = ShipRegistry.byId(shipId);
         if (live != null && live.mechanism != null) {   // already delegated (race / straggler) — reap the old graph
@@ -317,6 +319,18 @@ public class DisplayShip implements Listener {
         ShipPersistence.ShipState state = shipWorldData.loadShipMetadata(world, shipId);
         if (state == null) return;                       // no sidecar — orphan cleanup's job, not migration's
         if (state.migrated) {                            // delegated sidecar — this native root is a straggler
+            reapNativeEntities(shipId, root);
+            return;
+        }
+        // DefCoreLib is a hard depend; this is defensive so a missing engine skips quietly (no throw + retry spam).
+        if (!Bukkit.getPluginManager().isPluginEnabled("DefCoreLib")) return;
+        anon.def9a2a4.corelib.MechanismRegistry reg =
+            anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry();
+        // Idempotency (#3): if corelib already owns this id — live (byId) OR persisted-but-not-yet-recovered
+        // (hasPersistedState, e.g. a crash between a prior migration's assemble+persist and its migrated-marker
+        // write) — re-assembling would duplicate the mechanism (the reaper skips corelib-tagged ghosts). Reap the
+        // stale native entities only; corelib's own recovery brings the delegated ship back.
+        if (reg.byId(shipId) != null || reg.hasPersistedState(world, shipId)) {
             reapNativeEntities(shipId, root);
             return;
         }
