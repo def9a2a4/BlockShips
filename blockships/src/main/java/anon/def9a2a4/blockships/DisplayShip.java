@@ -773,6 +773,16 @@ public class DisplayShip implements Listener {
             return;
         }
         ShipInstance ship = ShipInstance.fromRecoveredMechanism(plugin, state, model, vehicle, mech);
+        // A2: repopulate the whole-ship leadable shulker. Fresh spawn wires it (spawnDelegatedPrefab), but
+        // fromRecoveredMechanism does not — so without this the "click any block with a lead to attach" shortcut
+        // is dead after a restart/chunk reload (the per-collider fence fallback in the interaction handler still
+        // works). Mirror the spawn-time wiring exactly.
+        for (int i = 0; i < model.parts.size(); i++) {
+            if (Boolean.TRUE.equals(model.parts.get(i).rawYaml.get("leadable"))) {
+                ship.leadableShulker = mech.colliderEntity(i);
+                break;
+            }
+        }
         ship.applyInitialDrivenPose(); // render the saved heading on frame 1 (no one-tick yaw flash)
         ShipRegistry.register(ship);
         // F5: re-add to BlockShips' chunk index (parity with the native recovery paths). addToChunkIndex is
@@ -1996,7 +2006,12 @@ public class DisplayShip implements Listener {
         if (shipId == null) return;
 
         ShipInstance inst = ShipRegistry.byId(shipId);
-        if (inst == null || !inst.vehicle.isValid()) return;
+        if (inst == null) {
+            // Unregistered native ship: a projectile hit is a third recovery trigger (like click/melee).
+            inst = attemptInteractionRecovery(shipId, shulker);
+            if (inst == null) return;
+        }
+        if (!inst.vehicle.isValid()) return;
 
         Projectile projectile = e.getEntity();
 
