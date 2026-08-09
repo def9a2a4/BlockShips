@@ -7,13 +7,6 @@ warn-config-mismatch: true
 # https://github.com/def9a2a4/DynLight
 ship-lights: true
 
-ships:
-  # When true, any old-format (native-engine) prefab ship already saved in a world is converted
-  # in-place to a defCoreLib-delegated mechanism the first time it is recovered (same id/pose, cargo
-  # preserved). This is the migration path toward the delegated-only engine; leave it on unless you
-  # specifically need to keep pre-existing ships on the old engine for testing.
-  migrate-native: true
-
 # Integrations with other plugins
 plugins:
   worldguard:

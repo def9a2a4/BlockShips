@@ -58,7 +58,6 @@ public class DisplayShip implements Listener {
     private final NamespacedKey WOOD_TYPE_KEY;
     private final NamespacedKey SHIP_TYPE_KEY;
     private ShipModel model;
-    private ShipPersistence persistence;
     private ShipWorldData shipWorldData;  // Per-world ship storage for chunk-based loading
     private Map<String, ShipModel> shipModels = new HashMap<>();
     private ItemTextureManager textureManager;
@@ -74,7 +73,6 @@ public class DisplayShip implements Listener {
         this.BANNER_DATA_KEY = new NamespacedKey(plugin, "banner_data");
         this.WOOD_TYPE_KEY = new NamespacedKey(plugin, "wood_type");
         this.SHIP_TYPE_KEY = new NamespacedKey(plugin, "ship_type");
-        this.persistence = new ShipPersistence(plugin);
         this.shipWorldData = new ShipWorldData(plugin);
         this.textureManager = new ItemTextureManager(plugin);
     }
@@ -463,70 +461,6 @@ public class DisplayShip implements Listener {
                 return null;
             }
         }
-    }
-
-    /**
-     * A5: convert a freshly-recovered, fully-recovered, NOT-yet-registered NATIVE prefab ship into a delegated
-     * defCoreLib mechanism in place — same id, pose, customization, and cargo. Returns the delegated (registered +
-     * chunk-indexed) ShipInstance on success, or null to mean "leave it native" (the caller then registers the
-     * native ship as usual, entities intact). MUST be called before the native ship is registered, because
-     * assembleFromParts requires the id not be live ({@link ShipRegistry#byId} null).
-     *
-     * <p>Order (assemble-before-teardown): capture → assemble delegated (with cargo) + persist → rewrite the
-     * sidecar from the (empty-storages) delegated ship so its {@code inventoryData} is cleared and the mechanism
-     * becomes the single cargo source → destroy the native entities → register + index the delegated ship. A crash
-     * before persist leaves the native ship fully intact (sidecar untouched); a crash after persist but before the
-     * native teardown leaves recoverable delegated state plus (harmless, cosmetic) leftover native entities that a
-     * later load resolves.
-     */
-    private ShipInstance convertNativeToDelegated(ShipInstance nativeShip, ShipPersistence.ShipState state) {
-        if (!plugin.getConfig().getBoolean("ships.migrate-native", true)) return null;
-        if (!Bukkit.getPluginManager().isPluginEnabled("DefCoreLib")) return null; // delegation needs the engine
-        if (nativeShip.mechanism != null) return null;              // already delegated
-        if ("custom".equals(nativeShip.shipType)) return null;      // custom ships are delegated via ShipWheelManager
-        if (!nativeShip.isRecoveryComplete()) return null;          // only convert a fully-recovered ship
-        ShipModel model = loadModelForState(state);
-        if (model == null) return null;
-        if (!model.rotationTransform.equals(new org.joml.Matrix3f())) return null; // Y-axis mechanism can't render it
-
-        java.util.UUID id = nativeShip.id;
-        World world = nativeShip.vehicle.getWorld();
-        // Capture everything BEFORE teardown.
-        Location pose = nativeShip.vehicle.getLocation().clone();
-        pose.setYaw((float) nativeShip.physics.currentYaw);
-        ShipCustomization customization = nativeShip.customization;
-        java.util.Map<Integer, org.bukkit.inventory.ItemStack[]> cargo = new java.util.HashMap<>();
-        for (java.util.Map.Entry<Integer, org.bukkit.inventory.Inventory> e : nativeShip.storages.entrySet()) {
-            cargo.put(e.getKey(), e.getValue().getContents().clone());
-        }
-
-        // Assemble the delegated ship FIRST (its id is free — native isn't registered), loading cargo pre-persist.
-        ShipInstance delegated = spawnDelegatedFromModel(id, nativeShip.shipType, model, pose, customization, cargo);
-        if (delegated == null) return null; // assembly refused/failed → keep the native ship
-
-        // Rewrite the sidecar from the delegated ship: its inst.storages is empty → inventoryData is cleared, so
-        // the mechanism (persisted by defCoreLib) is the single source of truth for cargo (no divergent copy).
-        shipWorldData.saveShipMetadata(delegated);
-        // Tear down the old native entities (root/displays/colliders); destroy() leaves the sidecar + chunk index.
-        try { nativeShip.destroy(); } catch (Throwable ignored) {}
-
-        ShipRegistry.register(delegated);
-        Location loc = delegated.vehicle.getLocation();
-        shipWorldData.addToChunkIndex(world, id, loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
-        shipWorldData.saveAllChunkIndices();
-        plugin.getLogger().info("Migrated native prefab ship " + id + " to a delegated mechanism");
-        return delegated;
-    }
-
-    /** A5: true if the chunk holds an entity belonging to corelib mechanism {@code shipId} — i.e. the ship is
-     *  already delegated (migrated or native-never), so native recovery must skip it (mirrors the per-entity
-     *  guard used by recoverUnregisteredShipsInChunk). */
-    private boolean chunkHasCorelibEntity(org.bukkit.Chunk chunk, UUID shipId) {
-        for (Entity e : chunk.getEntities()) {
-            Set<String> tags = e.getScoreboardTags();
-            if (ShipTags.isCorelibTagged(tags) && shipId.equals(ShipTags.extractShipId(tags))) return true;
-        }
-        return false;
     }
 
     // ----- Delegated (defCoreLib) ship recovery (M5) -----
