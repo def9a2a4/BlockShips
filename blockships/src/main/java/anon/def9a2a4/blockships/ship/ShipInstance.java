@@ -2193,42 +2193,9 @@ public class ShipInstance {
             // lists below are empty for a delegated ship; the external vehicle is still removed at the end.
             try { mechanism.destroy(); } catch (Throwable ignored) {}
         }
-        if (parent != null) {
-            Entity vehicleEntity = parent.getVehicle();
-            if (vehicleEntity != null) {
-                vehicleEntity.removePassenger(parent);
-            }
-            for (Entity passenger : parent.getPassengers()) {
-                passenger.remove();
-            }
-            parent.remove();
-        }
-        // Remove child block/item displays directly. Normally they are passengers of `parent`
-        // (removed above), but on a failed assembly they are spawned and not yet mounted (mounting is
-        // deferred 1 tick), so remove them by list too. Idempotent - a double remove() is harmless.
-        for (DisplayInstance di : displays) {
-            if (di.entity != null && di.entity.isValid()) di.entity.remove();
-        }
-        // Dismount any riders before removing shulkers
-        // (removePassenger triggers VehicleExitEvent, which handles safe-position teleport)
-        for (CollisionBox cb : colliders) {
-            for (Entity passenger : cb.entity.getPassengers()) {
-                if (passenger instanceof Player p) {
-                    cb.entity.removePassenger(p);
-                }
-            }
-        }
-        // Remove all collision shulkers and their carriers
-        // Note: Seats are now the shulkers themselves (no separate seat ArmorStands)
-        for (CollisionBox cb : colliders) {
-            cb.entity.remove();    // Remove shulker (may be a seat)
-            cb.carrier.remove();   // Remove carrier (ArmorStand or Interaction)
-        }
-        // Remove root vehicle
+        // Remove root vehicle (defCoreLib owns the borrowed vehicle's displays/colliders; mechanism.destroy above
+        // tore them down, but the vehicle ArmorStand itself is BlockShips-owned and removed here).
         if (vehicle != null && vehicle.isValid()) vehicle.remove();
-        // Clear incremental recovery state
-        pendingCarriers.clear();
-        pendingShulkers.clear();
         ShipRegistry.unregister(this);
     }
 

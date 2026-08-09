@@ -368,6 +368,9 @@ public class DisplayShip implements Listener {
             }
             ship.finalizeMigration(state);
             ShipRegistry.register(ship);
+            // F4: re-link the wheel + recompute stats one tick later (same as delegated recovery) — else a migrated
+            // CUSTOM ship stays at its conservative preliminary stats (immovable) until an unload+reload.
+            scheduleWheelRelink(ship, shipId);
             shipWorldData.saveShipMetadata(ship);        // re-persist as delegated (writes the migrated marker)
             Location rl = root.getLocation();
             shipWorldData.removeFromChunkIndex(world, shipId, rl.getBlockX() >> 4, rl.getBlockZ() >> 4);
@@ -391,20 +394,24 @@ public class DisplayShip implements Listener {
         return ShipRegistry.byId(shipId);
     }
 
-    /** Force-load the chunks the ship's model footprint spans (root position + model x/z extent, +1 chunk margin
-     *  for colliders overhanging block edges) so migration + reap see ALL of the ship's entities across chunk
-     *  boundaries. Returns the {cx,cz} of chunks we ticketed, to release afterwards. */
+    /** Force-load the chunks the ship's model footprint spans (root position + model radius, rotation-invariant,
+     *  +1 chunk margin for colliders overhanging block edges) so migration + reap see ALL of the ship's entities
+     *  across chunk boundaries. Returns the {cx,cz} of chunks we ticketed, to release afterwards. */
     private java.util.List<long[]> forceLoadFootprint(World world, Location rootLoc, ShipModel model) {
-        float minX = 0, maxX = 0, minZ = 0, maxZ = 0;
+        // Rotation-invariant bound: the heading isn't known here and parts rotate with it, so force-load a square
+        // around the root sized by the farthest part's radius. A circle of radius maxR covers every heading; the
+        // old per-axis un-rotated extent under-covered a long ship turned ~90° (far chunk never ticketed → its
+        // native entities never reaped at migration time). Slightly over-covers for a long thin hull — fine for a
+        // one-shot migration force-load.
+        double maxR = 0;
         for (ShipModel.ModelPart p : model.parts) {
-            float x = p.local.m30(), z = p.local.m32();
-            minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-            minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+            maxR = Math.max(maxR, Math.hypot(p.local.m30(), p.local.m32()));
         }
-        int cx0 = ((rootLoc.getBlockX() + (int) Math.floor(minX)) >> 4) - 1;
-        int cx1 = ((rootLoc.getBlockX() + (int) Math.ceil(maxX)) >> 4) + 1;
-        int cz0 = ((rootLoc.getBlockZ() + (int) Math.floor(minZ)) >> 4) - 1;
-        int cz1 = ((rootLoc.getBlockZ() + (int) Math.ceil(maxZ)) >> 4) + 1;
+        int r = (int) Math.ceil(maxR);
+        int cx0 = ((rootLoc.getBlockX() - r) >> 4) - 1;
+        int cx1 = ((rootLoc.getBlockX() + r) >> 4) + 1;
+        int cz0 = ((rootLoc.getBlockZ() - r) >> 4) - 1;
+        int cz1 = ((rootLoc.getBlockZ() + r) >> 4) + 1;
         java.util.List<long[]> forced = new java.util.ArrayList<>();
         for (int cx = cx0; cx <= cx1; cx++) {
             for (int cz = cz0; cz <= cz1; cz++) {
@@ -538,17 +545,25 @@ public class DisplayShip implements Listener {
         Location recoveredLoc = vehicle.getLocation();
         shipWorldData.addToChunkIndex(world, mechId, recoveredLoc.getBlockX() >> 4, recoveredLoc.getBlockZ() >> 4);
         shipWorldData.saveAllChunkIndices();
-        // Re-link the wheel + recompute stats one tick later: custom-ship stats depend on the wheel, whose PDC
-        // blocks are loaded by ShipWheelManager.loadAll, and resolveWheelData is lazy.
+        scheduleWheelRelink(ship, mechId);
+        plugin.getLogger().info("Recovered delegated " + ("custom".equals(state.shipType) ? "custom" : "prefab")
+            + " ship " + mechId);
+    }
+
+    /** Re-link a delegated ship's wheel + recompute its stats one tick later. Custom-ship speed/turn derive from
+     *  the wheel, whose PDC blocks are loaded lazily by {@code ShipWheelManager.loadAll}, and {@code resolveWheelData}
+     *  is lazy — so a synchronous call would find no wheel and leave the ship at its conservative preliminary stats
+     *  (immovable). No-op for prefab (no wheel). MUST be called AFTER the ship is registered; the identity guard
+     *  drops the task if the ship was replaced/removed in the intervening tick. Shared by the delegated-recovery
+     *  path ({@code reconstructDelegatedShip}) and the native→delegated migration ({@code migrateNativeShip}). */
+    private void scheduleWheelRelink(ShipInstance ship, UUID id) {
         new BukkitRunnable() {
             @Override public void run() {
-                if (ShipRegistry.byId(mechId) != ship) return; // ship replaced/removed meanwhile
+                if (ShipRegistry.byId(id) != ship) return; // ship replaced/removed meanwhile
                 ship.resolveWheelData();
                 ship.physics.recomputeStats();
             }
         }.runTask(plugin);
-        plugin.getLogger().info("Recovered delegated " + ("custom".equals(state.shipType) ? "custom" : "prefab")
-            + " ship " + mechId);
     }
 
     /**

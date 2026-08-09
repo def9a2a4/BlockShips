@@ -365,7 +365,7 @@ dispenser:
   weight: 2
   collider: true
   storage:
-    type: DROPPER
+    type: DISPENSER
     name: "Dispenser"
 
 dropper:
