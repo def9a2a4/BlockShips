@@ -78,12 +78,24 @@ tasks {
         }
     }
 
-    // The thin jar is never usable: bstats is relocated in shadowJar only, so running this one dies at
-    // onEnable on a NoClassDefFoundError. It also had NO classifier while shadowJar sets "", so both
-    // wrote build/libs/BlockShips-<version>.jar and clobbered each other — invisible to `make build`
-    // (shadowJar only) but hit by CI's `gradle build`, which runs both. Disabled rather than given a
-    // `-plain` classifier: a second jar would match the upload glob and `cp bin/*.jar`, and Paper then
-    // reports "Ambiguous plugin name". Nothing consumes it — no test sources, nothing published.
+    // The thin jar is never usable: bstats is relocated in shadowJar only (below), and Metrics is
+    // constructed as the FIRST statement of onEnable with no try/catch, so this one dies immediately on
+    // a NoClassDefFoundError. It also carried NO classifier while shadowJar sets "", so both targeted
+    // build/libs/BlockShips-<version>.jar.
+    //
+    // That was latent nondeterminism, not an observed break: `make build` runs shadowJar alone, and CI's
+    // `gradle build` ran BOTH with shadowJar happening to land last (last green run uploaded the shadow
+    // jar and all 6 matrix cells passed; Gradle 9.6.1 never warned about the overlapping output).
+    // Nothing orders the two tasks, so "happening to" was the entire guarantee — hence disabling it.
+    //
+    // Chosen over a `-plain` classifier not because that can't work — defCoreLib does exactly that, on
+    // purpose, since its subprojects compileOnly(project(":")) — but because BlockShips has no such
+    // consumer, so a second jar would do nothing except match the CI upload glob AND `cp bin/*.jar`,
+    // handing Paper "Ambiguous plugin name". Nothing consumes the thin jar: no test sources, no publishing.
+    //
+    // KEEP the manifest block. Shadow builds DefaultInheritManifest(project, jarTask.get().manifest, …),
+    // so shadowJar INHERITS this task's manifest; `enabled = false` affects execution only, not config.
+    // (archiveBaseName here, by contrast, is now dead — shadowJar sets its own.)
     jar {
         enabled = false
         archiveBaseName.set("BlockShips")
