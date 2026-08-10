@@ -498,11 +498,10 @@ public class ShipPhysics {
     }
 
     /**
-     * Delegated (defCoreLib) analogue of {@link #findPlayersOnDeck()}. defCoreLib owns the colliders, so
-     * the native {@code colliders} list is empty and the shulkers carry {@code corelib:mech:} tags rather
-     * than {@code shipTag}. Detects deck standers against the mechanism's collider boxes instead, using the
-     * identical horizontal-overlap + feet-height-band test, and returns the matched BLOCK INDEX (stable
-     * across recovery) so {@link #alignToGrid()} can re-query the box after the snap.
+     * Detects players standing on the ship's deck. defCoreLib owns the colliders, so the shulkers carry
+     * {@code corelib:mech:} tags. Tests deck standers against the mechanism's collider boxes using a
+     * horizontal-overlap + feet-height-band test, and returns the matched BLOCK INDEX (stable across
+     * recovery) so {@link #alignToGrid()} can re-query the box after the snap.
      */
     private Map<Player, Integer> findPlayersOnDeckDelegated() {
         Map<Player, Integer> playersOnDeck = new HashMap<>();

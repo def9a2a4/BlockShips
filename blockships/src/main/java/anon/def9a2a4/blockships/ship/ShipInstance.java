@@ -73,7 +73,7 @@ public class ShipInstance {
     // Delegated engine (M1): for CUSTOM ships, defCoreLib owns the displays/colliders/mounting and this
     // holds the live Mechanism. null for prefab + legacy-recovery ships, which keep the native entity engine
     // below. When non-null, the native vehicle/parent/display/collider spawn + mount is skipped.
-    public anon.def9a2a4.corelib.Mechanism mechanism;
+    public final anon.def9a2a4.corelib.Mechanism mechanism;
     private Location cachedVehicleLoc;  // Cached per-tick to avoid redundant getLocation() clones
     public final int driverSeatIndex;  // Index of driver seat (always 0)
     public final UUID id;  // Ship UUID - generated on spawn or restored from state
@@ -203,11 +203,8 @@ public class ShipInstance {
             .build();
     }
 
-    /** Restore persisted block-storage inventory contents. Shared by the native and delegated recovery/migration
-     *  paths. For a DELEGATED ship (mechanism != null) storage is mechanism-owned (built empty by
-     *  {@code createTypedInventory} at assembly), so overlay saved contents ONTO {@code mechanism.getStorage(i)} —
-     *  {@code instance.storages} stays empty and the interaction/drop paths read the mechanism. For a NATIVE ship
-     *  create the inventory into {@code instance.storages} as before. */
+    /** Restore persisted block-storage inventory contents. Storage is mechanism-owned (built empty by
+     *  {@code createTypedInventory} at assembly), so overlay saved contents ONTO {@code mechanism.getStorage(i)}. */
     private static void restoreInventoriesFromState(JavaPlugin plugin, ShipInstance instance,
                                                     ShipPersistence.ShipState state, ShipModel model) {
         if (state.inventoryData.isEmpty()) return;
@@ -228,17 +225,10 @@ public class ShipInstance {
                 if (blockIdx < model.parts.size()) {
                     ShipModel.ModelPart part = model.parts.get(blockIdx);
                     if (part.storage != null) {
-                        Inventory storage;
-                        if (instance.mechanism != null) {
-                            // Delegated: overlay onto the mechanism's inventory (do NOT create into instance.storages,
-                            // which is dead for delegated ships). Null = model/mechanism index mismatch; skip.
-                            storage = instance.mechanism.getStorage(blockIdx);
-                            if (storage == null) continue;
-                        } else {
-                            storage = createStorageInventory(part.storage,
-                                part.rawYaml.get("custom_name") instanceof String cns ? cns : null);
-                            instance.storages.put(blockIdx, storage);
-                        }
+                        // Overlay saved contents onto the mechanism's inventory. Null = model/mechanism index
+                        // mismatch; skip.
+                        Inventory storage = instance.mechanism.getStorage(blockIdx);
+                        if (storage == null) continue;
                         // Cap to the inventory size: `items` is sized from the persisted
                         // token count, which can exceed the (possibly changed) storage size.
                         storage.setContents(java.util.Arrays.copyOf(items,
@@ -303,9 +293,9 @@ public class ShipInstance {
         this.model = model;
         this.customization = customization != null ? customization : ShipCustomization.empty();
         this.mechanism = mechanism;
-        // Identity unification (M1): a delegated custom ship shares the Mechanism's UUID so ShipRegistry and
-        // the ship sidecar both key on it (no ship-UUID↔mechId map). Native ships keep a fresh random id.
-        this.id = mechanism != null ? mechanism.id() : UUID.randomUUID();
+        // Identity unification (M1): a ship shares its Mechanism's UUID so ShipRegistry and the ship sidecar
+        // both key on it (no ship-UUID↔mechId map).
+        this.id = mechanism.id();
         this.driverSeatIndex = 0;
 
         // Load all config values
@@ -366,20 +356,17 @@ public class ShipInstance {
         // Initialize previous state
         this.previousVehicleLocation = vehicle.getLocation().clone();
         this.previousPitch = vehicle.getPitch();
-        // Delegated ships (M1): the vehicle entity yaw is held at 0 (defCoreLib owns rotation via the display
-        // transform matrix), so seed the ship's heading from the model's assembly yaw — NOT the vehicle yaw —
-        // else physics thrust + the display rotation delta would think the ship faces 0°. Native ships keep
-        // reading the frozen vehicle yaw (their display passengers inherit it for rendering).
-        this.spawnYaw = (mechanism != null)
-            ? ShipTags.normalizeYaw(model.assemblyYaw)
-            : ShipTags.normalizeYaw(vehicle.getYaw());
+        // The vehicle entity yaw is held at 0 (defCoreLib owns rotation via the display transform matrix), so
+        // seed the ship's heading from the model's assembly yaw — NOT the vehicle yaw — else physics thrust +
+        // the display rotation delta would think the ship faces 0°.
+        this.spawnYaw = ShipTags.normalizeYaw(model.assemblyYaw);
         this.previousYaw = this.spawnYaw;
         // P7.C: a DELEGATED PREFAB ship carries its heading in the spawn Location yaw, not in the model
         // (model.assemblyYaw==0 for prefab, unlike custom where assemblyYaw IS the heading). So its rotation
         // baseline spawnYaw stays 0 but currentYaw must start at the placement heading; rotate() then spins
         // the mechanism by (currentYaw − spawnYaw) = the heading. (Recovery re-overrides currentYaw from the
-        // persisted absolute yaw.) Custom delegated + native ships keep currentYaw == spawnYaw.
-        boolean delegatedPrefab = mechanism != null && !"custom".equals(shipType);
+        // persisted absolute yaw.) Custom ships keep currentYaw == spawnYaw.
+        boolean delegatedPrefab = !"custom".equals(shipType);
         this.physics.currentYaw = delegatedPrefab
             ? ShipTags.normalizeYaw(spawnLocation.getYaw())
             : this.spawnYaw;
@@ -487,21 +474,14 @@ public class ShipInstance {
     }
 
     /**
-     * Live world-space collider boxes for this ship, engine-agnostic (M3). For a DELEGATED custom ship
-     * defCoreLib owns the colliders, so read them via the Mechanism block-index read-API; for a native
-     * (prefab/legacy) ship read the shulker boxes directly. Both {@link ShipCollision} and
-     * {@link ShipCollisionCoordinator} consume this so terrain + ship↔ship collision work for either engine.
-     * The returned boxes are snapshots (safe to keep for the current pass).
+     * Live world-space collider boxes for this ship (M3). defCoreLib owns the colliders, so read them via the
+     * Mechanism block-index read-API. Both {@link ShipCollision} and {@link ShipCollisionCoordinator} consume
+     * this so terrain + ship↔ship collision work. The returned boxes are snapshots (safe to keep for the
+     * current pass).
      */
     public java.util.List<org.bukkit.util.BoundingBox> colliderBoxes() {
-        // Delegated engine: let core snapshot its colliders directly (O(collider-count), fresh list) instead
-        // of walking blockCount() with a per-index lookup here.
-        if (mechanism != null) return mechanism.colliderBoxes();
-        java.util.List<org.bukkit.util.BoundingBox> out = new java.util.ArrayList<>();
-        for (CollisionBox cb : colliders) {
-            if (cb.entity != null && cb.entity.isValid()) out.add(cb.entity.getBoundingBox());
-        }
-        return out;
+        // Let core snapshot its colliders directly (O(collider-count), fresh list).
+        return mechanism.colliderBoxes();
     }
 
     /**
@@ -515,28 +495,16 @@ public class ShipInstance {
             return;
         }
 
-        // Auto-calculate using max axis distance from vehicle to farthest collider
+        // Auto-calculate using max axis distance from vehicle to farthest collider box center (defCoreLib
+        // owns the collider entities).
         Location center = vehicle.getLocation();
         float maxDist = 0;
-        if (mechanism != null) {
-            // Delegated: measure from the mechanism collider box centers (the shulker list is defCoreLib's).
-            for (org.bukkit.util.BoundingBox b : colliderBoxes()) {
-                float dx = (float) java.lang.Math.abs(center.getX() - b.getCenterX());
-                float dy = (float) java.lang.Math.abs(center.getY() - b.getCenterY());
-                float dz = (float) java.lang.Math.abs(center.getZ() - b.getCenterZ());
-                float dist = java.lang.Math.max(dx, java.lang.Math.max(dy, dz));
-                if (dist > maxDist) maxDist = dist;
-            }
-        } else {
-            for (CollisionBox cb : colliders) {
-                Location cbLoc = cb.entity.getLocation();
-                // Use max of axis distances (box distance) - cheaper than manhattan and works with getNearbyEntities
-                float dx = (float) java.lang.Math.abs(center.getX() - cbLoc.getX());
-                float dy = (float) java.lang.Math.abs(center.getY() - cbLoc.getY());
-                float dz = (float) java.lang.Math.abs(center.getZ() - cbLoc.getZ());
-                float dist = java.lang.Math.max(dx, java.lang.Math.max(dy, dz));
-                if (dist > maxDist) maxDist = dist;
-            }
+        for (org.bukkit.util.BoundingBox b : colliderBoxes()) {
+            float dx = (float) java.lang.Math.abs(center.getX() - b.getCenterX());
+            float dy = (float) java.lang.Math.abs(center.getY() - b.getCenterY());
+            float dz = (float) java.lang.Math.abs(center.getZ() - b.getCenterZ());
+            float dist = java.lang.Math.max(dx, java.lang.Math.max(dy, dz));
+            if (dist > maxDist) maxDist = dist;
         }
         // Add padding (2.0 for original getNearbyEntities radius per collider)
         this.collisionRadius = maxDist + 2.0f;
@@ -560,94 +528,8 @@ public class ShipInstance {
             }
         }
 
-        // Build rotation matrix including vehicle's current orientation (reuses workRotation)
-        Matrix4f R_full = buildRotationMatrix();
-
-        // Build translation matrix for collision offset (reuse workTranslation)
-        workTranslation.identity().translation(model.collisionOffset);
-
-        // Add custom ship collision offset from config
-        if ("custom".equals(shipType)) {
-            workTranslation.translate(config.customCollisionOffset);
-        }
-
-        // Throttle passenger integrity checks (only needed after chunk reload, not every tick)
-        boolean shouldCheckPassengers = (++passengerCheckCounter % PASSENGER_CHECK_INTERVAL == 0);
-
-        // Update collider (Interaction carrier + Shulker) positions
-        for (CollisionBox cb : colliders) {
-            // Calculate world position for this collider (reuses work* fields for zero-alloc)
-            computeColliderWorldPos(R_full, workTranslation, cb.base, cb.config.offset,
-                    currentVehicleLoc, workWorld, workOffset, workPerBlockOffset, workCurrentWorldPos);
-
-            // Calculate velocity (change in position since last tick)
-            workVelocity.set(workCurrentWorldPos).sub(cb.previousWorldPos);
-
-            // Check if this is the first tick (previousWorldPos was initialized to 0,0,0)
-            // If so, skip velocity application to avoid massive initial velocity spike
-            boolean isFirstTick = cb.previousWorldPos.x == 0 && cb.previousWorldPos.y == 0 && cb.previousWorldPos.z == 0;
-
-            // Teleport carrier to world position (including per-block offset)
-            // The shulker rides as passenger and follows smoothly (ArmorStand) or choppily (Interaction)
-            // Note: Carriers never rotate - only position changes (AABBs don't rotate, shulkers inherit zero rotation)
-            // Reuse carrier location to avoid allocation (lazily init if world changed)
-            if (workCarrierLoc == null || workCarrierLoc.getWorld() != currentVehicleLoc.getWorld()) {
-                workCarrierLoc = currentVehicleLoc.clone();
-            }
-            workCarrierLoc.setX(currentVehicleLoc.getX() + workOffset.x + workPerBlockOffset.x);
-            workCarrierLoc.setY(currentVehicleLoc.getY() + workOffset.y + workPerBlockOffset.y);
-            workCarrierLoc.setZ(currentVehicleLoc.getZ() + workOffset.z + workPerBlockOffset.z);
-            workCarrierLoc.setYaw(0);
-            workCarrierLoc.setPitch(0);
-
-            // Only teleport if position actually changed (avoids collision jitter when idle)
-            float velocityMagnitude = workVelocity.length();
-
-            // BEFORE teleport: capture player if this is a seat shulker
-            // (teleporting carriers can sometimes dismount nested passengers on pre-1.21.9)
-            Player seatedPlayer = null;
-            if (TeleportCompat.needsPassengerEject() && seatShulkers.contains(cb.entity)) {
-                for (Entity passenger : cb.entity.getPassengers()) {
-                    if (passenger instanceof Player p) {
-                        seatedPlayer = p;
-                        break;
-                    }
-                }
-            }
-
-            // Verify passenger relationship is intact (can break on chunk reload)
-            // Throttled: TeleportCompat already re-adds passengers after each teleport,
-            // so this only catches chunk reload edge cases - checking every 20 ticks is sufficient
-            if (shouldCheckPassengers && cb.carrier.isValid() && cb.entity.isValid() && !cb.carrier.getPassengers().contains(cb.entity)) {
-                cb.carrier.addPassenger(cb.entity);
-            }
-
-            if (isFirstTick || velocityMagnitude > 0.01) {
-                TeleportCompat.teleport(cb.carrier, workCarrierLoc);
-                // DO NOT teleport shulker directly - it causes block snapping
-                // Shulker should follow carrier as passenger
-                // NOTE: Do NOT set velocity on carriers - it causes client-side prediction
-                // to fight with teleport positioning, producing Y-axis jitter for players
-                // standing on the shulkers. Carriers move only via teleport.
-            }
-
-            // AFTER teleport: re-mount player if they were dismounted by teleport (pre-1.21.9 only)
-            if (seatedPlayer != null && !cb.entity.getPassengers().contains(seatedPlayer)) {
-                // Check if seat is still occupied (intentional dismount via freeSeat() clears this)
-                int seatIdx = ShipTags.extractSeatIndex(cb.entity.getScoreboardTags());
-                if (seatIdx >= 0 && occupiedSeatIndices.contains(seatIdx)) {
-                    final Player playerToRemount = seatedPlayer;
-                    final Shulker seat = cb.entity;
-                    seat.addPassenger(playerToRemount);
-                }
-            }
-
-            // Store current position for next tick
-            cb.previousWorldPos.set(workCurrentWorldPos);
-        }
-
-        // Note: Seats are now the shulkers themselves (no separate seat ArmorStands to update)
-        // Shulker positions are already updated in the collision box loop above
+        // The mechanism owns collider/shulker positioning for delegated ships; nothing to sync here beyond
+        // the radius + nearby-player flags computed above.
     }
 
     /**
@@ -659,33 +541,22 @@ public class ShipInstance {
     void refreshCarrierTracking() {
         java.util.Collection<Player> tracked = vehicle.getTrackedPlayers();
         if (tracked.isEmpty()) return;
-        if (mechanism != null) {
-            // Delegated (M1): defCoreLib owns the colliders, so the native `colliders` list is empty.
-            // Mirror the native re-track on defCoreLib's collider carriers, located by scoreboard tag
-            // (corelib:mech:{id}:{i}:carrier — ship.id == mechId). Settle is infrequent (this only fires
-            // on a movement->idle transition), so the one-shot nearby scan is cheap. Hiding+showing the
-            // carrier re-sends it and its passenger shulker, re-syncing the solid collision box on clients.
-            String carrierPrefix = "corelib:mech:" + id + ":";
-            double r = (collisionRadius > 0 ? collisionRadius : 32f) + 2.0;
-            for (Entity e : vehicle.getWorld().getNearbyEntities(vehicle.getLocation(), r, r, r)) {
-                if (!e.isValid()) continue;
-                boolean isCarrier = false;
-                for (String tag : e.getScoreboardTags()) {
-                    if (tag.startsWith(carrierPrefix) && tag.endsWith(":carrier")) { isCarrier = true; break; }
-                }
-                if (!isCarrier) continue;
-                for (Player player : tracked) {
-                    player.hideEntity(plugin, e);
-                    player.showEntity(plugin, e);
-                }
+        // defCoreLib owns the colliders. Re-track its collider carriers, located by scoreboard tag
+        // (corelib:mech:{id}:{i}:carrier — ship.id == mechId). Settle is infrequent (this only fires
+        // on a movement->idle transition), so the one-shot nearby scan is cheap. Hiding+showing the
+        // carrier re-sends it and its passenger shulker, re-syncing the solid collision box on clients.
+        String carrierPrefix = "corelib:mech:" + id + ":";
+        double r = (collisionRadius > 0 ? collisionRadius : 32f) + 2.0;
+        for (Entity e : vehicle.getWorld().getNearbyEntities(vehicle.getLocation(), r, r, r)) {
+            if (!e.isValid()) continue;
+            boolean isCarrier = false;
+            for (String tag : e.getScoreboardTags()) {
+                if (tag.startsWith(carrierPrefix) && tag.endsWith(":carrier")) { isCarrier = true; break; }
             }
-            return;
-        }
-        for (CollisionBox cb : colliders) {
-            if (!cb.carrier.isValid()) continue;
+            if (!isCarrier) continue;
             for (Player player : tracked) {
-                player.hideEntity(plugin, cb.carrier);
-                player.showEntity(plugin, cb.carrier);
+                player.hideEntity(plugin, e);
+                player.showEntity(plugin, e);
             }
         }
     }
@@ -1326,10 +1197,9 @@ public class ShipInstance {
      * into {@code seatShulkers}, so the existing seat code (boarding, steering = index 0, HP-mirror, dismount)
      * works unchanged. Block-index parity (mechanism index i == scan index i) makes {@code SeatInfo.blockIndex}
      * a valid Mechanism block index. A seat only materializes if defCoreLib gave that block a collider (its
-     * shulker is the mount) — tune {@code colliders.yml} if a seat block is missing. No-op for native ships.
+     * shulker is the mount) — tune {@code colliders.yml} if a seat block is missing.
      */
     public void adoptMechanismSeats() {
-        if (mechanism == null) return;
         for (int seatIdx = 0; seatIdx < model.seats.size(); seatIdx++) {
             ShipModel.SeatInfo si = model.seats.get(seatIdx);
             mechanism.designateSeat(si.blockIndex, si.isDriver);
@@ -1344,12 +1214,11 @@ public class ShipInstance {
      * P7.R4: render the correct heading on the FIRST frame after spawn/recovery. The physics tick calls
      * {@code mechanism.repositionDriven(currentYaw − spawnYaw)} every tick, but until that first tick a delegated
      * PREFAB display sits at {@code spawnYaw} (== {@code model.assemblyYaw}, i.e. 0 for a prefab) — a one-frame
-     * flash for any non-zero placement/saved heading. Applying it once here removes the flash. No-op for a
-     * non-delegated ship; a no-op rotation (relYaw==0) for custom ships (currentYaw == spawnYaw). Idempotent with
-     * the tick — {@code repositionDriven} is absolute-from-spawn, not incremental.
+     * flash for any non-zero placement/saved heading. Applying it once here removes the flash. A no-op
+     * rotation (relYaw==0) for custom ships (currentYaw == spawnYaw). Idempotent with the tick —
+     * {@code repositionDriven} is absolute-from-spawn, not incremental.
      */
     public void applyInitialDrivenPose() {
-        if (mechanism == null) return;
         mechanism.repositionDriven(physics.currentYaw - spawnYaw);
     }
 
@@ -1409,7 +1278,6 @@ public class ShipInstance {
      * once the footprint is complete, so this is the rare large-ship edge.
      */
     public void adoptMechanismSeatsForRecovery() {
-        if (mechanism == null) return;
         for (int seatIdx = 0; seatIdx < model.seats.size(); seatIdx++) {
             ShipModel.SeatInfo si = model.seats.get(seatIdx);
             Shulker s = mechanism.seatEntity(si.blockIndex);
@@ -1501,75 +1369,15 @@ public class ShipInstance {
                 List<Location> explosionLocations = new ArrayList<>();
                 explosionLocations.add(vehicle.getLocation().clone()); // Always include root/wheel location
 
-                // `colliders` is populated for a NATIVE ship only — a delegated ship's collider entities belong
-                // to the mechanism — so a delegated ship scatters no secondary explosions and gets just the
-                // root one above. Cosmetic, and accepted: the alternative is reaching across the engine
-                // boundary for entities purely to place particles.
-                java.util.Random random = new java.util.Random();
-                for (CollisionBox collider : colliders) {
-                    if (collider.entity != null && collider.entity.isValid()) {
-                        if (random.nextDouble() < 0.2) { // 20% chance
-                            explosionLocations.add(collider.entity.getLocation().clone());
-                        }
-                    }
-                }
+                // Only the root/wheel explosion location above: a delegated ship's collider entities belong to
+                // the mechanism, so no secondary scatter (cosmetic, accepted).
 
                 if (config.destroyOnDeath) {
-                    // Full destruction: blocks are lost, only stored items drop.
-                    //
-                    // CARGO-DROP OWNERSHIP — which engine backs this ship decides who drops:
-                    //   native    (mechanism == null): `storages` holds the live inventories, so this loop is
-                    //                                  the ONLY drop and must run.
-                    //   delegated (mechanism != null): `storages` is always EMPTY — its spawn-time writer sits
-                    //                                  inside the `if (mechanism == null)` guard — because a
-                    //                                  delegated ship's cargo lives on the mechanism. The engine
-                    //                                  drops it from Mechanism.destroy(), reached below via
-                    //                                  destroyWithCleanup(). Per BasicMechanism's contract, for
-                    //                                  a block-free mechanism the engine is the SINGLE drop
-                    //                                  authority and a consumer must NOT also drop or items
-                    //                                  duplicate — so this loop no-opping for delegated is
-                    //                                  correct, not a gap. Do not "fix" it by re-adding a
-                    //                                  helper that reads the mechanism's inventories here.
-                    // The clear() is what keeps this safe either way: an inventory drained here cannot be
-                    // dropped again by anything downstream still holding a reference to it.
-                    for (Map.Entry<Integer, Inventory> storageEntry : storages.entrySet()) {
-                        Inventory storage = storageEntry.getValue();
-                        for (ItemStack item : storage.getContents()) {
-                            if (item != null && !item.getType().isAir()) {
-                                world.dropItemNaturally(dropLocation, item);
-                            }
-                        }
-                        storage.clear();
-                    }
-                    // Shelves / chiseled bookshelves are deliberately NOT dropped here. They used to be — read
-                    // out of this model's own scan copy (rawYaml "container_items", the parts carrying no
-                    // `storage`) — back when nothing else covered them. defCoreLib now captures every
-                    // non-Container TileStateInventoryHolder into its block-entity snapshot (`bs_tsih_items`)
-                    // and drops it from Mechanism.destroy(), so re-dropping the scan copy here produced TWO of
-                    // every book. Unlike the loop above there was no clear() that could have de-duplicated it:
-                    // rawYaml is a detached snapshot, not the live inventory.
-                    //
-                    // Drop lead items for any entities leashed to ship shulkers.
-                    // In disassemble mode, transferLeadsFromShip() preserves leads by moving them to
-                    // fence posts. Here we just drop the lead items so players don't lose them silently.
-                    // Native ships only, again because `colliders` is empty for a delegated one. A delegated
-                    // ship falls back to Paper's own tickLeash, which drops one lead when the holder shulker is
-                    // removed — the same net result, but implicit rather than owned here, and NOT via the
-                    // leads-out seam (Mechanism.destroy() deliberately skips the beforeEntityRemoval hook).
-                    for (CollisionBox cb : colliders) {
-                        if (cb.entity == null || !cb.entity.isValid()) continue;
-                        for (org.bukkit.entity.Entity nearby : cb.entity.getWorld().getNearbyEntities(
-                                cb.entity.getLocation(), 12, 12, 12,
-                                e -> e instanceof io.papermc.paper.entity.Leashable l
-                                        && l.isLeashed()
-                                        && cb.entity.equals(l.getLeashHolder()))) {
-                            world.dropItemNaturally(cb.entity.getLocation(),
-                                    new ItemStack(org.bukkit.Material.LEAD));
-                            // Detach the leash to prevent Paper's tickLeash from dropping a second lead
-                            // when the shulker holder is removed by destroy()
-                            ((io.papermc.paper.entity.Leashable) nearby).setLeashHolder(null);
-                        }
-                    }
+                    // Full destruction: blocks are lost, only stored items drop. The engine is the SINGLE drop
+                    // authority for a delegated ship — cargo, block-entity contents (bs_tsih_items), and leads
+                    // are all dropped from Mechanism.destroy() via destroyWithCleanup() below (leads fall back
+                    // to Paper's tickLeash when the holder shulker is removed). Do NOT re-add a native drop loop
+                    // that reads the mechanism's inventories/colliders here, or items duplicate.
                     // Capture wheel location before entities are removed
                     Location wheelLoc = wheelData.getBlockLocation();
                     // Destroy entities and clean up persistence
@@ -1602,18 +1410,8 @@ public class ShipInstance {
             // Fallback if disassembly failed - use old behavior below
         }
 
-        // Prefab ships (or fallback for custom ships if disassembly failed):
-        // Drop all inventory contents first
-        if (world != null) {
-            for (Inventory storage : storages.values()) {
-                for (ItemStack item : storage.getContents()) {
-                    if (item != null && !item.getType().isAir()) {
-                        world.dropItemNaturally(dropLocation, item);
-                    }
-                }
-                storage.clear();  // Clear the inventory to prevent duplication
-            }
-        }
+        // Prefab ships (or fallback for custom ships if disassembly failed).
+        // Cargo is dropped by the engine from Mechanism.destroy() (below), so no inventory drop here.
 
         // Drop appropriate item based on ship type
         if (world != null) {
@@ -1679,9 +1477,6 @@ public class ShipInstance {
             idleCheckTask = null;
         }
         // Clear references (they'll be stale anyway after chunk unloads)
-        parent = null;
-        displays.clear();
-        colliders.clear();
         seatShulkers.clear();
         // vehicle reference is kept but may become stale
         taskStopped = true;
@@ -1792,12 +1587,10 @@ public class ShipInstance {
             return false;
         }
 
-        // Get dispenser inventory (the ammo). For a delegated ship the native `storages` map is empty — the
-        // dispenser's captured inventory rides on the mechanism, keyed by block index (== dispenserBlockIndex
-        // via the parity invariant). Consuming from it round-trips back to the placed dispenser on disassemble.
-        Inventory inv = (mechanism != null)
-            ? mechanism.getStorage(cannon.dispenserBlockIndex)
-            : storages.get(cannon.dispenserBlockIndex);
+        // Get dispenser inventory (the ammo). The dispenser's captured inventory rides on the mechanism, keyed
+        // by block index (== dispenserBlockIndex via the parity invariant). Consuming from it round-trips back
+        // to the placed dispenser on disassemble.
+        Inventory inv = mechanism.getStorage(cannon.dispenserBlockIndex);
         if (inv == null || inv.isEmpty()) {
             return false;
         }
