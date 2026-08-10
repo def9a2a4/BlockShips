@@ -4,7 +4,6 @@ import anon.def9a2a4.blockships.customships.ShipWheelData;
 import anon.def9a2a4.blockships.customships.ShipWheelManager;
 import anon.def9a2a4.blockships.customships.ShipWheelMenu;
 import anon.def9a2a4.blockships.util.AttributeCompat;
-import anon.def9a2a4.blockships.ship.CollisionBox;
 import anon.def9a2a4.blockships.ship.CustomShipRender;
 import anon.def9a2a4.blockships.ship.ShipInstance;
 import org.bukkit.*;
@@ -2023,9 +2022,8 @@ public class DisplayShip implements Listener {
                           String.format("%.1f", maxHealthValue));
         player.sendMessage("§eSpeed: §f" + String.format("%.3f", inst.physics.currentSpeed));
 
-        // Delegated ships have no native `colliders` list — the Mechanism owns the collider shulkers. Resolve the
-        // block index from the corelib tag (same as the interaction router) and read the box/part detail from the
-        // mechanism + model instead of scanning `inst.colliders` (which is empty and would print nothing).
+        // The Mechanism owns the collider shulkers. Resolve the block index from the corelib tag (same as the
+        // interaction router) and read the box/part detail from the mechanism + model.
         if (inst.mechanism != null) {
             int i = ShipTags.extractCorelibBlockIndex(shulker.getScoreboardTags());
             org.bukkit.util.BoundingBox box = i >= 0 ? inst.mechanism.getColliderBoxByBlock(i) : null;

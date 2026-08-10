@@ -3,7 +3,6 @@ package anon.def9a2a4.blockships.customships;
 import anon.def9a2a4.blockships.BlockShipsPlugin;
 import anon.def9a2a4.blockships.ShipConfig;
 import anon.def9a2a4.blockships.ShipCustomization;
-import anon.def9a2a4.blockships.ship.CollisionBox;
 import anon.def9a2a4.blockships.ship.ShipInstance;
 import anon.def9a2a4.blockships.ShipModel;
 import anon.def9a2a4.blockships.ShipRegistry;
@@ -685,31 +684,8 @@ public class ShipWheelManager {
         // Clear conflict state on successful disassembly attempt
         wheelData.setLastDisassemblyConflicts(null);
 
-        // Sync current storage inventories back to model before placing blocks
-        Map<Integer, Inventory> currentStorages = ship.storages;
-        for (Map.Entry<Integer, Inventory> entry : currentStorages.entrySet()) {
-            int blockIndex = entry.getKey();
-            Inventory inv = entry.getValue();
-
-            if (blockIndex >= 0 && blockIndex < model.parts.size()) {
-                ShipModel.ModelPart part = model.parts.get(blockIndex);
-                List<Map<String, Object>> itemsData = new ArrayList<>();
-
-                for (int slot = 0; slot < inv.getSize(); slot++) {
-                    ItemStack item = inv.getItem(slot);
-                    if (item != null && item.getType() != Material.AIR) {
-                        Map<String, Object> itemData = new HashMap<>();
-                        itemData.put("slot", slot);
-                        itemData.put("item", item.serializeAsBytes());
-                        itemsData.add(itemData);
-                    }
-                }
-
-                @SuppressWarnings("unchecked")
-                Map<String, Object> yaml = (Map<String, Object>) part.rawYaml;
-                yaml.put("container_items", itemsData);
-            }
-        }
+        // Storage inventories are mechanism-owned for a delegated ship; defCoreLib's disassemble() restores
+        // container contents from its own snapshot, so there is nothing to sync back to the model here.
 
         // WorldGuard: decide ONCE whether the wheel-anchor cell is protected, and pass it into placeBlocks
         // so the head-skip there and the deregister below use the same answer (they can never disagree).
@@ -828,27 +804,6 @@ public class ShipWheelManager {
                     "Delegated disassembly threw for ship " + ship.id + " — completing teardown; some blocks may be missing", t);
                 if (player != null) player.sendMessage(
                     "§eDisassembly hit an error — the ship was taken down but some blocks may be missing. (see server logs)");
-            }
-        } else {
-            // Track W (W3): block placement is all-or-abort — on throw leave the ship intact + registered so the
-            // player can retry (do NOT destroy/clear the wheel; that would lose the structure). Fail loud.
-            try {
-                BlockStructureScanner.placeBlocks(shipLoc, model, currentYaw, force, player, anchorProtected);
-            } catch (Throwable t) {
-                plugin.getLogger().log(java.util.logging.Level.SEVERE,
-                    "Disassembly (placeBlocks) failed for ship " + ship.id + " — ship left intact for retry", t);
-                if (player != null) player.sendMessage(
-                    "§cDisassembly failed — the ship is intact; please try again. (see server logs)");
-                return false;
-            }
-
-            // Leads are best-effort now that blocks are placed — a lead failure must NOT abort (that would leave
-            // placed blocks AND a live ship = duplication).
-            try {
-                transferLeadsFromShip(ship, model, shipLoc, currentYaw);
-            } catch (Throwable t) {
-                plugin.getLogger().log(java.util.logging.Level.WARNING,
-                    "Lead transfer failed during disassembly of " + ship.id + " (blocks already placed)", t);
             }
         }
 
@@ -991,73 +946,9 @@ public class ShipWheelManager {
     }
 
     /**
-     * Transfers leads from ship's shulkers to fence blocks (via LeashHitch).
-     * Called during disassembly after blocks are placed but before ship is destroyed.
-     *
-     * @param ship The ship instance being disassembled
-     * @param model The ship model containing leadable block info
-     * @param shipLoc The ship's current location (used as origin for block positions)
-     * @param currentYaw The ship's current yaw rotation
-     */
-    private void transferLeadsFromShip(ShipInstance ship, ShipModel model, Location shipLoc, float currentYaw) {
-        // Calculate rotation delta from assembly orientation
-        float rotationDelta = currentYaw - model.assemblyYaw;
-        while (rotationDelta < 0) rotationDelta += 360;
-        while (rotationDelta >= 360) rotationDelta -= 360;
-
-        // Iterate through colliders to find leadable shulkers with attached entities
-        for (CollisionBox collider : ship.colliders) {
-            int blockIndex = collider.blockIndex;
-
-            // Check if this block is leadable
-            if (blockIndex < 0 || blockIndex >= model.parts.size()) {
-                continue;
-            }
-            ShipModel.ModelPart part = model.parts.get(blockIndex);
-            if (!part.rawYaml.containsKey("leadable") || !Boolean.TRUE.equals(part.rawYaml.get("leadable"))) {
-                continue;
-            }
-
-            Shulker shulker = collider.entity;
-            if (shulker == null || !shulker.isValid()) {
-                continue;
-            }
-
-            // Find entities leashed to this shulker
-            List<org.bukkit.entity.Entity> leashedEntities = findEntitiesLeashedTo(shulker);
-            if (leashedEntities.isEmpty()) {
-                continue;
-            }
-
-            // Calculate the fence block's world location (apply rotation like placeBlocks does)
-            org.joml.Vector3f pos = new org.joml.Vector3f();
-            part.local.getTranslation(pos);
-            org.joml.Vector3f rotatedPos = BlockStructureScanner.rotatePosition(pos, rotationDelta);
-            // Round to match placeBlocks (BlockStructureScanner:775-781): getBlock() below floors, so an
-            // unrounded rotated coord that landed just under an integer (cos(90 deg)~6e-17 error) would put the
-            // LeashHitch one block off the fence and the lead would pop off on a rotated ship's disassembly.
-            Location fenceLoc = shipLoc.clone().add(
-                Math.round(rotatedPos.x), Math.round(rotatedPos.y), Math.round(rotatedPos.z));
-
-            // Spawn LeashHitch at the fence block
-            org.bukkit.entity.LeashHitch hitch = fenceLoc.getWorld().spawn(
-                fenceLoc.getBlock().getLocation().add(0.5, 0.5, 0.5),
-                org.bukkit.entity.LeashHitch.class
-            );
-
-            // Transfer each leashed entity to the LeashHitch
-            for (org.bukkit.entity.Entity entity : leashedEntities) {
-                // Entity is guaranteed to be Leashable from findEntitiesLeashedTo
-                ((io.papermc.paper.entity.Leashable) entity).setLeashHolder(hitch);
-            }
-        }
-    }
-
-    /**
-     * Delegated (M1) leads-out — the {@link Mechanism#setBeforeEntityRemoval} callback body. Identical to
-     * {@link #transferLeadsFromShip} except the collider shulker for a block index comes from the mechanism
-     * ({@code mech.colliderEntity(i)}) rather than the native {@code ship.colliders} list (empty for a
-     * delegated ship). Runs after blocks land but before the mechanism's collider entities are removed.
+     * Leads-out — the {@link Mechanism#setBeforeEntityRemoval} callback body. The collider shulker for a block
+     * index comes from the mechanism ({@code mech.colliderEntity(i)}). Runs after blocks land but before the
+     * mechanism's collider entities are removed.
      */
     private void transferLeadsFromMechanism(anon.def9a2a4.corelib.Mechanism mech, ShipModel model,
                                             Location shipLoc, float currentYaw) {

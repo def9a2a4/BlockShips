@@ -70,19 +70,14 @@ public class ShipInstance {
     public final ShipModel model;
     public final String shipType;  // Ship type identifier (e.g., "smallship", "bigship")
     public ArmorStand vehicle;  // Root entity used for physics (non-final for chunk recovery)
-    // Delegated engine (M1): for CUSTOM ships, defCoreLib owns the displays/colliders/mounting and this
-    // holds the live Mechanism. null for prefab + legacy-recovery ships, which keep the native entity engine
-    // below. When non-null, the native vehicle/parent/display/collider spawn + mount is skipped.
+    // Delegated engine: defCoreLib owns the displays/colliders/mounting; this holds the live Mechanism
+    // (always present — every ship is delegated).
     public final anon.def9a2a4.corelib.Mechanism mechanism;
     private Location cachedVehicleLoc;  // Cached per-tick to avoid redundant getLocation() clones
     public final int driverSeatIndex;  // Index of driver seat (always 0)
     public final UUID id;  // Ship UUID - generated on spawn or restored from state
     public final ShipCustomization customization;  // Ship customization data (banner, wood type, colors, textures)
 
-    private BlockDisplay parent;
-    private final List<DisplayInstance> displays = new ArrayList<>();
-    public final List<CollisionBox> colliders = new ArrayList<>();
-    public final Map<Integer, Inventory> storages = new HashMap<>();  // Block index -> inventory
     public final List<Shulker> seatShulkers = new ArrayList<>();  // Seat shulkers in order (index 0 = driver)
     private final Set<Integer> occupiedSeatIndices = new HashSet<>();  // Track which seats are occupied
     public Shulker leadableShulker;  // Designated lead attachment point (for prefab ships)
@@ -915,7 +910,7 @@ public class ShipInstance {
      * Applies the head/skull display transform (in-place) onto {@code transform}.
      * Handles both floor heads (16-step {@code skull_rotation}) and wall heads
      * (4-direction {@code skull_facing}). Shared by the spawn transform, the
-     * per-tick {@code DisplayInstance.base}, and the chunk-recovery path so the
+     * per-tick display transform, and the chunk-recovery path so the
      * three cannot drift. Applies to player and mob heads identically.
      */
     private void applySkullTransform(Matrix4f transform, Map<?, ?> rawYaml) {
