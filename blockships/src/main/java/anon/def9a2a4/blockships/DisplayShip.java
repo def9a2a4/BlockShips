@@ -1157,8 +1157,8 @@ public class DisplayShip implements Listener {
             if (mechanism != null) { try { mechanism.destroy(); } catch (Throwable ignored) {} }
             if (ship != null)      { try { ship.destroy();      } catch (Throwable ignored) {} }
             if (vehicle.isValid()) vehicle.remove();
-            plugin.getLogger().log(java.util.logging.Level.SEVERE,
-                "Delegated assembly failed for " + shipType + ".", t);
+            logOnce(id, java.util.logging.Level.SEVERE,
+                "delegated assembly failed for type '" + shipType + "'.", t);
             return null;
         }
         return ship;
@@ -1771,7 +1771,7 @@ public class DisplayShip implements Listener {
             // Unregistered native ship: hitting it triggers migration to the delegated engine
             // (chunk-load only fires on the load transition), like the shulker-click hook.
             inst = attemptInteractionMigration(shipId, shulker);
-            if (inst == null) return;   // couldn't recover: same no-op as before
+            if (inst == null) return;   // couldn't migrate — leave it native (as before)
         }
         if (!inst.vehicle.isValid()) return;
 
