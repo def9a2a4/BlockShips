@@ -355,12 +355,8 @@ public class DisplayShip implements Listener {
             reapNativeEntities(shipId, root);
             return;
         }
-        ShipModel model = loadModelForState(state);
-        if (model == null) {
-            logMigrationFailureOnce(shipId, java.util.logging.Level.WARNING,
-                "Cannot migrate ship " + shipId + " (model unavailable); leaving native.", null);
-            return;
-        }
+        ShipModel model = loadModelForState(state, shipId);
+        if (model == null) return;   // loadModelForState logged the reason once (via the dedupe key)
         java.util.List<long[]> forced = forceLoadFootprint(world, root.getLocation(), model);
         try {
             Location pose = root.getLocation().clone();
@@ -372,9 +368,7 @@ public class DisplayShip implements Listener {
             java.util.Map<Integer, org.bukkit.inventory.ItemStack[]> cargo = ShipInstance.decodeCargo(state);
             ShipInstance ship = spawnDelegatedFromModel(shipId, state.shipType, model, pose, customization, cargo);
             if (ship == null) {
-                logMigrationFailureOnce(shipId, java.util.logging.Level.SEVERE,
-                    "Migration failed for ship " + shipId + "; native entities left in place for retry on next load.", null);
-                return;
+                return;   // spawnDelegatedFromModel logged the reason once (via its non-null id)
             }
             ship.finalizeMigration(state);
             ShipRegistry.register(ship);
