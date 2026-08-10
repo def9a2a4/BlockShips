@@ -465,25 +465,34 @@ public class DisplayShip implements Listener {
     /**
      * Loads the appropriate ShipModel for a saved ship state.
      */
-    private ShipModel loadModelForState(ShipPersistence.ShipState state) {
+    /** Loads the model for a saved ship. On failure, logs the reason via {@link #logOnce}: pass the ship id as
+     *  {@code dedupeKey} on the migration path (which retries every chunk load — so it logs once per ship with a
+     *  full, forwardable reason), or null on one-shot callers (which log every time and add their own context). */
+    private ShipModel loadModelForState(ShipPersistence.ShipState state, UUID dedupeKey) {
         if ("custom".equals(state.shipType) && state.modelData != null) {
             // Custom ship - deserialize model from stored data
             try {
                 return ShipModel.fromMap(state.modelData);
             } catch (Exception e) {
-                plugin.getLogger().warning("Failed to load custom ship model: " + e.getMessage());
+                logOnce(dedupeKey, java.util.logging.Level.WARNING,
+                    "could not load its stored custom model: " + e.getMessage(), e);
                 return null;
             }
         } else {
             // Prefab ship - load from model file
             String modelPath = plugin.getConfig().getString("ships." + state.shipType + ".model-path");
             if (modelPath == null) {
+                // Prefab type not (or no longer) configured — the most common migration-stuck cause. Log once so an
+                // admin sees it, but only on the migration path (dedupeKey != null); one-shot callers report their own.
+                if (dedupeKey != null) logOnce(dedupeKey, java.util.logging.Level.WARNING,
+                    "no model-path configured for ship type '" + state.shipType + "' — cannot migrate; leaving native.", null);
                 return null;
             }
             try {
                 return ShipModel.fromFile(plugin, modelPath, state.shipType);
             } catch (Exception e) {
-                plugin.getLogger().warning("Failed to load model file " + modelPath + ": " + e.getMessage());
+                logOnce(dedupeKey, java.util.logging.Level.WARNING,
+                    "could not load model file '" + modelPath + "': " + e.getMessage(), e);
                 return null;
             }
         }
@@ -525,7 +534,7 @@ public class DisplayShip implements Listener {
                 + ".yml sidecar is missing; cannot rebuild the ShipInstance");
             return;
         }
-        ShipModel model = loadModelForState(state);
+        ShipModel model = loadModelForState(state, null);  // one-shot recovery: log every time (caller adds context below)
         if (model == null) {
             plugin.getLogger().warning("Delegated ship " + mechId + " recovered but its model could not be loaded");
             return;
@@ -1085,8 +1094,8 @@ public class DisplayShip implements Listener {
         // A Y-axis mechanism cannot render a non-identity rotation-matrix. Custom models are always identity
         // (BlockStructureScanner); prefab models could in principle carry one (none shipped do).
         if (!model.rotationTransform.equals(new org.joml.Matrix3f())) {
-            plugin.getLogger().warning("Delegated " + shipType + ": non-identity rotation-matrix unsupported by the "
-                + "Y-axis mechanism; skipping delegation.");
+            logOnce(id, java.util.logging.Level.WARNING,
+                "prefab model has a non-identity rotation-matrix, unsupported by the Y-axis mechanism; skipping delegation.", null);
             return null;
         }
         anon.def9a2a4.corelib.MechanismRegistry reg =
