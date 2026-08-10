@@ -1012,22 +1012,6 @@ public class ShipWheelManager {
     }
 
     /**
-     * Finds the collision shulker for a given block index.
-     *
-     * @param ship The ship instance
-     * @param blockIndex The block index to find
-     * @return The shulker entity, or null if not found
-     */
-    private Shulker findShulkerByBlockIndex(ShipInstance ship, int blockIndex) {
-        for (CollisionBox collider : ship.colliders) {
-            if (collider.blockIndex == blockIndex) {
-                return collider.entity;
-            }
-        }
-        return null;
-    }
-
-    /**
      * Transfers leads from ship's shulkers to fence blocks (via LeashHitch).
      * Called during disassembly after blocks are placed but before ship is destroyed.
      *

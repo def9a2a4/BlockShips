@@ -42,10 +42,6 @@ public final class ShipTags {
         return SEAT_PREFIX + index;
     }
 
-    public static String storageTag(int index) {
-        return STORAGE_PREFIX + index;
-    }
-
     public static String wheelTag(Location loc) {
         return WHEEL_PREFIX + loc.getBlockX() + "," + loc.getBlockY() + "," + loc.getBlockZ();
     }

@@ -157,17 +157,6 @@ public class ShipInstance {
     private int passengerCheckCounter = 0;
     private static final int PASSENGER_CHECK_INTERVAL = 20;
 
-    // Incremental recovery tracking
-    private int expectedEntityCount = 0;
-    private boolean recoveryComplete = true;  // true for newly spawned ships
-
-    // Temporary storage for incremental recovery (carrier/shulker pairing)
-    private final Map<Integer, Entity> pendingCarriers = new HashMap<>();
-    private final Map<Integer, Shulker> pendingShulkers = new HashMap<>();
-
-    // Fast lookup for recovered display indices (O(1) vs O(n) iteration with tag parsing)
-    private final Set<Integer> recoveredDisplayIndices = new HashSet<>();
-
     // Reusable matrices for updateCollisionPositions() - object pooling to reduce GC pressure
     private final Matrix4f workRotation = new Matrix4f();
     private final Matrix4f workTranslation = new Matrix4f();
@@ -195,23 +184,8 @@ public class ShipInstance {
     private Location workCarrierLoc;  // Lazily initialized (needs World reference from vehicle)
     private final org.bukkit.util.Vector workVehicleVelocity = new org.bukkit.util.Vector();
 
-    /**
-     * Private constructor for creating ShipInstance without spawning entities.
-     * Used by fromState() factory method for chunk load recovery.
-     */
-
-    /**
-     * Creates a ShipInstance from saved state without spawning entities.
-     * Entity references must be recovered via recoverEntities() after construction.
-     *
-     * @param plugin The plugin instance
-     * @param state The saved ship state
-     * @param model The ship model
-     * @return A new ShipInstance ready for entity recovery, or null on error
-     */
-
     /** Rebuild the ship {@link ShipCustomization} (banner / wood / balloon) from a persisted state. Shared by
-     *  the native {@link #fromState} and the delegated {@link #fromRecoveredMechanism} recovery paths. */
+     *  the delegated {@link #fromRecoveredMechanism} recovery + migration paths. */
     public static ShipCustomization buildCustomizationFromState(JavaPlugin plugin, ShipPersistence.ShipState state) {
         ItemStack customBanner = null;
         if (state.bannerData != null) {
@@ -281,8 +255,7 @@ public class ShipInstance {
      * Reconstruct a DELEGATED custom {@link ShipInstance} from a defCoreLib-recovered {@link Mechanism} + the
      * ship sidecar state, after a restart or chunk reload (fired via a recovered {@code MechanismAssembleEvent}).
      * The mechanism already owns the recovered vehicle/display/collider/seat entities; this wraps them so
-     * ship-domain logic (physics, steering, health, UI) works again. Sibling of {@link #fromState} (which is
-     * native-only and leaves {@code mechanism} null).
+     * ship-domain logic (physics, steering, health, UI) works again.
      */
     public static ShipInstance fromRecoveredMechanism(JavaPlugin plugin, ShipPersistence.ShipState state,
                                                       ShipModel model, ArmorStand vehicle,
@@ -1693,39 +1666,6 @@ public class ShipInstance {
     }
 
     /**
-     * Attempts to recover the vehicle reference after a chunk reload.
-     * When a chunk unloads and reloads, the Java reference to the ArmorStand becomes stale.
-     * This method finds the vehicle entity by its scoreboard tag and reassigns the reference.
-     *
-     * @param chunk The chunk to search for the vehicle entity
-     * @return true if recovery was successful, false otherwise
-     */
-
-    /**
-     * Returns true if this ship needs entity recovery after chunk load.
-     */
-
-    /**
-     * Spawns the invisible parent BlockDisplay that anchors the passenger chain
-     * (children mount to it, it mounts to the vehicle). Carries no transform of its
-     * own; rotation/offset live on the child matrices. Shared by the fresh-spawn
-     * ctor and recovery's parent-regeneration path.
-     */
-
-    /**
-     * Recovers all entity references from a loaded chunk.
-     * Called after chunk load when ShipInstance exists but entities need recovery.
-     *
-     * @param chunk The chunk containing the ship entities
-     * @return true if recovery was successful, false otherwise
-     */
-
-    /**
-     * Gets the transform matrix for a display entity at the given index.
-     * Used during entity recovery to reconstruct DisplayInstance objects.
-     */
-
-    /**
      * Suspends ship for chunk unload - cancels tasks but keeps entities.
      * Entity references become stale but will be recovered on chunk load.
      */
@@ -1741,7 +1681,6 @@ public class ShipInstance {
         // Clear references (they'll be stale anyway after chunk unloads)
         parent = null;
         displays.clear();
-        recoveredDisplayIndices.clear();
         colliders.clear();
         seatShulkers.clear();
         // vehicle reference is kept but may become stale
@@ -1817,83 +1756,6 @@ public class ShipInstance {
         count += (int) model.parts.stream().filter(p -> p.collision != null).count() * 2;
         count += model.seats.size();  // seat shulkers
         return count;
-    }
-
-    /**
-     * Counts the number of currently valid/recovered entities.
-     * Used during recovery to check how many entities were found.
-     * Note: leadableShulker is not counted separately as it's already included in colliders.
-     */
-
-    // ===== Incremental Recovery Methods =====
-
-    /**
-     * Sets the expected entity count for recovery completeness tracking.
-     * Called during chunk load recovery with the value from saved metadata.
-     */
-
-    /**
-     * Returns true if all expected entities have been recovered.
-     */
-
-    /**
-     * Collects any entities belonging to this ship from a newly-loaded chunk.
-     * Called when chunks load and ship recovery is incomplete.
-     *
-     * @return Number of entities added to ship collections.
-     *         Returns 2 for a carrier+shulker pair since colliders count as 2 entities.
-     *         Entities waiting for their pair (pending carriers/shulkers) return 0 until matched.
-     *         This matches the counting in countEntities() and countRecoveredEntities().
-     */
-
-    /**
-     * Attempts to add an entity to this ship's collections during incremental recovery.
-     *
-     * @return Number of entities added to ship collections:
-     *         - 0: Entity already exists, not recognized, or stored in pending map waiting for pair
-     *         - 1: Single entity added (display, seat shulker)
-     *         - 2: Carrier+shulker pair completed (both entities added to colliders)
-     */
-
-    /**
-     * Processes any pending carrier/shulker pairs that can now be combined.
-     */
-    private int processPendingColliders() {
-        int added = 0;
-        Iterator<Map.Entry<Integer, Entity>> iter = pendingCarriers.entrySet().iterator();
-        while (iter.hasNext()) {
-            Map.Entry<Integer, Entity> entry = iter.next();
-            int blockIdx = entry.getKey();
-            Shulker s = pendingShulkers.remove(blockIdx);
-            if (s != null) {
-                ShipModel.ModelPart part = model.parts.get(blockIdx);
-                colliders.add(new CollisionBox(entry.getValue(), s, new Matrix4f(part.local), part.collision, blockIdx));
-                // Set leadable reference if this shulker is the lead attachment point
-                if (leadableShulker == null && ShipTags.extractLeadableIndex(s.getScoreboardTags()) >= 0) {
-                    leadableShulker = s;
-                }
-                iter.remove();
-                added += 2;
-            }
-        }
-        return added;
-    }
-
-    /**
-     * Checks if a display entity at the given index already exists.
-     */
-    private boolean hasDisplayAtIndex(int index) {
-        return recoveredDisplayIndices.contains(index);
-    }
-
-    /**
-     * Checks if a collider at the given block index already exists.
-     */
-    private boolean hasColliderAtIndex(int blockIdx) {
-        for (CollisionBox cb : colliders) {
-            if (cb.blockIndex == blockIdx) return true;
-        }
-        return false;
     }
 
     // ===== Custom Ship Methods =====
