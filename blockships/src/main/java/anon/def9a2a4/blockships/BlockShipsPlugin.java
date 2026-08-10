@@ -686,20 +686,12 @@ public class BlockShipsPlugin extends JavaPlugin {
                     return true;
                 }
 
-                // Gather the collider shulkers from whichever engine owns them: a delegated ship has no native
-                // `colliders` list (the Mechanism owns the shulkers), so glow those instead — else this command
-                // was dead on delegated ships (unlike its sibling highlightseats, which reads seatShulkers).
+                // The Mechanism owns the collider shulkers; gather them by block index.
                 java.util.List<org.bukkit.entity.Shulker> colliderShulkers = new java.util.ArrayList<>();
-                if (ship.mechanism != null) {
-                    int n = ship.mechanism.blockCount();
-                    for (int i = 0; i < n; i++) {
-                        org.bukkit.entity.Shulker s = ship.mechanism.colliderEntity(i);
-                        if (s != null && s.isValid()) colliderShulkers.add(s);
-                    }
-                } else {
-                    for (var c : ship.colliders) {
-                        if (c.entity != null && c.entity.isValid()) colliderShulkers.add(c.entity);
-                    }
+                int n = ship.mechanism.blockCount();
+                for (int i = 0; i < n; i++) {
+                    org.bukkit.entity.Shulker s = ship.mechanism.colliderEntity(i);
+                    if (s != null && s.isValid()) colliderShulkers.add(s);
                 }
 
                 if (colliderShulkers.isEmpty()) {

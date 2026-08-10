@@ -202,27 +202,8 @@ public class ShipWorldData {
             }
         }
 
-        // Inventory contents
-        Map<String, String> inventories = new HashMap<>();
-        for (Map.Entry<Integer, org.bukkit.inventory.Inventory> entry : ship.storages.entrySet()) {
-            try {
-                List<String> itemsData = new ArrayList<>();
-                for (ItemStack item : entry.getValue().getContents()) {
-                    if (item != null && !item.getType().isAir()) {
-                        byte[] bytes = item.serializeAsBytes();
-                        itemsData.add(Base64.getEncoder().encodeToString(bytes));
-                    } else {
-                        itemsData.add("");
-                    }
-                }
-                inventories.put(String.valueOf(entry.getKey()), String.join("|", itemsData));
-            } catch (Exception e) {
-                plugin.getLogger().warning("Failed to serialize inventory at block " + entry.getKey() + ": " + e.getMessage());
-            }
-        }
-        if (!inventories.isEmpty()) {
-            config.set("inventories", inventories);
-        }
+        // Inventory contents are owned by the mechanism's persistence sidecar for a delegated ship
+        // (ship's own storage map is always empty), so there is nothing to serialize here.
 
         // Internal yaw for chunk recovery (vehicle yaw is frozen at spawnYaw)
         config.set("current_yaw", ship.physics.currentYaw);
