@@ -199,38 +199,6 @@ public class ShipInstance {
      * Private constructor for creating ShipInstance without spawning entities.
      * Used by fromState() factory method for chunk load recovery.
      */
-    private ShipInstance(JavaPlugin plugin, String shipType, ShipModel model, ShipCustomization customization, UUID existingId) {
-        this.plugin = plugin;
-        this.shipType = shipType;
-        this.model = model;
-        this.customization = customization != null ? customization : ShipCustomization.empty();
-        this.config = ShipConfig.load(plugin, shipType);
-        this.driverSeatIndex = 0;
-        this.id = existingId;
-
-        // Determine if this is an airship
-        String typeValue = plugin.getConfig().getString("ships." + shipType + ".type", "ship");
-        this.isAirship = "airship".equalsIgnoreCase(typeValue) ||
-                         ("custom".equals(shipType) && model.getDensity() < config.airDensity);
-
-        // Initialize seatShulkers list with nulls
-        for (int i = 0; i < model.seats.size(); i++) {
-            seatShulkers.add(null);
-        }
-
-        // Cache initial rotation radians (model.initialRotation is final)
-        this.initialRotRadX = (float) java.lang.Math.toRadians(model.initialRotation.x);
-        this.initialRotRadY = (float) java.lang.Math.toRadians(model.initialRotation.y);
-        this.initialRotRadZ = (float) java.lang.Math.toRadians(model.initialRotation.z);
-        cachedR_initial.identity().rotateY(initialRotRadX).rotateX(initialRotRadY).rotateZ(initialRotRadZ);
-
-        // Initialize delegates
-        this.physics = new ShipPhysics(this);
-        this.collision = new ShipCollision(this);
-
-        // Entity references will be recovered via recoverEntities()
-        // vehicle, parent, displays, colliders are null/empty
-    }
 
     /**
      * Creates a ShipInstance from saved state without spawning entities.
@@ -241,20 +209,6 @@ public class ShipInstance {
      * @param model The ship model
      * @return A new ShipInstance ready for entity recovery, or null on error
      */
-    public static ShipInstance fromState(JavaPlugin plugin, ShipPersistence.ShipState state, ShipModel model) {
-        ShipCustomization customization = buildCustomizationFromState(plugin, state);
-
-        ShipInstance instance = new ShipInstance(plugin, state.shipType, model, customization, state.id);
-        instance.metadataYaw = state.yaw;
-
-        // For custom ships, restore the source model for disassembly
-        if ("custom".equals(state.shipType)) {
-            instance.sourceModel = model;
-        }
-
-        restoreInventoriesFromState(plugin, instance, state, model);
-        return instance;
-    }
 
     /** Rebuild the ship {@link ShipCustomization} (banner / wood / balloon) from a persisted state. Shared by
      *  the native {@link #fromState} and the delegated {@link #fromRecoveredMechanism} recovery paths. */
@@ -359,9 +313,6 @@ public class ShipInstance {
         return inst;
     }
 
-    public ShipInstance(JavaPlugin plugin, String shipType, ShipModel model, Location spawnLocation, ShipCustomization customization) {
-        this(plugin, shipType, model, spawnLocation, customization, null, null);
-    }
 
     /**
      * Full fresh-spawn ctor. When {@code mechanism != null} (delegated custom ship, M1), defCoreLib owns the
@@ -909,39 +860,6 @@ public class ShipInstance {
      * Called from tick() on every active tick, and from alignToGrid() (to reset
      * the transformation after spawnYaw is re-anchored to currentYaw).
      */
-    private void updateDisplayTransforms() {
-        workR_initial.set(cachedR_initial);
-
-        float deltaYaw = physics.currentYaw - spawnYaw;
-        float deltaPitch = vehicle.getPitch();  // Pitch starts at 0, so no spawn offset needed
-
-        workDisplayRot.set(
-            (float) java.lang.Math.toRadians(-deltaYaw),
-            (float) java.lang.Math.toRadians(-deltaPitch),
-            0f
-        );
-        model.rotationTransform.transform(workDisplayRot, workDisplayTransformedRot);
-        workDisplayDelta.identity()
-            .rotateY(workDisplayTransformedRot.x)
-            .rotateX(workDisplayTransformedRot.y)
-            .rotateZ(workDisplayTransformedRot.z);
-        workR.set(workDisplayDelta).mul(workR_initial);
-
-        // Build translation matrix for position offset (in local space)
-        workT.identity().translation(model.positionOffset);
-
-        // Add custom ship display offset from config
-        workT_display.set(workT);
-        if ("custom".equals(shipType)) {
-            workT_display.translate(config.customDisplayOffset);
-        }
-
-        // Update each child's transformation: R * T_display * display.base
-        for (DisplayInstance di : displays) {
-            workWorldMatrix.set(workR).mul(workT_display).mul(di.base);
-            di.entity.setTransformationMatrix(workWorldMatrix);
-        }
-    }
 
     // Cached ProtocolLib + NMS reflection state for position sync packets
     private static volatile boolean positionSyncInitialized = false;
@@ -1334,27 +1252,6 @@ public class ShipInstance {
      * and teleports them to the top of the highest overlapping collider.
      * Called after updateCollisionPositions() on first tick to fix assembly clipping.
      */
-    private void pushPlayersOutOfColliders() {
-        Location center = vehicle.getLocation();
-        for (Player player : center.getWorld().getPlayers()) {
-            if (player.getLocation().distanceSquared(center) > PLAYER_PROXIMITY_RADIUS_SQ) continue;
-            org.bukkit.util.BoundingBox playerBox = player.getBoundingBox();
-            double highestTop = Double.NEGATIVE_INFINITY;
-            for (CollisionBox cb : colliders) {
-                org.bukkit.util.BoundingBox shulkerBox = cb.entity.getBoundingBox();
-                if (playerBox.overlaps(shulkerBox) && playerBox.getMinY() < shulkerBox.getMaxY() - 0.1) {
-                    double top = shulkerBox.getMaxY();
-                    if (top > highestTop) highestTop = top;
-                }
-            }
-            if (highestTop > Double.NEGATIVE_INFINITY) {
-                Location safeLoc = player.getLocation().clone();
-                safeLoc.setY(highestTop + config.assemblyNudgeHeight);
-                player.teleport(safeLoc);
-                player.setFallDistance(0);
-            }
-        }
-    }
 
     /** Returns the height of a shulker's collision box (1.0 * scale). */
     private static double getShulkerHeight(Shulker shulker) {
@@ -1602,18 +1499,6 @@ public class ShipInstance {
      * Restores storage inventory contents from saved data.
      * Used when loading ships from persistence.
      */
-    public void restoreStorageContents(Map<Integer, ItemStack[]> savedContents) {
-        for (Map.Entry<Integer, ItemStack[]> entry : savedContents.entrySet()) {
-            Inventory inv = storages.get(entry.getKey());
-            if (inv != null) {
-                // Cap to inventory size: an unguarded setContents throws IllegalArgumentException
-                // if the saved array is larger than the storage, which would fail the whole ship load.
-                ItemStack[] saved = entry.getValue();
-                inv.setContents(java.util.Arrays.copyOf(saved,
-                    java.lang.Math.min(saved.length, inv.getSize())));
-            }
-        }
-    }
 
     /**
      * Destroys the ship and drops the appropriate item at the ship's location.
@@ -1815,25 +1700,10 @@ public class ShipInstance {
      * @param chunk The chunk to search for the vehicle entity
      * @return true if recovery was successful, false otherwise
      */
-    public boolean recoverVehicle(org.bukkit.Chunk chunk) {
-        String rootTag = ShipTags.shipRootTag(this.id);
-
-        for (Entity entity : chunk.getEntities()) {
-            if (entity instanceof ArmorStand && entity.getScoreboardTags().contains(rootTag)) {
-                this.vehicle = (ArmorStand) entity;
-                plugin.getLogger().info("Recovered vehicle for ship " + this.id);
-                return true;
-            }
-        }
-        return false;
-    }
 
     /**
      * Returns true if this ship needs entity recovery after chunk load.
      */
-    public boolean needsEntityRecovery() {
-        return parent == null || !parent.isValid() || vehicle == null || !vehicle.isValid();
-    }
 
     /**
      * Spawns the invisible parent BlockDisplay that anchors the passenger chain
@@ -1841,18 +1711,6 @@ public class ShipInstance {
      * own; rotation/offset live on the child matrices. Shared by the fresh-spawn
      * ctor and recovery's parent-regeneration path.
      */
-    private BlockDisplay spawnParentDisplay(World w, Location at) {
-        return w.spawn(at, BlockDisplay.class, d -> {
-            d.setBlock(Bukkit.createBlockData(Material.AIR));
-            d.setInterpolationDuration(config.displayInterpolationDuration);
-            d.setTeleportDuration(0);  // Position comes from passenger chain, not teleports
-            d.setViewRange(64f);
-            d.setPersistent(true);
-            d.setGravity(false);
-            d.addScoreboardTag(ShipTags.shipTag(this.id));
-            d.addScoreboardTag(ShipTags.PARENT_TAG);
-        });
-    }
 
     /**
      * Recovers all entity references from a loaded chunk.
@@ -1861,281 +1719,11 @@ public class ShipInstance {
      * @param chunk The chunk containing the ship entities
      * @return true if recovery was successful, false otherwise
      */
-    public boolean recoverEntities(org.bukkit.Chunk chunk) {
-        String shipTagPrefix = ShipTags.shipTag(this.id);  // "displayship:{uuid}"
-
-        // First pass: collect entities from the chunk
-        List<Entity> shipEntities = new ArrayList<>();
-        for (Entity e : chunk.getEntities()) {
-            for (String tag : e.getScoreboardTags()) {
-                if (tag.startsWith(shipTagPrefix)) {
-                    shipEntities.add(e);
-                    break;
-                }
-            }
-        }
-
-        // 1. Recover vehicle (root ArmorStand with :root tag)
-        vehicle = null;
-        String rootTag = ShipTags.shipRootTag(this.id);
-        for (Entity e : shipEntities) {
-            if (e instanceof ArmorStand as && e.getScoreboardTags().contains(rootTag)) {
-                vehicle = as;
-                break;
-            }
-        }
-        if (vehicle == null) {
-            plugin.getLogger().warning("Ship " + id + " recovery failed: no vehicle found");
-            return false;
-        }
-
-        // Second pass: search area around vehicle for any missed entities
-        // This catches entities that drifted to adjacent chunks
-        Location vLoc = vehicle.getLocation();
-        for (Entity e : vLoc.getWorld().getNearbyEntities(vLoc, 32, 32, 32)) {
-            if (shipEntities.contains(e)) continue;  // Already found
-            for (String tag : e.getScoreboardTags()) {
-                if (tag.startsWith(shipTagPrefix)) {
-                    shipEntities.add(e);
-                    plugin.getLogger().fine("Found additional entity in nearby search: " + e.getType());
-                    break;
-                }
-            }
-        }
-
-        // 2. Recover parent BlockDisplay
-        parent = null;
-        for (Entity e : shipEntities) {
-            if (e instanceof BlockDisplay bd && ShipTags.isParent(e.getScoreboardTags())) {
-                parent = bd;
-                break;
-            }
-        }
-        boolean regeneratedParent = false;
-        if (parent == null) {
-            // The parent is an invisible, transform-less anchor with no persisted identity. Rather than
-            // failing recovery forever ("no parent display found"), regenerate it and re-establish the
-            // passenger chain to the recovered children below.
-            plugin.getLogger().info("Ship " + id + ": parent display missing - regenerating");
-            parent = spawnParentDisplay(vehicle.getWorld(), vehicle.getLocation());
-            regeneratedParent = true;
-        }
-
-        // 3. Recover displays by index
-        displays.clear();
-        recoveredDisplayIndices.clear();
-        Map<Integer, Display> displaysByIdx = new TreeMap<>();
-        for (Entity e : shipEntities) {
-            if (e instanceof Display d && !ShipTags.isParent(e.getScoreboardTags())) {
-                int idx = ShipTags.extractDisplayIndex(e.getScoreboardTags());
-                if (idx >= 0) {
-                    displaysByIdx.put(idx, d);
-                }
-            }
-        }
-        // Rebuild displays list with transforms from model
-        int totalDisplays = model.parts.size() + model.items.size();
-        for (int i = 0; i < totalDisplays; i++) {
-            Display d = displaysByIdx.get(i);
-            if (d != null) {
-                Matrix4f transform = getTransformForDisplayIndex(i);
-                displays.add(new DisplayInstance(d, transform));
-                recoveredDisplayIndices.add(i);
-            }
-        }
-
-        // If we regenerated the parent, the recovered children were detached from the old (deleted)
-        // parent - re-establish the passenger chain explicitly (mirrors the fresh-spawn mount).
-        if (regeneratedParent) {
-            for (DisplayInstance di : displays) {
-                parent.addPassenger(di.entity);
-            }
-            vehicle.addPassenger(parent);
-        }
-
-        // 4. Recover collision boxes (carriers and shulkers)
-        colliders.clear();
-        Map<Integer, Entity> carriers = new HashMap<>();
-        Map<Integer, Shulker> shulkers = new HashMap<>();
-        for (Entity e : shipEntities) {
-            Set<String> tags = e.getScoreboardTags();
-            int blockIdx = ShipTags.extractBlockIndex(tags);
-            if (blockIdx < 0) continue;
-            if (ShipTags.isCarrier(tags)) {
-                carriers.put(blockIdx, e);
-            }
-            if (ShipTags.isCollider(tags) && e instanceof Shulker s) {
-                shulkers.put(blockIdx, s);
-            }
-        }
-        // Pair carriers with shulkers
-        for (var entry : carriers.entrySet()) {
-            int blockIdx = entry.getKey();
-            Shulker s = shulkers.get(blockIdx);
-            if (s != null) {
-                // Skip a collider whose index no longer fits the model (model definition changed between
-                // save and load) instead of throwing - a throw here would abort recovery of every remaining
-                // ship in the batch. Matches how the incremental tryAddEntity path tolerates this.
-                if (blockIdx >= model.parts.size()) {
-                    plugin.getLogger().warning("Ship " + id + " recovery: collider block index " + blockIdx +
-                        " exceeds model parts size " + model.parts.size() + " - skipping (model may have changed).");
-                    continue;
-                }
-                // Get collision config from model
-                ShipModel.ModelPart part = model.parts.get(blockIdx);
-                colliders.add(new CollisionBox(entry.getValue(), s, new Matrix4f(part.local), part.collision, blockIdx));
-            }
-        }
-
-        // 5. Recover seat shulkers
-        seatShulkers.clear();
-        for (int i = 0; i < model.seats.size(); i++) {
-            seatShulkers.add(null);
-        }
-        for (Entity e : shipEntities) {
-            int seatIdx = ShipTags.extractSeatIndex(e.getScoreboardTags());
-            if (seatIdx >= 0 && seatIdx < seatShulkers.size() && e instanceof Shulker s) {
-                seatShulkers.set(seatIdx, s);
-            }
-        }
-
-        // 5b. Recover leadable shulker (for prefab ship lead attachment)
-        this.leadableShulker = null;
-        for (Entity e : shipEntities) {
-            int leadableIdx = ShipTags.extractLeadableIndex(e.getScoreboardTags());
-            if (leadableIdx >= 0 && e instanceof Shulker s) {
-                this.leadableShulker = s;
-                break;  // Only one leadable shulker per ship
-            }
-        }
-
-        // 6. Restore state and start ticking
-        previousVehicleLocation = vehicle.getLocation().clone();
-        previousPitch = vehicle.getPitch();
-        // spawnYaw must match vehicle.getYaw() (the frozen NBT yaw the client inherits
-        // for display passengers on 1.21.9+). currentYaw from metadata provides the delta.
-        // Delegated ships (M1): the vehicle yaw is frozen at 0, so seed spawnYaw from the model's
-        // assembly yaw instead — mirroring the fresh-spawn ctor — else rotation mis-baselines after a
-        // restart. (This native recoverEntities path currently produces mechanism==null ships; the guard
-        // is correct-by-construction for when delegated recovery is wired in M5.)
-        spawnYaw = (mechanism != null)
-            ? ShipTags.normalizeYaw(model.assemblyYaw)
-            : ShipTags.normalizeYaw(vehicle.getYaw());
-        physics.currentYaw = !Float.isNaN(metadataYaw)
-            ? ShipTags.normalizeYaw(metadataYaw)
-            : spawnYaw;
-        previousYaw = physics.currentYaw;
-        firstTick = true;
-
-        // Initialize chunk tracking for persistence
-        this.currentChunkX = vehicle.getLocation().getBlockX() >> 4;
-        this.currentChunkZ = vehicle.getLocation().getBlockZ() >> 4;
-        taskStopped = false;
-
-        // Initialize collision box previous positions to current positions
-        // This prevents first-tick velocity spike from (0,0,0) to actual position
-        Location currentVehicleLoc = vehicle.getLocation();
-
-        // Build rotation matrix including vehicle's current orientation
-        Matrix4f R_full = buildRotationMatrix();
-
-        Matrix4f T_collision = new Matrix4f().translation(model.collisionOffset);
-        if ("custom".equals(shipType)) {
-            T_collision.translate(config.customCollisionOffset);
-        }
-
-        // Initialize each collider's previousWorldPos to current position
-        Matrix4f tempWorld = new Matrix4f();
-        Vector3f tempOffset = new Vector3f();
-        Vector3f tempPerBlock = new Vector3f();
-        for (CollisionBox cb : colliders) {
-            cb.previousWorldPos = new Vector3f();
-            computeColliderWorldPos(R_full, T_collision, cb.base, cb.config.offset,
-                    currentVehicleLoc, tempWorld, tempOffset, tempPerBlock, cb.previousWorldPos);
-        }
-
-        // Position collision boxes immediately before starting tick task
-        updateCollisionPositions();
-
-        // Apply display transforms with correct deltaYaw (may be non-zero if
-        // metadata restored a different currentYaw than the vehicle's frozen spawnYaw)
-        updateDisplayTransforms();
-
-        // Recompute effective stats. The recovery path previously skipped this, so prefab and
-        // sail-only custom ships came back from a chunk reload / server restart stuck at
-        // effective*==0 (immovable, can't turn, airships can't ascend/descend). resolveWheelData()
-        // links wheelData for custom ships (null no-op for prefab);
-        // recomputeStats() is unconditional and idempotent and handles prefab/custom/stats-disabled.
-        resolveWheelData();
-        physics.recomputeStats();
-
-        // Start tick task
-        task = new BukkitRunnable() {
-            @Override
-            public void run() {
-                Location loc = vehicle.getLocation();
-                if (!loc.isChunkLoaded()) {
-                    return;
-                }
-                if (vehicle.isDead() || !vehicle.isValid()) {
-                    destroyWithPersistenceCleanup();
-                    cancel();
-                    return;
-                }
-                tick();
-            }
-        };
-        task.runTaskTimer(plugin, 0L, 1L);
-
-        plugin.getLogger().info("Recovered " + displays.size() + " displays, " + colliders.size() + " colliders for ship " + id);
-        return true;
-    }
 
     /**
      * Gets the transform matrix for a display entity at the given index.
      * Used during entity recovery to reconstruct DisplayInstance objects.
      */
-    private Matrix4f getTransformForDisplayIndex(int index) {
-        if (index < model.parts.size()) {
-            // Block display
-            ShipModel.ModelPart part = model.parts.get(index);
-            Matrix4f transform = new Matrix4f(part.local);
-
-            // Apply display rotation for custom ships
-            if ("custom".equals(shipType) && part.rawYaml.containsKey("display_yaw")) {
-                float displayYaw = ((Number) part.rawYaml.get("display_yaw")).floatValue();
-                transform.translate(0.5f, 0f, 0.5f);
-                transform.rotateY((float) java.lang.Math.toRadians(-displayYaw));
-                transform.translate(-0.5f, 0f, -0.5f);
-            }
-
-            // Handle heads/skulls and banners
-            boolean hasHead = part.rawYaml.containsKey("skull_profile") ||
-                              part.rawYaml.containsKey("skull_rotation") ||
-                              part.rawYaml.containsKey("skull_facing");
-            // Detect banners by rotation/facing keys (works for both plain and patterned banners)
-            boolean hasBannerPatterns = part.rawYaml.containsKey("banner_patterns") ||
-                                        part.rawYaml.containsKey("banner_rotation") ||
-                                        part.rawYaml.containsKey("banner_facing");
-
-            if (hasHead) {
-                // Use the shared helper so recovery matches the spawn/tick transform
-                // exactly (incl. the wall-head branch this path previously lacked).
-                applySkullTransform(transform, part.rawYaml);
-            } else if (hasBannerPatterns) {
-                return calculateBannerTransform(new Matrix4f(part.local), part.rawYaml);
-            }
-
-            return transform;
-        } else {
-            // Item display (index offset by parts.size())
-            int itemIndex = index - model.parts.size();
-            if (itemIndex < model.items.size()) {
-                return new Matrix4f(model.items.get(itemIndex).local);
-            }
-            return new Matrix4f();  // Identity matrix as fallback
-        }
-    }
 
     /**
      * Suspends ship for chunk unload - cancels tasks but keeps entities.
@@ -2236,15 +1824,6 @@ public class ShipInstance {
      * Used during recovery to check how many entities were found.
      * Note: leadableShulker is not counted separately as it's already included in colliders.
      */
-    public int countRecoveredEntities() {
-        int count = 0;
-        if (vehicle != null && vehicle.isValid()) count++;
-        if (parent != null && parent.isValid()) count++;
-        count += displays.size();
-        count += colliders.size() * 2;  // carrier + shulker per collider (leadableShulker is one of these)
-        count += (int) seatShulkers.stream().filter(s -> s != null && s.isValid()).count();
-        return count;
-    }
 
     // ===== Incremental Recovery Methods =====
 
@@ -2252,17 +1831,10 @@ public class ShipInstance {
      * Sets the expected entity count for recovery completeness tracking.
      * Called during chunk load recovery with the value from saved metadata.
      */
-    public void setExpectedEntityCount(int count) {
-        this.expectedEntityCount = count;
-        this.recoveryComplete = (count == 0) || (countRecoveredEntities() >= count);
-    }
 
     /**
      * Returns true if all expected entities have been recovered.
      */
-    public boolean isRecoveryComplete() {
-        return recoveryComplete;
-    }
 
     /**
      * Collects any entities belonging to this ship from a newly-loaded chunk.
@@ -2273,35 +1845,6 @@ public class ShipInstance {
      *         Entities waiting for their pair (pending carriers/shulkers) return 0 until matched.
      *         This matches the counting in countEntities() and countRecoveredEntities().
      */
-    public int collectEntitiesFromChunk(org.bukkit.Chunk chunk) {
-        if (recoveryComplete) return 0;
-
-        // Clean up any invalid pending entities
-        pendingCarriers.entrySet().removeIf(e -> !e.getValue().isValid());
-        pendingShulkers.entrySet().removeIf(e -> !e.getValue().isValid());
-
-        int added = 0;
-        for (Entity e : chunk.getEntities()) {
-            UUID entityShipId = ShipTags.extractShipId(e.getScoreboardTags());
-            if (!this.id.equals(entityShipId)) continue;
-            added += tryAddEntity(e);
-        }
-
-        if (added > 0) {
-            // Check for any pending carrier/shulker pairs that can now be combined
-            added += processPendingColliders();
-
-            int current = countRecoveredEntities();
-            if (current >= expectedEntityCount) {
-                recoveryComplete = true;
-                // Clear pending maps to release entity references
-                pendingCarriers.clear();
-                pendingShulkers.clear();
-                plugin.getLogger().info("Ship " + id + " recovery now complete (" + current + " entities)");
-            }
-        }
-        return added;
-    }
 
     /**
      * Attempts to add an entity to this ship's collections during incremental recovery.
@@ -2311,72 +1854,6 @@ public class ShipInstance {
      *         - 1: Single entity added (display, seat shulker)
      *         - 2: Carrier+shulker pair completed (both entities added to colliders)
      */
-    private int tryAddEntity(Entity e) {
-        Set<String> tags = e.getScoreboardTags();
-
-        // Skip vehicle/parent - already have them from initial recovery
-        if (e instanceof ArmorStand && ShipTags.isRoot(tags)) return 0;
-        if (e instanceof BlockDisplay && ShipTags.isParent(tags)) return 0;
-
-        // Display entity
-        if (e instanceof Display d && !ShipTags.isParent(tags)) {
-            int idx = ShipTags.extractDisplayIndex(tags);
-            if (idx >= 0 && !hasDisplayAtIndex(idx)) {
-                Matrix4f transform = getTransformForDisplayIndex(idx);
-                displays.add(new DisplayInstance(d, transform));
-                recoveredDisplayIndices.add(idx);
-                return 1;
-            }
-        }
-
-        // Collider: need both carrier and shulker with matching block index
-        int blockIdx = ShipTags.extractBlockIndex(tags);
-        if (blockIdx >= 0 && blockIdx < model.parts.size() && !hasColliderAtIndex(blockIdx)) {
-            if (ShipTags.isCarrier(tags)) {
-                // Check if we already have a shulker waiting
-                Shulker pendingShulker = pendingShulkers.remove(blockIdx);
-                if (pendingShulker != null) {
-                    ShipModel.ModelPart part = model.parts.get(blockIdx);
-                    colliders.add(new CollisionBox(e, pendingShulker, new Matrix4f(part.local), part.collision, blockIdx));
-                    // Set leadable reference if this shulker is the lead attachment point
-                    if (leadableShulker == null && ShipTags.extractLeadableIndex(pendingShulker.getScoreboardTags()) >= 0) {
-                        leadableShulker = pendingShulker;
-                    }
-                    return 2;
-                } else {
-                    pendingCarriers.put(blockIdx, e);
-                    return 0;  // Don't count until paired with shulker
-                }
-            }
-            if (ShipTags.isCollider(tags) && e instanceof Shulker s) {
-                // Check if we already have a carrier waiting
-                Entity pendingCarrier = pendingCarriers.remove(blockIdx);
-                if (pendingCarrier != null) {
-                    ShipModel.ModelPart part = model.parts.get(blockIdx);
-                    colliders.add(new CollisionBox(pendingCarrier, s, new Matrix4f(part.local), part.collision, blockIdx));
-                    // Set leadable reference if this shulker is the lead attachment point
-                    if (leadableShulker == null && ShipTags.extractLeadableIndex(tags) >= 0) {
-                        leadableShulker = s;
-                    }
-                    return 2;
-                } else {
-                    pendingShulkers.put(blockIdx, s);
-                    return 0;  // Don't count until paired with carrier
-                }
-            }
-        }
-
-        // Seat shulker
-        int seatIdx = ShipTags.extractSeatIndex(tags);
-        if (seatIdx >= 0 && seatIdx < seatShulkers.size() && e instanceof Shulker s) {
-            if (seatShulkers.get(seatIdx) == null) {
-                seatShulkers.set(seatIdx, s);
-                return 1;
-            }
-        }
-
-        return 0;
-    }
 
     /**
      * Processes any pending carrier/shulker pairs that can now be combined.

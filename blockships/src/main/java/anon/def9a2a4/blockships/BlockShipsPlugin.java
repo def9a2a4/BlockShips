@@ -353,9 +353,11 @@ public class BlockShipsPlugin extends JavaPlugin {
         for (World world : Bukkit.getWorlds()) {
             for (Entity entity : world.getEntities()) {
                 Set<String> tags = entity.getScoreboardTags();
-                boolean nativeTag = ShipTags.isShipEntity(tags);      // displayship: (prefab, and a delegated ship's vehicle)
-                boolean corelibTag = ShipTags.isCorelibTagged(tags);  // corelib:mech: (a delegated ship's colliders/seats/displays)
-                if (!nativeTag && !corelibTag) continue;              // not a BlockShips entity
+                // displayship: tags every ship's root vehicle, and is also what leftover legacy (pre-migration)
+                // entities carry; corelib:mech: tags the mechanism's colliders/seats/displays.
+                boolean shipTag = ShipTags.isShipEntity(tags);
+                boolean corelibTag = ShipTags.isCorelibTagged(tags);
+                if (!shipTag && !corelibTag) continue;                // not a BlockShips entity
 
                 UUID shipId = ShipTags.extractShipId(tags);
                 ShipInstance ship = shipId != null ? ShipRegistry.byId(shipId) : null;
@@ -364,7 +366,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                 // ship's corelib colliders (unregistered → its corelib entities are indistinguishable from a
                 // foreign mechanism's; the orphan is still detected via its displayship: vehicle below). Do NOT
                 // relax this to count byId==null corelib entities, or it starts reaping/counting sibling plugins.
-                if (corelibTag && !nativeTag && ship == null) continue;
+                if (corelibTag && !shipTag && ship == null) continue;
 
                 total++;
                 byType.merge(entity.getType().name(), 1, Integer::sum);
