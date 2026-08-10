@@ -1309,34 +1309,6 @@ public class ShipInstance {
     }
 
     /**
-     * Creates the virtual storage inventory for a ship storage block.
-     * Routes odd-size storage (e.g. HOPPER = 5 slots) through the type-based
-     * {@code createInventory} overload, which has no multiple-of-9 restriction that the
-     * size-based overload enforces (assembling a hopper would otherwise throw).
-     */
-    private static Inventory createStorageInventory(ShipModel.StorageConfig sc, String customNameGson) {
-        net.kyori.adventure.text.Component title;
-        if (customNameGson != null) {
-            try {
-                // A container's real (anvil) name, captured at scan; full color/format fidelity.
-                title = net.kyori.adventure.text.serializer.gson.GsonComponentSerializer.gson().deserialize(customNameGson);
-            } catch (Exception e) {
-                title = net.kyori.adventure.text.Component.text(sc.name);  // malformed persisted JSON -> generic label
-            }
-        } else {
-            title = net.kyori.adventure.text.Component.text(sc.name);
-        }
-        return (sc.type.invType != null)
-            ? Bukkit.createInventory(null, sc.type.invType, title)
-            : Bukkit.createInventory(null, sc.type.slots, title);
-    }
-
-    /**
-     * Restores storage inventory contents from saved data.
-     * Used when loading ships from persistence.
-     */
-
-    /**
      * Destroys the ship and drops the appropriate item at the ship's location.
      * For custom ships (block assembly), drops a ship wheel item.
      * For prefab ships, drops a ship kit with customization data.

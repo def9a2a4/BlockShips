@@ -5,6 +5,7 @@ import org.bukkit.Material;
 import org.bukkit.block.Block;
 
 import java.util.*;
+// Collections is used for the no-glue detectShipDetailed overload.
 
 /**
  * Detects ship blocks using 6-direction flood fill algorithm.
@@ -55,7 +56,7 @@ public class ShipDetector {
      * @param startLocation The ship wheel location
      * @return Internal result with blocks and status flags
      */
-    private InternalScanResult detectShipInternal(Location startLocation) {
+    private InternalScanResult detectShipInternal(Location startLocation, Set<Location> forcedMembers) {
         Set<Location> shipBlocks = new HashSet<>();
         Queue<Location> frontier = new LinkedList<>();
         boolean exceededLimit = false;
@@ -63,6 +64,17 @@ public class ShipDetector {
         // Start with the initial location
         frontier.add(startLocation.clone());
         shipBlocks.add(startLocation.clone());
+
+        // Glued cells join unconditionally and seed the frontier, so the fill expands THROUGH them —
+        // a glued dirt block bridges to allowed hull on its far side. They bypass the allow-list by
+        // design (that is what gluing is for), but never the air check: a glued cell whose block was
+        // broken while docked would otherwise become a ModelPart holding AIR blockdata, rendering an
+        // empty ItemDisplay and airing out an already-air cell at assembly.
+        for (Location forced : forcedMembers) {
+            if (forced.getBlock().getType().isAir()) continue;
+            Location cell = forced.clone();
+            if (shipBlocks.add(cell)) frontier.add(cell);
+        }
 
         // BFS flood fill
         while (!frontier.isEmpty()) {
@@ -96,7 +108,7 @@ public class ShipDetector {
                     continue;
                 }
 
-                if (!configManager.isAllowed(material)) {
+                if (!configManager.isAllowed(material) && !forcedMembers.contains(neighbor)) {
                     // Skip forbidden blocks (don't add to ship, but continue scanning)
                     continue;
                 }
@@ -111,25 +123,19 @@ public class ShipDetector {
     }
 
     /**
-     * Detect all ship blocks starting from the ship wheel location.
-     * Uses BFS flood fill with 6-direction expansion.
-     *
-     * @param startLocation The ship wheel location
-     * @return Set of all blocks that are part of the ship, or null if detection failed
-     */
-    public Set<Location> detectShip(Location startLocation) {
-        InternalScanResult result = detectShipInternal(startLocation);
-        if (result.exceededLimit) {
-            return null;
-        }
-        return result.blocks;
-    }
-
-    /**
      * Detect ship and return detailed information about the ship.
      */
     public ShipDetectionResult detectShipDetailed(Location startLocation) {
-        InternalScanResult result = detectShipInternal(startLocation);
+        return detectShipDetailed(startLocation, Collections.emptySet());
+    }
+
+    /**
+     * Detect ship, treating {@code forcedMembers} (the wheel's glued cells) as ship blocks regardless
+     * of the {@code blocks.yml} allow-list. They also seed the flood fill, so the ship can expand
+     * through a glued block to allowed hull beyond it.
+     */
+    public ShipDetectionResult detectShipDetailed(Location startLocation, Set<Location> forcedMembers) {
+        InternalScanResult result = detectShipInternal(startLocation, forcedMembers);
 
         if (result.blocks.isEmpty()) {
             return new ShipDetectionResult(false, "No valid blocks found for ship", null, 0, false);

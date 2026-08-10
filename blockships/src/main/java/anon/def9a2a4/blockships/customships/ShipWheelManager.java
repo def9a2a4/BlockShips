@@ -196,6 +196,12 @@ public class ShipWheelManager {
         ShipWheelData wheelData = placedWheels.remove(locationKey(location));
         if (wheelData == null) return;
 
+        // Drop the wheel's glue before the block goes. Setting the cell to AIR destroys the skull tile
+        // entity and its PDC anyway, so this is belt-and-braces — but it also drops the cached hull
+        // connectors, which nothing else would.
+        ShipGlue.clear(location.getBlock());
+        ShipWheelAnchors.forget(location.getBlock());
+
         // Drop ship wheel item
         org.bukkit.World world = location.getWorld();
         if (world != null && plugin instanceof BlockShipsPlugin bsp) {
@@ -214,6 +220,8 @@ public class ShipWheelManager {
     public void destroyWheelBlock(Location location) {
         ShipWheelData wd = placedWheels.remove(locationKey(location));
         if (wd == null) return;
+        ShipGlue.clear(location.getBlock());
+        ShipWheelAnchors.forget(location.getBlock());
         if (location.getWorld() != null) {
             location.getBlock().setType(Material.AIR);
         }
@@ -787,7 +795,7 @@ public class ShipWheelManager {
             });
 
             // Leads-out — re-leash entities off the collider shulkers onto fresh LeashHitches on the landed
-            // fences, after blocks land but before the colliders are removed (mirror transferLeadsFromShip).
+            // fences, after blocks land but before the colliders are removed (via transferLeadsFromMechanism).
             final ShipModel fModel = model;
             final Location fShipLoc = shipLoc.clone();
             final float fYaw = currentYaw;
@@ -1087,9 +1095,11 @@ public class ShipWheelManager {
         int maxShipSize = ((BlockShipsPlugin) plugin).getConfig().getInt("custom-ships.max-ship-size", 1000);
         int maxScanSize = ((BlockShipsPlugin) plugin).getConfig().getInt("custom-ships.max-scan-size", 5000);
 
-        // Run ship detection
+        // Run ship detection. Feed it the same glued cells assembly will use, so the preview and the
+        // real thing never disagree about what is on the ship.
         ShipDetector detector = new ShipDetector(maxShipSize, maxScanSize);
-        ShipDetector.ShipDetectionResult result = detector.detectShipDetailed(wheelLoc);
+        ShipDetector.ShipDetectionResult result =
+            detector.detectShipDetailed(wheelLoc, ShipGlue.gluedCells(wheelLoc.getBlock()));
 
         if (!result.isSuccess()) {
             // Detection failed - ship too large or other error
@@ -1203,6 +1213,10 @@ public class ShipWheelManager {
 
     /**
      * Calculate the total weight of all blocks in the ship.
+     *
+     * <p>All three of these helpers go through {@link BlockConfigManager#resolveWeight}, matching
+     * {@code BlockStructureScanner}: a glued block is not in blocks.yml and must be priced from
+     * defCoreLib's mass table rather than read as weightless.
      */
     private int calculateTotalWeight(Set<Location> blocks) {
         BlockConfigManager configManager = BlockConfigManager.getInstance();
@@ -1210,8 +1224,12 @@ public class ShipWheelManager {
 
         for (Location loc : blocks) {
             Block block = loc.getBlock();
-            BlockProperties props = configManager.getProperties(block.getType(), block.getBlockData());
-            totalWeight += props.getWeight();
+            // Guarded: this used to unbox getWeight() with no hasWeight() check, unlike its two
+            // siblings below — a block configured with an explicit `weight: null` NPE'd /detect.
+            Integer w = configManager.resolveWeight(block.getType(), block.getBlockData());
+            if (w != null) {
+                totalWeight += w;
+            }
         }
 
         return totalWeight;
@@ -1226,8 +1244,7 @@ public class ShipWheelManager {
 
         for (Location loc : blocks) {
             Block block = loc.getBlock();
-            BlockProperties props = configManager.getProperties(block.getType(), block.getBlockData());
-            if (props.hasWeight()) {
+            if (configManager.resolveWeight(block.getType(), block.getBlockData()) != null) {
                 count++;
             }
         }
@@ -1245,12 +1262,9 @@ public class ShipWheelManager {
 
         for (Location loc : blocks) {
             Block block = loc.getBlock();
-            BlockProperties props = configManager.getProperties(block.getType(), block.getBlockData());
-            if (props.hasWeight()) {
-                int w = props.getWeight();
-                if (w > 0) {
-                    positiveWeight += w;
-                }
+            Integer w = configManager.resolveWeight(block.getType(), block.getBlockData());
+            if (w != null && w > 0) {
+                positiveWeight += w;
             }
         }
 

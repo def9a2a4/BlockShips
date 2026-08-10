@@ -348,6 +348,53 @@ public class BlockConfigManager {
     }
 
     /**
+     * Whether {@code blocks.yml} says anything at all about this material.
+     *
+     * <p>Distinguishes "configured with weight 0" from "never mentioned". {@link #getProperties}
+     * synthesises a forbidden entry for an unknown material whose {@code weight} autoboxes to
+     * {@code Integer 0} — so {@link BlockProperties#hasWeight()} returns true and the block reads as
+     * weightless rather than unpriced. That is fine while the allow-list is the only way in, but a
+     * GLUED block is deliberately not allow-listed: left alone it would add 0 to the ship's weight
+     * while still incrementing the divisor, dragging mean density toward 0 (i.e. toward the airship
+     * threshold) and making glue the cheapest way to make a ship fly.
+     */
+    public boolean isConfigured(Material material) {
+        return blockPropertiesCache.containsKey(material);
+    }
+
+    /**
+     * The signed buoyancy weight to use for a block, or {@code null} when the block is deliberately
+     * excluded from density (an explicit {@code weight: null} in blocks.yml).
+     *
+     * <p>A material blocks.yml has never heard of is, in practice, a GLUED block — nothing else can
+     * get into a ship. Those fall back to defCoreLib's mass table so they weigh something real
+     * instead of nothing. That table is inertial mass and is always {@code >= 0}, which is the
+     * conservative answer here: a glued stone makes a ship sit lower, never higher.
+     *
+     * <p>Use this rather than {@code getProperties(...).getWeight()} anywhere weight feeds density,
+     * mass or health.
+     */
+    public Integer resolveWeight(Material material, BlockData blockData) {
+        if (isConfigured(material)) {
+            BlockProperties props = getProperties(material, blockData);
+            return props.hasWeight() ? props.getWeight() : null;
+        }
+        return corelibMass(material);
+    }
+
+    /** defCoreLib's inertial mass for a material, rounded to BlockShips' integer weight scale. */
+    private static Integer corelibMass(Material material) {
+        try {
+            double m = anon.def9a2a4.corelib.CoreLibPlugin.getInstance()
+                .getMechanismRegistry().massRegistry().get(material, null);
+            return (int) Math.round(m);
+        } catch (Throwable t) {
+            // CoreLib unavailable/faulted — a sane non-zero default beats a weightless ghost block.
+            return 1;
+        }
+    }
+
+    /**
      * Get properties for a specific block (considering block state).
      */
     public BlockProperties getProperties(Material material, BlockData blockData) {

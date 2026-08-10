@@ -15,7 +15,6 @@ public final class ShipTags {
      *  to the ship (see {@link #extractShipId}). Keep in sync with defCoreLib's MechanismRegistry tag scheme. */
     public static final String CORELIB_MECH_PREFIX = "corelib:mech:";
     public static final String SEAT_PREFIX = "shipseat:";
-    public static final String STORAGE_PREFIX = "storage:";
     public static final String WHEEL_PREFIX = "shipwheel:";
     public static final String INTERACT_PREFIX = "interact:";
     public static final String LEADABLE_PREFIX = "leadable:";
@@ -146,7 +145,7 @@ public final class ShipTags {
     /**
      * Block index {@code i} from a delegated (defCoreLib) collider/seat shulker tag
      * {@code corelib:mech:{mechId}:{i}:collider|seat|driver_seat}, or -1 if none. This is the delegated-engine
-     * analog of {@link #extractStorageIndex}/{@link #extractCannonIndex}/{@link #extractInteractIndex} — a
+     * analog of {@link #extractCannonIndex}/{@link #extractInteractIndex} — a
      * Mechanism-owned shulker carries only the {@code corelib:mech:} tag, so those native extractors return -1
      * for it, and the click router needs the block index to route via the parity invariant (mechanism block
      * index == model.parts index). Parsed with {@code indexOf} off the literal prefix (the mechId UUID has no
@@ -170,10 +169,6 @@ public final class ShipTags {
             }
         }
         return -1;
-    }
-
-    public static int extractStorageIndex(Set<String> tags) {
-        return extractIntIndex(tags, STORAGE_PREFIX);
     }
 
     public static String extractWheelLocation(Set<String> tags) {

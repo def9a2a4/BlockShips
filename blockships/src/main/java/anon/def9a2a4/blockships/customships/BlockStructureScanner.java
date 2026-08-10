@@ -291,9 +291,13 @@ public class BlockStructureScanner {
             maxScanSize = plugin.getConfig().getInt("custom-ships.max-scan-size", 5000);
         }
 
+        // Blocks the player glued to the wheel join the ship regardless of the blocks.yml allow-list,
+        // and seed the fill so it expands THROUGH them to allowed hull on their far side.
+        Set<Location> glued = ShipGlue.gluedCells(wheelLocation.getBlock());
+
         // Use ShipDetector to flood fill and find all ship blocks
         ShipDetector detector = new ShipDetector(maxShipSize, maxScanSize);
-        ShipDetector.ShipDetectionResult result = detector.detectShipDetailed(wheelLocation);
+        ShipDetector.ShipDetectionResult result = detector.detectShipDetailed(wheelLocation, glued);
 
         if (!result.isSuccess()) {
             return null;
@@ -303,6 +307,24 @@ public class BlockStructureScanner {
         if (shipBlocks == null || shipBlocks.isEmpty()) {
             return null;
         }
+
+        return captureCells(wheelLocation, facing, shipBlocks);
+    }
+
+    /**
+     * Capture an explicit list of world cells into a {@link ShipModel} plus its parity-ordered block
+     * list. Extracted from {@link #scanStructure} so the locked-set path ({@link #scanLocked}) shares
+     * it verbatim rather than reimplementing it — block-index parity, seats, cannons, storage, sign
+     * and banner data, centre of volume, health and the float offset all have to agree exactly, and a
+     * second implementation would drift.
+     *
+     * <p>Safe to extract because the per-cell loop has no order dependencies: every accumulator is
+     * commutative, and everything order-sensitive (driver-seat resolution, cannon detection, assembly
+     * yaw) happens after the loop and is index-derived.
+     */
+    public static ScanResult captureCells(Location wheelLocation, BlockFace facing,
+                                          Collection<Location> shipBlocks) {
+        BlockShipsPlugin plugin = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
 
         List<ShipModel.ModelPart> parts = new ArrayList<>();
         // Live world blocks in the SAME order as parts (orderedBlocks[i] ↔ parts[i]) so a delegated
@@ -384,8 +406,13 @@ public class BlockStructureScanner {
 
             // Only accumulate weight and center of volume for blocks with weight
             // Blocks with null weight are excluded from density calculations
-            if (props.hasWeight()) {
-                int weight = props.getWeight();
+            // resolveWeight, not props.getWeight(): a GLUED block is not in blocks.yml, and the
+            // synthesised "unknown material" entry weighs 0 while still counting toward the density
+            // divisor — so gluing stone would push a ship toward the airship threshold instead of
+            // sinking it. Unconfigured materials fall back to defCoreLib's mass table.
+            Integer resolvedWeight = configManager.resolveWeight(block.getType(), blockData);
+            if (resolvedWeight != null) {
+                int weight = resolvedWeight;
                 totalWeight += weight;
                 if (weight > 0) {
                     totalMass += weight;

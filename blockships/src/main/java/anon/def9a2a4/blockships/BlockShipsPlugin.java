@@ -91,6 +91,11 @@ public class BlockShipsPlugin extends JavaPlugin {
         shipWheelManager = new ShipWheelManager(this);
         shipWheelManager.loadAll();
 
+        // Make ship wheels defCoreLib glue anchors, so players can brush blocks the blocks.yml
+        // allow-list would otherwise forbid (dirt, stone, grass) onto a ship. Registered after the
+        // wheel manager exists, since the provider looks wheels up through it.
+        anon.def9a2a4.blockships.customships.ShipWheelAnchors.register(this);
+
         // M5: rebuild delegated custom ships whose mechanisms defCoreLib recovered from chunks that loaded
         // (fired their EntitiesLoadEvent) before this plugin enabled — those recovered events had no listener
         // yet. Done AFTER loadAll so the wheels are available for stat recomputation on reconstruction.
