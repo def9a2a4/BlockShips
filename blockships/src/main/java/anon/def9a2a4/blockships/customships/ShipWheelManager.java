@@ -945,32 +945,11 @@ public class ShipWheelManager {
         // region-file entity NBT — NOT the MechanismState snapshot. That's why tagging AFTER mechRegistry.persist()
         // is correct (don't "fix" the ordering) and why reconstructDelegatedShip deliberately does not re-tag. If
         // defCoreLib ever respawns fresh colliders on recovery, this branch (or reconstructDelegatedShip) must re-tag.
-        if (ship.mechanism != null) {
-            int i = ship.model.wheelPartIndex();
-            if (i >= 0) {
-                org.bukkit.entity.Shulker shulker = ship.mechanism.colliderEntity(i);
-                if (shulker != null && shulker.isValid()) {
-                    shulker.addScoreboardTag(ShipTags.wheelTag(wheelLoc));
-                }
-            }
-            return;
-        }
-
-        // Find the collision shulker at the wheel position (block index 0 should be the wheel)
-        // We need to iterate through colliders to find the one at position (0,0,0)
-        for (CollisionBox collider : ship.colliders) {
-            // Check if this collider is at the wheel position
-            // The collider's base transformation should have translation (0,0,0) for the wheel
-            org.joml.Vector3f translation = new org.joml.Vector3f();
-            collider.base.getTranslation(translation);
-
-            if (Math.abs(translation.x) < 0.01f && Math.abs(translation.y) < 0.01f && Math.abs(translation.z) < 0.01f) {
-                // This is the wheel collider - tag it with the wheel location
-                org.bukkit.entity.Shulker shulker = collider.entity;
-                if (shulker != null && shulker.isValid()) {
-                    shulker.addScoreboardTag(ShipTags.wheelTag(wheelLoc));
-                }
-                break;
+        int i = ship.model.wheelPartIndex();
+        if (i >= 0) {
+            org.bukkit.entity.Shulker shulker = ship.mechanism.colliderEntity(i);
+            if (shulker != null && shulker.isValid()) {
+                shulker.addScoreboardTag(ShipTags.wheelTag(wheelLoc));
             }
         }
     }

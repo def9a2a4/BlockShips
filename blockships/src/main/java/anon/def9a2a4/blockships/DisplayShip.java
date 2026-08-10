@@ -67,7 +67,6 @@ public class DisplayShip implements Listener {
     private final Set<UUID> shipsBeingRecovered = Collections.synchronizedSet(new HashSet<>());  // Prevent concurrent recovery
     private final Set<Long> chunksBeingRecovered = ConcurrentHashMap.newKeySet();  // Track chunks with pending async recovery
     private final Map<UUID, java.util.logging.Level> migrationFailureLogged = new ConcurrentHashMap<>();  // Per-ship highest migration-failure level already logged (so a stuck ship logs once, not every chunk load)
-    private final org.joml.Vector3f workWheelTranslation = new org.joml.Vector3f();  // Reusable for findWheelCollider
 
     public DisplayShip(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -1383,17 +1382,15 @@ public class DisplayShip implements Listener {
             // Past cooldown - allow interaction (timestamp updated after successful action)
         }
 
-        // Parse shulker tags: displayship:{uuid}, storage:{blockIndex}, shipseat:{seatIndex}, shipwheel:{location}, interact:{blockIndex}
+        // Parse shulker tags: displayship:{uuid}, shipseat:{seatIndex}, shipwheel:{location}, interact:{blockIndex}
         // Tag creation: ShipInstance constructor (collision boxes and seats)
         UUID shipId = null;
-        int storageBlockIndex = -1;
         int seatIndex = -1;
         String wheelLocation = null;
         int interactBlockIndex = -1;
 
         Set<String> tags = shulker.getScoreboardTags();
         shipId = ShipTags.extractShipId(tags);
-        storageBlockIndex = ShipTags.extractStorageIndex(tags);
         seatIndex = ShipTags.extractSeatIndex(tags);
         wheelLocation = ShipTags.extractWheelLocation(tags);
         interactBlockIndex = ShipTags.extractInteractIndex(tags);
@@ -1551,20 +1548,11 @@ public class DisplayShip implements Listener {
             }
         }
 
-        // Check if this shulker has storage
-        if (storageBlockIndex >= 0) {
-            Inventory storage = inst.storages.get(storageBlockIndex);
-            if (storage != null) {
-                player.openInventory(storage);
-                e.setCancelled(true);
-                return;
-            }
-        } else if (mci >= 0 && inst.mechanism != null) {
-            // Delegated: storage lives on the mechanism (inst.storages is empty), keyed by block index. Returns
-            // the live captured container inventory (vanilla chest/barrel/dispenser or custom block); edits
-            // round-trip on disassemble via defCoreLib's container restore. Prefab container parts also route
-            // here — assembleFromParts builds a typed inventory from the PartSpec storageType and getStorage
-            // returns it (persisted + rebuilt on recovery by defCoreLib).
+        // Check if this shulker has storage — it lives on the mechanism, keyed by block index. Returns the live
+        // captured container inventory (vanilla chest/barrel/dispenser or custom block); edits round-trip on
+        // disassemble via defCoreLib's container restore. Prefab container parts also route here —
+        // assembleFromParts builds a typed inventory from the PartSpec storageType and getStorage returns it.
+        if (mci >= 0) {
             Inventory storage = inst.mechanism.getStorage(mci);
             if (storage != null) {
                 player.openInventory(storage);
@@ -1964,30 +1952,11 @@ public class DisplayShip implements Listener {
     }
 
     /**
-     * Finds the wheel collider (the one at position 0,0,0 in the ship's coordinate system).
-     */
-    private CollisionBox findWheelCollider(ShipInstance ship) {
-        for (CollisionBox collider : ship.colliders) {
-            collider.base.getTranslation(workWheelTranslation);
-            if (Math.abs(workWheelTranslation.x) < 0.01f && Math.abs(workWheelTranslation.y) < 0.01f && Math.abs(workWheelTranslation.z) < 0.01f) {
-                return collider;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * The wheel shulker (the block at local (0,0,0)), engine-agnostic: the native `colliders` list for a prefab
-     * ship, or the Mechanism-owned collider for a delegated ship (whose `colliders` list is empty). Returns null
-     * if not found. `base` == `part.local`, so the (0,0,0) search is identical across engines.
+     * The Mechanism-owned wheel shulker (the block at local (0,0,0)). Returns null if not found.
      */
     private Shulker findWheelShulker(ShipInstance ship) {
-        if (ship.mechanism != null) {
-            int i = ship.model.wheelPartIndex();
-            return i >= 0 ? ship.mechanism.colliderEntity(i) : null;
-        }
-        CollisionBox wheel = findWheelCollider(ship);
-        return wheel != null ? wheel.entity : null;
+        int i = ship.model.wheelPartIndex();
+        return i >= 0 ? ship.mechanism.colliderEntity(i) : null;
     }
 
     /**
@@ -2079,77 +2048,6 @@ public class DisplayShip implements Listener {
             player.sendMessage("§b--- Original YAML ---");
             FormatUtil.formatYamlToChat(player, part.rawYaml, "");
             return;
-        }
-
-        // Find the CollisionBox for this shulker
-        CollisionBox matchedBox = null;
-        int colliderIndex = -1;
-        int index = 0;
-        for (CollisionBox box : inst.colliders) {
-            if (box.entity.equals(shulker)) {
-                matchedBox = box;
-                colliderIndex = index;
-                break;
-            }
-            index++;
-        }
-
-        if (matchedBox != null) {
-            player.sendMessage("");
-            player.sendMessage("§b--- Collision Box ---");
-            player.sendMessage("§eCollider Index: §f" + colliderIndex);
-            player.sendMessage("§eSize: §f" + matchedBox.config.size);
-            player.sendMessage("§eOffset: §f[" +
-                              matchedBox.config.offset.x + ", " +
-                              matchedBox.config.offset.y + ", " +
-                              matchedBox.config.offset.z + "]");
-            player.sendMessage("§eWorld Position: §f[" +
-                              String.format("%.2f", shulker.getLocation().getX()) + ", " +
-                              String.format("%.2f", shulker.getLocation().getY()) + ", " +
-                              String.format("%.2f", shulker.getLocation().getZ()) + "]");
-
-            // Display transformation matrix
-            player.sendMessage("");
-            player.sendMessage("§b--- Transformation Matrix ---");
-            org.joml.Matrix4f m = matchedBox.base;
-            player.sendMessage("§f[" + String.format("%.4f", m.m00()) + ", " + String.format("%.4f", m.m10()) + ", " + String.format("%.4f", m.m20()) + ", " + String.format("%.4f", m.m30()) + "]");
-            player.sendMessage("§f[" + String.format("%.4f", m.m01()) + ", " + String.format("%.4f", m.m11()) + ", " + String.format("%.4f", m.m21()) + ", " + String.format("%.4f", m.m31()) + "]");
-            player.sendMessage("§f[" + String.format("%.4f", m.m02()) + ", " + String.format("%.4f", m.m12()) + ", " + String.format("%.4f", m.m22()) + ", " + String.format("%.4f", m.m32()) + "]");
-            player.sendMessage("§f[" + String.format("%.4f", m.m03()) + ", " + String.format("%.4f", m.m13()) + ", " + String.format("%.4f", m.m23()) + ", " + String.format("%.4f", m.m33()) + "]");
-
-            // Find corresponding ModelPart by matching transformation matrix
-            ShipModel.ModelPart matchedPart = null;
-            for (ShipModel.ModelPart part : inst.model.parts) {
-                if (part.collision.enable && MathUtil.matricesEqual(part.local, matchedBox.base)) {
-                    matchedPart = part;
-                    break;
-                }
-            }
-
-            // Alternative: match by collider index if matrix comparison fails
-            if (matchedPart == null) {
-                int enabledCount = 0;
-                for (ShipModel.ModelPart part : inst.model.parts) {
-                    if (part.collision.enable) {
-                        if (enabledCount == colliderIndex) {
-                            matchedPart = part;
-                            break;
-                        }
-                        enabledCount++;
-                    }
-                }
-            }
-
-            if (matchedPart != null) {
-                player.sendMessage("");
-                player.sendMessage("§b--- Original YAML ---");
-                FormatUtil.formatYamlToChat(player, matchedPart.rawYaml, "");
-            } else {
-                player.sendMessage("");
-                player.sendMessage("§c(Could not find matching ModelPart)");
-            }
-        } else {
-            player.sendMessage("§c(CollisionBox not found for this shulker)");
         }
     }
 
