@@ -395,9 +395,9 @@ public class BlockShipsPlugin extends JavaPlugin {
         }
 
         sender.sendMessage("§eBlockShips entities in loaded chunks: §f" + total);
-        sender.sendMessage("§7  Prefab (native) ships here: §a" + prefabShips.size()
+        sender.sendMessage("§7  Prefab ships here: §a" + prefabShips.size()
             + "§7 (§f" + prefabEnt + "§7 entities)");
-        sender.sendMessage("§7  Custom (delegated) ships here: §a" + customShips.size()
+        sender.sendMessage("§7  Custom ships here: §a" + customShips.size()
             + "§7 (§f" + customEnt + "§7 entities)");
         sender.sendMessage("§7  Orphaned ships: " + attn(orphanedShips.size())
             + "§7; loose entities: " + attn(unattributed));
@@ -932,7 +932,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                 Map<UUID, World> worldById = new HashMap<>();
                 Set<UUID> destroyedShipIds = new HashSet<>();
                 // Split by shipType for the report (same axis as sendEntitySummary / sendStatsBreakdown):
-                // Prefab == native engine, Custom == delegated/defCoreLib engine.
+                // Prefab == kit-spawned from a model, Custom == player-built. Not an engine split.
                 int prefabShipCount = 0;
                 int customShipCount = 0;
                 for (ShipInstance ship : shipsToRemove) {

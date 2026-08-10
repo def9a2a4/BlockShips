@@ -66,7 +66,7 @@ public class DisplayShip implements Listener {
     private final Map<UUID, Long> lastShulkerInteraction = new HashMap<>();  // Cooldown for preventing double-entry
     private final Set<UUID> shipsBeingRecovered = Collections.synchronizedSet(new HashSet<>());  // Prevent concurrent recovery
     private final Set<Long> chunksBeingRecovered = ConcurrentHashMap.newKeySet();  // Track chunks with pending async recovery
-    private final Set<UUID> migrationFailureLogged = ConcurrentHashMap.newKeySet();  // Warn-once per ship so an unmigratable ship doesn't spam every chunk load
+    private final Map<UUID, java.util.logging.Level> migrationFailureLogged = new ConcurrentHashMap<>();  // Per-ship highest migration-failure level already logged (so a stuck ship logs once, not every chunk load)
     private final org.joml.Vector3f workWheelTranslation = new org.joml.Vector3f();  // Reusable for findWheelCollider
 
     public DisplayShip(JavaPlugin plugin) {
@@ -303,17 +303,27 @@ public class DisplayShip implements Listener {
             try {
                 migrateNativeShip(world, shipId, root);
             } catch (Throwable t) {
-                logMigrationFailureOnce(shipId, java.util.logging.Level.SEVERE,
-                    "Error migrating native ship " + shipId + "; leaving native entities for retry.", t);
+                logOnce(shipId, java.util.logging.Level.SEVERE,
+                    "could not be migrated (unexpected error) — please report this to the BlockShips developer; leaving native entities for retry.", t);
             }
         }
     }
 
-    /** Logs a migration failure at most once per ship (until it migrates), so a permanently-unmigratable ship
-     *  — model/config gone, engine down — doesn't repeat the same warning on every chunk load. Cleared on a
-     *  successful migration so a genuinely-new failure later still surfaces. */
-    private void logMigrationFailureOnce(UUID shipId, java.util.logging.Level level, String msg, Throwable t) {
-        if (!migrationFailureLogged.add(shipId)) return;
+    /**
+     * Log helper with per-ship de-duplication for the migration path. When {@code key} is non-null (a
+     * migration attempt, which re-fires on every chunk load), the same ship logs at most ONCE per severity —
+     * so an operator gets one complete, forwardable diagnostic (reason + any stacktrace) instead of a line
+     * every load; a genuinely worse failure (higher level) still surfaces once, and a successful migration
+     * clears the entry ({@link #migrationFailureLogged}). When {@code key} is null (a one-shot fresh-spawn or
+     * delegated-recovery attempt), it always logs, as before.
+     */
+    private void logOnce(UUID key, java.util.logging.Level level, String msg, Throwable t) {
+        if (key != null) {
+            java.util.logging.Level prev = migrationFailureLogged.get(key);
+            if (prev != null && prev.intValue() >= level.intValue()) return;  // already logged at >= this severity
+            migrationFailureLogged.put(key, level);
+            msg = "Ship " + key + ": " + msg;
+        }
         if (t != null) plugin.getLogger().log(level, msg, t);
         else plugin.getLogger().log(level, msg);
     }
