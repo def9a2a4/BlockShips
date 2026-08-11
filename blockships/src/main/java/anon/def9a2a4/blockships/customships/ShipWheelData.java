@@ -96,6 +96,16 @@ public class ShipWheelData {
         this.lastDetectedWeight = 0;
     }
 
+    /** This wheel's identity. Never null. Mirrored onto the block as {@code blockships:wheel_id}. */
+    public UUID getWheelId() {
+        return wheelId;
+    }
+
+    /** Only for {@link #fromMap} (adopting a persisted id) and duplicate re-minting at load. */
+    void setWheelId(UUID wheelId) {
+        if (wheelId != null) this.wheelId = wheelId;
+    }
+
     public Location getBlockLocation() {
         return blockLocation.clone();
     }
@@ -359,6 +369,7 @@ public class ShipWheelData {
      */
     public Map<String, Object> toMap() {
         Map<String, Object> map = new HashMap<>();
+        map.put("wheel_id", wheelId.toString());
         map.put("world", blockLocation.getWorld().getName());
         map.put("x", blockLocation.getBlockX());
         map.put("y", blockLocation.getBlockY());
@@ -396,6 +407,18 @@ public class ShipWheelData {
         BlockFace facing = safeBlockFace(map, "facing", BlockFace.NORTH);
 
         ShipWheelData data = new ShipWheelData(loc, facing);
+
+        // Absent for every wheel written before block identity existed; the constructor already minted one,
+        // so those simply keep the fresh id and get stamped onto their block the first time we look at it.
+        Object rawId = map.get("wheel_id");
+        if (rawId instanceof String s) {
+            try {
+                data.setWheelId(UUID.fromString(s));
+            } catch (IllegalArgumentException e) {
+                Bukkit.getLogger().warning("[BlockShips] Wheel at " + loc + " had an unreadable wheel_id ("
+                    + s + "); minting a new one.");
+            }
+        }
 
         if (map.containsKey("ship_uuid")) {
             data.setAssembledShipUUID(UUID.fromString((String) map.get("ship_uuid")));

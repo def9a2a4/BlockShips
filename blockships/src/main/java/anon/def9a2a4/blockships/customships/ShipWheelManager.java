@@ -161,13 +161,27 @@ public class ShipWheelManager {
     }
 
     /**
-     * Registers a ship wheel at the given location with its facing direction.
-     * The block itself should already be placed by the event handler.
+     * Registers a ship wheel at the given location with its facing direction, stamping identity onto the
+     * block. The block itself should already be placed, textured and updated by the event handler.
+     *
+     * @return false if the block could not be stamped, in which case nothing was recorded and the caller
+     *         must undo the placement. This genuinely can fail (defCoreLib missing, registration failed, the
+     *         block is not a tile entity), so the caller's failure branch is live — it is not dead code.
      */
     public boolean placeWheel(Location location, BlockFace facing) {
-        // Create and store wheel data
         ShipWheelData wheelData = new ShipWheelData(location, facing);
+
+        // Stamp BEFORE recording. If the stamp fails the block is not a wheel and must not be tracked as one:
+        // an untracked head is merely litter, whereas a tracked-but-unmarked cell is the ghost-record state
+        // that lets any later head at those coordinates impersonate this wheel.
+        if (!ShipWheelBlockType.stamp(location.getBlock(), wheelData.getWheelId())) {
+            return false;
+        }
+
         placedWheels.put(locationKey(location), wheelData);
+        // The block is stamped by this point, so a crash before the next save would leave a marked block with
+        // no record. Persist immediately rather than waiting for some unrelated path to save.
+        saveAll();
         return true;
     }
 
