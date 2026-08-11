@@ -72,6 +72,11 @@ public class ShipWheelData {
     // -1 means "not set, use calculated default based on block count"
     private float cameraDistance = -1;
 
+    // Frozen block set (persisted per-wheel). Non-null means this ship assembles from exactly these
+    // cells rather than re-running the flood fill, so docking it next to a pile of dirt no longer
+    // swallows the dirt. Null = unlocked, the historical behaviour.
+    private LockedStructure locked;
+
     public ShipWheelData(Location blockLocation, BlockFace facing) {
         this.blockLocation = blockLocation.clone();
         this.facing = facing;
