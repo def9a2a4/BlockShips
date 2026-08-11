@@ -87,6 +87,12 @@ public class BlockShipsPlugin extends JavaPlugin {
         displayShip.initialize();
         Bukkit.getPluginManager().registerEvents(displayShip, this);
 
+        // Register the wheel as a defCoreLib custom head block. Must run BEFORE any path that can land a
+        // carried wheel (forceRecoverDelegatedShips / migrateLoadedChunks below), because a landing block
+        // whose type is not registered gets no PDC restored at all. Needs DisplayShip's texture manager,
+        // hence its position after initialize().
+        anon.def9a2a4.blockships.customships.ShipWheelBlockType.register(this);
+
         // Initialize ShipWheelManager for custom block ships and load saved wheels
         shipWheelManager = new ShipWheelManager(this);
         shipWheelManager.loadAll();
