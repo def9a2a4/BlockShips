@@ -4,6 +4,7 @@ import anon.def9a2a4.blockships.BlockShipsPlugin;
 import anon.def9a2a4.blockships.HelpBookContent;
 import anon.def9a2a4.blockships.ShipConfig;
 import anon.def9a2a4.blockships.ShipRegistry;
+import anon.def9a2a4.blockships.ShipStats;
 import anon.def9a2a4.blockships.ship.ShipInstance;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
