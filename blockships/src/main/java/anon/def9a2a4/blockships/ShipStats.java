@@ -62,8 +62,31 @@ public final class ShipStats {
      */
     public static ShipStats of(ShipConfig config, ShipModel model, ShipThrust.Totals thrust,
                                float speedFrac) {
-        int mass = Math.max(1, model.mass);
-        int sailPower = model.sailPower;
+        return withThrust(config, model.sailPower, model.mass, model.totalWeight, thrust, speedFrac);
+    }
+
+    /**
+     * The three-ratio form for a ship with no model — the docked wheel menu.
+     *
+     * <p>Same maths as {@link #of(ShipConfig, ShipModel, ShipThrust.Totals, float)}; the caller
+     * supplies what the model would have known. Feed it {@link ShipThrust#scanWorld}, whose totals are
+     * potential rather than live, and label the result accordingly.
+     *
+     * @param totalWeight SIGNED hull weight, so buoyancy counts toward lift
+     */
+    public static ShipStats of(ShipConfig config, int woolCount, int bannerCount,
+                               int largeBannerCount, int hugeBannerCount, int mass,
+                               int totalWeight, ShipThrust.Totals thrust, float speedFrac) {
+        int sailPower = woolCount * config.woolPower
+                      + bannerCount * config.bannerPower
+                      + largeBannerCount * config.largeBannerPower
+                      + hugeBannerCount * config.hugeBannerPower;
+        return withThrust(config, sailPower, mass, totalWeight, thrust, speedFrac);
+    }
+
+    private static ShipStats withThrust(ShipConfig config, int sailPower, int rawMass, int totalWeight,
+                                        ShipThrust.Totals thrust, float speedFrac) {
+        int mass = Math.max(1, rawMass);
         float rawSail = (float) (config.basePower + sailPower) / mass;
         float cappedSail = Math.min(rawSail, config.sailCapRatio);
 
@@ -74,8 +97,8 @@ public final class ShipStats {
         // Signed total weight: a hull that is already near-buoyant needs only a little thrust, and a
         // lighter-than-air one is airborne with none. Using clamped mass here would give buoyancy no
         // credit at all and make a balloon as hard to lift as solid stone.
-        float lift = (float) thrust.vertical() / Math.max(1, model.totalWeight);
-        if (model.totalWeight <= 0) lift = Math.max(lift, 1.0f);
+        float lift = (float) thrust.vertical() / Math.max(1, totalWeight);
+        if (totalWeight <= 0) lift = Math.max(lift, 1.0f);
 
         return new ShipStats(sailPower, mass, rawSail, cappedSail, Math.min(cappedSail, 1.0f),
                              forward, turn, lift);

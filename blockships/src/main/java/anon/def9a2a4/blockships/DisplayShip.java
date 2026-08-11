@@ -93,9 +93,6 @@ public class DisplayShip implements Listener {
         // Register recipes for all ship types
         registerRecipes();
 
-        // Load chunk indices from per-world storage
-        shipWorldData.loadAllChunkIndices();
-
         // NOTE: native-ship migration (migrateLoadedChunks) runs LATER in BlockShipsPlugin enable — AFTER
         // forceRecoverDelegatedShips() — so corelib has already recovered delegated ships (setting byId) before
         // the migration idempotency probe runs, shrinking the crash-mid-migration re-spawn window (#3).
@@ -130,14 +127,7 @@ public class DisplayShip implements Listener {
                 // Snapshot ship state on main thread, then write async
                 for (ShipInstance ship : ShipRegistry.getAllShips()) {
                     shipWorldData.saveShipMetadataAsync(ship);
-
-                    // Ensure ship is in chunk index (may have been missed or moved)
-                    Location loc = ship.vehicle.getLocation();
-                    int chunkX = loc.getBlockX() >> 4;
-                    int chunkZ = loc.getBlockZ() >> 4;
-                    shipWorldData.addToChunkIndex(loc.getWorld(), ship.id, chunkX, chunkZ);
                 }
-                shipWorldData.saveAllChunkIndicesAsync();
             }
         }.runTaskTimer(plugin, 20L * 60, 20L * 60);  // Every 60 seconds
     }
@@ -227,8 +217,6 @@ public class DisplayShip implements Listener {
             ShipRegistry.unregister(ship);
             plugin.getLogger().fine("Suspended ship " + ship.id + " for chunk unload at " + chunk.getX() + "," + chunk.getZ());
         }
-        // Persist chunk indices (async - serialized behind metadata writes on ioExecutor)
-        shipWorldData.saveAllChunkIndicesAsync();
     }
 
     /**
@@ -374,9 +362,6 @@ public class DisplayShip implements Listener {
             // CUSTOM ship stays at its conservative preliminary stats (immovable) until an unload+reload.
             scheduleWheelRelink(ship, shipId);
             shipWorldData.saveShipMetadata(ship);        // re-persist as delegated (writes the migrated marker)
-            Location rl = root.getLocation();
-            shipWorldData.removeFromChunkIndex(world, shipId, rl.getBlockX() >> 4, rl.getBlockZ() >> 4);
-            shipWorldData.saveAllChunkIndices();
             // AFTER successful migration (ordering is load-bearing). Scan the model footprint radius (≥64) so the reap
             // covers exactly what forceLoadFootprint force-loaded — a >64-block-radius ship no longer strands native
             // entities in its outer chunks for the straggler sweep to mop up later.
@@ -580,12 +565,6 @@ public class DisplayShip implements Listener {
         }
         ship.applyInitialDrivenPose(); // render the saved heading on frame 1 (no one-tick yaw flash)
         ShipRegistry.register(ship);
-        // F5: re-add to BlockShips' chunk index (parity with the native recovery paths). addToChunkIndex is
-        // idempotent, so this is safe when loadAllChunkIndices already holds the entry; it closes the narrow
-        // crash-lost-index window and keeps the chunk key fresh at the recovered position.
-        Location recoveredLoc = vehicle.getLocation();
-        shipWorldData.addToChunkIndex(world, mechId, recoveredLoc.getBlockX() >> 4, recoveredLoc.getBlockZ() >> 4);
-        shipWorldData.saveAllChunkIndices();
         scheduleWheelRelink(ship, mechId);
         plugin.getLogger().info("Recovered delegated " + ("custom".equals(state.shipType) ? "custom" : "prefab")
             + " ship " + mechId);
@@ -1072,8 +1051,8 @@ public class DisplayShip implements Listener {
         }
         ShipRegistry.register(instance);
 
-        // Ship-level sidecar (ships/{id}.yml) — delegated recovery reads it in reconstructDelegatedShip. Delegated
-        // ships are NOT added to the native chunk index (they recover via defCoreLib's own persistence).
+        // Ship-level sidecar (ships/{id}.yml) — delegated recovery reads it in reconstructDelegatedShip
+        // (ships recover via defCoreLib's own persistence).
         shipWorldData.saveShipMetadata(instance);
 
         // Consume one kit

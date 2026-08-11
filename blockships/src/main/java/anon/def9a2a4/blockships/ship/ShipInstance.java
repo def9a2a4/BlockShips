@@ -652,10 +652,7 @@ public class ShipInstance {
             }
 
             int nCX = cachedVehicleLoc.getBlockX() >> 4, nCZ = cachedVehicleLoc.getBlockZ() >> 4;
-            if ((currentChunkX != nCX || currentChunkZ != nCZ)
-                    && plugin instanceof BlockShipsPlugin bsp && bsp.getDisplayShip() != null) {
-                bsp.getDisplayShip().getShipWorldData().updateChunkIndex(
-                    cachedVehicleLoc.getWorld(), this.id, currentChunkX, currentChunkZ, nCX, nCZ);
+            if (currentChunkX != nCX || currentChunkZ != nCZ) {
                 currentChunkX = nCX;
                 currentChunkZ = nCZ;
                 // M5: re-index the mechanism in defCoreLib's own persistence onto the new pivot chunk too, so a
@@ -1512,7 +1509,7 @@ public class ShipInstance {
     }
 
     /**
-     * Destroys the ship and cleans up persistence storage (metadata file and chunk index).
+     * Destroys the ship and cleans up persistence storage (deletes the metadata sidecar).
      * Use this instead of destroy() when the ship should be permanently removed.
      */
     public void destroyWithCleanup(ShipWorldData shipWorldData) {
@@ -1521,7 +1518,6 @@ public class ShipInstance {
         destroy();  // Remove entities and unregister
         if (world != null && shipWorldData != null) {
             shipWorldData.removeShip(world, this.id);
-            shipWorldData.saveAllChunkIndices();
         }
     }
 

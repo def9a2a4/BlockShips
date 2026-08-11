@@ -418,7 +418,7 @@ public class ShipWheelManager {
         }
     }
 
-    /** True if this id is in BlockShips' persisted chunk index (any world). Mirrors {@code collectPersistedShipIds}. */
+    /** True if this id has a persisted ship sidecar on disk (any world). Mirrors {@code collectPersistedShipIds}. */
     private boolean isPersistedShip(UUID id) {
         if (!(plugin instanceof BlockShipsPlugin bsp)) return false;
         var ds = bsp.getDisplayShip();
@@ -629,12 +629,8 @@ public class ShipWheelManager {
 
         // Register with per-world storage for chunk recovery
         if (plugin instanceof BlockShipsPlugin bsp) {
-            Location loc = ship.vehicle.getLocation();
             ShipWorldData shipWorldData = bsp.getDisplayShip().getShipWorldData();
             shipWorldData.saveShipMetadataAsync(ship);
-            shipWorldData.addToChunkIndex(loc.getWorld(), ship.id,
-                loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
-            shipWorldData.saveAllChunkIndicesAsync();
         }
 
         // Link the wheel to the ship
@@ -937,7 +933,7 @@ public class ShipWheelManager {
         // Nudge nearby players up to prevent clipping into placed blocks
         nudgeNearbyPlayersUp(shipLoc2, ship.config.assemblyNudgeHeight);
 
-        // Remove ship from per-world storage (delete file and chunk index). The ship is already
+        // Remove ship from per-world storage (delete the sidecar file). The ship is already
         // gone from the world at this point, so a save failure here does not fail the disassembly -
         // it is reported separately via outcome.persistFailed (and logged SEVERE by the callees).
         if (plugin instanceof BlockShipsPlugin bsp) {
@@ -945,14 +941,13 @@ public class ShipWheelManager {
             if (world != null) {
                 ShipWorldData worldData = bsp.getDisplayShip().getShipWorldData();
                 boolean fileOk = worldData.removeShip(world, ship.id);
-                boolean indexOk = worldData.saveAllChunkIndices();
-                if (!fileOk || !indexOk) {
+                if (!fileOk) {
                     outcome.persistFailed = true;
                     plugin.getLogger().severe("disassembleShip: persistence cleanup failed for ship "
                         + ship.id + " (world=" + world.getName() + ")");
                 }
             } else {
-                // Can't resolve the world, so the per-world YAML / chunk index can't be cleaned. Flag
+                // Can't resolve the world, so the per-world YAML sidecar can't be cleaned. Flag
                 // it as a persistence failure rather than skip silently - the ship is gone in-world but
                 // its on-disk record may linger.
                 outcome.persistFailed = true;

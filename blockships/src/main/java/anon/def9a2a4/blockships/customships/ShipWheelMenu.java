@@ -5,6 +5,7 @@ import anon.def9a2a4.blockships.HelpBookContent;
 import anon.def9a2a4.blockships.ShipConfig;
 import anon.def9a2a4.blockships.ShipRegistry;
 import anon.def9a2a4.blockships.ShipStats;
+import anon.def9a2a4.blockships.ShipThrust;
 import anon.def9a2a4.blockships.ship.ShipInstance;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -49,12 +50,27 @@ public class ShipWheelMenu {
         public final float sailRatio;  // uncapped sail ratio (before sail cap applied)
         public final float ratio;      // final ratio (with sail cap)
         public final boolean statsEnabled; // whether the power-to-mass stats system is active
+        // Propulsion. Thrust used to be invisible here: the menu called the sail-only ShipStats
+        // overload, which hardcodes turn and lift to zero and never reads thrustBlocks — so a ship
+        // that demonstrably flew on thruster power reported none of it.
+        public final float forwardRatio;
+        public final float turnRatio;   // at rest: sails aid turning only once the ship is moving
+        public final float liftRatio;
+        public final ShipThrust.Totals thrust;
+        public final boolean thrustIsLive; // false = docked "potential", nothing is actually powered
 
         public ShipInfo(int blockCount, int totalWeight, int mass, float density, int maxHealth,
                         Integer currentHealth, float surfaceOffset, float airDensity, float waterDensity,
                         int woolCount, int bannerCount, int sailPower,
                         float sailCapRatio, float sailRatio, float ratio,
-                        boolean statsEnabled) {
+                        boolean statsEnabled,
+                        float forwardRatio, float turnRatio, float liftRatio,
+                        ShipThrust.Totals thrust, boolean thrustIsLive) {
+            this.forwardRatio = forwardRatio;
+            this.turnRatio = turnRatio;
+            this.liftRatio = liftRatio;
+            this.thrust = thrust;
+            this.thrustIsLive = thrustIsLive;
             this.blockCount = blockCount;
             this.totalWeight = totalWeight;
             this.mass = mass;
@@ -356,6 +372,58 @@ public class ShipWheelMenu {
     }
 
     /**
+     * How long a docked ship's thrust scan stays good. A stale entry only ever shows a propeller the
+     * player just added or removed a few seconds late; it can never be wrong about a ship that is
+     * sitting still, which is the only state this path runs in.
+     */
+    private static final long DOCKED_THRUST_TTL_MS = 10_000L;
+
+    private record CachedThrust(ShipThrust.Totals totals, long stamp) {}
+
+    private static final java.util.Map<String, CachedThrust> DOCKED_THRUST_CACHE = new java.util.HashMap<>();
+
+    /**
+     * Potential thrust for a ship with no model, classified straight from the world.
+     *
+     * <p>A docked ship has never been through {@code BlockStructureScanner}, so there is no thrust list
+     * to read — the hull has to be found first. That is a full flood fill, hence the TTL: opening the
+     * menu repeatedly must not re-scan a thousand blocks each time.
+     *
+     * <p>Deliberately does not persist anything on {@link ShipWheelData}. Caching here keeps the whole
+     * feature inside this file.
+     */
+    private static ShipThrust.Totals dockedThrust(BlockShipsPlugin plugin, ShipWheelData wheelData) {
+        org.bukkit.Location wheelLoc = wheelData.getBlockLocation();
+        if (wheelLoc == null || wheelLoc.getWorld() == null) return ShipThrust.Totals.NONE;
+
+        String key = wheelLoc.getWorld().getName() + ":" + wheelLoc.getBlockX()
+                   + ":" + wheelLoc.getBlockY() + ":" + wheelLoc.getBlockZ();
+        long now = System.currentTimeMillis();
+        CachedThrust cached = DOCKED_THRUST_CACHE.get(key);
+        if (cached != null && now - cached.stamp() < DOCKED_THRUST_TTL_MS) return cached.totals();
+
+        ShipThrust.Totals totals = ShipThrust.Totals.NONE;
+        try {
+            int maxShipSize = plugin.getConfig().getInt("custom-ships.max-ship-size", 1000);
+            int maxScanSize = plugin.getConfig().getInt("custom-ships.max-scan-size", 5000);
+            // Silent detect: no particles, no waterline shulker, no chat. Same call the glue anchor
+            // provider uses for its connector set.
+            var result = new anon.def9a2a4.blockships.blockconfig.ShipDetector(maxShipSize, maxScanSize)
+                .detectShipDetailed(wheelLoc, ShipGlue.gluedCells(wheelLoc.getBlock()));
+            if (result.isSuccess() && result.getBlocks() != null) {
+                totals = ShipThrust.scanWorld(plugin, result.getBlocks(),
+                    BlockStructureScanner.blockFaceToYaw(wheelData.getFacing()));
+            }
+        } catch (Throwable t) {
+            // A ship over the size limit, or a detect fault. Showing no thrust is the right failure —
+            // never let a stats readout stop a menu from opening.
+            totals = ShipThrust.Totals.NONE;
+        }
+        DOCKED_THRUST_CACHE.put(key, new CachedThrust(totals, now));
+        return totals;
+    }
+
+    /**
      * Gets ship info from wheel data, calculating derived values.
      *
      * @param wheelData The ship wheel data containing detection results
@@ -416,21 +484,39 @@ public class ShipWheelMenu {
         // An assembled ship's model already knows every sail tier (including large/huge banners, which
         // are display entities the detect preview does not count); an unassembled one only has the
         // preview's wool/banner tallies.
+        //
+        // Both branches go through a THRUST-AWARE ShipStats form. The sail-only overloads zero out turn
+        // and lift and never look at thrustBlocks, which is why propulsion used to fly a ship and show
+        // up nowhere in its own stats page.
         ShipStats stats;
-        if (wheelData.isAssembled()) {
-            ShipInstance assembled = ShipRegistry.byId(wheelData.getAssembledShipUUID());
-            stats = assembled != null && assembled.model != null
-                ? ShipStats.of(config, assembled.model)
-                : ShipStats.of(config, woolCount, bannerCount, 0, 0, mass);
+        ShipThrust.Totals thrust;
+        boolean thrustIsLive;
+        ShipInstance assembled = wheelData.isAssembled()
+            ? ShipRegistry.byId(wheelData.getAssembledShipUUID()) : null;
+
+        if (assembled != null && assembled.model != null) {
+            // Live: only blocks actually powered (or, for a thruster, burning) are counted, so the
+            // menu agrees with what the ship is doing rather than with what it could do.
+            thrust = ShipThrust.totalsFor(plugin, assembled.mechanism, assembled.model);
+            thrustIsLive = true;
+            // speedFrac 0: sails aid turning in proportion to speed, and a player reading a menu is
+            // parked. The turn figure is therefore "at rest", which is also the honest one to compare
+            // reaction wheels against. The lore says so.
+            stats = ShipStats.of(config, assembled.model, thrust, 0f);
         } else {
-            stats = ShipStats.of(config, woolCount, bannerCount, 0, 0, mass);
+            // Docked (or the model is gone): classify from the world. Potential, not live.
+            thrust = dockedThrust(plugin, wheelData);
+            thrustIsLive = false;
+            stats = ShipStats.of(config, woolCount, bannerCount, 0, 0, mass, totalWeight, thrust, 0f);
         }
 
         return new ShipInfo(blockCount, totalWeight, mass, density, maxHealth, currentHealth,
                             surfaceOffset, airDensity, waterDensity,
                             woolCount, bannerCount, stats.sailPower,
                             config.sailCapRatio, stats.sailRatio, stats.ratio,
-                            config.statsEnabled);
+                            config.statsEnabled,
+                            stats.forwardRatio, stats.turnRatio, stats.liftRatio,
+                            thrust, thrustIsLive);
     }
 
     /**
@@ -569,6 +655,8 @@ public class ShipWheelMenu {
                     ? Math.round(info.ratio / info.sailCapRatio * 100) : Math.round(info.ratio * 100);
                 String maxTag = info.ratio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
                 lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%" + maxTag);
+
+                appendPropulsionLore(lore, info);
               }
             } else {
                 lore.add(ChatColor.GRAY + "Show ship first");
@@ -578,6 +666,59 @@ public class ShipWheelMenu {
             statsItem.setItemMeta(statsMeta);
         }
         return statsItem;
+    }
+
+    /**
+     * The propulsion half of the stats page: what the ship's thrust is doing to each of the three
+     * ratios, and how much of it is actually running.
+     *
+     * <p>Silent on a ship with no propulsion — a sailing boat should not have to read three zeroes.
+     */
+    private static void appendPropulsionLore(List<String> lore, ShipInfo info) {
+        ShipThrust.Totals t = info.thrust;
+        if (t == null || t.total() <= 0) return;
+
+        lore.add("");
+        // The engine count lives here rather than on the driver's action bar: it is a fact about how
+        // the ship is built, not about how it is moving, and it was crowding the speed meter.
+        String countColor = !info.thrustIsLive ? ChatColor.GRAY.toString()
+            : t.powered() >= t.total() ? ChatColor.GREEN.toString()
+            : t.powered() > 0 ? ChatColor.YELLOW.toString() : ChatColor.RED.toString();
+        lore.add(ChatColor.GRAY + "Propulsion: " + countColor + t.powered()
+            + ChatColor.GRAY + " / " + t.total() + (info.thrustIsLive ? " running" : " aboard"));
+        if (!info.thrustIsLive) {
+            // Docked: nothing is powered, so these are the numbers the ship would hit with everything
+            // running. Saying so is the difference between a forecast and a lie.
+            lore.add(ChatColor.DARK_GRAY + "  (potential — dock power is off)");
+        }
+
+        if (t.axial() > 0)      lore.add(ChatColor.GRAY + "  Forward thrust: " + ChatColor.WHITE + t.axial() + " pts");
+        if (t.turning() > 0)    lore.add(ChatColor.GRAY + "  Turning thrust: " + ChatColor.WHITE + t.turning() + " pts");
+        if (t.vertical() > 0)   lore.add(ChatColor.GRAY + "  Lift thrust: " + ChatColor.WHITE + t.vertical() + " pts");
+
+        lore.add("");
+        lore.add(ChatColor.GRAY + "Forward: " + ratioColor(info.forwardRatio)
+            + String.format("%.2f", info.forwardRatio));
+        // Sails only aid turning in proportion to speed, and a ship whose menu is open is parked — so
+        // this is the stopped figure. That is also the fair one for judging a reaction wheel, which is
+        // the only thing that turns a ship at a standstill.
+        lore.add(ChatColor.GRAY + "Turn: " + ratioColor(info.turnRatio)
+            + String.format("%.2f", info.turnRatio) + ChatColor.DARK_GRAY + " (at rest)");
+        if (t.vertical() > 0) {
+            int liftPercent = Math.round(info.liftRatio * 100);
+            String liftColor = liftPercent >= 100 ? ChatColor.GREEN.toString()
+                : liftPercent >= 75 ? ChatColor.YELLOW.toString() : ChatColor.RED.toString();
+            lore.add(ChatColor.GRAY + "Lift: " + liftColor + liftPercent + "%"
+                + (liftPercent >= 100 ? ChatColor.AQUA + " (flies)" : ChatColor.DARK_GRAY + " (sinks)"));
+        }
+    }
+
+    /** Shared colour ramp for a 0..1 ratio. */
+    private static String ratioColor(float ratio) {
+        if (ratio >= 0.9f) return ChatColor.AQUA.toString();
+        if (ratio >= 0.6f) return ChatColor.GREEN.toString();
+        if (ratio >= 0.3f) return ChatColor.YELLOW.toString();
+        return ChatColor.RED.toString();
     }
 
     /**

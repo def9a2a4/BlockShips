@@ -81,6 +81,46 @@ public final class ShipThrust {
     }
 
     /**
+     * Sum the thrust a set of world cells WOULD produce, for a ship that has no model.
+     *
+     * <p>A docked ship has never been scanned — {@code BlockStructureScanner} runs only from assembly —
+     * so there is no {@code thrustBlocks} list to walk and {@link #totalsFor} has nothing to say. The
+     * wheel menu still has to show a player what they have built, so this classifies straight from the
+     * blocks, using the same {@link #classify} the scanner uses.
+     *
+     * <p>Everything is counted as producing: nothing is powered while docked, so the only meaningful
+     * figure is potential. Present it as such — a menu that says "12 thrust" and then delivers none
+     * once the engines are cold is worse than saying nothing.
+     *
+     * @param assemblyYaw the wheel's facing as a yaw, from {@code BlockStructureScanner.blockFaceToYaw}
+     */
+    public static Totals scanWorld(BlockShipsPlugin plugin, Iterable<org.bukkit.Location> cells,
+                                   float assemblyYaw) {
+        if (cells == null) return Totals.NONE;
+        int axial = 0, perp = 0, vert = 0, turn = 0, total = 0;
+        for (org.bukkit.Location loc : cells) {
+            Block block = loc.getBlock();
+            org.bukkit.Material mat = block.getType();
+            // Every propulsion block is a custom head; skipping anything else keeps this a cheap
+            // material test over the hull rather than a defCoreLib lookup per block.
+            if (mat != org.bukkit.Material.PLAYER_HEAD && mat != org.bukkit.Material.PLAYER_WALL_HEAD) continue;
+            String typeId = typeIdOf(block);
+            if (!isThrustBlock(typeId)) continue;
+            Axis axis = classify(block, typeId, assemblyYaw);
+            if (axis == null) continue;
+            total++;
+            int pts = thrustOf(plugin, typeId);
+            switch (axis) {
+                case AXIAL -> axial += pts;
+                case PERPENDICULAR -> perp += pts;
+                case VERTICAL -> vert += pts;
+                case TURN_ONLY -> turn += pts;
+            }
+        }
+        return new Totals(axial, perp, vert, turn, total, total);
+    }
+
+    /**
      * Whether one thrust block is currently doing work.
      *
      * <p>A thruster is a fuel burner, so it reports through its state ({@code running_*} vs

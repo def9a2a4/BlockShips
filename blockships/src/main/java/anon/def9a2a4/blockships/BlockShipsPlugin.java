@@ -190,10 +190,9 @@ public class BlockShipsPlugin extends JavaPlugin {
 
     /**
      * Collects the UUIDs of all persisted ships (loaded + unloaded) from
-     * {@link ShipWorldData}'s in-memory chunk index across every indexed world on disk,
-     * including worlds that aren't currently loaded. No chunk I/O. The returned set
-     * inherently dedupes a UUID that (through corruption) appears in more than one
-     * world's index. Returns an empty set if {@code displayShip} is not yet initialized.
+     * {@link ShipWorldData}'s persisted-id set (scanned from ships/*.yml sidecars across every world on
+     * disk, including worlds that aren't currently loaded). No I/O here. The returned set inherently
+     * dedupes ids. Returns an empty set if {@code displayShip} is not yet initialized.
      */
     private Set<UUID> collectPersistedShipIds() {
         if (displayShip == null) {
@@ -221,7 +220,7 @@ public class BlockShipsPlugin extends JavaPlugin {
     private static final class WheelStats {
         /** Assembled wheel whose ship is registered (loaded) - exactly what force-disassemble acts on. */
         final Set<UUID> registeredWithWheel = new HashSet<>();
-        /** Assembled wheel whose ship is persisted (chunk index) but not registered - unloaded. */
+        /** Assembled wheel whose ship is persisted (has a sidecar) but not registered - unloaded. */
         final Set<UUID> unloadedPersisted = new HashSet<>();
         /** Assembled wheel whose ship is neither registered nor persisted - ship gone (orphan). */
         final Set<UUID> orphan = new HashSet<>();
@@ -272,7 +271,7 @@ public class BlockShipsPlugin extends JavaPlugin {
      * <ul>
      *   <li>Genuinely unloaded ships are <b>not</b> in {@link ShipRegistry} (chunk unload
      *       unregisters them). The source of truth for persisted (loaded+unloaded) ships is
-     *       {@link ShipWorldData}'s chunk index ({@link #collectPersistedShipIds()}).</li>
+     *       {@link ShipWorldData}'s persisted-id set ({@link #collectPersistedShipIds()}).</li>
      *   <li>An assembled wheel usually maps 1:1 to a custom {@link ShipInstance}, but a destroyed
      *       ship can leave the wheel flagged assembled ("orphan wheel"). We classify each assembled
      *       wheel by registry + persistence membership so counts stay self-consistent. customUnloaded
@@ -310,7 +309,7 @@ public class BlockShipsPlugin extends JavaPlugin {
         // Derived figures. customUnloaded is a deduped subset of persistedIds, and customLoaded is
         // disjoint from it (registered vs not), so in steady state customTotal <= totalPersisted. The
         // Math.max clamps below are still needed for two transient/edge cases: a just-registered ship
-        // not yet in the chunk index (loaded can momentarily exceed persisted), and a custom ship
+        // not yet persisted (loaded can momentarily exceed persisted), and a custom ship
         // persisted in an unloaded chunk whose wheel link was lost (counts here as a prefab -
         // distinguishing it would need per-ship YAML I/O). Display-only; never crashes.
         int customTotal = customLoaded + customUnloaded;
@@ -992,18 +991,14 @@ public class BlockShipsPlugin extends JavaPlugin {
                                 + " (type=" + ship.shipType + ", world=" + world.getName() + ")", e);
                         }
                     }
-                    // saveAllChunkIndices() logs SEVERE per world on failure and returns false; check it
-                    // so cleanupFailed reflects a failed chunks.yml write (previously swallowed).
-                    if (!shipWorldData.saveAllChunkIndices()) cleanupFailed = true;
                 } else {
                     cleanupFailed = true;
                     getLogger().severe("killentities: displayShip not initialized; skipped YAML cleanup");
                 }
-                // Known limitation (LOW, pre-existing): a queued async metadata/index save can
-                // re-write a just-destroyed ship's .yml / chunk-index entry after this synchronous
-                // cleanup, leaving a leaked file / stale index entry. It self-heals (next chunk load
-                // prunes zero-entity entries; startup validation drops missing-metadata entries) and
-                // never yields a live phantom ship. Inherent to the existing I/O pipeline.
+                // Known limitation (LOW, pre-existing): a queued async metadata save can re-write a
+                // just-destroyed ship's .yml after this synchronous cleanup, leaving a leaked file. It
+                // self-heals (the persisted-id set drops on removeShip; a stale sidecar is pruned on next
+                // load) and never yields a live phantom ship. Inherent to the existing I/O pipeline.
 
                 // Then clean up any remaining ship-tagged entities (orphans + any not removed by
                 // destroy()). Isolate per-entity so one bad remove() doesn't abort the sweep.
