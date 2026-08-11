@@ -98,6 +98,23 @@ custom-ships:
     # material. Worth much more than a plain banner — roughly by rendered area.
     large-banner-power: 20
     huge-banner-power: 50
+    # How performance is derived.
+    #   legacy - one sail ratio drives every stat (speed, turning, everything). Historical behaviour.
+    #   ratio3 - three independent ratios:
+    #              forward = capped sails + thrust pointing along the hull   -> speed, acceleration
+    #              turn    = thrust across the hull + gyroscopes, plus sails
+    #                        scaled by current speed (a rudder needs flow)   -> turn rate
+    #              lift    = thrust pointing down, against SIGNED weight     -> flight
+    #            Sails still plateau at sail-cap-ratio, so propulsion is what closes the last gap.
+    mode: legacy
+    # Free turning points every ship gets, so a bare hull can still steer a little.
+    base-turn: 2
+    # How much sail power aids turning. Multiplied by current speed / top speed, so sails do nothing
+    # for a stationary ship — that is what reaction wheels and side thrusters are for.
+    sail-turn-factor: 0.5
+    # Ticks for thrust to ramp up or down. Rotation power is all-or-nothing, so without this an engine
+    # running dry would cut every propeller in the same tick and drop a flying ship like a stone.
+    thrust-spool-ticks: 40
     # Thrust points per defCoreLib propulsion block, counted only while the block is actually powered
     # (or, for the thruster, burning). Which stat a block feeds depends on how it is mounted: along
     # the hull adds speed, across it adds turn rate, and flat adds lift. A reaction wheel always feeds

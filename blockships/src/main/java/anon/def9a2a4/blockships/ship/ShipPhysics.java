@@ -328,8 +328,10 @@ public class ShipPhysics {
         double forwardX = Math.sin(yawRad);
         double forwardZ = Math.cos(yawRad);
 
-        // Apply vertical physics based on ship type
-        if (ship.isAirship) {
+        // Apply vertical physics based on ship type. A ship with vertical thrust flies on the airship
+        // path too — that is what makes heavier-than-air possible — but with gravity only partly
+        // cancelled, in proportion to the lift it is actually producing.
+        if (ship.isAirship || hasThrustLift()) {
             applyAirshipVerticalPhysics();
         } else {
             handleBuoyancy(vehicleLoc);
@@ -550,6 +552,35 @@ public class ShipPhysics {
      * Apply airship vertical physics (no gravity/buoyancy, manual vertical control).
      * Space to ascend, Sprint to descend.
      */
+    /** Gravity per tick, shared with the buoyancy path so a falling ship falls at one rate. */
+    private static final float GRAVITY_PER_TICK = 0.08f;
+
+    /**
+     * Whether the hull's underside is resting on something solid.
+     *
+     * <p>Mirrors the ground check in {@link #handleBuoyancy}: probe just below the ship's lowest
+     * point, not below the wheel, so a ship with a deep keel settles on its keel.
+     */
+    private boolean hullRestingOnGround() {
+        Location loc = ship.vehicle.getLocation();
+        Location below = reuseLocation(loc);
+        below.setY(loc.getY() + ship.model.minY - 0.1);
+        Material under = below.getBlock().getType();
+        return under != Material.AIR && under.isSolid();
+    }
+
+    /**
+     * Whether this ship is being held up by thrust rather than by displacement.
+     *
+     * <p>Only in ratio3 mode, and only once something aboard is actually producing lift — so a ship
+     * that has thrusters but no fuel is not flying, it is falling.
+     */
+    private boolean hasThrustLift() {
+        if (!"ratio3".equalsIgnoreCase(ship.config.statsMode)) return false;
+        if (ship.model == null || ship.model.thrustBlocks.isEmpty()) return false;
+        return liftRatio() > 0f;
+    }
+
     private void applyAirshipVerticalPhysics() {
         ShipConfig config = ship.config;
 
@@ -568,6 +599,27 @@ public class ShipPhysics {
                 currentYVelocity = 0.0f;
             } else {
                 currentYVelocity *= config.verticalDrag;
+            }
+        }
+
+        // Thrust-lifted ships only: cancel gravity in proportion to the lift being produced. At
+        // liftRatio >= 1 the ship holds altitude exactly as a balloon does; below that it sinks, and
+        // the further below, the faster. Combined with thrust spool-down, losing power becomes a
+        // couple of seconds of decaying lift and then a progressive descent, not a dead drop.
+        //
+        // A lighter-than-air hull (ship.isAirship — a prefab, or a negative-density build) is
+        // deliberately untouched here: it floats by displacement and always has, and prefab models
+        // carry no weight data to compute a lift ratio from at all.
+        if (!ship.isAirship) {
+            float lift = Math.max(0f, Math.min(1f, liftRatio()));
+            float residualGravity = GRAVITY_PER_TICK * (1f - lift);
+            if (residualGravity > 0f) {
+                currentYVelocity -= residualGravity;
+                // Land rather than sink through the floor. Same hull-underside probe the buoyancy
+                // path uses, so a ship set down by either route stops in the same place.
+                if (currentYVelocity < 0f && hullRestingOnGround()) {
+                    currentYVelocity = 0.0f;
+                }
             }
         }
 
