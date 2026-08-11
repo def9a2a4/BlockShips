@@ -54,6 +54,7 @@ public class ShipConfig {
     public final int baseTurn;               // Free turning points every ship gets
     public final float sailTurnFactor;       // How much sail power aids turning, scaled by speed
     public final int thrustSpoolTicks;       // Ticks for thrust to ramp up/down (propeller inertia)
+    public final float liftFalloffExponent;  // How sharply lift below 1.0 stops holding a ship up
     public final float sailCapRatio;         // Sail contribution capped at this ratio (default: 0.8)
     public final float defaultRatio;         // Ratio that maps to current default stats (default: 0.7)
     public final float maxRatioMultiplier;   // Stats multiplier at ratio 1.0, relative to default (default: 1.5)
@@ -149,6 +150,7 @@ public class ShipConfig {
         this.baseTurn = b.baseTurn;
         this.sailTurnFactor = b.sailTurnFactor;
         this.thrustSpoolTicks = b.thrustSpoolTicks;
+        this.liftFalloffExponent = b.liftFalloffExponent;
         this.sailCapRatio = b.sailCapRatio;
         this.defaultRatio = b.defaultRatio;
         this.maxRatioMultiplier = b.maxRatioMultiplier;
@@ -299,6 +301,7 @@ public class ShipConfig {
             .baseTurn(cfg.getInt("custom-ships.stats.base-turn", 2))
             .sailTurnFactor((float) cfg.getDouble("custom-ships.stats.sail-turn-factor", 0.5))
             .thrustSpoolTicks(cfg.getInt("custom-ships.stats.thrust-spool-ticks", 40))
+            .liftFalloffExponent((float) cfg.getDouble("custom-ships.stats.lift-falloff-exponent", 3.0))
             .sailCapRatio((float) cfg.getDouble("custom-ships.stats.sail-cap-ratio", 0.8))
             .defaultRatio((float) cfg.getDouble("custom-ships.stats.default-ratio", 0.7))
             .maxRatioMultiplier((float) cfg.getDouble("custom-ships.stats.max-ratio-multiplier", 1.5))
@@ -378,6 +381,7 @@ public class ShipConfig {
         int baseTurn = 2;
         float sailTurnFactor = 0.5f;
         int thrustSpoolTicks = 40;
+        float liftFalloffExponent = 3.0f;
         float sailCapRatio = 0.8f;
         float defaultRatio = 0.7f;
         float maxRatioMultiplier = 1.5f;
@@ -456,6 +460,7 @@ public class ShipConfig {
         Builder baseTurn(int v) { baseTurn = v; return this; }
         Builder sailTurnFactor(float v) { sailTurnFactor = v; return this; }
         Builder thrustSpoolTicks(int v) { thrustSpoolTicks = v; return this; }
+        Builder liftFalloffExponent(float v) { liftFalloffExponent = v; return this; }
         Builder sailCapRatio(float v) { sailCapRatio = v; return this; }
         Builder defaultRatio(float v) { defaultRatio = v; return this; }
         Builder maxRatioMultiplier(float v) { maxRatioMultiplier = v; return this; }

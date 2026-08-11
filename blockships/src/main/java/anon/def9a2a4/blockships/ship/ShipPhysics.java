@@ -129,10 +129,20 @@ public class ShipPhysics {
             targetThrust.powered(), targetThrust.total());
     }
 
-    /** Move {@code current} toward {@code target} by a fraction of the full range per call. */
+    /**
+     * Move {@code current} toward {@code target} by a fraction of the full range per call.
+     *
+     * <p>The range is the LARGER of where we are and where we are going, not just the target. Scaling
+     * by the target alone makes spool-down nearly free-running: cutting power sets target 0, so the
+     * per-call step collapses to {@code 1 * step} — at the default 40 spool ticks that is 0.025/tick,
+     * and 30 points of vertical thrust take ~1200 ticks (a minute) to decay. Losing every propeller
+     * on a network then had almost no effect on how fast the ship came down, which is the opposite of
+     * what the spool exists to model. With this, a ramp takes {@code thrustSpoolTicks} in EITHER
+     * direction, which is what the config key claims.
+     */
     private static float approach(float current, float target, float step) {
         float delta = target - current;
-        float maxStep = Math.max(1f, Math.abs(target)) * step;
+        float maxStep = Math.max(1f, Math.max(Math.abs(current), Math.abs(target))) * step;
         if (Math.abs(delta) <= maxStep) return target;
         return current + Math.signum(delta) * maxStep;
     }
@@ -600,14 +610,29 @@ public class ShipPhysics {
         // the further below, the faster. Combined with thrust spool-down, losing power becomes a
         // couple of seconds of decaying lift and then a progressive descent, not a dead drop.
         //
+        // The support curve is lift^liftFalloffExponent, not lift. Linear made being under-powered
+        // almost free: at lift 0.5 a ship still got half its weight cancelled, and with verticalDrag
+        // at 0.9 the steady-state sink was a gentle -0.8*(1-lift) blocks/tick, so an obviously
+        // under-built ship still glided. Raising the exponent concentrates the useful range near 1.0
+        // — you either have enough thrust to fly or you are coming down.
+        //
         // A lighter-than-air hull (ship.isAirship — a prefab, or a negative-density build) is
         // deliberately untouched here: it floats by displacement and always has, and prefab models
         // carry no weight data to compute a lift ratio from at all.
         if (!ship.isAirship) {
             float lift = Math.max(0f, Math.min(1f, liftRatio()));
-            float residualGravity = GRAVITY_PER_TICK * (1f - lift);
+            float support = (float) Math.pow(lift, Math.max(0.1f, config.liftFalloffExponent));
+            float residualGravity = GRAVITY_PER_TICK * (1f - support);
             if (residualGravity > 0f) {
                 currentYVelocity -= residualGravity;
+                // Terminal velocity. Without a clamp the descent accelerated without bound until the
+                // ground probe caught it, so a ship that ran out of fuel high up arrived at whatever
+                // speed the fall length happened to produce. Falling is capped at the same vertical
+                // speed the ship can climb at, which keeps a power-loss descent survivable and
+                // readable.
+                if (currentYVelocity < -effectiveMaxVerticalSpeed) {
+                    currentYVelocity = -effectiveMaxVerticalSpeed;
+                }
                 // Land rather than sink through the floor. Same hull-underside probe the buoyancy
                 // path uses, so a ship set down by either route stops in the same place.
                 if (currentYVelocity < 0f && hullRestingOnGround()) {

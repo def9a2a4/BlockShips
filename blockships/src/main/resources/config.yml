@@ -118,6 +118,12 @@ custom-ships:
     # Ticks for thrust to ramp up or down. Rotation power is all-or-nothing, so without this an engine
     # running dry would cut every propeller in the same tick and drop a flying ship like a stone.
     thrust-spool-ticks: 40
+    # How sharply lift stops holding a ship up once it drops below 1.0. Gravity is cancelled in
+    # proportion to lift^this, so 1.0 is a straight line and higher numbers punish being under-powered
+    # much harder. At 3.0, lift 0.9 still supports 73% of the ship's weight but lift 0.5 supports only
+    # 12% — "nearly enough thrust" stops being nearly good enough, and a ship that loses a propeller
+    # bank drops noticeably instead of gliding down. Lower it toward 1.0 for a forgiving descent.
+    lift-falloff-exponent: 3.0
     # Thrust points per defCoreLib propulsion block, counted only while the block is actually powered
     # (or, for the thruster, burning). Which stat a block feeds depends on how it is mounted: along
     # the hull adds speed, across it adds turn rate, and flat adds lift. A reaction wheel always feeds

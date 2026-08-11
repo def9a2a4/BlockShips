@@ -825,21 +825,21 @@ public class ShipInstance {
     }
 
     /**
-     * Append "engines 3/4 · lift 82%" when the ship has propulsion aboard.
+     * Append "lift 82%" when the ship is holding itself up with thrust.
      *
      * <p>Rotation power is all-or-nothing per network, so a ship can lose every propeller at once
      * when an engine runs dry. Without something on screen, a flying ship starting to sink has no
      * visible cause — this is the difference between a mechanic and a mystery.
+     *
+     * <p>Deliberately lift ONLY. The powered/total engine count used to sit here too, but a static
+     * inventory figure does not belong next to a live speed meter — it never changes while you fly
+     * and it crowds the one number that does. It now lives in the wheel menu's stats page, which is
+     * where you go to read what a ship is made of.
      */
     private void appendPropulsionStatus(StringBuilder bar) {
         if (model == null || model.thrustBlocks.isEmpty()) return;
         anon.def9a2a4.blockships.ShipThrust.Totals t = physics.thrustTotals();
         if (t.total() <= 0) return;
-
-        boolean allRunning = t.powered() >= t.total();
-        String runColor = allRunning ? "§a" : t.powered() > 0 ? "§e" : "§c";
-        bar.append("  §7engines ").append(runColor).append(t.powered())
-           .append("§7/").append(t.total());
 
         // Lift only matters for a ship that is trying to hold itself up with thrust.
         if (t.vertical() > 0 || model.thrustBlocks.stream()

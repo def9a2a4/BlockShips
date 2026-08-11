@@ -19,15 +19,20 @@ import java.util.concurrent.TimeUnit;
  * Manages per-world ship data storage for chunk-based loading.
  *
  * Storage structure:
- *   worlds/{worldName}/chunks.yml - Maps "x,z" -> list of ship UUIDs
  *   worlds/{worldName}/ships/{uuid}.yml - Individual ship metadata
  */
 public class ShipWorldData {
     private final JavaPlugin plugin;
     private final File worldsFolder;
 
-    // In-memory chunk indices: world name -> "x,z" -> list of ship UUIDs
-    private final Map<String, Map<String, List<UUID>>> chunkIndices = new HashMap<>();
+    // Set of all ship ids that have a persisted sidecar on disk (worlds/*/ships/*.yml), across every world
+    // (loaded or not). Seeded once from disk in the constructor, then maintained incrementally on every sidecar
+    // create (saveShipMetadata / saveShipMetadataAsync) and delete (removeShip). Backs getAllPersistedShipIds(),
+    // which feeds the wheel-reap guard — so the maintenance MUST stay complete (a false-absent id reaps a live
+    // ship's wheel). Thread-safe: adds happen on the main thread at call time (before any async submit).
+    private final Set<UUID> persistedShipIds = ConcurrentHashMap.newKeySet();
+    // NOTE: the legacy chunk-index (world -> "x,z" -> [ship ids], persisted to chunks.yml) was removed — it only
+    // served the deleted native recovery path. Ship recovery now keys on defCoreLib's MechanismRegistry.
 
     // Cache of metadata existence checks (true = exists, false = doesn't exist)
     // Using ConcurrentHashMap for thread-safe access from chunk load events
@@ -48,63 +53,36 @@ public class ShipWorldData {
     public ShipWorldData(JavaPlugin plugin) {
         this.plugin = plugin;
         this.worldsFolder = new File(plugin.getDataFolder(), "worlds");
-    }
-
-    // ===== Chunk Index Operations =====
-
-    /**
-     * Gets the list of ship UUIDs in a specific chunk.
-     */
-    public List<UUID> getShipsInChunk(World world, int chunkX, int chunkZ) {
-        String key = chunkX + "," + chunkZ;
-        Map<String, List<UUID>> worldIndex = chunkIndices.get(world.getName());
-        if (worldIndex == null) return Collections.emptyList();
-        List<UUID> ships = worldIndex.get(key);
-        return ships != null ? new ArrayList<>(ships) : Collections.emptyList();
+        seedPersistedShipIds();
     }
 
     /**
-     * Adds a ship to the chunk index.
-     * Prevents duplicate entries for the same ship in the same chunk.
+     * Seeds {@link #persistedShipIds} from disk: every {@code worlds/<world>/ships/<uuid>.yml} sidecar. Runs once
+     * in the constructor (at plugin enable), BEFORE any wheel-reap consumer can query the set. Independent of
+     * {@code Bukkit.getWorlds()} — a directory walk sees worlds that exist on disk but aren't loaded.
      */
-    public void addToChunkIndex(World world, UUID shipId, int chunkX, int chunkZ) {
-        String worldName = world.getName();
-        String key = chunkX + "," + chunkZ;
+    private void seedPersistedShipIds() {
+        if (!worldsFolder.exists()) return;
+        File[] worldDirs = worldsFolder.listFiles(File::isDirectory);
+        if (worldDirs == null) return;
+        for (File worldDir : worldDirs) {
+            // One-time cleanup: the legacy chunk-index file is no longer written or read. Delete it best-effort so
+            // upgraded data folders self-tidy on first run of this build.
+            File legacyChunks = new File(worldDir, "chunks.yml");
+            if (legacyChunks.exists()) legacyChunks.delete();
 
-        List<UUID> ships = chunkIndices.computeIfAbsent(worldName, k -> new HashMap<>())
-                                       .computeIfAbsent(key, k -> new ArrayList<>());
-        if (!ships.contains(shipId)) {
-            ships.add(shipId);
-        }
-    }
-
-    /**
-     * Removes a ship from the chunk index.
-     */
-    public void removeFromChunkIndex(World world, UUID shipId, int chunkX, int chunkZ) {
-        String worldName = world.getName();
-        String key = chunkX + "," + chunkZ;
-
-        Map<String, List<UUID>> worldIndex = chunkIndices.get(worldName);
-        if (worldIndex == null) return;
-
-        List<UUID> ships = worldIndex.get(key);
-        if (ships != null) {
-            ships.remove(shipId);
-            if (ships.isEmpty()) {
-                worldIndex.remove(key);
+            File shipsDir = new File(worldDir, "ships");
+            File[] shipFiles = shipsDir.listFiles((d, name) -> name.endsWith(".yml"));
+            if (shipFiles == null) continue;
+            for (File f : shipFiles) {
+                String name = f.getName();
+                try {
+                    persistedShipIds.add(UUID.fromString(name.substring(0, name.length() - 4)));
+                } catch (IllegalArgumentException ignored) {
+                    // stray non-UUID filename — skip
+                }
             }
         }
-    }
-
-    /**
-     * Updates chunk index when a ship moves between chunks.
-     */
-    public void updateChunkIndex(World world, UUID shipId,
-                                  int oldChunkX, int oldChunkZ,
-                                  int newChunkX, int newChunkZ) {
-        removeFromChunkIndex(world, shipId, oldChunkX, oldChunkZ);
-        addToChunkIndex(world, shipId, newChunkX, newChunkZ);
     }
 
     // ===== Ship Metadata Operations =====
@@ -119,6 +97,10 @@ public class ShipWorldData {
 
         File shipFile = getShipFile(world.getName(), ship.id);
         shipFile.getParentFile().mkdirs();
+
+        // Maintain the persisted-id set on the main thread at call time (present-sooner: a reap consumer must never
+        // see a live ship's sidecar as absent). The sidecar is about to exist on disk regardless of async timing.
+        persistedShipIds.add(ship.id);
 
         YamlConfiguration config = buildShipMetadataConfig(ship);
         config.set("entity_count", ship.countEntities());
@@ -146,6 +128,10 @@ public class ShipWorldData {
         YamlConfiguration config = buildShipMetadataConfig(ship);
         int entityCount = ship.countEntities();
         config.set("entity_count", entityCount);
+
+        // Maintain the persisted-id set on the MAIN thread here, BEFORE the async submit — not inside the lambda —
+        // so a main-thread reap consumer never observes a false-absent id while the write is still queued.
+        persistedShipIds.add(shipId);
 
         // Write: file I/O on async thread
         pendingIOOperations.incrementAndGet();
@@ -209,49 +195,6 @@ public class ShipWorldData {
         config.set("current_yaw", ship.physics.currentYaw);
 
         return config;
-    }
-
-    /**
-     * Saves all chunk indices to disk asynchronously.
-     * Snapshots index data on calling thread, writes on IO thread.
-     */
-    public void saveAllChunkIndicesAsync() {
-        // Snapshot: deep copy chunk indices on main thread
-        Map<String, Map<String, List<String>>> snapshot = new HashMap<>();
-        for (Map.Entry<String, Map<String, List<UUID>>> worldEntry : chunkIndices.entrySet()) {
-            Map<String, List<String>> worldSnapshot = new HashMap<>();
-            for (Map.Entry<String, List<UUID>> chunkEntry : worldEntry.getValue().entrySet()) {
-                List<String> uuidStrings = new ArrayList<>();
-                for (UUID uuid : chunkEntry.getValue()) {
-                    uuidStrings.add(uuid.toString());
-                }
-                worldSnapshot.put(chunkEntry.getKey(), uuidStrings);
-            }
-            snapshot.put(worldEntry.getKey(), worldSnapshot);
-        }
-
-        // Write on async thread
-        pendingIOOperations.incrementAndGet();
-        ioExecutor.submit(() -> {
-            try {
-                for (Map.Entry<String, Map<String, List<String>>> worldEntry : snapshot.entrySet()) {
-                    String worldName = worldEntry.getKey();
-                    File worldDir = new File(worldsFolder, worldName);
-                    worldDir.mkdirs();
-                    File chunksFile = new File(worldDir, "chunks.yml");
-
-                    YamlConfiguration config = new YamlConfiguration();
-                    for (Map.Entry<String, List<String>> chunkEntry : worldEntry.getValue().entrySet()) {
-                        config.set(chunkEntry.getKey(), chunkEntry.getValue());
-                    }
-                    config.save(chunksFile);
-                }
-            } catch (Exception e) {
-                plugin.getLogger().severe("Failed to async save chunk indices: " + e.getMessage());
-            } finally {
-                pendingIOOperations.decrementAndGet();
-            }
-        });
     }
 
     /**
@@ -374,11 +317,14 @@ public class ShipWorldData {
      * Removes a ship from storage completely.
      *
      * @return true if the on-disk ship file was removed (or was already absent), false if the file
-     *         still exists after the delete attempt. The in-memory chunk index is always updated.
+     *         still exists after the delete attempt. The persisted-id set is always updated.
      */
     public boolean removeShip(World world, UUID shipId) {
         // Update cache to indicate file no longer exists
         metadataExistsCache.put(world.getName() + ":" + shipId, false);
+        // Maintain the persisted-id set (main thread). The sidecar is about to be deleted; drop it from the set so
+        // the reap guard and stats stop counting it.
+        persistedShipIds.remove(shipId);
 
         // Remove ship file
         boolean fileOk = true;
@@ -388,160 +334,15 @@ public class ShipWorldData {
             plugin.getLogger().severe("Failed to delete ship file for " + shipId + " (world="
                 + world.getName() + "): " + shipFile.getAbsolutePath());
         }
-
-        // Remove from all chunk indices for this world
-        Map<String, List<UUID>> worldIndex = chunkIndices.get(world.getName());
-        if (worldIndex != null) {
-            worldIndex.values().forEach(list -> list.remove(shipId));
-            // Clean up empty entries
-            worldIndex.entrySet().removeIf(e -> e.getValue().isEmpty());
-        }
         return fileOk;
     }
 
     // ===== Persistence =====
 
     /**
-     * Loads all chunk indices from disk.
-     */
-    public void loadAllChunkIndices() {
-        chunkIndices.clear();
-
-        if (!worldsFolder.exists()) return;
-
-        File[] worldDirs = worldsFolder.listFiles(File::isDirectory);
-        if (worldDirs == null) return;
-
-        for (File worldDir : worldDirs) {
-            String worldName = worldDir.getName();
-            File chunksFile = new File(worldDir, "chunks.yml");
-
-            if (!chunksFile.exists()) continue;
-
-            YamlConfiguration config = YamlConfiguration.loadConfiguration(chunksFile);
-            Map<String, List<UUID>> worldIndex = new HashMap<>();
-
-            for (String key : config.getKeys(false)) {
-                List<String> uuidStrings = config.getStringList(key);
-                List<UUID> uuids = new ArrayList<>();
-                for (String uuidStr : uuidStrings) {
-                    try {
-                        uuids.add(UUID.fromString(uuidStr));
-                    } catch (IllegalArgumentException e) {
-                        plugin.getLogger().warning("Invalid UUID in chunk index: " + uuidStr);
-                    }
-                }
-                if (!uuids.isEmpty()) {
-                    worldIndex.put(key, uuids);
-                }
-            }
-
-            if (!worldIndex.isEmpty()) {
-                chunkIndices.put(worldName, worldIndex);
-            }
-        }
-
-        // Validate chunk indices - remove entries for ships with missing metadata files
-        int removedStale = validateAndCleanChunkIndices();
-
-        int totalShips = chunkIndices.values().stream()
-            .flatMap(m -> m.values().stream())
-            .mapToInt(List::size)
-            .sum();
-        if (totalShips > 0 || removedStale > 0) {
-            plugin.getLogger().info("Loaded chunk indices: " + totalShips + " valid ship entries" +
-                (removedStale > 0 ? ", removed " + removedStale + " stale entries" : ""));
-        }
-    }
-
-    /**
-     * Validates chunk indices and removes entries for ships with missing metadata files.
-     * Also removes duplicate UUIDs within the same chunk.
-     * @return The number of stale entries removed
-     */
-    private int validateAndCleanChunkIndices() {
-        int removedCount = 0;
-
-        for (String worldName : new ArrayList<>(chunkIndices.keySet())) {
-            Map<String, List<UUID>> worldIndex = chunkIndices.get(worldName);
-
-            for (String chunkKey : new ArrayList<>(worldIndex.keySet())) {
-                List<UUID> ships = worldIndex.get(chunkKey);
-
-                // Remove duplicates and ships with missing metadata files
-                Set<UUID> seen = new HashSet<>();
-                Iterator<UUID> iter = ships.iterator();
-                while (iter.hasNext()) {
-                    UUID uuid = iter.next();
-                    // Remove if duplicate or missing metadata file
-                    if (seen.contains(uuid) || !getShipFile(worldName, uuid).exists()) {
-                        iter.remove();
-                        removedCount++;
-                    } else {
-                        seen.add(uuid);
-                    }
-                }
-
-                // Remove empty chunk entries
-                if (ships.isEmpty()) {
-                    worldIndex.remove(chunkKey);
-                }
-            }
-
-            // Remove empty world entries
-            if (worldIndex.isEmpty()) {
-                chunkIndices.remove(worldName);
-            }
-        }
-
-        // Save cleaned indices if we removed anything
-        if (removedCount > 0) {
-            saveAllChunkIndices();
-        }
-
-        return removedCount;
-    }
-
-    /**
-     * Saves all chunk indices to disk.
-     */
-    public boolean saveAllChunkIndices() {
-        boolean allOk = true;
-        for (Map.Entry<String, Map<String, List<UUID>>> worldEntry : chunkIndices.entrySet()) {
-            String worldName = worldEntry.getKey();
-            Map<String, List<UUID>> worldIndex = worldEntry.getValue();
-
-            File worldDir = new File(worldsFolder, worldName);
-            worldDir.mkdirs();
-            File chunksFile = new File(worldDir, "chunks.yml");
-
-            YamlConfiguration config = new YamlConfiguration();
-            for (Map.Entry<String, List<UUID>> chunkEntry : worldIndex.entrySet()) {
-                List<String> uuidStrings = new ArrayList<>();
-                for (UUID uuid : chunkEntry.getValue()) {
-                    uuidStrings.add(uuid.toString());
-                }
-                config.set(chunkEntry.getKey(), uuidStrings);
-            }
-
-            try {
-                config.save(chunksFile);
-            } catch (IOException e) {
-                allOk = false;
-                plugin.getLogger().severe("Failed to save chunk index for world " + worldName + ": " + e.getMessage());
-            }
-        }
-        return allOk;
-    }
-
-    /**
-     * Saves everything - chunk indices and all ship metadata for currently loaded ships.
+     * Saves metadata for all currently loaded ships.
      */
     public void saveAll() {
-        // Save chunk indices
-        saveAllChunkIndices();
-
-        // Save metadata for all currently loaded ships
         for (ShipInstance ship : ShipRegistry.getAllShips()) {
             saveShipMetadata(ship);
         }
@@ -554,29 +355,13 @@ public class ShipWorldData {
     }
 
     /**
-     * Gets all ship UUIDs known in a world (from chunk indices).
-     */
-    public Set<UUID> getAllShipIds(World world) {
-        Set<UUID> ids = new HashSet<>();
-        Map<String, List<UUID>> worldIndex = chunkIndices.get(world.getName());
-        if (worldIndex != null) {
-            worldIndex.values().forEach(ids::addAll);
-        }
-        return ids;
-    }
-
-    /**
-     * All persisted ship ids across every indexed world on disk (loaded or not).
-     * Reads the full in-memory chunk index directly, so it sees worlds that exist on
-     * disk but aren't currently loaded (e.g. an unloaded Multiverse world) — unlike
-     * iterating {@link org.bukkit.Bukkit#getWorlds()}. No chunk I/O.
+     * All persisted ship ids across every world on disk (loaded or not), scanned from
+     * {@code worlds/*}/ships/*.yml sidecars (the source of truth for recoverability). Seeded once at
+     * construction and maintained incrementally on every sidecar save/delete, so it sees worlds that exist on
+     * disk but aren't currently loaded — unlike iterating {@link org.bukkit.Bukkit#getWorlds()}. No I/O here.
      */
     public Set<UUID> getAllPersistedShipIds() {
-        Set<UUID> ids = new HashSet<>();
-        for (Map<String, List<UUID>> worldIndex : chunkIndices.values()) {
-            worldIndex.values().forEach(ids::addAll);
-        }
-        return ids;
+        return new HashSet<>(persistedShipIds);
     }
 
     /**
