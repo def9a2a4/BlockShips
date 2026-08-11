@@ -117,9 +117,10 @@ public final class ShipWheelAnchors {
         }
 
         @Override public Set<Block> connectorBlocks() {
-            // Only meaningful while docked; an assembled ship has no hull in the world, and authoring
-            // is refused there anyway.
-            if (data.isAssembled()) return Set.of();
+            // Only meaningful while docked and UNLOCKED. An assembled ship has no hull in the world; a locked
+            // ship's members are already glue offsets, so the engine's connects() sees them without extra
+            // connectors — and natural spread is frozen, so we must NOT re-flood the allow-list here.
+            if (data.isAssembled() || data.isLocked()) return Set.of();
             Set<Location> cells = connectors(plugin, block);
             if (cells.isEmpty()) return Set.of();
             Set<Block> out = new HashSet<>(cells.size() * 2);

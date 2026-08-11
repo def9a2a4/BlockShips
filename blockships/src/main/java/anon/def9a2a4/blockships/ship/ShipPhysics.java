@@ -82,7 +82,6 @@ public class ShipPhysics {
      * instead of ramp.
      */
     private void tickPropulsion() {
-        if (!"ratio3".equalsIgnoreCase(ship.config.statsMode)) return;
         if (ship.model == null || ship.model.thrustBlocks.isEmpty()) return;
         // Cheap backstop poll; the event does the timely work.
         if (++thrustPollCounter >= 20) {
@@ -195,19 +194,14 @@ public class ShipPhysics {
 
         // Custom ships: compute ratio from sail power and mass. One shared calculator (ShipStats) so
         // physics and every readout agree — they used to each roll their own copy of this.
-        boolean ratio3 = "ratio3".equalsIgnoreCase(config.statsMode);
-        anon.def9a2a4.blockships.ShipStats stats;
-        if (ratio3) {
-            // speedFrac from the PREVIOUS tick's top speed: sails aid turning in proportion to how
-            // fast the ship is already moving, and effectiveMaxSpeed is only assigned below.
-            float prevTop = Math.max(0.0001f, effectiveMaxSpeed > 0 ? effectiveMaxSpeed : config.maxSpeed);
-            float speedFrac = Math.abs(currentSpeed) / prevTop;
-            stats = anon.def9a2a4.blockships.ShipStats.of(config, ship.model, liveThrust(), speedFrac);
-        } else {
-            stats = anon.def9a2a4.blockships.ShipStats.of(config, ship.model);
-        }
-        float ratio = ratio3 ? stats.forwardRatio : stats.ratio;
-        float turnRatio = ratio3 ? stats.turnRatio : ratio;
+        // speedFrac comes from the PREVIOUS tick's top speed: sails aid turning in proportion to how
+        // fast the ship is already moving, and effectiveMaxSpeed is only assigned below.
+        float prevTop = Math.max(0.0001f, effectiveMaxSpeed > 0 ? effectiveMaxSpeed : config.maxSpeed);
+        float speedFrac = Math.abs(currentSpeed) / prevTop;
+        anon.def9a2a4.blockships.ShipStats stats =
+            anon.def9a2a4.blockships.ShipStats.of(config, ship.model, liveThrust(), speedFrac);
+        float ratio = stats.forwardRatio;
+        float turnRatio = stats.turnRatio;
         this.lastLiftRatio = stats.liftRatio;
 
         // Compute horizontal stats
@@ -572,11 +566,10 @@ public class ShipPhysics {
     /**
      * Whether this ship is being held up by thrust rather than by displacement.
      *
-     * <p>Only in ratio3 mode, and only once something aboard is actually producing lift — so a ship
-     * that has thrusters but no fuel is not flying, it is falling.
+     * <p>True only once something aboard is actually producing lift — a ship with thrusters but no
+     * fuel is not flying, it is falling.
      */
     private boolean hasThrustLift() {
-        if (!"ratio3".equalsIgnoreCase(ship.config.statsMode)) return false;
         if (ship.model == null || ship.model.thrustBlocks.isEmpty()) return false;
         return liftRatio() > 0f;
     }

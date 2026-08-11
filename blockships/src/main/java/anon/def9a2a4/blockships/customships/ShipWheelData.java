@@ -72,10 +72,10 @@ public class ShipWheelData {
     // -1 means "not set, use calculated default based on block count"
     private float cameraDistance = -1;
 
-    // Frozen block set (persisted per-wheel). Non-null means this ship assembles from exactly these
-    // cells rather than re-running the flood fill, so docking it next to a pile of dirt no longer
-    // swallows the dirt. Null = unlocked, the historical behaviour.
-    private LockedStructure locked;
+    // When true, this wheel's ship is "locked": membership is frozen to its glue offsets (stored on the wheel
+    // skull by defCoreLib) and the natural allow-list flood fill is disabled, so docking it next to a pile of
+    // dirt no longer swallows the dirt. The frozen cells live in the glue store, not here. False = unlocked.
+    private boolean naturalFrozen;
 
     public ShipWheelData(Location blockLocation, BlockFace facing) {
         this.blockLocation = blockLocation.clone();
@@ -273,18 +273,14 @@ public class ShipWheelData {
         this.cameraDistance = distance;
     }
 
-    /** The frozen block set, or null when this wheel is unlocked. */
-    public LockedStructure getLocked() {
-        return locked;
-    }
-
-    /** Freeze (non-null) or unfreeze (null) this wheel's block set. Callers must {@code saveAll()}. */
-    public void setLocked(LockedStructure locked) {
-        this.locked = locked;
-    }
-
+    /** True when natural allow-list spread is frozen (membership = the wheel's glue offsets). */
     public boolean isLocked() {
-        return locked != null;
+        return naturalFrozen;
+    }
+
+    /** Freeze (true) or unfreeze (false) natural spread. Callers must {@code saveAll()}. */
+    public void setNaturalFrozen(boolean frozen) {
+        this.naturalFrozen = frozen;
     }
 
     /**
@@ -366,8 +362,8 @@ public class ShipWheelData {
         if (cameraDistance >= 0) {
             map.put("camera_distance", cameraDistance);
         }
-        if (locked != null) {
-            map.put("locked", locked.toMap());
+        if (naturalFrozen) {
+            map.put("locked", true);
         }
         return map;
     }
@@ -401,13 +397,15 @@ public class ShipWheelData {
             data.setCameraDistance(((Number) map.get("camera_distance")).floatValue());
         }
 
-        // Frozen block set. Absent (every pre-lock wheel) = unlocked; a corrupt blob also reads as
-        // unlocked rather than failing the whole wheel load.
+        // Lock flag. New format is a plain boolean — the frozen cells live in the wheel's glue store, not here.
+        // A legacy LockedStructure blob (Map/section) loads as UNLOCKED: the packed store was retired, so those
+        // ships re-lock once. Absent (every pre-lock wheel) = unlocked.
         Object lockedRaw = map.get("locked");
-        if (lockedRaw instanceof Map<?, ?> m) {
-            data.setLocked(LockedStructure.fromMap(m));
-        } else if (lockedRaw instanceof org.bukkit.configuration.ConfigurationSection sec) {
-            data.setLocked(LockedStructure.fromMap(sec.getValues(false)));
+        if (lockedRaw instanceof Boolean b) {
+            data.setNaturalFrozen(b);
+        } else if (lockedRaw instanceof Map || lockedRaw instanceof org.bukkit.configuration.ConfigurationSection) {
+            Bukkit.getLogger().info("[BlockShips] Wheel at " + loc + " carried a legacy locked-structure; "
+                + "loading it unlocked (re-lock from the wheel menu to freeze it again).");
         }
 
         return data;

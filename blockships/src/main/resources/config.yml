@@ -103,15 +103,13 @@ custom-ships:
     # material. Worth much more than a plain banner — roughly by rendered area.
     large-banner-power: 20
     huge-banner-power: 50
-    # How performance is derived.
-    #   legacy - one sail ratio drives every stat (speed, turning, everything). Historical behaviour.
-    #   ratio3 - three independent ratios:
-    #              forward = capped sails + thrust pointing along the hull   -> speed, acceleration
-    #              turn    = thrust across the hull + gyroscopes, plus sails
-    #                        scaled by current speed (a rudder needs flow)   -> turn rate
-    #              lift    = thrust pointing down, against SIGNED weight     -> flight
-    #            Sails still plateau at sail-cap-ratio, so propulsion is what closes the last gap.
-    mode: legacy
+    # Performance is three independent ratios, not one:
+    #   forward = capped sails + thrust pointing along the hull   -> speed, acceleration
+    #   turn    = thrust across the hull + gyroscopes, plus sails scaled by current speed
+    #             (a rudder needs flow)                           -> turn rate
+    #   lift    = thrust pointing down, against SIGNED weight     -> flight
+    # Sails still plateau at sail-cap-ratio, so propulsion is what closes the last gap.
+    #
     # Free turning points every ship gets, so a bare hull can still steer a little.
     base-turn: 2
     # How much sail power aids turning. Multiplied by current speed / top speed, so sails do nothing

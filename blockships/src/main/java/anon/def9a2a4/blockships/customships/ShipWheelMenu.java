@@ -140,13 +140,13 @@ public class ShipWheelMenu {
         // Help/Info button (always available)
         menu.setItem(HELP_SLOT, createHelpItem());
 
-        // Detect Ship button (always available)
+        // Show Ship button (always available)
         ItemStack detectItem = new ItemStack(Material.ENDER_EYE);
         ItemMeta detectMeta = detectItem.getItemMeta();
         if (detectMeta != null) {
-            detectMeta.setDisplayName(ChatColor.AQUA + "Detect Ship");
+            detectMeta.setDisplayName(ChatColor.AQUA + "Show Ship");
             detectMeta.setLore(Arrays.asList(
-                ChatColor.GRAY + "Preview which blocks will be included",
+                ChatColor.GRAY + "Shows the blocks actually part of the ship",
                 ChatColor.GRAY + "Shows block count and total weight",
                 ChatColor.GRAY + "Spawns particles to visualize ship"
             ));
@@ -491,7 +491,7 @@ public class ShipWheelMenu {
                 }
             } else {
                 lore.add(ChatColor.GRAY + "No ship detected yet");
-                lore.add(ChatColor.GRAY + "Click to detect ship");
+                lore.add(ChatColor.GRAY + "Click to show ship");
             }
 
             infoMeta.setLore(lore);
@@ -571,7 +571,7 @@ public class ShipWheelMenu {
                 lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%" + maxTag);
               }
             } else {
-                lore.add(ChatColor.GRAY + "Detect ship first");
+                lore.add(ChatColor.GRAY + "Show ship first");
             }
 
             statsMeta.setLore(lore);
@@ -643,9 +643,11 @@ public class ShipWheelMenu {
             meta.setDisplayName((locked ? ChatColor.AQUA + "Structure Locked" : ChatColor.GRAY + "Structure Unlocked"));
             List<String> lore = new ArrayList<>();
             if (locked) {
-                lore.add(ChatColor.GRAY + "Frozen blocks: " + ChatColor.WHITE + wheelData.getLocked().size());
+                lore.add(ChatColor.GRAY + "Frozen blocks: " + ChatColor.WHITE
+                    + (ShipGlue.glueCount(wheelData.getBlockLocation().getBlock()) + 1));
                 lore.add(ChatColor.GRAY + "This ship assembles from exactly");
-                lore.add(ChatColor.GRAY + "these blocks. Nothing new is picked up.");
+                lore.add(ChatColor.GRAY + "these blocks. Nothing new is picked up,");
+                lore.add(ChatColor.GRAY + "but you can still glue/unglue any of them.");
                 lore.add("");
                 lore.add(ChatColor.GRAY + "Blocks that are gone are simply skipped.");
                 lore.add(ChatColor.YELLOW + "Click" + ChatColor.GRAY + " to unlock");

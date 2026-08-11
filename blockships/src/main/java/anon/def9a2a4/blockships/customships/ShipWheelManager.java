@@ -278,62 +278,92 @@ public class ShipWheelManager {
     public record WheelResolution(WheelState state, @Nullable ShipInstance ship) {}
 
     /**
-     * Toggle the wheel's frozen block set, or re-freeze one that is already locked.
-     *
-     * <p>Locking snapshots whatever the ship is right now — from the assembled model when it is
-     * flying, otherwise from a fresh detect (including glued cells). Re-freezing is the repair path:
-     * blocks lost to an obstructed or protected landing are gone from a locked set permanently
-     * otherwise, and unlock/relock would re-open the "swallow whatever is piled against the hull"
-     * hole in between.
+     * Toggle the wheel's lock, or re-freeze one that is already locked. Locking is DOCKED-ONLY: it materializes
+     * the ship's current membership (a fresh detect, including glued cells) into the wheel's glue offsets and
+     * sets {@code naturalFrozen}, so the ship then assembles from exactly those cells and the brush can still
+     * add/remove any of them. Unlocking prunes the glue back to the genuinely-manual cells (those the natural
+     * flood fill won't re-derive) and re-enables natural spread. Re-freezing is the repair path: cells lost to
+     * an obstructed/protected landing erode the glue permanently otherwise.
      *
      * @param refreeze when true, re-snapshot instead of unlocking an already-locked wheel
      * @return a player-facing summary, or null when the action was refused (message already sent)
      */
     public @Nullable String toggleLock(Player player, ShipWheelData wheelData, boolean refreeze) {
+        Location wheelLoc = wheelData.getBlockLocation();
+        Block wheelBlock = wheelLoc.getBlock();
+
+        // ── Unlock ──────────────────────────────────────────────────────────────────────────────────────
         if (wheelData.isLocked() && !refreeze) {
-            wheelData.setLocked(null);
+            wheelData.setNaturalFrozen(false);
+            // Prune the materialized hull back to manual-only: cells the natural flood fill will re-derive on
+            // its own need not stay glued. Docked only — mid-flight there is no wheel skull to rewrite.
+            if (resolveWheelState(wheelData).ship() == null && !wheelBlock.getType().isAir()) {
+                int maxShipSize = ((BlockShipsPlugin) plugin).getConfig().getInt("custom-ships.max-ship-size", 1000);
+                int maxScanSize = ((BlockShipsPlugin) plugin).getConfig().getInt("custom-ships.max-scan-size", 5000);
+                ShipDetector.ShipDetectionResult natural =
+                    new ShipDetector(maxShipSize, maxScanSize).detectShipDetailed(wheelLoc, Collections.emptySet());
+                Set<String> naturalKeys = new HashSet<>();
+                if (natural.isSuccess() && natural.getBlocks() != null) {
+                    for (Location c : natural.getBlocks()) naturalKeys.add(cellKey(c));
+                }
+                List<Location> manual = new ArrayList<>();
+                for (Location c : ShipGlue.rawGlueCells(wheelBlock)) {
+                    if (!naturalKeys.contains(cellKey(c))) manual.add(c);
+                }
+                ShipGlue.writeCells(wheelBlock, manual);
+            }
             saveAll();
             return "Unlocked — this ship will pick up connected blocks again when it assembles.";
         }
 
+        // ── Lock / refreeze (docked only) ───────────────────────────────────────────────────────────────
         WheelResolution res = resolveWheelState(wheelData);
-        // A detect on an unloaded chunk reads air and would freeze a one-block ship. ORPHAN is a
-        // confused link rather than a live ship; reconcile it first so the snapshot is meaningful.
+        // A detect on an unloaded chunk reads air and would freeze a one-block ship. ORPHAN is a confused link
+        // rather than a live ship; reconcile it first so the snapshot is meaningful.
         if (res.state() == WheelState.UNLOADED_RECOVERABLE) {
             player.sendMessage("§cShip is still loading — try again in a moment.");
             return null;
         }
         if (res.state() == WheelState.ORPHAN) {
             reconcileOrphan(wheelData);
+            res = resolveWheelState(wheelData);
+        }
+        if (res.ship() != null) {
+            // Docked-only: a flying ship's hull is aired out, so there is no wheel skull to store glue on.
+            player.sendMessage("§cDock the ship before locking it.");
+            return null;
         }
 
-        Location wheelLoc = wheelData.getBlockLocation();
-        int previous = wheelData.isLocked() ? wheelData.getLocked().size() : -1;
-        ShipInstance ship = res.ship();
-        if (ship != null && ship.sourceModel != null) {
-            // Assembled: snapshot the MODEL, not the world — the hull is aired out, so there is
-            // nothing in the world to read. The model is also the authoritative answer: it is exactly
-            // the set that flew, in the same wheel-relative frame the locked set stores.
-            wheelData.setLocked(LockedStructure.captureFromModel(ship.sourceModel, wheelData.getFacing()));
-        } else {
-            int maxShipSize = ((BlockShipsPlugin) plugin).getConfig().getInt("custom-ships.max-ship-size", 1000);
-            int maxScanSize = ((BlockShipsPlugin) plugin).getConfig().getInt("custom-ships.max-scan-size", 5000);
-            ShipDetector detector = new ShipDetector(maxShipSize, maxScanSize);
-            ShipDetector.ShipDetectionResult scan =
-                detector.detectShipDetailed(wheelLoc, ShipGlue.gluedCells(wheelLoc.getBlock()));
-            if (!scan.isSuccess() || scan.getBlocks() == null || scan.getBlocks().isEmpty()) {
-                player.sendMessage("§c" + scan.getMessage());
-                return null;
-            }
-            wheelData.setLocked(LockedStructure.capture(wheelLoc, wheelData.getFacing(), scan.getBlocks()));
+        int maxShipSize = ((BlockShipsPlugin) plugin).getConfig().getInt("custom-ships.max-ship-size", 1000);
+        int maxScanSize = ((BlockShipsPlugin) plugin).getConfig().getInt("custom-ships.max-scan-size", 5000);
+        ShipDetector.ShipDetectionResult scan =
+            new ShipDetector(maxShipSize, maxScanSize).detectShipDetailed(wheelLoc, ShipGlue.gluedCells(wheelBlock));
+        if (!scan.isSuccess() || scan.getBlocks() == null || scan.getBlocks().isEmpty()) {
+            player.sendMessage("§c" + scan.getMessage());
+            return null;
         }
+        Set<Location> members = scan.getBlocks();
+        int cap = ShipGlue.maxSize();
+        if (members.size() > cap) {
+            player.sendMessage("§cShip is too large to lock (" + members.size() + " blocks, glue cap " + cap
+                + "). Raise glue.max-size in defCoreLib to lock ships this big.");
+            return null;
+        }
+        int previous = wheelData.isLocked() ? ShipGlue.glueCount(wheelBlock) + 1 : -1;   // +1 for the wheel cell
+        ShipGlue.writeCells(wheelBlock, members);   // the wheel's own (0,0,0) cell is skipped inside writeCells
+        wheelData.setNaturalFrozen(true);
         saveAll();
 
-        int now = wheelData.getLocked().size();
+        int now = members.size();
         if (previous >= 0 && previous != now) {
             return "Re-froze " + now + " blocks (was " + previous + ").";
         }
         return "Locked " + now + " blocks — this ship will no longer pick up anything new.";
+    }
+
+    /** Block-coordinate key for set membership without Location's double-precision equality pitfalls. */
+    private static String cellKey(Location l) {
+        return l.getBlockX() + "," + l.getBlockY() + "," + l.getBlockZ();
     }
 
 
@@ -481,7 +511,7 @@ public class ShipWheelManager {
         // stacked against the docked hull are never absorbed. Both paths funnel into the same
         // captureCells(), so the two ScanResults are structurally identical.
         BlockStructureScanner.ScanResult scan = wheelData.isLocked()
-            ? BlockStructureScanner.scanLocked(wheelLoc, wheelData.getFacing(), wheelData.getLocked())
+            ? BlockStructureScanner.scanFrozen(wheelLoc, wheelData.getFacing())
             : BlockStructureScanner.scanStructure(wheelLoc, wheelData.getFacing());
         if (scan == null || scan.model().parts.isEmpty()) {
             player.sendMessage(wheelData.isLocked()
@@ -1160,19 +1190,28 @@ public class ShipWheelManager {
         int maxShipSize = ((BlockShipsPlugin) plugin).getConfig().getInt("custom-ships.max-ship-size", 1000);
         int maxScanSize = ((BlockShipsPlugin) plugin).getConfig().getInt("custom-ships.max-scan-size", 5000);
 
-        // Run ship detection. Feed it the same glued cells assembly will use, so the preview and the
-        // real thing never disagree about what is on the ship.
-        ShipDetector detector = new ShipDetector(maxShipSize, maxScanSize);
-        ShipDetector.ShipDetectionResult result =
-            detector.detectShipDetailed(wheelLoc, ShipGlue.gluedCells(wheelLoc.getBlock()));
-
-        if (!result.isSuccess()) {
-            // Detection failed - ship too large or other error
-            player.sendMessage("§c" + result.getMessage());
-            return false;
+        // Membership per the same rules assembly uses, so the preview never disagrees with what actually
+        // assembles: a LOCKED ship shows exactly its frozen set (raw glue offsets + wheel, NOT the flood fill,
+        // so blocks stacked against a docked hull don't appear); an unlocked ship runs the detect fed the same
+        // glued cells assembly will use.
+        Set<Location> shipBlocks;
+        if (wheelData.isLocked()) {
+            shipBlocks = new HashSet<>();
+            for (Location c : ShipGlue.rawGlueCells(wheelLoc.getBlock())) {
+                if (!c.getBlock().getType().isAir()) shipBlocks.add(c);
+            }
+            shipBlocks.add(wheelLoc.clone());
+        } else {
+            ShipDetector detector = new ShipDetector(maxShipSize, maxScanSize);
+            ShipDetector.ShipDetectionResult result =
+                detector.detectShipDetailed(wheelLoc, ShipGlue.gluedCells(wheelLoc.getBlock()));
+            if (!result.isSuccess()) {
+                player.sendMessage("§c" + result.getMessage());   // too large or other error
+                return false;
+            }
+            shipBlocks = result.getBlocks();
         }
 
-        Set<Location> shipBlocks = result.getBlocks();
         if (shipBlocks == null || shipBlocks.isEmpty()) {
             player.sendMessage("§cNo valid blocks found for ship!");
             return false;
@@ -1682,7 +1721,7 @@ public class ShipWheelManager {
             Set<Location> detected = wheelData.getLastDetectedSeatBlocks();
 
             if ((detected == null || detected.isEmpty()) && driverSeat == null) {
-                player.sendMessage("§eNo seats detected. Click 'Detect Ship' first.");
+                player.sendMessage("§eNo seats detected. Click 'Show Ship' first.");
                 return;
             }
 
