@@ -236,21 +236,9 @@ custom-items:
       result-item: PLAYER_HEAD
       result-texture-set: SHIP_WHEEL_SET
 
-  ship_engine:
-    display-name: "Ship Engine"
-    base-material: BLAST_FURNACE
-    enchant-glint: true
-    stackable: true
-    recipe:
-      pattern:
-        - "CCC"
-        - "CBC"
-        - "CCC"
-      ingredients:
-        C: [COPPER_INGOT]
-        B: [BLAST_FURNACE]
-      result-name: "Ship Engine"
-      result-item: BLAST_FURNACE
+  # (The old `ship_engine` item lived here. The experimental ship-engine subsystem was removed, and
+  # the item outlived it as a craftable blast furnace that nothing read. Propulsion now comes from
+  # defCoreLib's rotation blocks — propellers, thrusters and reaction wheels.)
 
   captains_manual:
     display-name: "Captain's Manual"
