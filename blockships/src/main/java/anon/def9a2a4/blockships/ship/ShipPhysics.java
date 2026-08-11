@@ -51,6 +51,18 @@ public class ShipPhysics {
     private float effectiveDescendAcceleration;
     private boolean statsComputed = false;
 
+    /**
+     * The ship's actual top speed after the power-to-mass ratio is applied.
+     *
+     * <p>Use this, not {@code config.maxSpeed}, for anything player-facing: the raw config value is
+     * the ratio-1.0 reference, so a lightly-rigged ship measured against it reads as far slower than
+     * it actually is relative to what it can do.
+     */
+    public float effectiveMaxSpeed() {
+        if (!statsComputed) computeEffectiveStats();
+        return effectiveMaxSpeed;
+    }
+
     // Sound cooldown (ticks until next sound can play)
     private int soundCooldown = 0;
 
@@ -94,11 +106,9 @@ public class ShipPhysics {
             return;
         }
 
-        // Custom ships: compute ratio from sail power and mass
-        float sailRatio = ship.model.getSailRatio(config.basePower);
-        // Apply sail cap: non-engine contribution capped at sailCapRatio
-        float cappedSailRatio = Math.min(sailRatio, config.sailCapRatio);
-        float ratio = Math.min(cappedSailRatio, 1.0f);
+        // Custom ships: compute ratio from sail power and mass. One shared calculator (ShipStats) so
+        // physics and every readout agree — they used to each roll their own copy of this.
+        float ratio = anon.def9a2a4.blockships.ShipStats.of(config, ship.model).ratio;
 
         // Compute horizontal stats
         effectiveMaxSpeed = config.computeStat(ratio, config.maxSpeed,

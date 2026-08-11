@@ -798,7 +798,10 @@ public class ShipInstance {
         // This method just displays current speed to the player
 
         // Only update action bar if speed changed significantly (optimization)
-        float speedPercent = physics.currentSpeed / config.maxSpeed;  // -1.0 to 1.0
+        // Against the ship's OWN top speed, not the config reference: a lightly-rigged ship at full
+        // throttle should read as full, not as a fraction of what a fully-rigged one could do.
+        float topSpeed = Math.max(0.0001f, physics.effectiveMaxSpeed());
+        float speedPercent = physics.currentSpeed / topSpeed;  // -1.0 to 1.0
         if (java.lang.Math.abs(speedPercent - previousDisplayedSpeed) < SPEED_DISPLAY_THRESHOLD) {
             return;  // Speed hasn't changed enough, skip update
         }

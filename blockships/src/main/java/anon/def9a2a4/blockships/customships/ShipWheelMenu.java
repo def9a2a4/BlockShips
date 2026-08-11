@@ -412,17 +412,23 @@ public class ShipWheelMenu {
             mass = Math.max(1, wheelData.getLastDetectedPositiveWeight());
         }
 
-        int sailPower = woolCount * config.woolPower + bannerCount * config.bannerPower;
-
-        // Compute power ratio
-        float sailRatio = (float) (config.basePower + sailPower) / mass;
-        float cappedSailRatio = Math.min(sailRatio, config.sailCapRatio);
-        float ratio = Math.min(cappedSailRatio, 1.0f);
+        // An assembled ship's model already knows every sail tier (including large/huge banners, which
+        // are display entities the detect preview does not count); an unassembled one only has the
+        // preview's wool/banner tallies.
+        ShipStats stats;
+        if (wheelData.isAssembled()) {
+            ShipInstance assembled = ShipRegistry.byId(wheelData.getAssembledShipUUID());
+            stats = assembled != null && assembled.model != null
+                ? ShipStats.of(config, assembled.model)
+                : ShipStats.of(config, woolCount, bannerCount, 0, 0, mass);
+        } else {
+            stats = ShipStats.of(config, woolCount, bannerCount, 0, 0, mass);
+        }
 
         return new ShipInfo(blockCount, totalWeight, mass, density, maxHealth, currentHealth,
                             surfaceOffset, airDensity, waterDensity,
-                            woolCount, bannerCount, sailPower,
-                            config.sailCapRatio, sailRatio, ratio,
+                            woolCount, bannerCount, stats.sailPower,
+                            config.sailCapRatio, stats.sailRatio, stats.ratio,
                             config.statsEnabled);
     }
 

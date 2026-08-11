@@ -118,16 +118,9 @@ public final class ShipModel {
         return (float) totalWeight / blockCount;
     }
 
-    /**
-     * Calculates the ship's power-to-mass ratio for stat scaling.
-     * Uses sail power only (engines are dynamic and added at runtime).
-     * @param basePower Free power points every ship gets
-     * @return The ratio (0.0 to ~1.0+), before sail cap is applied
-     */
-    public float getSailRatio(int basePower) {
-        if (mass <= 0) return 0;
-        return (float) (basePower + sailPower) / mass;
-    }
+    // The power-to-mass ratio used to be computed here (and, separately, in four other places).
+    // It now lives in ShipStats, which is the only thing that knows how the sail cap and the tiers
+    // combine — see ShipStats.of(config, model).
 
     /**
      * Calculates the surface offset based on density compared to water.

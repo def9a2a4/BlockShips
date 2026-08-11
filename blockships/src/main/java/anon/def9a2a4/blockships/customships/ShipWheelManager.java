@@ -1140,17 +1140,13 @@ public class ShipWheelManager {
                 player.sendMessage("§7Blocks: §f" + blockCount);
                 player.sendMessage("§7Health: §f" + (int) Math.ceil(currentHealth) + " §7/ §f" + (int) maxHealth);
                 if (config.statsEnabled) {
-                    int mass = Math.max(1, ship.model.mass);
-                    int sailPower = ship.model.woolCount * config.woolPower + ship.model.bannerCount * config.bannerPower;
-                    float sailRatio = (float) (config.basePower + sailPower) / mass;
-                    float cappedSailRatio = Math.min(sailRatio, config.sailCapRatio);
-                    float ratio = Math.min(cappedSailRatio, 1.0f);
-                    int speedPercent = config.sailCapRatio > 0
-                        ? Math.round(ratio / config.sailCapRatio * 100) : Math.round(ratio * 100);
+                    anon.def9a2a4.blockships.ShipStats stats =
+                        anon.def9a2a4.blockships.ShipStats.of(config, ship.model);
+                    int speedPercent = stats.speedPercent(config);
 
-                    player.sendMessage("§7Sails: §f" + ship.model.woolCount + " wool, " + ship.model.bannerCount + " banners §7(" + sailPower + " pts)");
-                    String speedColor = speedPercent >= 125 ? "§b" : speedPercent >= 100 ? "§a" : speedPercent >= 75 ? "§e" : speedPercent >= 50 ? "§6" : "§c";
-                    player.sendMessage("§7Speed: " + speedColor + speedPercent + "%");
+                    player.sendMessage("§7Sails: §f" + describeSails(ship.model) + " §7(" + stats.sailPower + " pts)");
+                    player.sendMessage("§7Speed: "
+                        + anon.def9a2a4.blockships.ShipStats.speedColor(speedPercent) + speedPercent + "%");
                 } else {
                     player.sendMessage("§7Stats: §8disabled");
                 }
@@ -1243,16 +1239,16 @@ public class ShipWheelManager {
         }
         // Ship stats
         if (config.statsEnabled) {
-            int sailPower = woolCount * config.woolPower + bannerCount * config.bannerPower;
-            int shipMass = Math.max(1, calculateMass(shipBlocks));
-            float sailRatio = (float) (config.basePower + sailPower) / shipMass;
-            float cappedSailRatio = Math.min(sailRatio, config.sailCapRatio);
-            float ratio = Math.min(cappedSailRatio, 1.0f);
-            int speedPercent = config.sailCapRatio > 0
-                ? Math.round(ratio / config.sailCapRatio * 100) : Math.round(ratio * 100);
-            player.sendMessage("§7Sails: §f" + woolCount + " wool, " + bannerCount + " banners §7(" + sailPower + " pts)");
-            String speedColor = speedPercent >= 125 ? "§b" : speedPercent >= 100 ? "§a" : speedPercent >= 75 ? "§e" : speedPercent >= 50 ? "§6" : "§c";
-            player.sendMessage("§7Speed: " + speedColor + speedPercent + "%" + (speedPercent < 50 ? " §8(add banners or wool as sails!)" : ""));
+            // Preview path: large/huge banners are display entities and are not counted here, so this
+            // can under-report a ship that carries them. The assembled readout above uses the model,
+            // which does count them.
+            anon.def9a2a4.blockships.ShipStats stats = anon.def9a2a4.blockships.ShipStats.of(
+                config, woolCount, bannerCount, 0, 0, calculateMass(shipBlocks));
+            int speedPercent = stats.speedPercent(config);
+            player.sendMessage("§7Sails: §f" + woolCount + " wool, " + bannerCount + " banners §7("
+                + stats.sailPower + " pts)");
+            player.sendMessage("§7Speed: " + anon.def9a2a4.blockships.ShipStats.speedColor(speedPercent)
+                + speedPercent + "%" + (speedPercent < 50 ? " §8(add banners or wool as sails!)" : ""));
         } else {
             player.sendMessage("§7Stats: §8disabled");
         }
@@ -1277,6 +1273,22 @@ public class ShipWheelManager {
         }
 
         return true;
+    }
+
+    /** "3 wool, 2 banners, 1 large banner" — omits tiers the ship doesn't carry. */
+    private static String describeSails(ShipModel model) {
+        StringBuilder sb = new StringBuilder();
+        appendCount(sb, model.woolCount, "wool", "wool");
+        appendCount(sb, model.bannerCount, "banner", "banners");
+        appendCount(sb, model.largeBannerCount, "large banner", "large banners");
+        appendCount(sb, model.hugeBannerCount, "huge banner", "huge banners");
+        return sb.length() == 0 ? "none" : sb.toString();
+    }
+
+    private static void appendCount(StringBuilder sb, int n, String singular, String plural) {
+        if (n <= 0) return;
+        if (sb.length() > 0) sb.append(", ");
+        sb.append(n).append(' ').append(n == 1 ? singular : plural);
     }
 
     /**
