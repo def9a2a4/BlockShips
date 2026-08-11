@@ -1147,6 +1147,7 @@ public class ShipWheelManager {
                     player.sendMessage("§7Sails: §f" + describeSails(ship.model) + " §7(" + stats.sailPower + " pts)");
                     player.sendMessage("§7Speed: "
                         + anon.def9a2a4.blockships.ShipStats.speedColor(speedPercent) + speedPercent + "%");
+                    sendThrustSummary(player, ship.model);
                 } else {
                     player.sendMessage("§7Stats: §8disabled");
                 }

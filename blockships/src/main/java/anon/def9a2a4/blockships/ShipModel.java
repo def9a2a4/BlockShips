@@ -58,6 +58,20 @@ public final class ShipModel {
     public final int hugeBannerCount;           // Number of huge banners hosted on ship blocks
     public final int sailPower;                 // Sail power points (wool + banner + large + huge, weighted)
 
+    /**
+     * A defCoreLib propulsion block aboard this ship, and which way it pushes relative to the hull.
+     *
+     * <p>Classified once at scan time (facing is fixed for the life of the ship); how much it
+     * actually contributes is decided live, from whether it is currently powered or burning.
+     *
+     * <p>{@code blockIndex} is safe across a save/load: {@code parts} serializes as an ordered list
+     * and deserializes in the same order, which seats and cannons already rely on.
+     */
+    public record ThrustBlock(int blockIndex, String typeId, ShipThrust.Axis axis) {}
+
+    /** Propulsion blocks aboard, empty for a ship that carries none. */
+    public final List<ThrustBlock> thrustBlocks;
+
     // Assembly rotation (for custom block ships disassembly)
     public final float assemblyYaw;             // Yaw angle when assembled (0=S, 90=W, 180=N, 270=E), 0 for prefab ships
 
@@ -66,7 +80,8 @@ public final class ShipModel {
                      float waterFloatOffset, double maxHealth, double healthRegenPerSecond,
                      int totalWeight, int mass, int blockCount, Vector3f centerOfVolume, float minY, float maxY, float assemblyYaw,
                      int woolCount, int bannerCount, int largeBannerCount, int hugeBannerCount,
-                     int woolPower, int bannerPower, int largeBannerPower, int hugeBannerPower) {
+                     int woolPower, int bannerPower, int largeBannerPower, int hugeBannerPower,
+                     List<ThrustBlock> thrustBlocks) {
         this.parts = parts;
         this.items = items;
         this.initialRotation = initialRotation;
@@ -91,6 +106,7 @@ public final class ShipModel {
         this.hugeBannerCount = hugeBannerCount;
         this.sailPower = woolCount * woolPower + bannerCount * bannerPower
                        + largeBannerCount * largeBannerPower + hugeBannerCount * hugeBannerPower;
+        this.thrustBlocks = thrustBlocks != null ? thrustBlocks : Collections.emptyList();
     }
 
     /**
@@ -416,7 +432,7 @@ public final class ShipModel {
         return new ShipModel(out, items, initialRotation, positionOffset, collisionOffset, rotationTransform,
                            seats, new ArrayList<>(), waterFloatOffset, maxHealth, healthRegenPerSecond,
                            0, 0, 0, new Vector3f(0, 0, 0), 0f, 0f, 0f,
-                           0, 0, 0, 0, 3, 7, 20, 50);
+                           0, 0, 0, 0, 3, 7, 20, 50, Collections.emptyList());
     }
 
     private static Matrix4f matrixFromMinecraftNbt(final float[] a) {
@@ -643,6 +659,17 @@ public final class ShipModel {
         map.put("banner_count", bannerCount);
         map.put("large_banner_count", largeBannerCount);
         map.put("huge_banner_count", hugeBannerCount);
+        if (!thrustBlocks.isEmpty()) {
+            List<Map<String, Object>> tb = new ArrayList<>(thrustBlocks.size());
+            for (ThrustBlock t : thrustBlocks) {
+                Map<String, Object> m = new HashMap<>();
+                m.put("index", t.blockIndex());
+                m.put("type", t.typeId());
+                m.put("axis", t.axis().name());
+                tb.add(m);
+            }
+            map.put("thrust_blocks", tb);
+        }
         map.put("center_of_volume", Arrays.asList(centerOfVolume.x, centerOfVolume.y, centerOfVolume.z));
 
         // Serialize parts - include transformation matrix (not in rawYaml for custom ships)
@@ -803,6 +830,24 @@ public final class ShipModel {
             ? ((Number) map.get("large_banner_count")).intValue() : 0;
         int hugeBannerCount = map.containsKey("huge_banner_count")
             ? ((Number) map.get("huge_banner_count")).intValue() : 0;
+
+        // Propulsion blocks. Absent for every ship saved before propulsion existed — an empty list is
+        // correct there, and such a ship simply carries no thrust until it is next re-detected.
+        List<ThrustBlock> thrustBlocks = new ArrayList<>();
+        if (map.get("thrust_blocks") instanceof List<?> rawThrust) {
+            for (Object o : rawThrust) {
+                if (!(o instanceof Map<?, ?> m)) continue;
+                Object idx = m.get("index"), type = m.get("type"), axis = m.get("axis");
+                if (!(idx instanceof Number n) || type == null || axis == null) continue;
+                try {
+                    thrustBlocks.add(new ThrustBlock(n.intValue(), String.valueOf(type),
+                        ShipThrust.Axis.valueOf(String.valueOf(axis))));
+                } catch (IllegalArgumentException ignored) {
+                    // Unknown axis name (downgrade, or a hand-edited sidecar) — drop that one entry
+                    // rather than failing the whole ship.
+                }
+            }
+        }
         // Sidecars written before the engine subsystem was removed still carry engine_count,
         // engine_block_indices and engine_local_positions. All three are simply ignored — reading a
         // pre-change world must keep working.
@@ -820,7 +865,7 @@ public final class ShipModel {
             maxHealth, healthRegenPerSecond, totalWeight, mass, blockCount,
             centerOfVolume, minY, maxY, assemblyYaw,
             woolCount, bannerCount, largeBannerCount, hugeBannerCount,
-            woolPower, bannerPower, largeBannerPower, hugeBannerPower);
+            woolPower, bannerPower, largeBannerPower, hugeBannerPower, thrustBlocks);
     }
 }
 

@@ -421,6 +421,12 @@ public class BlockStructureScanner {
         int largeBannerCount = 0;
         int hugeBannerCount = 0;
 
+        // defCoreLib propulsion blocks, classified by which way they push relative to the hull.
+        // Done here, during the scan, because the blocks are still in the world at this point — after
+        // assembly they are aired out and only the mechanism can answer.
+        List<ShipModel.ThrustBlock> thrustBlocks = new ArrayList<>();
+        float scanAssemblyYaw = blockFaceToYaw(facing);
+
         // Track ship bounds (for all blocks)
         float minY = Float.MAX_VALUE;
         float maxY = Float.MIN_VALUE;
@@ -504,6 +510,19 @@ public class BlockStructureScanner {
                 for (anon.def9a2a4.corelib.BannerTier tier : hosted) {
                     if (tier == anon.def9a2a4.corelib.BannerTier.HUGE) hugeBannerCount++;
                     else if (tier == anon.def9a2a4.corelib.BannerTier.LARGE) largeBannerCount++;
+                }
+            }
+
+            // Propulsion. Only player heads can be defCoreLib custom blocks, so the material check
+            // keeps this off the hot path for the other 99% of a hull.
+            if (blockMaterial == Material.PLAYER_HEAD || blockMaterial == Material.PLAYER_WALL_HEAD) {
+                String thrustType = anon.def9a2a4.blockships.ShipThrust.typeIdOf(block);
+                if (anon.def9a2a4.blockships.ShipThrust.isThrustBlock(thrustType)) {
+                    anon.def9a2a4.blockships.ShipThrust.Axis axis =
+                        anon.def9a2a4.blockships.ShipThrust.classify(block, thrustType, scanAssemblyYaw);
+                    if (axis != null) {
+                        thrustBlocks.add(new ShipModel.ThrustBlock(blockIndex, thrustType, axis));
+                    }
                 }
             }
 
@@ -802,7 +821,8 @@ public class BlockStructureScanner {
             woolPower,
             bannerPower,
             largeBannerPower,
-            hugeBannerPower
+            hugeBannerPower,
+            thrustBlocks
         );
         return new ScanResult(model, orderedBlocks);
     }
