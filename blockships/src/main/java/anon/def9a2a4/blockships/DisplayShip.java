@@ -2318,6 +2318,19 @@ public class DisplayShip implements Listener {
                 handleCameraDistanceChange(player, wheelData, action == ShipWheelMenu.MenuAction.CAMERA_DISTANCE_INCREASE, event.getInventory());
                 // Don't set stateChanged - we update items in place
                 break;
+            case TOGGLE_LOCK: {
+                // Shift-click re-freezes an already-locked wheel instead of unlocking it — the repair
+                // path, so a ship that lost blocks to an obstructed landing can be re-snapshotted
+                // without briefly unlocking (which would let it swallow whatever is beside it).
+                boolean refreeze = event.isShiftClick() && wheelData.isLocked();
+                String result = manager.toggleLock(player, wheelData, refreeze);
+                if (result != null) {
+                    player.sendMessage("§b" + result);
+                    ShipWheelMenu.updateLockItem(event.getInventory(), wheelData);
+                }
+                // Don't set stateChanged - we update the item in place
+                break;
+            }
         }
 
         // Close and reopen menu if state changed (for assemble/disassemble)
@@ -2376,6 +2389,9 @@ public class DisplayShip implements Listener {
         newValue = Math.max(4f, Math.min(32f, newValue));  // Clamp to valid range
 
         wheelData.setCameraDistance(newValue);
+        // Persist now. Every other mutating wheel path saves immediately; this one didn't, so a crash
+        // (or any shutdown that skips onDisable) silently reverted the player's setting.
+        ((BlockShipsPlugin) plugin).getShipWheelManager().saveAll();
 
         // Update all seat shulkers immediately (so change takes effect if player is riding)
         for (Shulker shulker : ship.seatShulkers) {

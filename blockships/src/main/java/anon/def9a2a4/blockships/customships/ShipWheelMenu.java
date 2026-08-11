@@ -120,6 +120,7 @@ public class ShipWheelMenu {
     private static final int FORCE_DISASSEMBLE_SLOT = 17;  // Right of disassemble button
     private static final int HIGHLIGHT_SEATS_SLOT = 19;    // Below detect slot (row 3)
     private static final int STATS_SLOT = 20;              // Below info slot (row 3)
+    private static final int LOCK_SLOT = 13;               // Between fire-cannons and assemble
 
     /**
      * Opens the ship wheel menu for a player.
@@ -151,6 +152,9 @@ public class ShipWheelMenu {
             detectItem.setItemMeta(detectMeta);
         }
         menu.setItem(DETECT_SLOT, detectItem);
+
+        // Lock button (always available)
+        menu.setItem(LOCK_SLOT, createLockItem(wheelData));
 
         // Assemble Ship button (only if not assembled)
         if (!isAssembled) {
@@ -312,6 +316,7 @@ public class ShipWheelMenu {
         HIGHLIGHT_SEATS,
         CAMERA_DISTANCE_DECREASE,
         CAMERA_DISTANCE_INCREASE,
+        TOGGLE_LOCK,
         NONE
     }
 
@@ -343,6 +348,8 @@ public class ShipWheelMenu {
             return MenuAction.CAMERA_DISTANCE_INCREASE;
         } else if (slot == STATS_SLOT) {
             return MenuAction.INFO;  // Clicking stats banner also refreshes ship info
+        } else if (slot == LOCK_SLOT) {
+            return MenuAction.TOGGLE_LOCK;
         }
         return MenuAction.NONE;
     }
@@ -607,6 +614,51 @@ public class ShipWheelMenu {
             plusItem.setItemMeta(plusMeta);
         }
         inventory.setItem(CAMERA_PLUS_SLOT, plusItem);
+    }
+
+    /**
+     * Re-render the lock button in place, without closing and reopening the menu.
+     * Mirrors {@link #updateCameraItems} — a toggle that flickers the whole GUI reads as a bug.
+     */
+    public static void updateLockItem(Inventory inventory, ShipWheelData wheelData) {
+        inventory.setItem(LOCK_SLOT, createLockItem(wheelData));
+    }
+
+    /**
+     * The lock button: freeze which blocks belong to this ship, so docking it next to a pile of
+     * blocks no longer swallows them.
+     */
+    private static ItemStack createLockItem(ShipWheelData wheelData) {
+        boolean locked = wheelData.isLocked();
+        ItemStack item = new ItemStack(locked ? Material.IRON_TRAPDOOR : Material.TRIPWIRE_HOOK);
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName((locked ? ChatColor.AQUA + "Structure Locked" : ChatColor.GRAY + "Structure Unlocked"));
+            List<String> lore = new ArrayList<>();
+            if (locked) {
+                lore.add(ChatColor.GRAY + "Frozen blocks: " + ChatColor.WHITE + wheelData.getLocked().size());
+                lore.add(ChatColor.GRAY + "This ship assembles from exactly");
+                lore.add(ChatColor.GRAY + "these blocks. Nothing new is picked up.");
+                lore.add("");
+                lore.add(ChatColor.GRAY + "Blocks that are gone are simply skipped.");
+                lore.add(ChatColor.YELLOW + "Click" + ChatColor.GRAY + " to unlock");
+                lore.add(ChatColor.YELLOW + "Shift-click" + ChatColor.GRAY + " to re-freeze from the");
+                lore.add(ChatColor.GRAY + "current structure (after repairs or additions)");
+            } else {
+                lore.add(ChatColor.GRAY + "This ship picks up any connected");
+                lore.add(ChatColor.GRAY + "allowed block when it assembles —");
+                lore.add(ChatColor.GRAY + "including whatever is stacked against");
+                lore.add(ChatColor.GRAY + "the hull while it is docked.");
+                lore.add("");
+                lore.add(ChatColor.YELLOW + "Click" + ChatColor.GRAY + " to freeze the current structure");
+            }
+            meta.setLore(lore);
+            if (locked) meta.addEnchant(org.bukkit.enchantments.Enchantment.UNBREAKING, 1, true);
+            meta.addItemFlags(org.bukkit.inventory.ItemFlag.HIDE_ENCHANTS,
+                              org.bukkit.inventory.ItemFlag.HIDE_ATTRIBUTES);
+            item.setItemMeta(meta);
+        }
+        return item;
     }
 
     /**

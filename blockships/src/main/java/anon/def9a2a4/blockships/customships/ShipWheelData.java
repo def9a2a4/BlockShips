@@ -273,6 +273,20 @@ public class ShipWheelData {
         this.cameraDistance = distance;
     }
 
+    /** The frozen block set, or null when this wheel is unlocked. */
+    public LockedStructure getLocked() {
+        return locked;
+    }
+
+    /** Freeze (non-null) or unfreeze (null) this wheel's block set. Callers must {@code saveAll()}. */
+    public void setLocked(LockedStructure locked) {
+        this.locked = locked;
+    }
+
+    public boolean isLocked() {
+        return locked != null;
+    }
+
     /**
      * Calculates a default camera distance based on the number of blocks in the ship.
      * Scales from 4 (small ships) to ~16 (large ships), capped at 20.
@@ -352,6 +366,9 @@ public class ShipWheelData {
         if (cameraDistance >= 0) {
             map.put("camera_distance", cameraDistance);
         }
+        if (locked != null) {
+            map.put("locked", locked.toMap());
+        }
         return map;
     }
 
@@ -382,6 +399,15 @@ public class ShipWheelData {
         // Load camera distance if present (backwards compatible - defaults to -1 if missing)
         if (map.containsKey("camera_distance")) {
             data.setCameraDistance(((Number) map.get("camera_distance")).floatValue());
+        }
+
+        // Frozen block set. Absent (every pre-lock wheel) = unlocked; a corrupt blob also reads as
+        // unlocked rather than failing the whole wheel load.
+        Object lockedRaw = map.get("locked");
+        if (lockedRaw instanceof Map<?, ?> m) {
+            data.setLocked(LockedStructure.fromMap(m));
+        } else if (lockedRaw instanceof org.bukkit.configuration.ConfigurationSection sec) {
+            data.setLocked(LockedStructure.fromMap(sec.getValues(false)));
         }
 
         return data;

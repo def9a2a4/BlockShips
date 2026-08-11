@@ -278,6 +278,66 @@ public class ShipWheelManager {
     public record WheelResolution(WheelState state, @Nullable ShipInstance ship) {}
 
     /**
+     * Toggle the wheel's frozen block set, or re-freeze one that is already locked.
+     *
+     * <p>Locking snapshots whatever the ship is right now — from the assembled model when it is
+     * flying, otherwise from a fresh detect (including glued cells). Re-freezing is the repair path:
+     * blocks lost to an obstructed or protected landing are gone from a locked set permanently
+     * otherwise, and unlock/relock would re-open the "swallow whatever is piled against the hull"
+     * hole in between.
+     *
+     * @param refreeze when true, re-snapshot instead of unlocking an already-locked wheel
+     * @return a player-facing summary, or null when the action was refused (message already sent)
+     */
+    public @Nullable String toggleLock(Player player, ShipWheelData wheelData, boolean refreeze) {
+        if (wheelData.isLocked() && !refreeze) {
+            wheelData.setLocked(null);
+            saveAll();
+            return "Unlocked — this ship will pick up connected blocks again when it assembles.";
+        }
+
+        WheelResolution res = resolveWheelState(wheelData);
+        // A detect on an unloaded chunk reads air and would freeze a one-block ship. ORPHAN is a
+        // confused link rather than a live ship; reconcile it first so the snapshot is meaningful.
+        if (res.state() == WheelState.UNLOADED_RECOVERABLE) {
+            player.sendMessage("§cShip is still loading — try again in a moment.");
+            return null;
+        }
+        if (res.state() == WheelState.ORPHAN) {
+            reconcileOrphan(wheelData);
+        }
+
+        Location wheelLoc = wheelData.getBlockLocation();
+        int previous = wheelData.isLocked() ? wheelData.getLocked().size() : -1;
+        ShipInstance ship = res.ship();
+        if (ship != null && ship.sourceModel != null) {
+            // Assembled: snapshot the MODEL, not the world — the hull is aired out, so there is
+            // nothing in the world to read. The model is also the authoritative answer: it is exactly
+            // the set that flew, in the same wheel-relative frame the locked set stores.
+            wheelData.setLocked(LockedStructure.captureFromModel(ship.sourceModel, wheelData.getFacing()));
+        } else {
+            int maxShipSize = ((BlockShipsPlugin) plugin).getConfig().getInt("custom-ships.max-ship-size", 1000);
+            int maxScanSize = ((BlockShipsPlugin) plugin).getConfig().getInt("custom-ships.max-scan-size", 5000);
+            ShipDetector detector = new ShipDetector(maxShipSize, maxScanSize);
+            ShipDetector.ShipDetectionResult scan =
+                detector.detectShipDetailed(wheelLoc, ShipGlue.gluedCells(wheelLoc.getBlock()));
+            if (!scan.isSuccess() || scan.getBlocks() == null || scan.getBlocks().isEmpty()) {
+                player.sendMessage("§c" + scan.getMessage());
+                return null;
+            }
+            wheelData.setLocked(LockedStructure.capture(wheelLoc, wheelData.getFacing(), scan.getBlocks()));
+        }
+        saveAll();
+
+        int now = wheelData.getLocked().size();
+        if (previous >= 0 && previous != now) {
+            return "Re-froze " + now + " blocks (was " + previous + ").";
+        }
+        return "Locked " + now + " blocks — this ship will no longer pick up anything new.";
+    }
+
+
+    /**
      * The authoritative "is this wheel really assembled?" check (Track W R0). Route every assembled-for-action
      * decision (assemble/align/disassemble/menu) through this instead of trusting the raw {@code isAssembled()}
      * flag. Pre-M5 a delegated ship cannot rebind once unregistered, so ORPHAN (chunk loaded + no live mechanism)
@@ -416,9 +476,17 @@ public class ShipWheelManager {
 
         // Scan the structure. Returns the derived model PLUS the live world blocks in parts-index order
         // (still in the world — air-out is deferred), so the delegated assembler gets block-index parity.
-        BlockStructureScanner.ScanResult scan = BlockStructureScanner.scanStructure(wheelLoc, wheelData.getFacing());
+        //
+        // A LOCKED wheel skips the flood fill entirely and rebuilds from its frozen cell set, so blocks
+        // stacked against the docked hull are never absorbed. Both paths funnel into the same
+        // captureCells(), so the two ScanResults are structurally identical.
+        BlockStructureScanner.ScanResult scan = wheelData.isLocked()
+            ? BlockStructureScanner.scanLocked(wheelLoc, wheelData.getFacing(), wheelData.getLocked())
+            : BlockStructureScanner.scanStructure(wheelLoc, wheelData.getFacing());
         if (scan == null || scan.model().parts.isEmpty()) {
-            player.sendMessage("§cNo valid ship structure found!");
+            player.sendMessage(wheelData.isLocked()
+                ? "§cNothing left of the locked structure — unlock the wheel and re-detect."
+                : "§cNo valid ship structure found!");
             return false;
         }
         ShipModel model = scan.model();

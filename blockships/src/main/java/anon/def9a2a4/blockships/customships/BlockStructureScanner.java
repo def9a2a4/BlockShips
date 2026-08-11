@@ -312,6 +312,32 @@ public class BlockStructureScanner {
     }
 
     /**
+     * Assemble from a wheel's FROZEN cell set instead of a flood fill. Cells that are now air are
+     * dropped (the ship comes back smaller); nothing new can ever be added, which is the whole point.
+     *
+     * @return null when the wheel cell itself is gone or nothing survives
+     */
+    public static ScanResult scanLocked(Location wheelLocation, BlockFace facing, LockedStructure locked) {
+        if (wheelLocation.getBlock().getType().isAir()) {
+            return null;   // no wheel, no ship — the offsets are relative to it
+        }
+        LockedStructure.Resolved resolved = locked.resolve(wheelLocation, facing);
+        if (resolved.cells().isEmpty()) {
+            return null;
+        }
+        // Re-check against the CURRENT limit: the set was frozen under whatever max-ship-size was
+        // configured then, and an admin may since have lowered it.
+        BlockShipsPlugin plugin = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
+        if (plugin != null) {
+            int maxShipSize = plugin.getConfig().getInt("custom-ships.max-ship-size", 1000);
+            if (resolved.cells().size() > maxShipSize) {
+                return null;
+            }
+        }
+        return captureCells(wheelLocation, facing, resolved.cells());
+    }
+
+    /**
      * Capture an explicit list of world cells into a {@link ShipModel} plus its parity-ordered block
      * list. Extracted from {@link #scanStructure} so the locked-set path ({@link #scanLocked}) shares
      * it verbatim rather than reimplementing it — block-index parity, seats, cannons, storage, sign

@@ -91,6 +91,30 @@ public final class LockedStructure {
         return new LockedStructure(trimmed, new ArrayList<>(paletteIndex.keySet()), facing);
     }
 
+    /**
+     * Freeze from an assembled ship's model rather than the world.
+     *
+     * <p>Needed because an assembled ship's blocks are aired out — there is nothing in the world to
+     * read. The model's part translations are already wheel-relative offsets in the assembly frame,
+     * which is exactly the frame {@link #resolve} rotates from, and each part carries the BlockData it
+     * was captured with. So this is the authoritative snapshot: precisely the set that flew.
+     */
+    public static LockedStructure captureFromModel(anon.def9a2a4.blockships.ShipModel model, BlockFace facing) {
+        Map<String, Integer> paletteIndex = new LinkedHashMap<>();
+        long[] out = new long[model.parts.size()];
+        int n = 0;
+        for (anon.def9a2a4.blockships.ShipModel.ModelPart part : model.parts) {
+            if (part.block == null) continue;   // display-only part (prefab banner/balloon) — no cell
+            Vector3f t = part.local.getTranslation(new Vector3f());
+            String norm = normalize(part.block);
+            int pi = paletteIndex.computeIfAbsent(norm, k -> paletteIndex.size());
+            out[n++] = pack(Math.round(t.x), Math.round(t.y), Math.round(t.z), pi);
+        }
+        long[] trimmed = new long[n];
+        System.arraycopy(out, 0, trimmed, 0, n);
+        return new LockedStructure(trimmed, new ArrayList<>(paletteIndex.keySet()), facing);
+    }
+
     /** Outcome of resolving a locked set against the world. */
     public record Resolved(List<Location> cells, int missing, int changed) {}
 
