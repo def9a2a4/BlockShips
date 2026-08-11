@@ -1276,6 +1276,34 @@ public class ShipWheelManager {
         return true;
     }
 
+    /**
+     * Report the propulsion aboard, grouped by what it does.
+     *
+     * <p>These blocks do not affect movement yet — this is the readout that makes the classification
+     * checkable on its own: mount a propeller sideways and it should say "turning", not "forward".
+     */
+    private static void sendThrustSummary(Player player, ShipModel model) {
+        if (model.thrustBlocks.isEmpty()) return;
+        int axial = 0, perpendicular = 0, vertical = 0, turnOnly = 0;
+        BlockShipsPlugin bsp = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
+        int axialPts = 0, perpPts = 0, vertPts = 0, turnPts = 0;
+        for (ShipModel.ThrustBlock t : model.thrustBlocks) {
+            int pts = anon.def9a2a4.blockships.ShipThrust.thrustOf(bsp, t.typeId());
+            switch (t.axis()) {
+                case AXIAL -> { axial++; axialPts += pts; }
+                case PERPENDICULAR -> { perpendicular++; perpPts += pts; }
+                case VERTICAL -> { vertical++; vertPts += pts; }
+                case TURN_ONLY -> { turnOnly++; turnPts += pts; }
+            }
+        }
+        player.sendMessage("§7Propulsion: §f" + model.thrustBlocks.size() + " block(s)");
+        if (axial > 0) player.sendMessage("  §7forward: §f" + axial + " §7(" + axialPts + " pts)");
+        if (perpendicular > 0) player.sendMessage("  §7turning: §f" + perpendicular + " §7(" + perpPts + " pts)");
+        if (vertical > 0) player.sendMessage("  §7lift: §f" + vertical + " §7(" + vertPts + " pts)");
+        if (turnOnly > 0) player.sendMessage("  §7gyroscopes: §f" + turnOnly + " §7(" + turnPts + " pts)");
+        player.sendMessage("  §8(not yet applied to movement)");
+    }
+
     /** "3 wool, 2 banners, 1 large banner" — omits tiers the ship doesn't carry. */
     private static String describeSails(ShipModel model) {
         StringBuilder sb = new StringBuilder();

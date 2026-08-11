@@ -39,6 +39,68 @@ public final class ShipThrust {
         "mech:reaction_wheel", 10
     );
 
+    /**
+     * Thrust currently being produced, split by what it drives.
+     *
+     * @param powered how many thrust blocks are actually running, for the driver readout
+     * @param total   how many are aboard at all
+     */
+    public record Totals(int axial, int perpendicular, int vertical, int turnOnly,
+                         int powered, int total) {
+        public static final Totals NONE = new Totals(0, 0, 0, 0, 0, 0);
+        /** Everything that turns the ship: side thrust plus gyroscopes. */
+        public int turning() { return perpendicular + turnOnly; }
+    }
+
+    /**
+     * Sum the thrust a ship is producing right now.
+     *
+     * <p>Only blocks that are actually running count — a propeller with no power and a thruster with
+     * no fuel contribute nothing, which is what makes fuel and power matter in flight. Walks the
+     * model's cached thrust list, never all of the ship's blocks.
+     *
+     * @param mechanism the assembled mechanism, or null when docked (then everything counts as
+     *                  powered, giving the "potential" figure the wheel menu shows)
+     */
+    public static Totals totalsFor(BlockShipsPlugin plugin, anon.def9a2a4.corelib.Mechanism mechanism,
+                                   ShipModel model) {
+        if (model == null || model.thrustBlocks.isEmpty()) return Totals.NONE;
+        int axial = 0, perp = 0, vert = 0, turn = 0, powered = 0;
+        for (ShipModel.ThrustBlock t : model.thrustBlocks) {
+            if (mechanism != null && !isProducing(mechanism, t)) continue;
+            powered++;
+            int pts = thrustOf(plugin, t.typeId());
+            switch (t.axis()) {
+                case AXIAL -> axial += pts;
+                case PERPENDICULAR -> perp += pts;
+                case VERTICAL -> vert += pts;
+                case TURN_ONLY -> turn += pts;
+            }
+        }
+        return new Totals(axial, perp, vert, turn, powered, model.thrustBlocks.size());
+    }
+
+    /**
+     * Whether one thrust block is currently doing work.
+     *
+     * <p>A thruster is a fuel burner, so it reports through its state ({@code running_*} vs
+     * {@code idle_*}); everything else is a rotation consumer and reports through the network. Both
+     * are cheap reads of a cached solve.
+     */
+    private static boolean isProducing(anon.def9a2a4.corelib.Mechanism mechanism, ShipModel.ThrustBlock t) {
+        try {
+            if ("mech:thruster".equals(t.typeId())) {
+                String state = mechanism.getBlock(t.blockIndex()).customState();
+                return state != null && state.startsWith("running");
+            }
+            return mechanism.isRotationPowered(t.blockIndex());
+        } catch (Throwable e) {
+            // Index out of range after a partial recovery, or a CoreLib fault: treat as unpowered
+            // rather than crediting thrust that may not exist.
+            return false;
+        }
+    }
+
     /** Config key suffix for a type: {@code mech:large_propeller} -> {@code large-propeller}. */
     private static String configKey(String typeId) {
         int colon = typeId.indexOf(':');

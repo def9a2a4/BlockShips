@@ -513,6 +513,19 @@ public class DisplayShip implements Listener {
     }
 
     /**
+     * defCoreLib re-solved a mechanism's rotation network, so what is powered aboard may have changed
+     * — an engine started or ran dry. Invalidate that ship's cached thrust.
+     *
+     * <p>Ship id IS mechanism id, so the lookup is direct. Fires at most once per 20 ticks per
+     * mechanism, and only on an actual change.
+     */
+    @EventHandler
+    public void onMechanismRotationSolved(anon.def9a2a4.corelib.MechanismRotationSolvedEvent event) {
+        ShipInstance ship = ShipRegistry.byId(event.getMechanism().id());
+        if (ship != null && ship.physics != null) ship.physics.markThrustDirty();
+    }
+
+    /**
      * Rebuild a {@link ShipInstance} around an already-recovered delegated {@link anon.def9a2a4.corelib.Mechanism}
      * (idempotent: no-op if the ship is already registered). Main-thread only (recovery fires from EntitiesLoad).
      * Used by the recovered-event listener and by enable-time forced recovery ({@link #forceRecoverDelegatedShips}).

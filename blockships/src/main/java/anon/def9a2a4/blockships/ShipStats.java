@@ -25,12 +25,64 @@ public final class ShipStats {
     /** The value fed to {@link ShipConfig#computeStat} — capped and clamped to 1. */
     public final float ratio;
 
-    private ShipStats(int sailPower, int mass, float sailRatio, float cappedSailRatio, float ratio) {
+    // ── Three-ratio model (stats.mode: ratio3) ───────────────────────────────
+    // Sails and propulsion drive different things, so one number can't describe a ship any more.
+
+    /** Speed and acceleration: capped sails PLUS axial thrust. */
+    public final float forwardRatio;
+    /** Turn rate: side thrust and gyroscopes, plus sails scaled by how fast the ship is moving. */
+    public final float turnRatio;
+    /** Lift, against SIGNED weight — so buoyancy counts toward flight instead of being ignored. */
+    public final float liftRatio;
+
+    private ShipStats(int sailPower, int mass, float sailRatio, float cappedSailRatio, float ratio,
+                      float forwardRatio, float turnRatio, float liftRatio) {
         this.sailPower = sailPower;
         this.mass = mass;
         this.sailRatio = sailRatio;
         this.cappedSailRatio = cappedSailRatio;
         this.ratio = ratio;
+        this.forwardRatio = forwardRatio;
+        this.turnRatio = turnRatio;
+        this.liftRatio = liftRatio;
+    }
+
+    /**
+     * The full three-ratio form.
+     *
+     * <p>Keeping the sail cap is what gives propulsion a job: uncapped, a handful of huge banners
+     * would max a mid-size ship out and no propeller would ever change a number. Sails plateau at
+     * {@code sail-cap-ratio}; axial thrust is what closes the remaining gap.
+     *
+     * <p>Sails feed turning too, but scaled by current speed — a rudder needs water moving past it.
+     * Thrust-based turning is speed-independent, which is precisely what makes a reaction wheel
+     * worth carrying: it is the thing that turns you when you are stopped.
+     *
+     * @param speedFrac current speed as a fraction of top speed, 0..1
+     */
+    public static ShipStats of(ShipConfig config, ShipModel model, ShipThrust.Totals thrust,
+                               float speedFrac) {
+        int mass = Math.max(1, model.mass);
+        int sailPower = model.sailPower;
+        float rawSail = (float) (config.basePower + sailPower) / mass;
+        float cappedSail = Math.min(rawSail, config.sailCapRatio);
+
+        float forward = clamp01(cappedSail + (float) thrust.axial() / mass);
+        float turn = clamp01((config.baseTurn
+                              + sailPower * config.sailTurnFactor * clamp01(speedFrac)
+                              + thrust.turning()) / mass);
+        // Signed total weight: a hull that is already near-buoyant needs only a little thrust, and a
+        // lighter-than-air one is airborne with none. Using clamped mass here would give buoyancy no
+        // credit at all and make a balloon as hard to lift as solid stone.
+        float lift = (float) thrust.vertical() / Math.max(1, model.totalWeight);
+        if (model.totalWeight <= 0) lift = Math.max(lift, 1.0f);
+
+        return new ShipStats(sailPower, mass, rawSail, cappedSail, Math.min(cappedSail, 1.0f),
+                             forward, turn, lift);
+    }
+
+    private static float clamp01(float v) {
+        return v < 0 ? 0 : Math.min(v, 1.0f);
     }
 
     /** From an assembled ship's model — the authoritative path; the model already knows every tier. */
@@ -57,7 +109,9 @@ public final class ShipStats {
         int mass = Math.max(1, rawMass);
         float sailRatio = (float) (config.basePower + sailPower) / mass;
         float capped = Math.min(sailRatio, config.sailCapRatio);
-        return new ShipStats(sailPower, mass, sailRatio, capped, Math.min(capped, 1.0f));
+        float ratio = Math.min(capped, 1.0f);
+        // Sail-only form: forward is the legacy ratio, and there is no thrust to turn or lift with.
+        return new ShipStats(sailPower, mass, sailRatio, capped, ratio, ratio, 0f, 0f);
     }
 
     /**

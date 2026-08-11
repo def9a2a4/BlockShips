@@ -98,6 +98,17 @@ custom-ships:
     # material. Worth much more than a plain banner — roughly by rendered area.
     large-banner-power: 20
     huge-banner-power: 50
+    # Thrust points per defCoreLib propulsion block, counted only while the block is actually powered
+    # (or, for the thruster, burning). Which stat a block feeds depends on how it is mounted: along
+    # the hull adds speed, across it adds turn rate, and flat adds lift. A reaction wheel always feeds
+    # turn rate whichever way it sits.
+    thrust:
+      fan: 1
+      propeller: 4
+      large-propeller: 12
+      huge-propeller: 30
+      thruster: 15
+      reaction-wheel: 10
     # Sail contribution capped at this ratio
     sail-cap-ratio: 0.8
     # Ratio that maps to current default stats (0.55 max speed, 1.5 rotation, etc.)

@@ -51,6 +51,93 @@ public class ShipPhysics {
     private float effectiveDescendAcceleration;
     private boolean statsComputed = false;
 
+    // ── Live propulsion ──────────────────────────────────────────────────────
+    // Sails and mass are fixed for a voyage; thrust is not. A propeller loses power when an engine
+    // runs dry, and a thruster stops when its fuel does — so the thrust half of the stats is
+    // recomputed rather than cached at assembly.
+
+    /** Thrust as of the last recompute, before spool-down. */
+    private anon.def9a2a4.blockships.ShipThrust.Totals targetThrust =
+        anon.def9a2a4.blockships.ShipThrust.Totals.NONE;
+    /** Thrust actually applied, ramping toward the target — propellers have inertia. */
+    private float spooledAxial, spooledTurning, spooledVertical;
+    /** Set by defCoreLib's re-solve event, or by the periodic poll. */
+    private boolean thrustDirty = true;
+    private int thrustPollCounter = 0;
+    /** Last computed lift ratio, for the flight model and the readouts. */
+    private float lastLiftRatio = 0f;
+
+    /** Force a thrust recompute on the next stats pass (defCoreLib re-solved this ship's network). */
+    public void markThrustDirty() {
+        thrustDirty = true;
+        statsComputed = false;
+    }
+
+    /**
+     * Per-tick propulsion upkeep, called from the ship tick before {@link #update()}.
+     *
+     * <p>Two reasons this exists rather than relying on the re-solve event alone. The event only
+     * fires when a SOURCE flips, which misses nothing today but is not a contract worth betting the
+     * flight model on; and spool-down has to advance every tick regardless, or thrust would step
+     * instead of ramp.
+     */
+    private void tickPropulsion() {
+        if (!"ratio3".equalsIgnoreCase(ship.config.statsMode)) return;
+        if (ship.model == null || ship.model.thrustBlocks.isEmpty()) return;
+        // Cheap backstop poll; the event does the timely work.
+        if (++thrustPollCounter >= 20) {
+            thrustPollCounter = 0;
+            thrustDirty = true;
+        }
+        // Recompute every tick while thrust is still ramping, so the spool actually moves.
+        statsComputed = false;
+    }
+
+    /** How much lift the ship is currently producing, relative to its weight. 1.0 = neutral. */
+    public float liftRatio() {
+        if (!statsComputed) computeEffectiveStats();
+        return lastLiftRatio;
+    }
+
+    /** Thrust blocks currently running, and how many there are — for the driver readout. */
+    public anon.def9a2a4.blockships.ShipThrust.Totals thrustTotals() {
+        return targetThrust;
+    }
+
+    /**
+     * Thrust totals with spool-down applied.
+     *
+     * <p>Rotation power is all-or-nothing per network, so one engine running dry cuts every propeller
+     * on it in the same tick. Ramping over {@code thrust-spool-ticks} turns that from a ship falling
+     * out of the sky instantly into a couple of seconds of decaying lift — physically justified
+     * (propellers do not stop dead) and enough time to react.
+     */
+    private anon.def9a2a4.blockships.ShipThrust.Totals liveThrust() {
+        if (thrustDirty) {
+            targetThrust = anon.def9a2a4.blockships.ShipThrust.totalsFor(
+                (anon.def9a2a4.blockships.BlockShipsPlugin) ship.plugin, ship.mechanism, ship.model);
+            thrustDirty = false;
+        }
+        int spoolTicks = Math.max(1, ship.config.thrustSpoolTicks);
+        float step = 1.0f / spoolTicks;
+        spooledAxial = approach(spooledAxial, targetThrust.axial(), step);
+        spooledTurning = approach(spooledTurning, targetThrust.turning(), step);
+        spooledVertical = approach(spooledVertical, targetThrust.vertical(), step);
+        // The spooled turning total is carried in `perpendicular` with `turnOnly` zero: the two are
+        // only ever consumed through turning(), which sums them, and they spool as one quantity.
+        return new anon.def9a2a4.blockships.ShipThrust.Totals(
+            Math.round(spooledAxial), Math.round(spooledTurning), Math.round(spooledVertical), 0,
+            targetThrust.powered(), targetThrust.total());
+    }
+
+    /** Move {@code current} toward {@code target} by a fraction of the full range per call. */
+    private static float approach(float current, float target, float step) {
+        float delta = target - current;
+        float maxStep = Math.max(1f, Math.abs(target)) * step;
+        if (Math.abs(delta) <= maxStep) return target;
+        return current + Math.signum(delta) * maxStep;
+    }
+
     /**
      * The ship's actual top speed after the power-to-mass ratio is applied.
      *
@@ -108,18 +195,32 @@ public class ShipPhysics {
 
         // Custom ships: compute ratio from sail power and mass. One shared calculator (ShipStats) so
         // physics and every readout agree — they used to each roll their own copy of this.
-        float ratio = anon.def9a2a4.blockships.ShipStats.of(config, ship.model).ratio;
+        boolean ratio3 = "ratio3".equalsIgnoreCase(config.statsMode);
+        anon.def9a2a4.blockships.ShipStats stats;
+        if (ratio3) {
+            // speedFrac from the PREVIOUS tick's top speed: sails aid turning in proportion to how
+            // fast the ship is already moving, and effectiveMaxSpeed is only assigned below.
+            float prevTop = Math.max(0.0001f, effectiveMaxSpeed > 0 ? effectiveMaxSpeed : config.maxSpeed);
+            float speedFrac = Math.abs(currentSpeed) / prevTop;
+            stats = anon.def9a2a4.blockships.ShipStats.of(config, ship.model, liveThrust(), speedFrac);
+        } else {
+            stats = anon.def9a2a4.blockships.ShipStats.of(config, ship.model);
+        }
+        float ratio = ratio3 ? stats.forwardRatio : stats.ratio;
+        float turnRatio = ratio3 ? stats.turnRatio : ratio;
+        this.lastLiftRatio = stats.liftRatio;
 
         // Compute horizontal stats
         effectiveMaxSpeed = config.computeStat(ratio, config.maxSpeed,
             config.floorMaxSpeed, config.capMaxSpeed);
         effectiveAcceleration = config.computeStat(ratio, config.acceleration,
             config.floorAcceleration, config.capAcceleration);
-        effectiveRotationSpeed = config.computeStat(ratio, config.rotationSpeed,
+        // Rotation runs off turnRatio, which in ratio3 mode is a different number from forward.
+        effectiveRotationSpeed = config.computeStat(turnRatio, config.rotationSpeed,
             config.floorRotationSpeed, config.capRotationSpeed);
-        effectiveRotationAcceleration = config.computeStat(ratio, config.rotationAcceleration,
+        effectiveRotationAcceleration = config.computeStat(turnRatio, config.rotationAcceleration,
             config.floorRotationAcceleration, config.capRotationAcceleration);
-        effectiveRotationDeceleration = config.computeStat(ratio, config.rotationDeceleration,
+        effectiveRotationDeceleration = config.computeStat(turnRatio, config.rotationDeceleration,
             config.floorRotationDeceleration, config.capRotationDeceleration);
 
         // Compute vertical stats (airships only, density-based)
@@ -176,6 +277,8 @@ public class ShipPhysics {
      */
     public void update() {
         if (!ship.vehicle.isValid() || ship.vehicle.isDead()) return;
+
+        tickPropulsion();
 
         Location vehicleLoc = ship.vehicle.getLocation();
         ShipConfig config = ship.config;
