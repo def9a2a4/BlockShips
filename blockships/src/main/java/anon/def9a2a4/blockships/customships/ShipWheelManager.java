@@ -1284,6 +1284,7 @@ public class ShipWheelManager {
                 + stats.sailPower + " pts)");
             player.sendMessage("§7Speed: " + anon.def9a2a4.blockships.ShipStats.speedColor(speedPercent)
                 + speedPercent + "%" + (speedPercent < 50 ? " §8(add banners or wool as sails!)" : ""));
+            sendPotentialThrustSummary(player, shipBlocks, wheelData.getFacing());
         } else {
             player.sendMessage("§7Stats: §8disabled");
         }
@@ -1335,7 +1336,25 @@ public class ShipWheelManager {
         if (perpendicular > 0) player.sendMessage("  §7turning: §f" + perpendicular + " §7(" + perpPts + " pts)");
         if (vertical > 0) player.sendMessage("  §7lift: §f" + vertical + " §7(" + vertPts + " pts)");
         if (turnOnly > 0) player.sendMessage("  §7gyroscopes: §f" + turnOnly + " §7(" + turnPts + " pts)");
-        player.sendMessage("  §8(not yet applied to movement)");
+    }
+
+    /**
+     * The docked equivalent of {@link #sendThrustSummary}, classified straight from the world.
+     *
+     * <p>A docked ship has no model, so there is no thrust list to walk — but the caller has already
+     * flood-filled the hull, so the cells are in hand and this costs one pass over them. Without it a
+     * player only learns what their propulsion does by assembling the ship.
+     */
+    private static void sendPotentialThrustSummary(Player player, java.util.Set<Location> shipBlocks,
+                                                   BlockFace facing) {
+        BlockShipsPlugin bsp = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
+        anon.def9a2a4.blockships.ShipThrust.Totals t = anon.def9a2a4.blockships.ShipThrust.scanWorld(
+            bsp, shipBlocks, BlockStructureScanner.blockFaceToYaw(facing));
+        if (t.total() <= 0) return;
+        player.sendMessage("§7Propulsion: §f" + t.total() + " block(s) §8(potential — nothing is powered while docked)");
+        if (t.axial() > 0)    player.sendMessage("  §7forward: §f" + t.axial() + " pts");
+        if (t.turning() > 0)  player.sendMessage("  §7turning: §f" + t.turning() + " pts");
+        if (t.vertical() > 0) player.sendMessage("  §7lift: §f" + t.vertical() + " pts");
     }
 
     /** "3 wool, 2 banners, 1 large banner" — omits tiers the ship doesn't carry. */
