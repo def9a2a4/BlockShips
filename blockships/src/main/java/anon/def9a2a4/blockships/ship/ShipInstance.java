@@ -273,11 +273,10 @@ public class ShipInstance {
 
 
     /**
-     * Full fresh-spawn ctor. When {@code mechanism != null} (delegated custom ship, M1), defCoreLib owns the
-     * displays/colliders/mounting: {@code providedVehicle} is the ArmorStand the mechanism was assembled on,
-     * and ALL native vehicle/parent/display/collider spawn + mount below is skipped. When both are null this is
-     * the classic native path (prefab ships; and any legacy custom spawn). {@code providedVehicle} must be
-     * non-null iff {@code mechanism} is non-null.
+     * Full fresh-spawn ctor. All ships are delegated (M1): {@code mechanism} is required non-null (the ctor derefs
+     * {@code mechanism.id()} below), and defCoreLib owns the displays/colliders/mounting. {@code providedVehicle} is
+     * the ArmorStand the mechanism was assembled on (tagged {@code corelib:mech:{id}:vehicle}); this ctor adopts it,
+     * adds the ship-root tag + health, and seeds heading from {@code model.assemblyYaw}.
      */
     public ShipInstance(JavaPlugin plugin, String shipType, ShipModel model, Location spawnLocation,
                         ShipCustomization customization,
@@ -383,8 +382,8 @@ public class ShipInstance {
         new BukkitRunnable() {
             @Override
             public void run() {
-                // Native mount (prefab + legacy). A delegated custom ship is already mounted by defCoreLib
-                // (parent → vehicle, colliders on carriers), so skip — but still start the tick loop below.
+                // defCoreLib already mounted the display chain (parent → vehicle, colliders on carriers); just
+                // start the tick loop below.
 
                 // Start tick loop
                 task = new BukkitRunnable() {
@@ -690,16 +689,6 @@ public class ShipInstance {
         }
     }
 
-    /**
-     * Updates display entity transformations based on the current rotation delta.
-     * Vehicle yaw is frozen at spawnYaw - all visual rotation is applied here via the
-     * display transformation matrix, using the internal yaw tracked by ShipPhysics.
-     * This avoids the entity tracker's byte-precision (~1.4 deg) rotation packets.
-     *
-     * Called from tick() on every active tick, and from alignToGrid() (to reset
-     * the transformation after spawnYaw is re-anchored to currentYaw).
-     */
-
     // Cached ProtocolLib + NMS reflection state for position sync packets
     private static volatile boolean positionSyncInitialized = false;
     private static volatile boolean positionSyncAvailable = false;
@@ -826,8 +815,39 @@ public class ShipInstance {
         }
         bar.append("§7]");
 
+        // Propulsion readout, composed into the SAME action bar rather than sent separately — the
+        // speed bar, the ship-health text and this would otherwise overwrite each other, last write
+        // wins. Only shown when the ship actually carries propulsion.
+        appendPropulsionStatus(bar);
+
         // Send to action bar
         player.sendActionBar(net.kyori.adventure.text.Component.text(bar.toString()));
+    }
+
+    /**
+     * Append "engines 3/4 · lift 82%" when the ship has propulsion aboard.
+     *
+     * <p>Rotation power is all-or-nothing per network, so a ship can lose every propeller at once
+     * when an engine runs dry. Without something on screen, a flying ship starting to sink has no
+     * visible cause — this is the difference between a mechanic and a mystery.
+     */
+    private void appendPropulsionStatus(StringBuilder bar) {
+        if (model == null || model.thrustBlocks.isEmpty()) return;
+        anon.def9a2a4.blockships.ShipThrust.Totals t = physics.thrustTotals();
+        if (t.total() <= 0) return;
+
+        boolean allRunning = t.powered() >= t.total();
+        String runColor = allRunning ? "§a" : t.powered() > 0 ? "§e" : "§c";
+        bar.append("  §7engines ").append(runColor).append(t.powered())
+           .append("§7/").append(t.total());
+
+        // Lift only matters for a ship that is trying to hold itself up with thrust.
+        if (t.vertical() > 0 || model.thrustBlocks.stream()
+                .anyMatch(tb -> tb.axis() == anon.def9a2a4.blockships.ShipThrust.Axis.VERTICAL)) {
+            int liftPercent = java.lang.Math.round(physics.liftRatio() * 100);
+            String liftColor = liftPercent >= 100 ? "§a" : liftPercent >= 75 ? "§e" : "§c";
+            bar.append("  §7lift ").append(liftColor).append(liftPercent).append('%');
+        }
     }
 
     // Set input state from ShipSteeringListener
@@ -1470,9 +1490,9 @@ public class ShipInstance {
         if (mechanism != null) {
             // Delegated safe-dismount: mechanism.destroy() below removes the seat shulkers via Entity.remove(),
             // which ejects any seated player IN PLACE without firing VehicleExitEvent — so the safe-position
-            // teleport + fall-distance reset would be skipped. Mirror the native removePassenger→VehicleExitEvent
-            // path (see the colliders loop below, which is empty for a delegated ship) over seatShulkers, and do
-            // it BEFORE tearing the mechanism down while the seats still exist and the ship is still registered.
+            // teleport + fall-distance reset would be skipped. Explicitly removePassenger over seatShulkers first
+            // (fires VehicleExitEvent), BEFORE tearing the mechanism down while the seats still exist and the ship
+            // is still registered.
             for (Shulker seat : seatShulkers) {
                 if (seat != null && seat.isValid()) {
                     for (Entity passenger : seat.getPassengers()) {
@@ -1481,8 +1501,8 @@ public class ShipInstance {
                 }
             }
             // Delegated (M1): defCoreLib owns the parent/displays/colliders — tear them down via the Mechanism
-            // (removes entities WITHOUT restoring blocks). Idempotent if disassemble() already ran. The native
-            // lists below are empty for a delegated ship; the external vehicle is still removed at the end.
+            // (removes entities WITHOUT restoring blocks). Idempotent if disassemble() already ran. The external
+            // vehicle is still removed at the end.
             try { mechanism.destroy(); } catch (Throwable ignored) {}
         }
         // Remove root vehicle (defCoreLib owns the borrowed vehicle's displays/colliders; mechanism.destroy above

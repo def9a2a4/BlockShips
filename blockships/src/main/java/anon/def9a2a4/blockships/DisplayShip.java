@@ -377,7 +377,10 @@ public class DisplayShip implements Listener {
             Location rl = root.getLocation();
             shipWorldData.removeFromChunkIndex(world, shipId, rl.getBlockX() >> 4, rl.getBlockZ() >> 4);
             shipWorldData.saveAllChunkIndices();
-            reapNativeEntities(shipId, root);            // AFTER successful migration (ordering is load-bearing)
+            // AFTER successful migration (ordering is load-bearing). Scan the model footprint radius (≥64) so the reap
+            // covers exactly what forceLoadFootprint force-loaded — a >64-block-radius ship no longer strands native
+            // entities in its outer chunks for the straggler sweep to mop up later.
+            reapNativeEntities(shipId, root, Math.max(footprintRadius(model), 64));
             migrationFailureLogged.remove(shipId);       // success: allow a future genuinely-new failure to log again
             plugin.getLogger().info("Migrated native " + state.shipType + " ship " + shipId
                 + " to the delegated engine.");
@@ -405,11 +408,7 @@ public class DisplayShip implements Listener {
         // old per-axis un-rotated extent under-covered a long ship turned ~90° (far chunk never ticketed → its
         // native entities never reaped at migration time). Slightly over-covers for a long thin hull — fine for a
         // one-shot migration force-load.
-        double maxR = 0;
-        for (ShipModel.ModelPart p : model.parts) {
-            maxR = Math.max(maxR, Math.hypot(p.local.m30(), p.local.m32()));
-        }
-        int r = (int) Math.ceil(maxR);
+        int r = footprintRadius(model);
         int cx0 = ((rootLoc.getBlockX() - r) >> 4) - 1;
         int cx1 = ((rootLoc.getBlockX() + r) >> 4) + 1;
         int cz0 = ((rootLoc.getBlockZ() - r) >> 4) - 1;
@@ -432,12 +431,30 @@ public class DisplayShip implements Listener {
         }
     }
 
+    /** Block radius of the ship's model footprint: the farthest part's rotation-invariant distance from the root
+     *  (a circle of this radius covers every heading). Used to size both the migration force-load and the reap scan
+     *  so the reap covers exactly what was force-loaded. */
+    private int footprintRadius(ShipModel model) {
+        double maxR = 0;
+        for (ShipModel.ModelPart p : model.parts) {
+            maxR = Math.max(maxR, Math.hypot(p.local.m30(), p.local.m32()));
+        }
+        return (int) Math.ceil(maxR);
+    }
+
     /** Reap the native entity graph ({@code displayship:{id}:*}, non-corelib) for a migrated/straggler ship across
      *  its (now force-loaded) footprint. Drops leads on any leash-holder collider first (mirrors the native
      *  lead-drop so leashed mobs aren't silently lost — the lead item returns to the world). */
     private void reapNativeEntities(UUID shipId, ArmorStand root) {
+        reapNativeEntities(shipId, root, 64);
+    }
+
+    /** As {@link #reapNativeEntities(UUID, ArmorStand)} but with an explicit scan half-extent (blocks). The migration
+     *  success path passes the model footprint radius so the reap covers exactly what {@link #forceLoadFootprint}
+     *  force-loaded, rather than a fixed 64-block cube that would miss parts of a >64-block-radius ship. */
+    private void reapNativeEntities(UUID shipId, ArmorStand root, int halfExtent) {
         String shipTagPrefix = ShipTags.shipTag(shipId);
-        for (Entity e : root.getWorld().getNearbyEntities(root.getLocation(), 64, 64, 64)) {
+        for (Entity e : root.getWorld().getNearbyEntities(root.getLocation(), halfExtent, halfExtent, halfExtent)) {
             Set<String> tags = e.getScoreboardTags();
             if (ShipTags.isCorelibTagged(tags)) continue;   // never touch delegated entities
             boolean mine = false;

@@ -1,3 +1,6 @@
+# Bumped by ConfigMigration when a shipped default changes. Do not edit by hand.
+config-version: 1
+
 # BlockShips Plugin Configuration
 
 # Set to false to disable outdated resource file warnings on startup
@@ -81,12 +84,14 @@ custom-ships:
   # ratio = power / mass determines ship performance.
   stats:
     # Master switch for the power-to-mass ratio system.
-    # true  = custom ships scale speed/rotation by sails and mass
+    # true  = custom ships scale speed/rotation by sails and mass (default)
     # false = custom ships ignore composition and use the fixed default stats below
-    #         (sails become cosmetic; restores pre-stats behavior) (default)
-    # NOTE: disabled by default pending a rework of the stats system in a future update.
+    #         (sails become cosmetic; restores pre-stats behavior)
+    # This was previously off "pending a rework of the stats system". That rework has landed — sail
+    # tiers, propulsion blocks and the three-ratio model below — so it now defaults on. Existing
+    # servers are upgraded once, and only if they never turned it on themselves.
     # Feedback on ship stats balance and functionality welcome: https://github.com/def9a2a4/BlockShips/issues/18
-    enabled: false
+    enabled: true
     # Free power points every ship gets (ensures even tiny ships have some base ratio)
     base-power: 2
     # Power points per wool block used as sail

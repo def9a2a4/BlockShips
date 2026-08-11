@@ -46,6 +46,10 @@ public class BlockShipsPlugin extends JavaPlugin {
 
         saveDefaultConfig();
 
+        // Upgrade an existing config.yml. saveDefaultConfig() writes the file once and never again, so
+        // a changed default only reaches a running server through here.
+        ConfigMigration.run(this);
+
         // Warn if bundled resource files (blocks, items, prefab ships) are outdated
         ConfigValidator.checkForOutdatedResources(this);
 

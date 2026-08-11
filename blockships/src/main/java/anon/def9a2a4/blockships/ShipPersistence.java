@@ -1,11 +1,5 @@
 package anon.def9a2a4.blockships;
 
-import anon.def9a2a4.blockships.ship.ShipInstance;
-import org.bukkit.*;
-import org.bukkit.inventory.Inventory;
-import org.bukkit.inventory.ItemStack;
-import org.bukkit.plugin.java.JavaPlugin;
-
 import java.util.*;
 
 public final class ShipPersistence {
