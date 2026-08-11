@@ -312,6 +312,41 @@ public class BlockStructureScanner {
     }
 
     /**
+     * Large/huge banners hosted on the structure's blocks, keyed by host block.
+     *
+     * <p>One region query for the whole ship. defCoreLib's banner displays are entities, so this is a
+     * nearby-entity sweep; doing it per candidate block would mean hundreds of sweeps during an
+     * assembly that already walks every cell.
+     *
+     * <p>The box is padded by 4 because a large banner's display entity is spawned in the neighbour
+     * cell toward the face it hangs on, and scaled up from there — a box fitted tightly to the hull
+     * would miss precisely the banners mounted on its outside.
+     */
+    private static Map<Block, List<anon.def9a2a4.corelib.BannerTier>> queryBannerTiers(
+            Collection<Location> cells) {
+        if (cells.isEmpty()) return Collections.emptyMap();
+        org.bukkit.World world = null;
+        double minX = Double.MAX_VALUE, minY = Double.MAX_VALUE, minZ = Double.MAX_VALUE;
+        double maxX = -Double.MAX_VALUE, maxY = -Double.MAX_VALUE, maxZ = -Double.MAX_VALUE;
+        for (Location l : cells) {
+            if (world == null) world = l.getWorld();
+            minX = Math.min(minX, l.getBlockX()); maxX = Math.max(maxX, l.getBlockX() + 1);
+            minY = Math.min(minY, l.getBlockY()); maxY = Math.max(maxY, l.getBlockY() + 1);
+            minZ = Math.min(minZ, l.getBlockZ()); maxZ = Math.max(maxZ, l.getBlockZ() + 1);
+        }
+        if (world == null) return Collections.emptyMap();
+        org.bukkit.util.BoundingBox box =
+            new org.bukkit.util.BoundingBox(minX, minY, minZ, maxX, maxY, maxZ).expand(4.0);
+        try {
+            return anon.def9a2a4.corelib.CoreLibPlugin.getInstance().bannerTiersIn(world, box);
+        } catch (Throwable t) {
+            // Never let a CoreLib fault block an assembly — worst case the ship loses its large-banner
+            // sail power for this scan.
+            return Collections.emptyMap();
+        }
+    }
+
+    /**
      * Assemble from a wheel's FROZEN cell set instead of a flood fill. Cells that are now air are
      * dropped (the ship comes back smaller); nothing new can ever be added, which is the whole point.
      *
@@ -376,10 +411,15 @@ public class BlockStructureScanner {
         // Track sail blocks for ship stats (power-to-mass ratio)
         int woolCount = 0;
         int bannerCount = 0;
-        // Engines were an experimental placeholder feature, now removed. These stay as
-        // vestigial always-zero/empty values feeding the (dormant) ShipModel fields.
-        int engineCount = 0;
-        List<Integer> engineBlockIndices = java.util.Collections.emptyList();
+
+        // Large/huge banners are defCoreLib display entities attached to a host block, not block
+        // states, so no material test can find them. One region query for the whole structure —
+        // asking per block would mean hundreds of entity lookups on the main thread mid-assembly.
+        // The box is padded because a banner's display sits in the neighbour cell toward the face it
+        // hangs on, i.e. just OUTSIDE the hull it is mounted to.
+        Map<Block, List<anon.def9a2a4.corelib.BannerTier>> bannerTiers = queryBannerTiers(shipBlocks);
+        int largeBannerCount = 0;
+        int hugeBannerCount = 0;
 
         // Track ship bounds (for all blocks)
         float minY = Float.MAX_VALUE;
@@ -455,6 +495,16 @@ public class BlockStructureScanner {
                 woolCount++;
             } else if (blockMaterial.name().contains("BANNER")) {
                 bannerCount++;
+            }
+            // Large/huge banners hosted on this block. NORMAL tiers are skipped: a vanilla banner
+            // block is already counted by material just above, and counting it here too would double
+            // its sail power.
+            List<anon.def9a2a4.corelib.BannerTier> hosted = bannerTiers.get(block);
+            if (hosted != null) {
+                for (anon.def9a2a4.corelib.BannerTier tier : hosted) {
+                    if (tier == anon.def9a2a4.corelib.BannerTier.HUGE) hugeBannerCount++;
+                    else if (tier == anon.def9a2a4.corelib.BannerTier.LARGE) largeBannerCount++;
+                }
             }
 
             // Store position to block index mapping (for finding driver seat block)
@@ -723,6 +773,8 @@ public class BlockStructureScanner {
         // Load configurable sail power values
         int woolPower = plugin.getConfig().getInt("custom-ships.stats.wool-power", 3);
         int bannerPower = plugin.getConfig().getInt("custom-ships.stats.banner-power", 7);
+        int largeBannerPower = plugin.getConfig().getInt("custom-ships.stats.large-banner-power", 20);
+        int hugeBannerPower = plugin.getConfig().getInt("custom-ships.stats.huge-banner-power", 50);
 
         ShipModel model = new ShipModel(
             parts,
@@ -745,10 +797,12 @@ public class BlockStructureScanner {
             assemblyYaw,  // Store for disassembly rotation calculation
             woolCount,
             bannerCount,
+            largeBannerCount,
+            hugeBannerCount,
             woolPower,
             bannerPower,
-            engineCount,
-            engineBlockIndices
+            largeBannerPower,
+            hugeBannerPower
         );
         return new ScanResult(model, orderedBlocks);
     }

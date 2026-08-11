@@ -2052,10 +2052,40 @@ public class DisplayShip implements Listener {
     // ===== Custom Ship Wheel System =====
 
     /**
-     * Helper: Check if an item is a ship wheel custom item
+     * Helper: Check if an item is a ship wheel custom item.
+     *
+     * <p>Three arms, because a wheel item can reach a player's hand three ways. Keeping them in one place is
+     * what stops a corelib-minted wheel (an explosion drop, say) from being silently rejected and failing
+     * the {@code captains_manual} recipe.
      */
     private boolean isShipWheel(ItemStack stack) {
-        return matchesCustomItemId(stack, "ship_wheel");
+        // 1. BlockShips' own mint — every wheel crafted, given or dropped through our paths.
+        if (matchesCustomItemId(stack, "ship_wheel")) return true;
+        // 2. defCoreLib's mint, for a drop that came out of the registered block (explosion, enrichDrop).
+        //    Via the public accessor: CustomBlockRegistry.BLOCK_TYPE_KEY is package-private to corelib.
+        if (CustomItem.SHIP_WHEEL_CORELIB_ID.equals(
+                anon.def9a2a4.corelib.CustomBlockRegistry.getItemTypeId(stack))) {
+            return true;
+        }
+        // 3. MIGRATION ONLY. A legacy wheel broken by vanilla physics during the un-migrated window drops a
+        //    head carrying the right skin and NEITHER key. Matching on the skin is a deliberate
+        //    false-positive surface — any player head wearing this texture reads as a wheel — and is
+        //    tolerable only because the texture is not obtainable in survival. Delete this arm at the same
+        //    time as the legacy arm of isShipWheelBlock.
+        String declared = anon.def9a2a4.blockships.customships.ShipWheelBlockType.texture();
+        return declared != null && declared.equals(headTextureBase64(stack));
+    }
+
+    /** The raw base64 {@code textures} profile property on a player-head item, or null. */
+    private static String headTextureBase64(ItemStack stack) {
+        if (stack == null || stack.getType() != Material.PLAYER_HEAD || !stack.hasItemMeta()) return null;
+        if (!(stack.getItemMeta() instanceof SkullMeta skull)) return null;
+        com.destroystokyo.paper.profile.PlayerProfile profile = skull.getPlayerProfile();
+        if (profile == null) return null;
+        for (com.destroystokyo.paper.profile.ProfileProperty p : profile.getProperties()) {
+            if ("textures".equals(p.getName())) return p.getValue();
+        }
+        return null;
     }
 
     /**
