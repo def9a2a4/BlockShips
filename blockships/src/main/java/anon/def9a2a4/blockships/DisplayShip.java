@@ -2150,6 +2150,11 @@ public class DisplayShip implements Listener {
     @EventHandler
     public void onPlaceShipWheel(PlayerInteractEvent event) {
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+        // PlayerInteractEvent fires once per hand, and each hand is a separate interaction with its own
+        // result — cancelling the main-hand event does NOT suppress the off-hand one. Without this guard, a
+        // wheel in the off-hand while the main hand is empty reaches vanilla and plants an untracked head.
+        // Mirrors the guards on onShipWheelRightClick and onShulkerClick.
+        if (event.getHand() != EquipmentSlot.HAND) return;
 
         ItemStack item = event.getItem();
         if (!isShipWheel(item)) return;
