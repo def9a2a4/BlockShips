@@ -2112,9 +2112,16 @@ public class DisplayShip implements Listener {
     /**
      * Whether a crafting-grid item satisfies a recipe ingredient. Custom-item ingredients are matched by
      * their custom_item_id PDC (rename-proof); everything else uses the ingredient's own matcher.
+     *
+     * <p>The ship wheel is the exception: it exists in more than one mint (ours and defCoreLib's), so it is
+     * matched by {@link #isShipWheel}, which knows about all of them. This is the other half of the
+     * material-only {@code RecipeChoice} for the wheel — see {@code CustomItemIngredient.getRecipeChoice}.
+     * Together they make wheel matching independent of exact PDC equality. Deliberately scoped to the wheel:
+     * widening it to every custom item would loosen the balloons too.
      */
     private boolean ingredientMatches(RecipeIngredient ingredient, ItemStack item) {
         if (ingredient instanceof CustomItemIngredient ci) {
+            if ("ship_wheel".equals(ci.getCustomItemId())) return isShipWheel(item);
             return matchesCustomItemId(item, ci.getCustomItemId());
         }
         return ingredient.matches(item);
