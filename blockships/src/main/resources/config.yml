@@ -93,6 +93,11 @@ custom-ships:
     wool-power: 3
     # Power points per banner block used as sail
     banner-power: 7
+    # Power points per LARGE / HUGE banner (defCoreLib bbanners). These are display entities attached
+    # to a host block rather than blocks of their own, so they are found by an entity query, not by
+    # material. Worth much more than a plain banner — roughly by rendered area.
+    large-banner-power: 20
+    huge-banner-power: 50
     # Sail contribution capped at this ratio
     sail-cap-ratio: 0.8
     # Ratio that maps to current default stats (0.55 max speed, 1.5 rotation, etc.)

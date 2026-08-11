@@ -97,8 +97,8 @@ public class ShipPhysics {
         // Custom ships: compute ratio from sail power and mass
         float sailRatio = ship.model.getSailRatio(config.basePower);
         // Apply sail cap: non-engine contribution capped at sailCapRatio
-        float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
-        float ratio = Math.min(nonEngineRatio, 1.0f);
+        float cappedSailRatio = Math.min(sailRatio, config.sailCapRatio);
+        float ratio = Math.min(cappedSailRatio, 1.0f);
 
         // Compute horizontal stats
         effectiveMaxSpeed = config.computeStat(ratio, config.maxSpeed,

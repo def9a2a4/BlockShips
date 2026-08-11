@@ -416,8 +416,8 @@ public class ShipWheelMenu {
 
         // Compute power ratio
         float sailRatio = (float) (config.basePower + sailPower) / mass;
-        float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
-        float ratio = Math.min(nonEngineRatio, 1.0f);
+        float cappedSailRatio = Math.min(sailRatio, config.sailCapRatio);
+        float ratio = Math.min(cappedSailRatio, 1.0f);
 
         return new ShipInfo(blockCount, totalWeight, mass, density, maxHealth, currentHealth,
                             surfaceOffset, airDensity, waterDensity,

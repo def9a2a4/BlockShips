@@ -1143,8 +1143,8 @@ public class ShipWheelManager {
                     int mass = Math.max(1, ship.model.mass);
                     int sailPower = ship.model.woolCount * config.woolPower + ship.model.bannerCount * config.bannerPower;
                     float sailRatio = (float) (config.basePower + sailPower) / mass;
-                    float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
-                    float ratio = Math.min(nonEngineRatio, 1.0f);
+                    float cappedSailRatio = Math.min(sailRatio, config.sailCapRatio);
+                    float ratio = Math.min(cappedSailRatio, 1.0f);
                     int speedPercent = config.sailCapRatio > 0
                         ? Math.round(ratio / config.sailCapRatio * 100) : Math.round(ratio * 100);
 
@@ -1246,8 +1246,8 @@ public class ShipWheelManager {
             int sailPower = woolCount * config.woolPower + bannerCount * config.bannerPower;
             int shipMass = Math.max(1, calculateMass(shipBlocks));
             float sailRatio = (float) (config.basePower + sailPower) / shipMass;
-            float nonEngineRatio = Math.min(sailRatio, config.sailCapRatio);
-            float ratio = Math.min(nonEngineRatio, 1.0f);
+            float cappedSailRatio = Math.min(sailRatio, config.sailCapRatio);
+            float ratio = Math.min(cappedSailRatio, 1.0f);
             int speedPercent = config.sailCapRatio > 0
                 ? Math.round(ratio / config.sailCapRatio * 100) : Math.round(ratio * 100);
             player.sendMessage("§7Sails: §f" + woolCount + " wool, " + bannerCount + " banners §7(" + sailPower + " pts)");
