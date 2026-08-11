@@ -30,6 +30,15 @@ public class ShipWheelData {
         }
     }
 
+    /**
+     * This wheel's identity, mirrored onto the block itself as {@code blockships:wheel_id}.
+     *
+     * <p>The block's copy is the authoritative one; this record's {@link #blockLocation} is a cache of where
+     * that block currently is. Minted here so a wheel always has an id even before its block is stamped, and
+     * so an entry loaded from a pre-identity {@code ship_wheels.yml} gets one for free.
+     */
+    private UUID wheelId = UUID.randomUUID();
+
     private Location blockLocation;
     private BlockFace facing;
     private UUID assembledShipUUID;  // UUID of ship if assembled, null if not
