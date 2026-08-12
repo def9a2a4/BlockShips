@@ -372,9 +372,9 @@ public class ShipWheelMenu {
     }
 
     /**
-     * How long a docked ship's thrust scan stays good. A stale entry only ever shows a propeller the
-     * player just added or removed a few seconds late; it can never be wrong about a ship that is
-     * sitting still, which is the only state this path runs in.
+     * How long a docked ship's thrust scan stays good, as a backstop only — the cache key below carries
+     * the ship's own detect state, so any change a player makes and then re-detects invalidates it
+     * immediately. This bounds how long a scan can lag a change the player has NOT re-detected.
      */
     private static final long DOCKED_THRUST_TTL_MS = 10_000L;
 
@@ -386,32 +386,53 @@ public class ShipWheelMenu {
      * Potential thrust for a ship with no model, classified straight from the world.
      *
      * <p>A docked ship has never been through {@code BlockStructureScanner}, so there is no thrust list
-     * to read — the hull has to be found first. That is a full flood fill, hence the TTL: opening the
+     * to read — the hull has to be found first. That is a full flood fill, hence the cache: opening the
      * menu repeatedly must not re-scan a thousand blocks each time.
      *
-     * <p>Deliberately does not persist anything on {@link ShipWheelData}. Caching here keeps the whole
-     * feature inside this file.
+     * <p>The key includes the wheel's last-detected block count and its lock state, not just its
+     * position. Time alone was not enough: the Ship Info button runs a fresh detect that prints one set
+     * of numbers to chat and then rendered lore from a cache up to ten seconds old, so a single click
+     * could disagree with itself. Folding the detect state into the key means the redetect that changed
+     * the ship also changes the key. It also stops a wheel broken and rebuilt at the same coordinates
+     * from inheriting the previous ship's figures.
      */
     private static ShipThrust.Totals dockedThrust(BlockShipsPlugin plugin, ShipWheelData wheelData) {
         org.bukkit.Location wheelLoc = wheelData.getBlockLocation();
         if (wheelLoc == null || wheelLoc.getWorld() == null) return ShipThrust.Totals.NONE;
 
         String key = wheelLoc.getWorld().getName() + ":" + wheelLoc.getBlockX()
-                   + ":" + wheelLoc.getBlockY() + ":" + wheelLoc.getBlockZ();
+                   + ":" + wheelLoc.getBlockY() + ":" + wheelLoc.getBlockZ()
+                   + "#" + wheelData.getLastDetectedBlockCount()
+                   + "@" + wheelData.getFacing()
+                   + (wheelData.isLocked() ? "L" : "");
         long now = System.currentTimeMillis();
         CachedThrust cached = DOCKED_THRUST_CACHE.get(key);
         if (cached != null && now - cached.stamp() < DOCKED_THRUST_TTL_MS) return cached.totals();
 
         ShipThrust.Totals totals = ShipThrust.Totals.NONE;
         try {
-            int maxShipSize = plugin.getConfig().getInt("custom-ships.max-ship-size", 1000);
-            int maxScanSize = plugin.getConfig().getInt("custom-ships.max-scan-size", 5000);
-            // Silent detect: no particles, no waterline shulker, no chat. Same call the glue anchor
-            // provider uses for its connector set.
-            var result = new anon.def9a2a4.blockships.blockconfig.ShipDetector(maxShipSize, maxScanSize)
-                .detectShipDetailed(wheelLoc, ShipGlue.gluedCells(wheelLoc.getBlock()));
-            if (result.isSuccess() && result.getBlocks() != null) {
-                totals = ShipThrust.scanWorld(plugin, result.getBlocks(),
+            java.util.Set<org.bukkit.Location> cells;
+            if (wheelData.isLocked()) {
+                // A locked ship is exactly its frozen set — the raw glue cells plus the wheel — and NOT
+                // a flood fill. detectShip and scanFrozen both take this branch; without it the stats
+                // page would count propellers stacked against a docked hull that will never assemble
+                // with it, and contradict the chat readout from the same click. rawGlueCells is the
+                // right source: gluedCells additionally pulls in the sticky closure, which is precisely
+                // the growth a lock exists to prevent.
+                cells = new java.util.HashSet<>(ShipGlue.rawGlueCells(wheelLoc.getBlock()));
+                cells.add(wheelLoc);
+            } else {
+                int maxShipSize = plugin.getConfig().getInt("custom-ships.max-ship-size", 1000);
+                int maxScanSize = plugin.getConfig().getInt("custom-ships.max-scan-size", 5000);
+                // Silent detect: no particles, no waterline shulker, no chat. Same call the glue anchor
+                // provider uses for its connector set. Returns failure for a missing wheel block, so an
+                // assembled ship cannot scan the dock it left behind.
+                var result = new anon.def9a2a4.blockships.blockconfig.ShipDetector(maxShipSize, maxScanSize)
+                    .detectShipDetailed(wheelLoc, ShipGlue.gluedCells(wheelLoc.getBlock()));
+                cells = result.isSuccess() ? result.getBlocks() : null;
+            }
+            if (cells != null) {
+                totals = ShipThrust.scanWorld(plugin, cells,
                     BlockStructureScanner.blockFaceToYaw(wheelData.getFacing()));
             }
         } catch (Throwable t) {
