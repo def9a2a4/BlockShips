@@ -188,11 +188,20 @@ public class ShipCollision {
 
         // Apply vertical collision response
         if (Math.abs(verticalForce) > 0.001f) {
-            // Apply vertical force to Y velocity
-            if (verticalForce > 0 && ship.physics.currentYVelocity < 0) {
-                // Hitting ground while falling - stop downward velocity
+            // Apply vertical force to Y velocity.
+            //
+            // The two "stop" tests use <= 0 / >= 0, not < 0 / > 0, and the boundary is the whole point:
+            // a ship that has just LANDED sits at exactly 0, because ShipPhysics.clampFallToGround
+            // already trimmed the step. With a strict test, 0 fell through to the else and got pushed
+            // UPWARD every tick — the wheel-column sweep cannot see an overhanging hull, so terrain
+            // penetration keeps reporting a force forever. The ship bobbed, and toggling
+            // wasVerticallyMoving on every bounce spammed refreshCarrierTracking, which is the deck
+            // jitter that call exists to prevent. Only reachable since vertical-only movement started
+            // running terrain checks at all.
+            if (verticalForce > 0 && ship.physics.currentYVelocity <= 0) {
+                // Hitting ground while falling (or already resting on it) - stop downward velocity
                 ship.physics.currentYVelocity = 0;
-            } else if (verticalForce < 0 && ship.physics.currentYVelocity > 0) {
+            } else if (verticalForce < 0 && ship.physics.currentYVelocity >= 0) {
                 // Hitting ceiling while rising - stop upward velocity
                 ship.physics.currentYVelocity = 0;
             } else {

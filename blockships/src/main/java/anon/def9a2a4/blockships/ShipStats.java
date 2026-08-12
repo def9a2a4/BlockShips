@@ -55,8 +55,9 @@ public final class ShipStats {
      * {@code sail-cap-ratio}; axial thrust is what closes the remaining gap.
      *
      * <p>Sails feed turning too, but scaled by current speed — a rudder needs water moving past it.
-     * Thrust-based turning is speed-independent, which is precisely what makes a reaction wheel
-     * worth carrying: it is the thing that turns you when you are stopped.
+     * ALL thrust-based turning is speed-independent, so a side-mounted propeller steers a stopped ship
+     * just as a reaction wheel does, and harder. The wheel's case is cost, not uniqueness: one power and
+     * one floor block, against a propeller that wants hull width and several times the network.
      *
      * @param speedFrac current speed as a fraction of top speed, 0..1
      */
@@ -169,11 +170,32 @@ public final class ShipStats {
 
 
     /** Colour code for a speed percentage, shared by the two /detect readouts. */
+    /**
+     * Blocks per second a ship short of lift settles at, for the readouts.
+     *
+     * <p>One copy, called by both the wheel menu and the driver's action bar. It mirrors
+     * {@code ShipPhysics.applyAirshipVerticalPhysics}'s terminal exactly, INCLUDING the exponent floor
+     * and the non-negative lift — the display copies used to omit both, so a server with an odd
+     * {@code sink-speed-exponent} got a number that disagreed with the ship under it. Returns 0 for a
+     * ship that is holding altitude or climbing.
+     *
+     * <p>This is the steady state, not the instantaneous rate: a ship reaches it in about seven ticks.
+     */
+    public static float sinkBlocksPerSecond(ShipConfig config, float liftRatio) {
+        if (liftRatio >= 1f) return 0f;
+        float lift = Math.max(0f, liftRatio);
+        return config.maxSinkSpeed
+            * (float) Math.pow(1f - lift, Math.max(0.05f, config.sinkSpeedExponent)) * 20f;
+    }
+
     public static String speedColor(int speedPercent) {
-        if (speedPercent >= 125) return "§b";
-        if (speedPercent >= 100) return "§a";
-        if (speedPercent >= 75) return "§e";
-        if (speedPercent >= 50) return "§6";
+        // Thresholds match ShipWheelMenu.speedColor — keep the two in step. They moved down when this
+        // figure switched from the sails-only ratio to forwardRatio: that is clamp01'd, so a reading can
+        // never exceed 100 and the old 125 tier was unreachable. Aqua now marks "maxed out".
+        if (speedPercent >= 100) return "§b";
+        if (speedPercent >= 85) return "§a";
+        if (speedPercent >= 65) return "§e";
+        if (speedPercent >= 40) return "§6";
         return "§c";
     }
 }

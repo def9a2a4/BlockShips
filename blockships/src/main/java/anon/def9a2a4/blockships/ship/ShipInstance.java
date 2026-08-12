@@ -845,13 +845,20 @@ public class ShipInstance {
             // fast" — so a sinking ship shows its actual descent rate. A percentage alone made a
             // failing ship's situation something the pilot had to work out mid-emergency.
             float lift = physics.liftRatio();
-            int liftPercent = java.lang.Math.round(lift * 100);
+            float fullClimb = 1f + config.climbSurplusFull;
+            // Capped, for the same reason as the wheel menu: past fullClimb the ship already climbs at
+            // its maximum, and "lift 1250%" is true but tells the pilot nothing.
+            String liftText = lift > fullClimb
+                ? java.lang.Math.round(fullClimb * 100) + "%+"
+                : java.lang.Math.round(lift * 100) + "%";
             String liftColor = lift >= 1f ? "§a" : lift >= 0.75f ? "§e" : "§c";
-            bar.append("  §7lift ").append(liftColor).append(liftPercent).append('%');
-            if (lift < 1f) {
-                float sinkPerSec = config.maxSinkSpeed
-                    * (float) java.lang.Math.pow(1f - lift, config.sinkSpeedExponent) * 20f;
-                bar.append(" §c▼").append(String.format("%.1f", sinkPerSec));
+            bar.append("  §7lift ").append(liftColor).append(liftText);
+            // Gated on ACTUALLY descending, not on lift < 1. A hull with vertical thrust and partial
+            // lift that is floating on water takes the buoyancy path and does not sink at all — it used
+            // to sit at the waterline advertising a 6 blocks/s descent that was never going to happen.
+            if (lift < 1f && physics.currentYVelocity < -0.001f) {
+                bar.append(" §c▼").append(String.format("%.1f",
+                    anon.def9a2a4.blockships.ShipStats.sinkBlocksPerSecond(config, lift)));
             }
         }
     }

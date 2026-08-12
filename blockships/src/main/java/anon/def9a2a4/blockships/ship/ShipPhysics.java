@@ -82,13 +82,19 @@ public class ShipPhysics {
      * instead of ramp.
      */
     private void tickPropulsion() {
-        if (ship.model == null || ship.model.thrustBlocks.isEmpty()) return;
-        // Cheap backstop poll; the event does the timely work.
-        if (++thrustPollCounter >= 20) {
-            thrustPollCounter = 0;
-            thrustDirty = true;
+        if (ship.model == null) return;
+        if (!ship.model.thrustBlocks.isEmpty()) {
+            // Cheap backstop poll; the event does the timely work.
+            if (++thrustPollCounter >= 20) {
+                thrustPollCounter = 0;
+                thrustDirty = true;
+            }
         }
-        // Recompute every tick while thrust is still ramping, so the spool actually moves.
+        // Recompute every tick, thrust or not. This used to return early for a ship with no thrust
+        // blocks, which quietly froze the SAIL stats too: turnRatio scales with current speed, and the
+        // only other place statsComputed is cleared is a defCoreLib re-solve. So a pure sailing ship
+        // computed its stats once, at assembly, with currentSpeed == 0 — and a hull carrying two
+        // hundred points of canvas turned exactly like a bare one at every speed, for the whole voyage.
         statsComputed = false;
     }
 
@@ -165,10 +171,10 @@ public class ShipPhysics {
     // Reusable Locations for physics calculations - reduces GC pressure
     private Location workLocation = null;
     private Location workLocation2 = null;  // Second work location for buoyancy (hull check vs water scan)
-    // Third work location, for the falling ground sweep. It needs its own because the sweep is called
-    // from inside handleBuoyancy, which is already holding workLocation (the hull check) and
-    // workLocation2 (the below-hull check) live — borrowing either would silently move the position
-    // the caller is still reading from.
+    // Third work location, for the falling ground sweep. Kept separate because the sweep runs from
+    // inside handleBuoyancy and from the flight path, both of which sit downstream of hullInWater
+    // (workLocation) and findWaterSurfaceY (workLocation2) — sharing one would put two probes on the
+    // same object in a single tick, which is the sort of thing that works until someone reorders a call.
     private Location workLocation3 = null;
 
     public ShipPhysics(ShipInstance ship) {
@@ -203,13 +209,14 @@ public class ShipPhysics {
             effectiveMaxVerticalSpeed = config.maxVerticalSpeed;
             effectiveLiftAcceleration = config.liftAcceleration;
             effectiveDescendAcceleration = config.descendAcceleration;
-            // Fully lifted, not zero. This branch means "no ratio system applies here" — a prefab, or a
-            // server that turned stats off — and such a ship is supported by fiat, exactly as it was
-            // before any of this existed. Leaving lastLiftRatio at its 0f initialiser would tell the
-            // flight model these ships produce no lift, which now means "cannot climb, fall at full
-            // gravity": it would ground every prefab airship and drop any stats-off ship carrying a
-            // vertical propeller out of the sky.
-            lastLiftRatio = 1.0f;
+            // lastLiftRatio is deliberately left at 0 here, and nothing on this branch reads it:
+            // isThrustLifted() is false whenever stats are off, and a prefab airship is carried by
+            // ship.isAirship, which short-circuits both the flight dispatch and the displacementLift
+            // branch inside applyAirshipVerticalPhysics. An earlier version set it to 1.0f as a
+            // "supported by fiat" sentinel, which backfired badly: 1.0 is the exact value meaning ZERO
+            // SURPLUS everywhere downstream, so a stats-off ship with a vertical propeller took the
+            // flight path (lift >= 1) and then got climbCap 0 AND sinkFrac 0 — it could not climb, could
+            // not fall, and could not float. A one-way elevator.
             statsComputed = true;
             return;
         }
@@ -242,7 +249,9 @@ public class ShipPhysics {
         effectiveRotationDeceleration = config.computeStat(turnRatio, config.rotationDeceleration,
             config.floorRotationDeceleration, config.capRotationDeceleration);
 
-        // Vertical stats, for EVERY ship — there is no airship branch here any more.
+        // Vertical stats. No airship branch here any more — buoyant and heavier-than-air custom hulls
+        // share one formula. (Prefabs never reach this line: they take the early-out above and keep the
+        // raw config values, which is what makes them bit-identical to before the rework.)
         //
         // This answers "how fast does it move up and down", which is a different question from
         // stats.liftRatio's "can it hold itself up at all". Lift decides whether you fly; this decides
@@ -331,12 +340,21 @@ public class ShipPhysics {
         Location probe = reuseLocation3(vehicleLoc);
         for (int y = from; y >= to; y--) {
             probe.setY(y);
-            Material m = probe.getBlock().getType();
-            if (m != Material.AIR && m.isSolid()) {
-                // Rest exactly on this block's top face rather than wherever the step happened to end.
-                float allowed = (float) ((y + 1) - hullY);
-                return allowed >= 0f ? 0f : allowed;
-            }
+            if (!probe.getBlock().getType().isSolid()) continue;
+            // Rest exactly on this block's top face rather than wherever the step happened to end.
+            float allowed = (float) ((y + 1) - hullY);
+            // A block whose top is ABOVE the hull is not a floor under it — the hull is inside terrain.
+            // Keep looking rather than treating it as ground: clamping to 0 here pinned such a ship at
+            // its altitude permanently, unable to descend by any input, after it flew into a hillside
+            // or was recovered inside a block. Let it fall to a real surface; ShipCollision handles the
+            // horizontal extraction.
+            if (allowed > 0f) continue;
+            // Snap to rest rather than returning a hair's-breadth negative. The float rounding of
+            // (y+1)-hullY, and the 0.001 tolerance above, can both leave a residue of ~1e-9 to -0.001 —
+            // too small to move the ship (update() ignores steps under 0.001) but enough to fail the
+            // settle test, which pins wasVerticallyMoving true for the rest of the voyage and stops
+            // refreshCarrierTracking ever firing on landing.
+            return allowed > -0.001f ? 0f : allowed;
         }
         return vy;
     }
@@ -655,6 +673,10 @@ public class ShipPhysics {
      */
     private boolean isThrustLifted() {
         if (ship.model == null) return false;
+        // Stats off means the whole ratio system is off, so propulsion does not fly anything — the ship
+        // is an ordinary hull, exactly as it was before any of this existed. Without this, a stats-off
+        // server's ships take the flight path with a lift ratio that was never computed.
+        if (!ship.config.statsEnabled) return false;
         for (anon.def9a2a4.blockships.ShipModel.ThrustBlock tb : ship.model.thrustBlocks) {
             if (tb.axis() == anon.def9a2a4.blockships.ShipThrust.Axis.VERTICAL) return true;
         }
@@ -666,10 +688,10 @@ public class ShipPhysics {
 
         // Displacement-lifted hulls (prefab `type: airship`, or any negative-density build) keep the
         // original model exactly: full manual control, no gravity, no lift arithmetic. This split is
-        // FIRST and gates the whole derivation on purpose. A prefab's stats take an early-out in
-        // computeEffectiveStats, so its liftRatio() is permanently 0 — deriving the climb ceiling from
-        // lift unconditionally would give every balloon in the game a ceiling of zero and ground the
-        // plugin's flagship ship. test-bot asserts the prefab climbs; that assertion is the tripwire.
+        // FIRST and gates the whole derivation on purpose — a prefab has no weight data to compute a
+        // lift ratio from at all, and deriving the climb ceiling from lift unconditionally would give
+        // every balloon in the game a ceiling of zero and ground the plugin's flagship ship. test-bot
+        // asserts the prefab climbs; that assertion is the tripwire.
         boolean displacementLift = ship.isAirship;
 
         float lift = displacementLift ? 1.0f : Math.max(0f, liftRatio());
@@ -690,20 +712,26 @@ public class ShipPhysics {
         float terminalSink = displacementLift ? 0f : config.maxSinkSpeed * sinkFrac;
         float sinkAccel = displacementLift ? 0f : GRAVITY_PER_TICK * sinkFrac;
 
-        if (ship.hasDriver && ship.isSpacePressed) {
+        // The climb branch runs ONLY when there is surplus to climb on. When climbCap is 0 the old code
+        // still ran it as min(v + accel, 0), which reset the velocity to exactly zero every tick
+        // whenever liftAcceleration exceeded the (small) sink acceleration — so holding Space on an
+        // under-powered ship cut the descent to a single gravity step per tick and lift-hold-sink-factor
+        // never applied at all. Measured at lift 0.95: 0.19 blocks/s against the 0.46 the model says.
+        // Now Space falls through to drag, and the `hold` term below is the only thing it does.
+        if (ship.hasDriver && ship.isSpacePressed && climbCap > 0f) {
             currentYVelocity = Math.min(currentYVelocity + effectiveLiftAcceleration, climbCap);
-            if (Math.abs(currentSpeed) < config.verticalForwardNudge) {
-                currentSpeed = config.verticalForwardNudge;
-            }
         } else if (ship.hasDriver && ship.isSprintPressed) {
             // Descending always works — there is no story in which lack of lift stops you going down.
             // The floor takes the larger of the two: without it, pressing Sprint on a failing ship
             // whose natural terminal exceeds the climb speed would SLOW the fall.
+            //
+            // And the result is taken as a MINIMUM against the current velocity, so Sprint can only ever
+            // speed a descent up. `floor` is derived from the CURRENT lift while the velocity may still
+            // carry a faster fall from a moment ago — relighting the engines while holding Sprint would
+            // otherwise clamp a -0.5 fall up to -0.1, i.e. holding "descend" would brake by 80%.
             float floor = Math.max(effectiveMaxVerticalSpeed, terminalSink);
-            currentYVelocity = Math.max(currentYVelocity - effectiveDescendAcceleration, -floor);
-            if (Math.abs(currentSpeed) < config.verticalForwardNudge) {
-                currentSpeed = config.verticalForwardNudge;
-            }
+            float sprint = Math.max(currentYVelocity - effectiveDescendAcceleration, -floor);
+            currentYVelocity = Math.min(currentYVelocity, sprint);
         } else if (!ship.hasDriver && displacementLift) {
             // A parked balloon holds station rather than drifting. Only balloons: doing this for a
             // thrust-lifted hull pinned its velocity to 0 every tick, so it could never integrate a
@@ -711,6 +739,15 @@ public class ShipPhysics {
             currentYVelocity = 0.0f;
         } else {
             currentYVelocity *= config.verticalDrag;
+        }
+
+        // A driver touching either vertical control keeps a trickle of forward speed. Hoisted out of the
+        // two branches above because Space on an under-powered ship now falls through to drag, and the
+        // nudge should follow the INPUT, not which arm happened to handle it — it is also what keeps
+        // currentSpeed above the movement threshold so the ship still counts as under way.
+        if (ship.hasDriver && (ship.isSpacePressed || ship.isSprintPressed)
+                && Math.abs(currentSpeed) < config.verticalForwardNudge) {
+            currentSpeed = config.verticalForwardNudge;
         }
 
         // Gravity, as a pull toward the deficit's terminal at the deficit's rate. A no-op at lift >= 1
@@ -728,7 +765,9 @@ public class ShipPhysics {
         // lift >= 1 produces no residual gravity at all and previously got no ground check whatsoever.
         currentYVelocity = clampFallToGround(vehicleLoc, currentYVelocity);
 
-        // Settle-to-rest, and the single exit that fires refreshCarrierTracking — keep it that way, or
+        // Settle-to-rest, and the vertical path's only trigger for refreshCarrierTracking — keep it that
+        // way (ShipInstance fires it too, but only on the movement→idle transition, which a ship still
+        // coasting horizontally never reaches), or
         // deck-standers get collision jitter after a landing with nothing to clear it.
         //
         // The dead band applies only when nothing is pulling the ship down. It used to be

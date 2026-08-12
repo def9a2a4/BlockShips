@@ -372,15 +372,43 @@ public class ShipWheelMenu {
     }
 
     /**
-     * How long a docked ship's thrust scan stays good, as a backstop only — the cache key below carries
-     * the ship's own detect state, so any change a player makes and then re-detects invalidates it
-     * immediately. This bounds how long a scan can lag a change the player has NOT re-detected.
+     * How long a docked ship's thrust scan stays good, as a backstop only — the entry also carries the
+     * ship's own detect state, so any change a player makes and then re-detects invalidates it at once.
+     * This bounds how long a scan can lag a change the player has NOT re-detected.
      */
     private static final long DOCKED_THRUST_TTL_MS = 10_000L;
 
-    private record CachedThrust(ShipThrust.Totals totals, long stamp) {}
+    /**
+     * Cached scan plus the detect state it was taken under. Those fields are compared on READ rather than
+     * being folded into the key, which matters: as part of the key they minted a fresh permanent entry
+     * every time a block count changed, so a player iterating on a hull — place a block, /detect, place,
+     * /detect — leaked one entry per iteration for the life of the server.
+     */
+    private record CachedThrust(ShipThrust.Totals totals, long stamp,
+                                int blockCount, org.bukkit.block.BlockFace facing, boolean locked) {
+        boolean matches(ShipWheelData d) {
+            return blockCount == d.getLastDetectedBlockCount()
+                && facing == d.getFacing()
+                && locked == d.isLocked();
+        }
+    }
 
+    /**
+     * One entry per wheel location, replaced in place. Bounded by the number of distinct wheels a player
+     * has opened a menu on, and pruned whenever a wheel is removed (see {@link #forgetDockedThrust}).
+     */
     private static final java.util.Map<String, CachedThrust> DOCKED_THRUST_CACHE = new java.util.HashMap<>();
+
+    private static String dockedThrustKey(org.bukkit.Location wheelLoc) {
+        return wheelLoc.getWorld().getName() + ":" + wheelLoc.getBlockX()
+             + ":" + wheelLoc.getBlockY() + ":" + wheelLoc.getBlockZ();
+    }
+
+    /** Drop a wheel's cached scan — call when the wheel is removed, mirroring ShipWheelAnchors.forget. */
+    public static void forgetDockedThrust(org.bukkit.Location wheelLoc) {
+        if (wheelLoc == null || wheelLoc.getWorld() == null) return;
+        DOCKED_THRUST_CACHE.remove(dockedThrustKey(wheelLoc));
+    }
 
     /**
      * Potential thrust for a ship with no model, classified straight from the world.
@@ -389,25 +417,22 @@ public class ShipWheelMenu {
      * to read — the hull has to be found first. That is a full flood fill, hence the cache: opening the
      * menu repeatedly must not re-scan a thousand blocks each time.
      *
-     * <p>The key includes the wheel's last-detected block count and its lock state, not just its
-     * position. Time alone was not enough: the Ship Info button runs a fresh detect that prints one set
-     * of numbers to chat and then rendered lore from a cache up to ten seconds old, so a single click
-     * could disagree with itself. Folding the detect state into the key means the redetect that changed
-     * the ship also changes the key. It also stops a wheel broken and rebuilt at the same coordinates
-     * from inheriting the previous ship's figures.
+     * <p>An entry is reused only while the wheel's detect state is unchanged. Time alone was not enough:
+     * the Ship Info button runs a fresh detect that prints one set of numbers to chat and then rendered
+     * lore from a cache up to ten seconds old, so a single click could disagree with itself. Comparing
+     * the detect state means the re-detect that changed the ship also drops the entry — and a wheel
+     * broken and rebuilt at the same coordinates cannot inherit the previous ship's figures.
      */
     private static ShipThrust.Totals dockedThrust(BlockShipsPlugin plugin, ShipWheelData wheelData) {
         org.bukkit.Location wheelLoc = wheelData.getBlockLocation();
         if (wheelLoc == null || wheelLoc.getWorld() == null) return ShipThrust.Totals.NONE;
 
-        String key = wheelLoc.getWorld().getName() + ":" + wheelLoc.getBlockX()
-                   + ":" + wheelLoc.getBlockY() + ":" + wheelLoc.getBlockZ()
-                   + "#" + wheelData.getLastDetectedBlockCount()
-                   + "@" + wheelData.getFacing()
-                   + (wheelData.isLocked() ? "L" : "");
+        String key = dockedThrustKey(wheelLoc);
         long now = System.currentTimeMillis();
         CachedThrust cached = DOCKED_THRUST_CACHE.get(key);
-        if (cached != null && now - cached.stamp() < DOCKED_THRUST_TTL_MS) return cached.totals();
+        if (cached != null && now - cached.stamp() < DOCKED_THRUST_TTL_MS && cached.matches(wheelData)) {
+            return cached.totals();
+        }
 
         ShipThrust.Totals totals = ShipThrust.Totals.NONE;
         try {
@@ -440,7 +465,8 @@ public class ShipWheelMenu {
             // never let a stats readout stop a menu from opening.
             totals = ShipThrust.Totals.NONE;
         }
-        DOCKED_THRUST_CACHE.put(key, new CachedThrust(totals, now));
+        DOCKED_THRUST_CACHE.put(key, new CachedThrust(totals, now,
+            wheelData.getLastDetectedBlockCount(), wheelData.getFacing(), wheelData.isLocked()));
         return totals;
     }
 
@@ -586,12 +612,14 @@ public class ShipWheelMenu {
                 // Ship stats (simplified - detailed breakdown in stats item below)
                 lore.add("");
                 if (info.statsEnabled) {
-                    int speedPercent = info.sailCapRatio > 0
-                        ? Math.round(info.ratio / info.sailCapRatio * 100) : Math.round(info.ratio * 100);
-                    String maxTag = info.ratio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
+                    // forwardRatio, NOT the sails-only ratio: this is the number ShipPhysics actually
+                    // drives top speed from, so a thruster-driven ship no longer reports the speed of
+                    // sails it does not have.
+                    int speedPercent = Math.round(info.forwardRatio * 100);
+                    String maxTag = info.forwardRatio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
                     lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%" + maxTag);
                     if (speedPercent < 50) {
-                        lore.add(ChatColor.DARK_PURPLE + "(add banners or wool as sails!)");
+                        lore.add(ChatColor.DARK_PURPLE + "(add sails, or propellers along the hull!)");
                     }
                 } else {
                     lore.add(ChatColor.GRAY + "Stats system disabled - fixed speed");
@@ -669,12 +697,15 @@ public class ShipWheelMenu {
                 int effectivePower = Math.min(cappedSailPower, info.mass);
                 lore.add(ChatColor.GRAY + "Effective Power: " + ChatColor.WHITE + effectivePower
                     + ChatColor.GRAY + " / " + info.mass + " pts");
-                lore.add(ChatColor.GRAY + "Power Ratio: " + ChatColor.YELLOW
-                    + String.format("%.2f", info.ratio) + ChatColor.GRAY + " / 1.00");
+                // "Sail Ratio", not "Power Ratio": this block — Effective Power, the cap, this line — is
+                // the SAIL budget and always was. Leaving it labelled "Power" put it in direct
+                // contradiction with the thrust-derived "Forward" figure a few lines below.
+                lore.add(ChatColor.GRAY + "Sail Ratio: " + ChatColor.YELLOW
+                    + String.format("%.2f", info.ratio) + ChatColor.GRAY + " / "
+                    + String.format("%.2f", info.sailCapRatio) + " cap");
 
-                int speedPercent = info.sailCapRatio > 0
-                    ? Math.round(info.ratio / info.sailCapRatio * 100) : Math.round(info.ratio * 100);
-                String maxTag = info.ratio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
+                int speedPercent = Math.round(info.forwardRatio * 100);
+                String maxTag = info.forwardRatio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
                 lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%" + maxTag);
 
                 appendPropulsionLore(lore, info, config);
@@ -721,30 +752,43 @@ public class ShipWheelMenu {
         lore.add(ChatColor.GRAY + "Forward: " + ratioColor(info.forwardRatio)
             + String.format("%.2f", info.forwardRatio));
         // Sails only aid turning in proportion to speed, and a ship whose menu is open is parked — so
-        // this is the stopped figure. That is also the fair one for judging a reaction wheel, which is
-        // the only thing that turns a ship at a standstill.
+        // this is the stopped figure. Anything thrust-driven (a side propeller as much as a reaction
+        // wheel) keeps working at a standstill, so this is the fair number for comparing them.
         lore.add(ChatColor.GRAY + "Turn: " + ratioColor(info.turnRatio)
             + String.format("%.2f", info.turnRatio) + ChatColor.DARK_GRAY + " (at rest)");
         if (t.vertical() > 0) {
-            // Three-way, matching what the flight model actually does: surplus climbs, exactly enough
-            // holds, and anything short sinks — at a rate set by how much is missing, so show that rate
-            // rather than leaving the player to infer it from a percentage.
-            int liftPercent = Math.round(info.liftRatio * 100);
-            String liftColor = info.liftRatio >= 1f ? ChatColor.GREEN.toString()
-                : info.liftRatio >= 0.75f ? ChatColor.YELLOW.toString() : ChatColor.RED.toString();
+            // Four-way, matching what the flight model actually does: full surplus climbs at speed, a
+            // little surplus climbs slowly, exactly enough holds, and anything short sinks — at a rate
+            // set by how much is missing, so show that rate rather than making the player infer it.
+            float lift = info.liftRatio;
+            float fullClimb = 1f + config.climbSurplusFull;
+            // Cap the printed figure. Past fullClimb the ship already climbs at its maximum, so the
+            // extra is not information — and a huge propeller on a light hull reads "1250%", which is
+            // technically true and useless.
+            String liftText = lift > fullClimb
+                ? Math.round(fullClimb * 100) + "%+"
+                : Math.round(lift * 100) + "%";
+            String liftColor = lift >= 1f ? ChatColor.GREEN.toString()
+                : lift >= 0.75f ? ChatColor.YELLOW.toString() : ChatColor.RED.toString();
             String verdict;
-            if (info.liftRatio >= 1f + config.climbSurplusFull) {
+            if (lift >= fullClimb) {
                 verdict = ChatColor.AQUA + " (climbs)";
-            } else if (info.liftRatio > 1f) {
+            } else if (lift >= 1f + config.climbSurplusFull * 0.1f) {
+                // A tenth of the surplus is roughly a tenth of climb speed — below that it is a hover
+                // with rounding on top, and calling it "climbing" would be a lie the player can measure.
                 verdict = ChatColor.AQUA + " (climbs slowly)";
-            } else if (info.liftRatio >= 1f) {
+            } else if (lift >= 1f) {
                 verdict = ChatColor.GRAY + " (holds altitude)";
             } else {
-                float sinkPerSec = config.maxSinkSpeed
-                    * (float) Math.pow(1f - info.liftRatio, config.sinkSpeedExponent) * 20f;
-                verdict = ChatColor.DARK_GRAY + String.format(" (sinks %.1f blocks/s)", sinkPerSec);
+                verdict = ChatColor.DARK_GRAY + String.format(" (sinks %.1f blocks/s)",
+                    ShipStats.sinkBlocksPerSecond(config, lift));
             }
-            lore.add(ChatColor.GRAY + "Lift: " + liftColor + liftPercent + "%" + verdict);
+            // Docked, every block counts as running, so this whole verdict is a forecast for a ship
+            // with its engines lit. Say so — the Propulsion line's hedge is too far above to carry here,
+            // and "180% (climbs)" on a hull with no power source aboard is exactly the promise
+            // ShipThrust.scanWorld's contract warns against making.
+            if (!info.thrustIsLive) verdict += ChatColor.DARK_GRAY + " once powered";
+            lore.add(ChatColor.GRAY + "Lift: " + liftColor + liftText + verdict);
         }
     }
 
@@ -950,13 +994,18 @@ public class ShipWheelMenu {
 
     /**
      * Returns a ChatColor for speed percentage display.
-     * Red (<50%) -> Gold (50-74%) -> Yellow (75-99%) -> Green (100-124%) -> Blue (125%+)
+     * Red (&lt;40%) -&gt; Gold (40-64%) -&gt; Yellow (65-84%) -&gt; Green (85-99%) -&gt; Aqua (100%, maxed)
+     *
+     * <p>The thresholds moved down when the figure switched from the sails-only ratio to
+     * {@code forwardRatio}. That ratio is {@code clamp01}'d, so the reading can never exceed 100 — the
+     * old 125 tier was unreachable and the old 100 tier fired only at exact saturation, leaving three
+     * usable colours out of five. Aqua now means "maxed out", which is the thing worth signalling.
      */
     private static ChatColor speedColor(int speedPercent) {
-        if (speedPercent >= 125) return ChatColor.AQUA;
-        if (speedPercent >= 100) return ChatColor.GREEN;
-        if (speedPercent >= 75) return ChatColor.YELLOW;
-        if (speedPercent >= 50) return ChatColor.GOLD;
+        if (speedPercent >= 100) return ChatColor.AQUA;
+        if (speedPercent >= 85) return ChatColor.GREEN;
+        if (speedPercent >= 65) return ChatColor.YELLOW;
+        if (speedPercent >= 40) return ChatColor.GOLD;
         return ChatColor.RED;
     }
 }

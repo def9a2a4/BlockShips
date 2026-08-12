@@ -115,10 +115,14 @@ public class ShipWheelData {
     }
 
     /**
-     * Updates the wheel's block location and facing direction.
-     * Used when a ship is disassembled at a different location than where it was assembled.
+     * Updates the wheel's cached block location and facing direction, after the ship lands somewhere other
+     * than where it was assembled.
+     *
+     * <p>Package-private on purpose: {@code blockLocation} is a cache of where the block currently is, and
+     * {@code ShipWheelManager.relocate} is its only legitimate writer. A caller that moved it directly would
+     * desync the cache from the block's {@code blockships:wheel_id} PDC with nothing to notice.
      */
-    public void updateBlockLocation(Location newLocation, BlockFace newFacing) {
+    void updateBlockLocation(Location newLocation, BlockFace newFacing) {
         this.blockLocation = newLocation.clone();
         this.facing = newFacing;
     }

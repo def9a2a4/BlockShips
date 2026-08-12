@@ -49,10 +49,22 @@ public class ShipWheelManager {
      * could never be disassembled again (P2). A {@code put} under a fresh id evicts nothing.
      *
      * <p>{@code ShipWheelData.blockLocation} is now a <i>cache</i> of where the block currently is; the
-     * block's own {@code blockships:wheel_id} PDC is the truth. A stale cache is expected and self-heals (see
-     * {@link #getWheelAtBlock}); it is never treated as corruption.
+     * block's own {@code blockships:wheel_id} PDC is the truth. A stale cache is expected; it is never
+     * treated as corruption. (Phase 2A adds the PDC-first resolver that acts on that.)
      */
     private final Map<UUID, ShipWheelData> placedWheels;
+
+    /**
+     * Rows from ship_wheels.yml that could not be turned into a {@link ShipWheelData} — almost always
+     * because their world had not been loaded yet, occasionally because they duplicate an id or a cell.
+     * Held verbatim and re-emitted by {@link #saveAll()} so that saving is never destructive.
+     *
+     * <p>These rows are <b>not</b> re-parsed when their world later loads: {@link #loadAll()} runs once from
+     * plugin enable and there is no {@code WorldLoadEvent} hook. A wheel in a late-loading world therefore
+     * survives the file but stays non-functional until the next restart. That is a deliberate, documented
+     * limitation — the point of this list is to stop the data from being deleted, not to hot-recover it.
+     */
+    private final List<Map<String, Object>> unresolvedRows = new ArrayList<>();
 
     // Particle colors for ship detection visualization
     private static final Color PARTICLE_WHITE = Color.fromRGB(255, 255, 255);
@@ -150,25 +162,60 @@ public class ShipWheelManager {
 
         List<Map<?, ?>> wheelList = config.getMapList("wheels");
         int loaded = 0;
-        int failed = 0;
+        int quarantined = 0;
+        // Cells already claimed this load. Location keying used to merge same-cell rows silently; id keying
+        // will not, so without this both survive forever and inflate /blockships stats.
+        Set<String> seenCells = new HashSet<>();
 
         for (Map<?, ?> map : wheelList) {
+            Map<String, Object> row = copyRow(map);
             try {
-                @SuppressWarnings("unchecked")
-                ShipWheelData data = ShipWheelData.fromMap((Map<String, Object>) map);
-                if (data != null) {
-                    placedWheels.put(locationKey(data.getBlockLocation()), data);
-                    loaded++;
-                } else {
-                    failed++;  // World doesn't exist
+                ShipWheelData data = ShipWheelData.fromMap(row);
+                if (data == null) {
+                    // World not loaded (or otherwise unresolvable). Keep the row verbatim.
+                    unresolvedRows.add(row);
+                    quarantined++;
+                    continue;
                 }
+                // Duplicate id (copied ship_wheels.yml, cloned world): the second put would silently evict
+                // the first. Do NOT re-mint the later one — the block in the world still carries the old id,
+                // so re-minting manufactures a record that can never resolve. Quarantine it instead.
+                if (placedWheels.containsKey(data.getWheelId())) {
+                    plugin.getLogger().warning("Duplicate wheel id " + data.getWheelId()
+                        + " in " + WHEELS_FILE + "; keeping the first and quarantining the later row.");
+                    unresolvedRows.add(row);
+                    quarantined++;
+                    continue;
+                }
+                String cell = locationKey(data.getBlockLocation());
+                if (!seenCells.add(cell)) {
+                    plugin.getLogger().warning("Two wheels recorded at " + cell
+                        + "; keeping the first and quarantining the later row.");
+                    unresolvedRows.add(row);
+                    quarantined++;
+                    continue;
+                }
+                placedWheels.put(data.getWheelId(), data);
+                loaded++;
             } catch (Exception e) {
+                // Also non-destructive: a row that throws mid-parse used to be dropped permanently.
                 plugin.getLogger().warning("Failed to load ship wheel: " + e.getMessage());
-                failed++;
+                unresolvedRows.add(row);
+                quarantined++;
             }
         }
 
-        plugin.getLogger().info("Loaded " + loaded + " ship wheels" + (failed > 0 ? " (" + failed + " failed)" : ""));
+        plugin.getLogger().info("Loaded " + loaded + " ship wheels"
+            + (quarantined > 0 ? " (" + quarantined + " unresolved, preserved on save)" : ""));
+    }
+
+    /** Defensive copy of a raw config row into the shape {@link ShipWheelData#fromMap} and saveAll want. */
+    private static Map<String, Object> copyRow(Map<?, ?> raw) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> e : raw.entrySet()) {
+            if (e.getKey() != null) row.put(e.getKey().toString(), e.getValue());
+        }
+        return row;
     }
 
     /**
@@ -177,6 +224,28 @@ public class ShipWheelManager {
      */
     private static String locationKey(Location loc) {
         return loc.getWorld().getName() + ":" + loc.getBlockX() + ":" + loc.getBlockY() + ":" + loc.getBlockZ();
+    }
+
+    /**
+     * The wheel whose <i>cached</i> cell is {@code cell}, or null.
+     *
+     * <p>A linear scan, deliberately — not a maintained reverse index. An index would need updating at every
+     * mutation site and would become a second source of truth that could authorise the wrong block; this
+     * cannot desync. It is also far cheaper than the {@code getState()} that any PDC read on the same call
+     * path already pays, and the class already scans on interactive paths ({@link #getWheelByShipUUID},
+     * {@link #getNearestWheel}).
+     *
+     * <p>The cached cell is a hint, not identity. Phase 2A resolves blocks by their {@code wheel_id} PDC and
+     * this becomes a fallback for wheels that predate the stamp.
+     */
+    private @Nullable ShipWheelData byCachedCell(Location cell) {
+        if (cell == null || cell.getWorld() == null) return null;
+        String key = locationKey(cell);
+        for (ShipWheelData w : placedWheels.values()) {
+            Location bl = w.getBlockLocation();
+            if (bl != null && bl.getWorld() != null && key.equals(locationKey(bl))) return w;
+        }
+        return null;
     }
 
     /**
@@ -197,7 +266,7 @@ public class ShipWheelManager {
             return false;
         }
 
-        placedWheels.put(locationKey(location), wheelData);
+        placedWheels.put(wheelData.getWheelId(), wheelData);
         // The block is stamped by this point, so a crash before the next save would leave a marked block with
         // no record. Persist immediately rather than waiting for some unrelated path to save.
         saveAll();
@@ -208,8 +277,9 @@ public class ShipWheelManager {
      * Removes a ship wheel at the given location.
      */
     public void removeWheel(Location location) {
-        ShipWheelData wheelData = placedWheels.remove(locationKey(location));
+        ShipWheelData wheelData = byCachedCell(location);
         if (wheelData != null) {
+            placedWheels.remove(wheelData.getWheelId());
             // If assembled, destroy the ship too
             if (wheelData.isAssembled()) {
                 ShipInstance ship = ShipRegistry.byId(wheelData.getAssembledShipUUID());
@@ -226,14 +296,16 @@ public class ShipWheelManager {
      * Use this instead of removeWheel() when the ship is already destroyed/disassembled.
      */
     public void breakWheelBlock(Location location) {
-        ShipWheelData wheelData = placedWheels.remove(locationKey(location));
+        ShipWheelData wheelData = byCachedCell(location);
         if (wheelData == null) return;
+        placedWheels.remove(wheelData.getWheelId());
 
         // Drop the wheel's glue before the block goes. Setting the cell to AIR destroys the skull tile
         // entity and its PDC anyway, so this is belt-and-braces — but it also drops the cached hull
         // connectors, which nothing else would.
         ShipGlue.clear(location.getBlock());
         ShipWheelAnchors.forget(location.getBlock());
+        ShipWheelMenu.forgetDockedThrust(location);
 
         // Drop ship wheel item
         org.bukkit.World world = location.getWorld();
@@ -251,10 +323,12 @@ public class ShipWheelManager {
      * Used when a ship is fully destroyed so the wheel is lost along with the ship.
      */
     public void destroyWheelBlock(Location location) {
-        ShipWheelData wd = placedWheels.remove(locationKey(location));
+        ShipWheelData wd = byCachedCell(location);
         if (wd == null) return;
+        placedWheels.remove(wd.getWheelId());
         ShipGlue.clear(location.getBlock());
         ShipWheelAnchors.forget(location.getBlock());
+        ShipWheelMenu.forgetDockedThrust(location);
         if (location.getWorld() != null) {
             location.getBlock().setType(Material.AIR);
         }
@@ -265,7 +339,7 @@ public class ShipWheelManager {
      * Gets wheel data at a location, if it exists.
      */
     public ShipWheelData getWheelAt(Location location) {
-        return placedWheels.get(locationKey(location));
+        return byCachedCell(location);
     }
 
     /**
@@ -505,14 +579,15 @@ public class ShipWheelManager {
     }
 
     /**
-     * Updates the tracked location of a wheel after disassembly at a new position.
-     * Removes old map entry and adds new one.
+     * Moves a wheel's <i>cached</i> cell after it lands somewhere new.
+     *
+     * <p>No map surgery: {@code placedWheels} is keyed by wheel id, which does not change when the block
+     * moves, so the old remove/re-put pair was a no-op on the same key. This is the only caller of
+     * {@link ShipWheelData#updateBlockLocation}, which is package-private so the cache cannot be moved
+     * behind the manager's back.
      */
-    private void updateWheelLocation(ShipWheelData wheelData, Location newLocation, BlockFace newFacing) {
-        Location oldLocation = wheelData.getBlockLocation();
-        placedWheels.remove(locationKey(oldLocation));
+    private void relocate(ShipWheelData wheelData, Location newLocation, BlockFace newFacing) {
         wheelData.updateBlockLocation(newLocation, newFacing);
-        placedWheels.put(locationKey(newLocation), wheelData);
     }
 
     /**
@@ -951,12 +1026,12 @@ public class ShipWheelManager {
                 wWorld.dropItemNaturally(newWheelLocation.clone().add(0.5, 0.5, 0.5),
                     bsp.getDisplayShip().createShipWheelItem());
             }
-            placedWheels.remove(locationKey(wheelData.getBlockLocation()));
+            placedWheels.remove(wheelData.getWheelId());
             saveAll();
         } else {
             float rotationDelta = currentYaw - model.assemblyYaw;
             BlockFace newFacing = BlockStructureScanner.rotateBlockFace(wheelData.getFacing(), rotationDelta);
-            updateWheelLocation(wheelData, newWheelLocation, newFacing);
+            relocate(wheelData, newWheelLocation, newFacing);
         }
 
         // Destroy the ship
@@ -1230,6 +1305,16 @@ public class ShipWheelManager {
         // glued cells assembly will use.
         Set<Location> shipBlocks;
         if (wheelData.isLocked()) {
+            // No wheel, no ship — the same guard scanFrozen applies, and the same one the flood-fill path
+            // gained in ShipDetector. Without it this branch was the hole that guard did not cover: an
+            // assembled-but-unresolvable wheel (its chunk unloaded, so the early return above did not
+            // fire) reads an aired-out cell, finds no glue on the skull that is not there, and reports a
+            // one-block ship — then overwrites the wheel's stored detection stats with 1/0/0, clobbering
+            // the real figures the menu reads.
+            if (wheelLoc.getBlock().getType().isAir()) {
+                player.sendMessage("§cNo ship wheel at that location — it may still be assembled or loading.");
+                return false;
+            }
             shipBlocks = new HashSet<>();
             for (Location c : ShipGlue.rawGlueCells(wheelLoc.getBlock())) {
                 if (!c.getBlock().getType().isAir()) shipBlocks.add(c);

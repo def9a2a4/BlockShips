@@ -1,5 +1,7 @@
 # Bumped by ConfigMigration when a shipped default changes. Do not edit by hand.
-config-version: 1
+# Keep in step with ConfigMigration.CURRENT_VERSION: a fresh install already HAS every current default,
+# so shipping a lower number here just makes the plugin re-save this file on its first boot for nothing.
+config-version: 2
 
 # BlockShips Plugin Configuration
 
