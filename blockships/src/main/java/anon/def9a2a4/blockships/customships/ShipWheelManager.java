@@ -114,6 +114,11 @@ public class ShipWheelManager {
         for (ShipWheelData data : placedWheels.values()) {
             wheelList.add(data.toMap());
         }
+        // Re-emit rows that could not be parsed at load — almost always because their world had not been
+        // loaded yet. Without this, saving is destructive: loadAll drops those rows and the very next save
+        // rewrites the file without them, permanently deleting every wheel in a world that a world manager
+        // enables after us.
+        wheelList.addAll(unresolvedRows);
         config.set("wheels", wheelList);
 
         try {

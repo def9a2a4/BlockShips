@@ -61,6 +61,21 @@ public class ShipDetector {
         Queue<Location> frontier = new LinkedList<>();
         boolean exceededLimit = false;
 
+        // No wheel, no ship. The seed used to be added unconditionally, which meant a scan started from
+        // a cell whose wheel block was gone — an assembled ship (the hull is aired out and the skull
+        // removed), or a wheel broken out of band — did not fail. It SUCCEEDED, seeded from air, and
+        // then expanded into whatever allow-listed blocks happened to sit next to the empty cell: a
+        // dock, a pier, someone else's deck. Callers saw a valid result and reported another
+        // structure's blocks as this ship's.
+        //
+        // This is the same guard BlockStructureScanner.scanFrozen already applies, and the same one the
+        // forcedMembers loop below has always applied to every cell except this one. Two callers depend
+        // on it — the wheel menu's docked readout and defCoreLib's glue-anchor connector provider —
+        // and neither can check for itself, because both legitimately run while the ship is elsewhere.
+        if (startLocation.getBlock().getType().isAir()) {
+            return new InternalScanResult(shipBlocks, false, false);
+        }
+
         // Start with the initial location
         frontier.add(startLocation.clone());
         shipBlocks.add(startLocation.clone());
