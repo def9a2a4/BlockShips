@@ -166,6 +166,14 @@ public class ShipWheelManager {
      */
     public void loadAll() {
         File wheelsFile = new File(plugin.getDataFolder(), WHEELS_FILE);
+
+        // Sweep a temp file left by a crash between saveAll's write and its rename. The rename is what
+        // publishes a write, so an orphaned temp is never the live copy and deleting it is correct.
+        File staleTmp = new File(plugin.getDataFolder(), WHEELS_FILE + ".tmp");
+        if (staleTmp.exists() && !staleTmp.delete()) {
+            plugin.getLogger().warning("Could not delete stale " + staleTmp.getName());
+        }
+
         if (!wheelsFile.exists()) {
             return;  // No wheels to load
         }
