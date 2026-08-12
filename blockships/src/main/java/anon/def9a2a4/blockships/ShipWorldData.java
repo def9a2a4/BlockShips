@@ -5,9 +5,13 @@ import org.bukkit.World;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -72,6 +76,16 @@ public class ShipWorldData {
             if (legacyChunks.exists()) legacyChunks.delete();
 
             File shipsDir = new File(worldDir, "ships");
+            File[] all = shipsDir.listFiles();
+            if (all == null) continue;
+            // Sweep temp files left by a crash between writeConfigAtomic's write and its rename. They are
+            // never newer than the target in any usable sense — the rename is what publishes a write — so
+            // deleting is correct. Note this does NOT match *.yml.corrupt, which is evidence and must stay.
+            for (File f : all) {
+                if (f.getName().endsWith(".tmp") && !f.delete()) {
+                    plugin.getLogger().warning("Could not delete stale temp file " + f.getAbsolutePath());
+                }
+            }
             File[] shipFiles = shipsDir.listFiles((d, name) -> name.endsWith(".yml"));
             if (shipFiles == null) continue;
             for (File f : shipFiles) {
@@ -82,6 +96,49 @@ public class ShipWorldData {
                     // stray non-UUID filename — skip
                 }
             }
+        }
+    }
+
+    /** Distinguishes concurrent temp files. See {@link #writeConfigAtomic}. */
+    private static final java.util.concurrent.atomic.AtomicLong TMP_SEQ = new java.util.concurrent.atomic.AtomicLong();
+
+    /**
+     * Writes {@code cfg} to {@code target} atomically: full write to a temp sibling, then an atomic rename.
+     *
+     * <p>{@code YamlConfiguration.save(File)} truncates in place, so a crash, kill or ENOSPC mid-write left a
+     * truncated sidecar — and {@code loadConfiguration} then swallowed the parse error and returned an empty
+     * config, which read as "this ship has no id" and got its entities reaped. A rename is all-or-nothing:
+     * the target is either the old file or the new one, never a prefix of either.
+     *
+     * <p>The temp name carries a unique suffix because two writers can target the same sidecar — the sync
+     * path on the main thread and {@link #saveShipMetadataAsync} on {@code BlockShips-IO}. A shared fixed
+     * temp name would let them interleave bytes into one file and then rename the wreckage over a good
+     * target. With distinct temps the worst case is a lost update (last rename wins), and since both writers
+     * snapshot full ship state on the main thread, that is at worst slightly stale — never corrupt.
+     *
+     * @return true if {@code target} now holds the new content.
+     */
+    private boolean writeConfigAtomic(File target, YamlConfiguration cfg) {
+        File dir = target.getParentFile();
+        if (dir != null && !dir.exists() && !dir.mkdirs()) {
+            plugin.getLogger().severe("Cannot create directory for " + target.getAbsolutePath());
+            return false;
+        }
+        File tmp = new File(dir, target.getName() + "." + Long.toHexString(TMP_SEQ.getAndIncrement()) + ".tmp");
+        try {
+            cfg.save(tmp);
+            try {
+                Files.move(tmp.toPath(), target.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException notAtomic) {
+                Files.move(tmp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
+            return true;
+        } catch (IOException e) {
+            plugin.getLogger().severe("Failed to write " + target.getName() + ": " + e.getMessage());
+            // The target is untouched, so the previous good content survives.
+            if (tmp.exists() && !tmp.delete()) tmp.deleteOnExit();
+            return false;
         }
     }
 
@@ -105,12 +162,13 @@ public class ShipWorldData {
         YamlConfiguration config = buildShipMetadataConfig(ship);
         config.set("entity_count", ship.countEntities());
 
-        try {
-            config.save(shipFile);
+        // Deliberately SYNCHRONOUS, not routed onto ioExecutor: migrateNativeShip writes the migrated marker
+        // through here and reapStragglerEntities reads it back in the same chunk iteration
+        // (migrateLoadedChunks runs the migrator then the reaper). Deferring the write would make the reaper
+        // read the pre-migration sidecar and skip the stragglers it exists to sweep.
+        if (writeConfigAtomic(shipFile, config)) {
             // Populate cache on successful save
             metadataExistsCache.put(world.getName() + ":" + ship.id, true);
-        } catch (IOException e) {
-            plugin.getLogger().severe("Failed to save ship metadata for " + ship.id + ": " + e.getMessage());
         }
     }
 
@@ -139,8 +197,9 @@ public class ShipWorldData {
             try {
                 File shipFile = getShipFile(worldName, shipId);
                 shipFile.getParentFile().mkdirs();
-                config.save(shipFile);
-                metadataExistsCache.put(worldName + ":" + shipId, true);
+                if (writeConfigAtomic(shipFile, config)) {
+                    metadataExistsCache.put(worldName + ":" + shipId, true);
+                }
             } catch (Exception e) {
                 plugin.getLogger().severe("Failed to async save ship metadata for " + shipId + ": " + e.getMessage());
             } finally {
@@ -206,26 +265,93 @@ public class ShipWorldData {
         pendingIOOperations.incrementAndGet();
         return CompletableFuture.supplyAsync(() -> {
             try {
-                return loadShipMetadataSync(worldName, shipId);
+                return loadShipMetadataSync(worldName, shipId).state();
             } finally {
                 pendingIOOperations.decrementAndGet();
             }
         }, ioExecutor);
     }
 
+    /** Outcome of reading one sidecar. See {@link #loadShipMetadataChecked}. */
+    public enum LoadStatus {
+        /** Parsed cleanly; {@code state} is non-null. */
+        OK,
+        /** No file on disk. The ship genuinely has no sidecar. */
+        ABSENT,
+        /** I/O error reading the file (permissions, a disk blip, a concurrent write). Say nothing about
+         *  the ship's validity — retry on the next load. Never destructive. */
+        TRANSIENT,
+        /** The file exists but is unusable: unparseable YAML, or a missing/blank/mismatched {@code id}. */
+        CORRUPT
+    }
+
+    /** A sidecar read result. {@code state} is non-null only when {@code status == OK}. */
+    public record MetadataLoad(LoadStatus status, @Nullable ShipPersistence.ShipState state) {
+        private static final MetadataLoad ABSENT = new MetadataLoad(LoadStatus.ABSENT, null);
+        private static final MetadataLoad TRANSIENT = new MetadataLoad(LoadStatus.TRANSIENT, null);
+        private static final MetadataLoad CORRUPT = new MetadataLoad(LoadStatus.CORRUPT, null);
+    }
+
     /**
      * Loads ship metadata from per-world storage (sync version for internal use).
-     * Returns a ShipState without position data.
+     *
+     * <p>Distinguishes ABSENT from CORRUPT from TRANSIENT, which the old signature could not: it returned
+     * null only for a missing file, and {@code YamlConfiguration.loadConfiguration} swallows both I/O and
+     * parse errors into an <i>empty</i> config. A truncated sidecar therefore produced a config whose
+     * {@code id} was null and NPE'd on {@code UUID.fromString} — thrown from the reaper, on the main thread,
+     * inside a chunk-load event. Callers that destroy things must be able to fail closed on CORRUPT.
      */
-    private ShipPersistence.ShipState loadShipMetadataSync(String worldName, UUID shipId) {
+    private MetadataLoad loadShipMetadataSync(String worldName, UUID shipId) {
         File shipFile = getShipFile(worldName, shipId);
         if (!shipFile.exists()) {
-            return null;
+            return MetadataLoad.ABSENT;
         }
 
-        YamlConfiguration config = YamlConfiguration.loadConfiguration(shipFile);
+        YamlConfiguration config = new YamlConfiguration();
+        try {
+            config.load(shipFile);
+        } catch (IOException e) {
+            // Transient: says nothing about whether the ship is valid. Do NOT quarantine, do NOT reap.
+            plugin.getLogger().warning("Could not read ship sidecar " + shipId + " (world=" + worldName
+                + "): " + e.getMessage() + " — treating as a transient error, will retry");
+            return MetadataLoad.TRANSIENT;
+        } catch (org.bukkit.configuration.InvalidConfigurationException e) {
+            plugin.getLogger().severe("Ship sidecar " + shipId + " (world=" + worldName
+                + ") is not valid YAML: " + e.getMessage());
+            return MetadataLoad.CORRUPT;
+        }
 
         String id = config.getString("id");
+        if (id == null || id.isBlank()) {
+            plugin.getLogger().severe("Ship sidecar " + shipId + " (world=" + worldName + ") has no id");
+            return MetadataLoad.CORRUPT;
+        }
+        UUID parsedId;
+        try {
+            parsedId = UUID.fromString(id.trim());
+        } catch (IllegalArgumentException e) {
+            plugin.getLogger().severe("Ship sidecar " + shipId + " (world=" + worldName
+                + ") has an unreadable id '" + id + "'");
+            return MetadataLoad.CORRUPT;
+        }
+        if (!parsedId.equals(shipId)) {
+            // Silently accepted before, building a ShipState under the wrong UUID.
+            plugin.getLogger().severe("Ship sidecar " + shipId + " (world=" + worldName
+                + ") declares a different id " + parsedId + "; refusing to use it");
+            return MetadataLoad.CORRUPT;
+        }
+
+        try {
+            return new MetadataLoad(LoadStatus.OK, readState(config, worldName, parsedId));
+        } catch (Exception e) {
+            plugin.getLogger().severe("Ship sidecar " + shipId + " (world=" + worldName
+                + ") could not be read: " + e.getMessage());
+            return MetadataLoad.CORRUPT;
+        }
+    }
+
+    /** Builds the {@link ShipPersistence.ShipState} from an already-validated config. */
+    private ShipPersistence.ShipState readState(YamlConfiguration config, String worldName, UUID id) {
         String shipType = config.getString("ship_type", "smallship");
         String modelPath = config.getString("model_path");
         String woodType = config.getString("wood_type", "OAK");
@@ -261,7 +387,7 @@ public class ShipWorldData {
 
         // Create ShipState without position (position comes from recovered vehicle)
         ShipPersistence.ShipState state = new ShipPersistence.ShipState(
-            UUID.fromString(id),
+            id,
             shipType,
             modelPath,
             worldName,
@@ -280,10 +406,68 @@ public class ShipWorldData {
 
     /**
      * Loads ship metadata from per-world storage (synchronous).
-     * Returns a ShipState without position data.
+     * Returns a ShipState without position data, or null if it could not be read for any reason.
+     *
+     * <p>Callers that DESTROY something on a null must use {@link #loadShipMetadataChecked} instead and
+     * fail closed on CORRUPT/TRANSIENT — a null here conflates "this ship has no sidecar" with "we could
+     * not read its sidecar", and reaping on the latter deletes a live ship.
      */
     public ShipPersistence.ShipState loadShipMetadata(World world, UUID shipId) {
+        return loadShipMetadataSync(world.getName(), shipId).state();
+    }
+
+    /** As {@link #loadShipMetadata}, but reports WHY there is no state. */
+    public MetadataLoad loadShipMetadataChecked(World world, UUID shipId) {
         return loadShipMetadataSync(world.getName(), shipId);
+    }
+
+    /**
+     * One-shot enable-time sweep: rename every unreadable sidecar to {@code <uuid>.yml.corrupt} (bytes
+     * preserved) and drop its id from {@link #persistedShipIds}.
+     *
+     * <p>Must run AFTER the wheel manager's {@code loadAll} and BEFORE {@code forceRecoverDelegatedShips}
+     * / {@code migrateLoadedChunks}, which both consume sidecars. Quarantine deliberately does NOT live in
+     * the shared loader: the migrator runs before the reaper on the same chunk, so a loader-side rename
+     * would flip CORRUPT to ABSENT between them and the reaper would delete a live ship's entities.
+     * TRANSIENT failures are left strictly alone — renaming a good file on a disk blip would create the
+     * data-loss path this is meant to close.
+     *
+     * @return the number of sidecars quarantined.
+     */
+    public int quarantineCorruptSidecars() {
+        if (!worldsFolder.exists()) return 0;
+        File[] worldDirs = worldsFolder.listFiles(File::isDirectory);
+        if (worldDirs == null) return 0;
+        int quarantined = 0;
+        for (File worldDir : worldDirs) {
+            File[] shipFiles = new File(worldDir, "ships").listFiles((d, name) -> name.endsWith(".yml"));
+            if (shipFiles == null) continue;
+            for (File f : shipFiles) {
+                String name = f.getName();
+                UUID id;
+                try {
+                    id = UUID.fromString(name.substring(0, name.length() - 4));
+                } catch (IllegalArgumentException ignored) {
+                    continue;  // stray non-UUID filename — not ours to judge
+                }
+                if (loadShipMetadataSync(worldDir.getName(), id).status() != LoadStatus.CORRUPT) continue;
+                File dest = new File(f.getParentFile(), name + ".corrupt");
+                if (f.renameTo(dest)) {
+                    // Otherwise resolveWheelState keeps reading UNLOADED_RECOVERABLE forever and the wheel
+                    // can never be assembled or reaped.
+                    persistedShipIds.remove(id);
+                    metadataExistsCache.put(worldDir.getName() + ":" + id, false);
+                    quarantined++;
+                    plugin.getLogger().severe("Quarantined corrupt ship sidecar " + id + " (world="
+                        + worldDir.getName() + ") to " + dest.getName() + "; its blocks are NOT recoverable "
+                        + "from it, but nothing was deleted.");
+                } else {
+                    plugin.getLogger().severe("Could not quarantine corrupt ship sidecar " + id
+                        + " (world=" + worldDir.getName() + "); leaving it in place.");
+                }
+            }
+        }
+        return quarantined;
     }
 
     /**

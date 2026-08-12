@@ -28,6 +28,9 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 
 import java.io.File;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 
 /**
@@ -133,12 +136,27 @@ public class ShipWheelManager {
         wheelList.addAll(unresolvedRows);
         config.set("wheels", wheelList);
 
+        // Atomic: write a temp sibling, then rename. config.save() truncates in place, so a crash, kill or
+        // ENOSPC mid-write left a truncated ship_wheels.yml — and loadConfiguration swallows the parse error
+        // and hands back an EMPTY config, so the next boot loaded zero wheels and the very next save wrote
+        // that empty set back. Every wheel on the server, gone, with no error a player would ever see.
+        //
+        // A fixed temp name is safe here (unlike the sidecars): saveAll is main-thread only.
+        File tmp = new File(wheelsFile.getParentFile(), WHEELS_FILE + ".tmp");
         try {
-            config.save(wheelsFile);
+            config.save(tmp);
+            try {
+                Files.move(tmp.toPath(), wheelsFile.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException notAtomic) {
+                Files.move(tmp.toPath(), wheelsFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
             plugin.getLogger().info("Saved " + wheelList.size() + " ship wheels to " + WHEELS_FILE);
             return true;
         } catch (Exception e) {
             plugin.getLogger().severe("Failed to save ship wheels: " + e.getMessage());
+            // The live file is untouched — the previous good content survives.
+            if (tmp.exists() && !tmp.delete()) tmp.deleteOnExit();
             return false;
         }
     }

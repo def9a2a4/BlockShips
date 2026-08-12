@@ -109,6 +109,17 @@ public class BlockShipsPlugin extends JavaPlugin {
         // wheel manager exists, since the provider looks wheels up through it.
         anon.def9a2a4.blockships.customships.ShipWheelAnchors.register(this);
 
+        // Quarantine unreadable ship sidecars ONCE, here — after loadAll, and before anything that consumes a
+        // sidecar. Both consumers below (forceRecoverDelegatedShips -> reconstructDelegatedShip, and
+        // migrateLoadedChunks -> migrateNativeShip/reapStragglerEntities) run the migrator before the reaper
+        // on the same chunk, so quarantining from inside the shared loader would flip CORRUPT to ABSENT
+        // between them and the reaper would delete a live ship's entities.
+        int quarantined = displayShip.getShipWorldData().quarantineCorruptSidecars();
+        if (quarantined > 0) {
+            getLogger().severe("Quarantined " + quarantined + " corrupt ship sidecar(s) to *.yml.corrupt. "
+                + "Those ships cannot be rebuilt, but nothing was deleted and no entities were reaped.");
+        }
+
         // M5: rebuild delegated custom ships whose mechanisms defCoreLib recovered from chunks that loaded
         // (fired their EntitiesLoadEvent) before this plugin enabled — those recovered events had no listener
         // yet. Done AFTER loadAll so the wheels are available for stat recomputation on reconstruction.

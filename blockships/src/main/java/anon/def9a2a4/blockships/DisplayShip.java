@@ -119,8 +119,18 @@ public class DisplayShip implements Listener {
     public void migrateLoadedChunks() {
         for (World world : Bukkit.getWorlds()) {
             for (org.bukkit.Chunk chunk : world.getLoadedChunks()) {
-                migrateNativeShipsInChunk(world, chunk);
-                reapStragglerEntities(world, chunk);
+                // Defense in depth: this runs during onEnable, and reapStragglerEntities used to be able to
+                // throw (NPE on a torn sidecar) — which aborted the loop for every remaining chunk AND every
+                // remaining world, leaving the plugin half-enabled. The 3-state loader is the real fix; this
+                // stops any future throw here from taking the whole enable down with it.
+                try {
+                    migrateNativeShipsInChunk(world, chunk);
+                    reapStragglerEntities(world, chunk);
+                } catch (Throwable t) {
+                    plugin.getLogger().log(java.util.logging.Level.SEVERE,
+                        "Enable-time sweep failed for chunk " + chunk.getX() + "," + chunk.getZ()
+                            + " in " + world.getName() + " — continuing with the remaining chunks", t);
+                }
             }
         }
     }
@@ -268,8 +278,15 @@ public class DisplayShip implements Listener {
             // distinguishes those (reap) from a still-pending native ship (leave for migrateNativeShip).
             Boolean reap = reapDecision.get(shipId);
             if (reap == null) {
-                ShipPersistence.ShipState st = shipWorldData.loadShipMetadata(world, shipId);
-                reap = (st == null) || st.migrated;             // orphan (no sidecar) or already-delegated straggler
+                // FAIL CLOSED. Only a genuinely ABSENT sidecar means "orphan"; a sidecar we could not READ
+                // (torn write, bad YAML, I/O blip) used to arrive here as a plain null and reap a live ship's
+                // entities. CORRUPT ones are quarantined once at enable, not here.
+                ShipWorldData.MetadataLoad load = shipWorldData.loadShipMetadataChecked(world, shipId);
+                reap = switch (load.status()) {
+                    case ABSENT -> true;                        // no sidecar — orphan
+                    case OK -> load.state().migrated;           // already-delegated straggler
+                    case CORRUPT, TRANSIENT -> false;           // unreadable — never destructive
+                };
                 reapDecision.put(shipId, reap);
             }
             if (!reap) continue;                                // pending migration — leave for migrateNativeShip
@@ -332,8 +349,19 @@ public class DisplayShip implements Listener {
             reapNativeEntities(shipId, root);
             return;
         }
-        ShipPersistence.ShipState state = shipWorldData.loadShipMetadata(world, shipId);
-        if (state == null) return;                       // no sidecar — orphan cleanup's job, not migration's
+        ShipWorldData.MetadataLoad load = shipWorldData.loadShipMetadataChecked(world, shipId);
+        if (load.status() != ShipWorldData.LoadStatus.OK) {
+            // ABSENT — orphan cleanup's job, not migration's. CORRUPT/TRANSIENT — we cannot know what this
+            // ship was, so migrate nothing and destroy nothing; the entities stay for a later retry (and the
+            // reaper is fail-closed on the same statuses, so they will not be swept out from under us).
+            if (load.status() != ShipWorldData.LoadStatus.ABSENT) {
+                logOnce(shipId, java.util.logging.Level.WARNING,
+                    "cannot be migrated: its sidecar is " + load.status()
+                        + ". Native entities left in place for retry.", null);
+            }
+            return;
+        }
+        ShipPersistence.ShipState state = load.state();
         if (state.migrated) {                            // delegated sidecar — this native root is a straggler
             reapNativeEntities(shipId, root);
             return;
@@ -550,12 +578,16 @@ public class DisplayShip implements Listener {
             return;
         }
         World world = vehicle.getWorld();
-        ShipPersistence.ShipState state = shipWorldData.loadShipMetadata(world, mechId);
-        if (state == null) {
+        ShipWorldData.MetadataLoad load = shipWorldData.loadShipMetadataChecked(world, mechId);
+        if (load.status() != ShipWorldData.LoadStatus.OK) {
+            // The mechanism is live either way — it just has no ShipInstance wrapped around it. That is the
+            // "orphan" WS1's disassemble path exists to land. Name the actual reason: saying "missing" for a
+            // corrupt or unreadable file sends an operator looking for the wrong thing.
             plugin.getLogger().warning("Delegated ship " + mechId + " recovered but its ships/" + mechId
-                + ".yml sidecar is missing; cannot rebuild the ShipInstance");
+                + ".yml sidecar is " + load.status() + "; cannot rebuild the ShipInstance");
             return;
         }
+        ShipPersistence.ShipState state = load.state();
         ShipModel model = loadModelForState(state, null);  // one-shot recovery: log every time (caller adds context below)
         if (model == null) {
             plugin.getLogger().warning("Delegated ship " + mechId + " recovered but its model could not be loaded");
