@@ -220,8 +220,11 @@ public class ShipPhysics {
         // fast the ship is already moving, and effectiveMaxSpeed is only assigned below.
         float prevTop = Math.max(0.0001f, effectiveMaxSpeed > 0 ? effectiveMaxSpeed : config.maxSpeed);
         float speedFrac = Math.abs(currentSpeed) / prevTop;
+        // Call liveThrust() EXACTLY ONCE per computeEffectiveStats: it is not a getter, it advances the
+        // spool ramp by one step each time. A second call here would spool at double rate.
+        anon.def9a2a4.blockships.ShipThrust.Totals live = liveThrust();
         anon.def9a2a4.blockships.ShipStats stats =
-            anon.def9a2a4.blockships.ShipStats.of(config, ship.model, liveThrust(), speedFrac);
+            anon.def9a2a4.blockships.ShipStats.of(config, ship.model, live, speedFrac);
         float ratio = stats.forwardRatio;
         float turnRatio = stats.turnRatio;
         this.lastLiftRatio = stats.liftRatio;
@@ -259,7 +262,7 @@ public class ShipPhysics {
         float verticalRatio = Math.min(1.0f,
             Math.max(0f, -density) * config.verticalDensityScale
             + ship.model.sailPower * config.sailVerticalFactor / vMass
-            + (float) liveThrust().vertical() / vMass);
+            + (float) live.vertical() / vMass);
 
         effectiveMaxVerticalSpeed = config.computeStat(verticalRatio, config.maxVerticalSpeed,
             config.floorMaxVerticalSpeed, config.capMaxVerticalSpeed);
