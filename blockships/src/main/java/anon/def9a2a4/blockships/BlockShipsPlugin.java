@@ -97,6 +97,9 @@ public class BlockShipsPlugin extends JavaPlugin {
         // hence its position after initialize().
         anon.def9a2a4.blockships.customships.ShipWheelBlockType.register(this);
 
+        // List the prefab ships in the DefCoreLib catalog (flat under "blockships"), admin-give only.
+        anon.def9a2a4.blockships.customships.PrefabShipCatalog.register(this);
+
         // Initialize ShipWheelManager for custom block ships and load saved wheels
         shipWheelManager = new ShipWheelManager(this);
         shipWheelManager.loadAll();

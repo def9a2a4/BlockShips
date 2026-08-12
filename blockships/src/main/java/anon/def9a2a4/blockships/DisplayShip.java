@@ -52,6 +52,15 @@ import java.util.stream.Collectors;
 
 public class DisplayShip implements Listener {
 
+    /**
+     * Cap on the downward velocity a dismounting player inherits from the ship, blocks/tick.
+     *
+     * <p>0.4 is roughly vanilla terminal-ish over a short drop and well inside survivable; the ship
+     * itself can now descend at {@code max-sink-speed} (0.5 by default, and faster while accelerating),
+     * which is not something to hand to a player whose fall distance was just reset to zero.
+     */
+    private static final float DISMOUNT_MAX_DOWNWARD_VELOCITY = 0.4f;
+
     private final JavaPlugin plugin;
     private final NamespacedKey BANNER_DATA_KEY;
     private final NamespacedKey WOOD_TYPE_KEY;
@@ -1705,7 +1714,13 @@ public class DisplayShip implements Listener {
                 player.teleport(safePos);
                 player.setFallDistance(0);
                 float currentSpeed = inst.physics.currentSpeed;
-                float currentYVelocity = inst.physics.currentYVelocity;
+                // Momentum handed to the player, not a launch. The point of carrying velocity over is a
+                // smooth hop-off, so the downward component is capped: a ship can now descend several
+                // times faster than it ever could before, and passing that straight to a dismounting
+                // rider — right after setFallDistance(0), so the damage clock restarts from full height
+                // — turns stepping off a descending deck into a reliable death. The DRIVER escapes this
+                // by accident (freeSeat() zeroes the velocity before this reads it); passengers do not.
+                float currentYVelocity = Math.max(inst.physics.currentYVelocity, -DISMOUNT_MAX_DOWNWARD_VELOCITY);
 
                 float yawRad = (float) Math.toRadians(-inst.physics.currentYaw);
                 double forwardX = Math.sin(yawRad) * currentSpeed;
@@ -2168,8 +2183,15 @@ public class DisplayShip implements Listener {
         BlockFace face = event.getBlockFace();
         Block targetBlock = clickedBlock.getRelative(face);
 
-        // Check if target location is valid for placement
-        if (!targetBlock.getType().isAir()) return;
+        // Check if target location is valid for placement.
+        //
+        // isAir() alone is too narrow, and returning here without cancelling is the bug: water, lava, fire,
+        // snow layers and tall grass are all replaceable but not air, so vanilla would go on to place the
+        // wheel item as a plain head. That head still carries corelib's identity key (it is on the item), so
+        // corelib adopts it while BlockShips has no record of it — an untracked look-alike that breaks into
+        // nothing and can be minted indefinitely. Placing into replaceable cells instead keeps every wheel on
+        // the tracked path, and routes MORE cells through the WorldGuard check below rather than fewer.
+        if (!targetBlock.getType().isAir() && !targetBlock.isReplaceable()) return;
 
         Player player = event.getPlayer();
 
@@ -2256,8 +2278,14 @@ public class DisplayShip implements Listener {
             }
             event.setCancelled(true);
         } else {
-            // Failed to place - revert block
+            // Reachable: placeWheel fails when the block could not be stamped with its identity (defCoreLib
+            // missing, registration failed, target not a tile entity). Cancel as well as reverting — without
+            // the cancel vanilla places a plain head here AND consumes the item, which is exactly the
+            // untracked look-alike the guard above exists to prevent.
             targetBlock.setType(Material.AIR);
+            event.setCancelled(true);
+            player.sendMessage("§cCouldn't place that ship wheel — its identity could not be written. "
+                + "Tell an admin to check the server log for a DefCoreLib registration error.");
         }
     }
 

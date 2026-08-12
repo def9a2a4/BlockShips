@@ -94,11 +94,21 @@ public final class ShipStats {
         float turn = clamp01((config.baseTurn
                               + sailPower * config.sailTurnFactor * clamp01(speedFrac)
                               + thrust.turning()) / mass);
-        // Signed total weight: a hull that is already near-buoyant needs only a little thrust, and a
-        // lighter-than-air one is airborne with none. Using clamped mass here would give buoyancy no
-        // credit at all and make a balloon as hard to lift as solid stone.
-        float lift = (float) thrust.vertical() / Math.max(1, totalWeight);
-        if (totalWeight <= 0) lift = Math.max(lift, 1.0f);
+        // Lift is measured against SIGNED weight, so buoyancy counts toward flight instead of being
+        // ignored: a hull that is already near-neutral needs only a little thrust, and a lighter-than-air
+        // one is airborne with none. 1.0 means "holds its own weight"; ABOVE 1.0 is what climbs.
+        //
+        // The neutral/buoyant branch is not a special case bolted on — it is the same quantity measured
+        // from a different baseline. At or below zero weight the hull already holds itself up, so it
+        // starts at 1.0 and every point of vertical thrust is surplus on top. Two bugs this replaces:
+        //   - `max(1, totalWeight)` made the divisor 1 for a buoyant hull, so 30 points of thrust
+        //     reported lift 30 and the HUD printed "3000%".
+        //   - `max(lift, 1.0f)` pinned a neutral hull to EXACTLY 1.0, so it hovered and could never
+        //     climb however many propellers were added — and a zero-weight hull is not an airship
+        //     either (`isAirship` needs density < 0, strictly), so nothing else rescued it.
+        float lift = totalWeight > 0
+            ? (float) thrust.vertical() / totalWeight
+            : 1.0f + (float) thrust.vertical() / mass;
 
         return new ShipStats(sailPower, mass, rawSail, cappedSail, Math.min(cappedSail, 1.0f),
                              forward, turn, lift);
@@ -138,21 +148,25 @@ public final class ShipStats {
     }
 
     /**
-     * The ratio as a percentage of "fully rigged", for player-facing display.
+     * Top speed as a percentage, for player-facing display.
      *
-     * <p>Measured against the sail cap rather than 1.0, so a ship with every sail it can usefully
-     * carry reads as 100% instead of 80%.
+     * <p>Reads {@link #forwardRatio} — the number physics actually drives {@code effectiveMaxSpeed}
+     * from — against a full 1.0, and both of those are deliberate:
+     *
+     * <p>It used to read {@link #ratio}, which is capped sails ONLY. So a ship flying on thrusters
+     * with no canvas reported the speed of the sails it did not have, and the stats page contradicted
+     * the ship underneath the player.
+     *
+     * <p>And it used to divide by {@code sail-cap-ratio} so a fully-rigged ship read 100% instead of
+     * 80%. That hid the very thing the cap exists to communicate — sails plateau, propulsion closes the
+     * gap — and it made the top of the scale depend on a config value: at the default 0.8 the maximum
+     * reading is 125%, but at 0.5 it would be 200% and every ship with a propeller would peg the top
+     * colour. 80% for full canvas is the honest reading.
      */
     public int speedPercent() {
-        return Math.round(ratio * 100);
+        return Math.round(forwardRatio * 100);
     }
 
-    /** Percentage relative to the sail cap — see {@link #speedPercent()}. */
-    public int speedPercent(ShipConfig config) {
-        return config.sailCapRatio > 0
-            ? Math.round(ratio / config.sailCapRatio * 100)
-            : speedPercent();
-    }
 
     /** Colour code for a speed percentage, shared by the two /detect readouts. */
     public static String speedColor(int speedPercent) {

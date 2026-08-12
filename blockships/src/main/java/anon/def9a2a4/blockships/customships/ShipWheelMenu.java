@@ -656,7 +656,7 @@ public class ShipWheelMenu {
                 String maxTag = info.ratio >= 1.0f ? ChatColor.AQUA + " (max)" : "";
                 lore.add(ChatColor.GRAY + "Speed: " + speedColor(speedPercent) + speedPercent + "%" + maxTag);
 
-                appendPropulsionLore(lore, info);
+                appendPropulsionLore(lore, info, config);
               }
             } else {
                 lore.add(ChatColor.GRAY + "Show ship first");
@@ -674,7 +674,7 @@ public class ShipWheelMenu {
      *
      * <p>Silent on a ship with no propulsion — a sailing boat should not have to read three zeroes.
      */
-    private static void appendPropulsionLore(List<String> lore, ShipInfo info) {
+    private static void appendPropulsionLore(List<String> lore, ShipInfo info, ShipConfig config) {
         ShipThrust.Totals t = info.thrust;
         if (t == null || t.total() <= 0) return;
 
@@ -705,11 +705,25 @@ public class ShipWheelMenu {
         lore.add(ChatColor.GRAY + "Turn: " + ratioColor(info.turnRatio)
             + String.format("%.2f", info.turnRatio) + ChatColor.DARK_GRAY + " (at rest)");
         if (t.vertical() > 0) {
+            // Three-way, matching what the flight model actually does: surplus climbs, exactly enough
+            // holds, and anything short sinks — at a rate set by how much is missing, so show that rate
+            // rather than leaving the player to infer it from a percentage.
             int liftPercent = Math.round(info.liftRatio * 100);
-            String liftColor = liftPercent >= 100 ? ChatColor.GREEN.toString()
-                : liftPercent >= 75 ? ChatColor.YELLOW.toString() : ChatColor.RED.toString();
-            lore.add(ChatColor.GRAY + "Lift: " + liftColor + liftPercent + "%"
-                + (liftPercent >= 100 ? ChatColor.AQUA + " (flies)" : ChatColor.DARK_GRAY + " (sinks)"));
+            String liftColor = info.liftRatio >= 1f ? ChatColor.GREEN.toString()
+                : info.liftRatio >= 0.75f ? ChatColor.YELLOW.toString() : ChatColor.RED.toString();
+            String verdict;
+            if (info.liftRatio >= 1f + config.climbSurplusFull) {
+                verdict = ChatColor.AQUA + " (climbs)";
+            } else if (info.liftRatio > 1f) {
+                verdict = ChatColor.AQUA + " (climbs slowly)";
+            } else if (info.liftRatio >= 1f) {
+                verdict = ChatColor.GRAY + " (holds altitude)";
+            } else {
+                float sinkPerSec = config.maxSinkSpeed
+                    * (float) Math.pow(1f - info.liftRatio, config.sinkSpeedExponent) * 20f;
+                verdict = ChatColor.DARK_GRAY + String.format(" (sinks %.1f blocks/s)", sinkPerSec);
+            }
+            lore.add(ChatColor.GRAY + "Lift: " + liftColor + liftPercent + "%" + verdict);
         }
     }
 

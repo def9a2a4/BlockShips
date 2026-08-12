@@ -38,7 +38,21 @@ public class ShipWheelManager {
     private static final String WHEELS_FILE = "ship_wheels.yml";
 
     private final JavaPlugin plugin;
-    private final Map<String, ShipWheelData> placedWheels;  // Location key -> wheel data
+
+    /**
+     * Wheel id → wheel data.
+     *
+     * <p><b>Keyed by identity, never by location.</b> Assembly airs the wheel's block out of the world, so an
+     * assembled ship's cell is empty and anything may occupy it. Under the old location keying that made the
+     * cell's coordinates both the ship's identity and a free-for-all: planting a head there let anyone destroy
+     * or steer the ship (P1), and placing a real wheel there evicted the sailing ship's record entirely, so it
+     * could never be disassembled again (P2). A {@code put} under a fresh id evicts nothing.
+     *
+     * <p>{@code ShipWheelData.blockLocation} is now a <i>cache</i> of where the block currently is; the
+     * block's own {@code blockships:wheel_id} PDC is the truth. A stale cache is expected and self-heals (see
+     * {@link #getWheelAtBlock}); it is never treated as corruption.
+     */
+    private final Map<UUID, ShipWheelData> placedWheels;
 
     // Particle colors for ship detection visualization
     private static final Color PARTICLE_WHITE = Color.fromRGB(255, 255, 255);
@@ -1179,14 +1193,20 @@ public class ShipWheelManager {
                 player.sendMessage("§7Blocks: §f" + blockCount);
                 player.sendMessage("§7Health: §f" + (int) Math.ceil(currentHealth) + " §7/ §f" + (int) maxHealth);
                 if (config.statsEnabled) {
+                    // Thrust-aware, and only the blocks actually running count. The sail-only overload
+                    // used here before hardcoded forwardRatio to the sail ratio, so a thruster-driven
+                    // ship reported the speed of its sails — which on a bare hull is none.
+                    anon.def9a2a4.blockships.ShipThrust.Totals thrust =
+                        anon.def9a2a4.blockships.ShipThrust.totalsFor(
+                            (BlockShipsPlugin) plugin, ship.mechanism, ship.model);
                     anon.def9a2a4.blockships.ShipStats stats =
-                        anon.def9a2a4.blockships.ShipStats.of(config, ship.model);
-                    int speedPercent = stats.speedPercent(config);
+                        anon.def9a2a4.blockships.ShipStats.of(config, ship.model, thrust, 0f);
+                    int speedPercent = stats.speedPercent();
 
                     player.sendMessage("§7Sails: §f" + describeSails(ship.model) + " §7(" + stats.sailPower + " pts)");
                     player.sendMessage("§7Speed: "
                         + anon.def9a2a4.blockships.ShipStats.speedColor(speedPercent) + speedPercent + "%");
-                    sendThrustSummary(player, ship.model);
+                    sendThrustSummary(player, thrust, true);
                 } else {
                     player.sendMessage("§7Stats: §8disabled");
                 }
@@ -1291,14 +1311,22 @@ public class ShipWheelManager {
             // Preview path: large/huge banners are display entities and are not counted here, so this
             // can under-report a ship that carries them. The assembled readout above uses the model,
             // which does count them.
+            //
+            // One world scan feeds both the speed figure and the summary below — hoisted out of the
+            // summary so the two cannot disagree, and so the docked Speed includes thrust the same way
+            // the assembled one does.
+            anon.def9a2a4.blockships.ShipThrust.Totals thrust =
+                anon.def9a2a4.blockships.ShipThrust.scanWorld((BlockShipsPlugin) plugin, shipBlocks,
+                    BlockStructureScanner.blockFaceToYaw(wheelData.getFacing()));
             anon.def9a2a4.blockships.ShipStats stats = anon.def9a2a4.blockships.ShipStats.of(
-                config, woolCount, bannerCount, 0, 0, calculateMass(shipBlocks));
-            int speedPercent = stats.speedPercent(config);
+                config, woolCount, bannerCount, 0, 0, calculateMass(shipBlocks), totalWeight, thrust, 0f);
+            int speedPercent = stats.speedPercent();
             player.sendMessage("§7Sails: §f" + woolCount + " wool, " + bannerCount + " banners §7("
                 + stats.sailPower + " pts)");
             player.sendMessage("§7Speed: " + anon.def9a2a4.blockships.ShipStats.speedColor(speedPercent)
-                + speedPercent + "%" + (speedPercent < 50 ? " §8(add banners or wool as sails!)" : ""));
-            sendPotentialThrustSummary(player, shipBlocks, wheelData.getFacing());
+                + speedPercent + "%"
+                + (speedPercent < 50 ? " §8(add sails, or propellers along the hull)" : ""));
+            sendThrustSummary(player, thrust, false);
         } else {
             player.sendMessage("§7Stats: §8disabled");
         }
@@ -1326,46 +1354,27 @@ public class ShipWheelManager {
     }
 
     /**
-     * Report the propulsion aboard, grouped by what it does.
+     * Report the propulsion aboard, grouped by what it does. The classification is the same one
+     * ShipPhysics applies to movement: mount a propeller sideways and it reads "turning", not "forward".
      *
-     * <p>These blocks do not affect movement yet — this is the readout that makes the classification
-     * checkable on its own: mount a propeller sideways and it should say "turning", not "forward".
-     */
-    private static void sendThrustSummary(Player player, ShipModel model) {
-        if (model.thrustBlocks.isEmpty()) return;
-        int axial = 0, perpendicular = 0, vertical = 0, turnOnly = 0;
-        BlockShipsPlugin bsp = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
-        int axialPts = 0, perpPts = 0, vertPts = 0, turnPts = 0;
-        for (ShipModel.ThrustBlock t : model.thrustBlocks) {
-            int pts = anon.def9a2a4.blockships.ShipThrust.thrustOf(bsp, t.typeId());
-            switch (t.axis()) {
-                case AXIAL -> { axial++; axialPts += pts; }
-                case PERPENDICULAR -> { perpendicular++; perpPts += pts; }
-                case VERTICAL -> { vertical++; vertPts += pts; }
-                case TURN_ONLY -> { turnOnly++; turnPts += pts; }
-            }
-        }
-        player.sendMessage("§7Propulsion: §f" + model.thrustBlocks.size() + " block(s)");
-        if (axial > 0) player.sendMessage("  §7forward: §f" + axial + " §7(" + axialPts + " pts)");
-        if (perpendicular > 0) player.sendMessage("  §7turning: §f" + perpendicular + " §7(" + perpPts + " pts)");
-        if (vertical > 0) player.sendMessage("  §7lift: §f" + vertical + " §7(" + vertPts + " pts)");
-        if (turnOnly > 0) player.sendMessage("  §7gyroscopes: §f" + turnOnly + " §7(" + turnPts + " pts)");
-    }
-
-    /**
-     * The docked equivalent of {@link #sendThrustSummary}, classified straight from the world.
+     * <p>One method for both the assembled and the docked readout, taking the {@link
+     * anon.def9a2a4.blockships.ShipThrust.Totals} the caller already computed. They used to be two, and
+     * had drifted — the docked one collapsed gyroscopes into turning while the assembled one split them,
+     * so the same ship described itself differently depending on whether it was flying.
      *
-     * <p>A docked ship has no model, so there is no thrust list to walk — but the caller has already
-     * flood-filled the hull, so the cells are in hand and this costs one pass over them. Without it a
-     * player only learns what their propulsion does by assembling the ship.
+     * <p>{@code live} distinguishes what is RUNNING from what is merely aboard. The assembled readout
+     * used to print every block unlabelled, so a ship whose fuel had run out still reported
+     * "forward: 4 (48 pts)" while producing nothing — and it read as authoritative, because the
+     * "not yet applied to movement" disclaimer that once excused it was removed when thrust started
+     * actually driving physics.
      */
-    private static void sendPotentialThrustSummary(Player player, java.util.Set<Location> shipBlocks,
-                                                   BlockFace facing) {
-        BlockShipsPlugin bsp = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
-        anon.def9a2a4.blockships.ShipThrust.Totals t = anon.def9a2a4.blockships.ShipThrust.scanWorld(
-            bsp, shipBlocks, BlockStructureScanner.blockFaceToYaw(facing));
+    private static void sendThrustSummary(Player player, anon.def9a2a4.blockships.ShipThrust.Totals t,
+                                          boolean live) {
         if (t.total() <= 0) return;
-        player.sendMessage("§7Propulsion: §f" + t.total() + " block(s) §8(potential — nothing is powered while docked)");
+        String head = live
+            ? "§7Propulsion: §f" + t.powered() + "§7/§f" + t.total() + " §7running"
+            : "§7Propulsion: §f" + t.total() + " block(s) §8(potential — nothing is powered while docked)";
+        player.sendMessage(head);
         if (t.axial() > 0)    player.sendMessage("  §7forward: §f" + t.axial() + " pts");
         if (t.turning() > 0)  player.sendMessage("  §7turning: §f" + t.turning() + " pts");
         if (t.vertical() > 0) player.sendMessage("  §7lift: §f" + t.vertical() + " pts");

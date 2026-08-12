@@ -165,6 +165,11 @@ public class ShipPhysics {
     // Reusable Locations for physics calculations - reduces GC pressure
     private Location workLocation = null;
     private Location workLocation2 = null;  // Second work location for buoyancy (hull check vs water scan)
+    // Third work location, for the falling ground sweep. It needs its own because the sweep is called
+    // from inside handleBuoyancy, which is already holding workLocation (the hull check) and
+    // workLocation2 (the below-hull check) live — borrowing either would silently move the position
+    // the caller is still reading from.
+    private Location workLocation3 = null;
 
     public ShipPhysics(ShipInstance ship) {
         this.ship = ship;
@@ -198,6 +203,13 @@ public class ShipPhysics {
             effectiveMaxVerticalSpeed = config.maxVerticalSpeed;
             effectiveLiftAcceleration = config.liftAcceleration;
             effectiveDescendAcceleration = config.descendAcceleration;
+            // Fully lifted, not zero. This branch means "no ratio system applies here" — a prefab, or a
+            // server that turned stats off — and such a ship is supported by fiat, exactly as it was
+            // before any of this existed. Leaving lastLiftRatio at its 0f initialiser would tell the
+            // flight model these ships produce no lift, which now means "cannot climb, fall at full
+            // gravity": it would ground every prefab airship and drop any stats-off ship carrying a
+            // vertical propeller out of the sky.
+            lastLiftRatio = 1.0f;
             statsComputed = true;
             return;
         }
@@ -227,23 +239,34 @@ public class ShipPhysics {
         effectiveRotationDeceleration = config.computeStat(turnRatio, config.rotationDeceleration,
             config.floorRotationDeceleration, config.capRotationDeceleration);
 
-        // Compute vertical stats (airships only, density-based)
-        if (ship.isAirship) {
-            float density = ship.model.getDensity();
-            float densityMag = Math.abs(density);
-            float verticalRatio = Math.min(densityMag * config.verticalDensityScale, 1.0f);
+        // Vertical stats, for EVERY ship — there is no airship branch here any more.
+        //
+        // This answers "how fast does it move up and down", which is a different question from
+        // stats.liftRatio's "can it hold itself up at all". Lift decides whether you fly; this decides
+        // how quickly, and the two compose — a helicopter at exactly lift 1.0 has a high ceiling and no
+        // surplus with which to use it, while a balloon gains speed from bolting on fans.
+        //
+        // Three contributions, all power-over-weight like the other two ratios:
+        //   buoyancy — max(0, -density), NOT |density|. The absolute value used to hand a HEAVY hull a
+        //              vertical bonus for being heavy; only lighter-than-air should count. Identical
+        //              for real airships, whose density is negative already.
+        //   sails    — a rigged airship rises faster than a bare one. Never lets a heavy hull fly:
+        //              that is lift's job, and lift ignores sails entirely.
+        //   thrust   — fans, propellers and thrusters pointing vertically, so adding them speeds up a
+        //              lighter-than-air ship too, not just a heavier-than-air one.
+        float density = ship.model.getDensity();
+        int vMass = Math.max(1, ship.model.mass);
+        float verticalRatio = Math.min(1.0f,
+            Math.max(0f, -density) * config.verticalDensityScale
+            + ship.model.sailPower * config.sailVerticalFactor / vMass
+            + (float) liveThrust().vertical() / vMass);
 
-            effectiveMaxVerticalSpeed = config.computeStat(verticalRatio, config.maxVerticalSpeed,
-                config.floorMaxVerticalSpeed, config.capMaxVerticalSpeed);
-            effectiveLiftAcceleration = config.computeStat(verticalRatio, config.liftAcceleration,
-                config.floorVerticalAcceleration, config.capVerticalAcceleration);
-            effectiveDescendAcceleration = config.computeStat(verticalRatio, config.descendAcceleration,
-                config.floorVerticalAcceleration, config.capVerticalAcceleration);
-        } else {
-            effectiveMaxVerticalSpeed = config.maxVerticalSpeed;
-            effectiveLiftAcceleration = config.liftAcceleration;
-            effectiveDescendAcceleration = config.descendAcceleration;
-        }
+        effectiveMaxVerticalSpeed = config.computeStat(verticalRatio, config.maxVerticalSpeed,
+            config.floorMaxVerticalSpeed, config.capMaxVerticalSpeed);
+        effectiveLiftAcceleration = config.computeStat(verticalRatio, config.liftAcceleration,
+            config.floorVerticalAcceleration, config.capVerticalAcceleration);
+        effectiveDescendAcceleration = config.computeStat(verticalRatio, config.descendAcceleration,
+            config.floorVerticalAcceleration, config.capVerticalAcceleration);
 
         statsComputed = true;
     }
@@ -273,6 +296,46 @@ public class ShipPhysics {
     private Location reuseLocation2(Location source) {
         workLocation2 = reuseLocationInto(workLocation2, source);
         return workLocation2;
+    }
+
+    private Location reuseLocation3(Location source) {
+        workLocation3 = reuseLocationInto(workLocation3, source);
+        return workLocation3;
+    }
+
+    /**
+     * Trim a downward step so the hull lands on the first solid block it would pass through.
+     *
+     * <p>The old check sampled a single point 0.1 blocks under the hull <em>before</em> the move, which
+     * only works while the step is smaller than the probe. It never was, quite: at the old 0.3 cap a
+     * ship already buried itself up to 0.2 blocks on every landing, and anything faster passes clean
+     * through a one-block floor — the probe sees air above it on one tick and air below it on the next.
+     * Since the whole point of the flight rework is to let ships fall faster, sweeping is a prerequisite
+     * rather than a refinement.
+     *
+     * <p>Returns the largest (least negative) step that keeps the hull above the block it would hit, or
+     * {@code vy} unchanged when the path is clear. Positive velocities pass through untouched.
+     *
+     * <p>Known limitation, unchanged from the check it replaces: this probes the wheel's column only, so
+     * a hull with an overhanging keel can still clip terrain outside that column. Making it
+     * footprint-aware means sampling the model's bottom blocks and belongs with the collision work.
+     */
+    private float clampFallToGround(Location vehicleLoc, float vy) {
+        if (vy >= 0f) return vy;
+        double hullY = vehicleLoc.getY() + ship.model.minY;
+        int from = (int) Math.floor(hullY - 0.001);   // the block the hull is standing in/on right now
+        int to = (int) Math.floor(hullY + vy);        // the block it would end up in
+        Location probe = reuseLocation3(vehicleLoc);
+        for (int y = from; y >= to; y--) {
+            probe.setY(y);
+            Material m = probe.getBlock().getType();
+            if (m != Material.AIR && m.isSolid()) {
+                // Rest exactly on this block's top face rather than wherever the step happened to end.
+                float allowed = (float) ((y + 1) - hullY);
+                return allowed >= 0f ? 0f : allowed;
+            }
+        }
+        return vy;
     }
 
     /**
@@ -332,11 +395,21 @@ public class ShipPhysics {
         double forwardX = Math.sin(yawRad);
         double forwardZ = Math.cos(yawRad);
 
-        // Apply vertical physics based on ship type. A ship with vertical thrust flies on the airship
-        // path too — that is what makes heavier-than-air possible — but with gravity only partly
-        // cancelled, in proportion to the lift it is actually producing.
-        if (ship.isAirship || hasThrustLift()) {
-            applyAirshipVerticalPhysics();
+        // Vertical physics, three ways.
+        //
+        // Water is tested FIRST for anything that is not a balloon, and that ordering is the whole
+        // guard: applyAirshipVerticalPhysics never looks at water, so a hull that reaches it while
+        // floating would sink straight through the seabed. It also means a powered-down flier that
+        // comes down over the sea ditches and floats instead of continuing to the ocean floor — but a
+        // ship still making full lift flies on over the water rather than being captured by it.
+        //
+        // The flight test is "is this hull built to fly" (isThrustLifted), not "is it producing lift
+        // right now". Keying it on live lift meant a single fan lying flat on a heavy deck — lift
+        // 0.005, but greater than zero — pulled an ordinary boat off the buoyancy path the moment that
+        // fan got power, and dropped it back when the power died.
+        boolean flies = ship.isAirship || (isThrustLifted() && (liftRatio() >= 1f || !hullInWater(vehicleLoc)));
+        if (flies) {
+            applyAirshipVerticalPhysics(vehicleLoc);
         } else {
             handleBuoyancy(vehicleLoc);
         }
@@ -417,24 +490,31 @@ public class ShipPhysics {
     }
 
     /**
+     * Whether the hull's underside is in water — at its lowest point, not at the wheel, so a ship with
+     * a deep keel is judged on its keel.
+     *
+     * <p>Extracted so the dispatch in {@link #update()} and {@link #handleBuoyancy} share one
+     * definition. The dispatch has to ask the question before choosing a branch, because the flight
+     * path never looks at water and would sink a floating hull straight through the seabed.
+     */
+    private boolean hullInWater(Location vehicleLoc) {
+        double hullY = vehicleLoc.getY() + ship.model.minY;
+        Location probe = reuseLocation(vehicleLoc);
+        probe.setY(hullY);
+        if (isWaterOrWaterlogged(probe.getBlock())) return true;
+        probe.setY(hullY - 1);
+        return isWaterOrWaterlogged(probe.getBlock());
+    }
+
+    /**
      * Handle buoyancy physics for water-based ships.
      */
     private void handleBuoyancy(Location vehicleLoc) {
         ShipConfig config = ship.config;
 
-        // For custom ships, check water at the ship's lowest point (hull), not at the wheel
-        // Use workLocation for hull check position
         double hullCheckY = vehicleLoc.getY() + ship.model.minY;
-        Location hullCheckLoc = reuseLocation(vehicleLoc);
-        hullCheckLoc.setY(hullCheckY);
 
-        // Check water at hull and one block below
-        Location belowHullLoc = hullCheckLoc.clone();
-        belowHullLoc.subtract(0, 1, 0);
-        boolean inWater = isWaterOrWaterlogged(hullCheckLoc.getBlock())
-            || isWaterOrWaterlogged(belowHullLoc.getBlock());
-
-        if (inWater) {
+        if (hullInWater(vehicleLoc)) {
             double waterSurfaceY = findWaterSurfaceY(vehicleLoc, hullCheckY);
             double targetY = waterSurfaceY + calculateFloatOffset();
             double currentY = vehicleLoc.getY();
@@ -450,19 +530,13 @@ public class ShipPhysics {
                 currentYVelocity = currentYVelocity * (1.0f - config.buoyancyDamping) + targetVelocity * config.buoyancyDamping;
             }
         } else {
-            // Check ground at ship's lowest point (hull), not at the wheel
-            // Use small offset (0.1) so hull settles just into the ground block
-            // hullCheckLoc (workLocation) still has hull Y, use workLocation2 for below check
-            Location belowCheck = reuseLocation2(hullCheckLoc);
-            belowCheck.subtract(0, 0.1, 0);
-            Material belowHullBlock = belowCheck.getBlock().getType();
-            if (belowHullBlock == Material.AIR || !belowHullBlock.isSolid()) {
-                // Fall if hull not on ground
-                currentYVelocity -= 0.08f;  // Gravity
-            } else {
-                // Hull on solid ground
-                currentYVelocity = 0.0f;
-            }
+            // Out of water and unsupported: fall. Terminal velocity and the swept landing are shared
+            // with the flight path, so a ship set down by either route falls at one rate and stops in
+            // the same place — which is what GRAVITY_PER_TICK's comment has always claimed. Before
+            // this, gravity here was an unclamped `-= 0.08f` that reached several blocks per tick from
+            // altitude and simply teleported the hull through the ground.
+            currentYVelocity = Math.max(currentYVelocity - GRAVITY_PER_TICK, -config.maxSinkSpeed);
+            currentYVelocity = clampFallToGround(vehicleLoc, currentYVelocity);
         }
     }
 
@@ -559,89 +633,110 @@ public class ShipPhysics {
     /** Gravity per tick, shared with the buoyancy path so a falling ship falls at one rate. */
     private static final float GRAVITY_PER_TICK = 0.08f;
 
-    /**
-     * Whether the hull's underside is resting on something solid.
-     *
-     * <p>Mirrors the ground check in {@link #handleBuoyancy}: probe just below the ship's lowest
-     * point, not below the wheel, so a ship with a deep keel settles on its keel.
-     */
-    private boolean hullRestingOnGround() {
-        Location loc = ship.vehicle.getLocation();
-        Location below = reuseLocation(loc);
-        below.setY(loc.getY() + ship.model.minY - 0.1);
-        Material under = below.getBlock().getType();
-        return under != Material.AIR && under.isSolid();
+    /** Move {@code cur} toward {@code target} by at most {@code maxStep}, never overshooting. */
+    private static float moveToward(float cur, float target, float maxStep) {
+        if (maxStep <= 0f) return cur;
+        float d = target - cur;
+        return Math.abs(d) <= maxStep ? target : cur + Math.signum(d) * maxStep;
     }
 
     /**
-     * Whether this ship is being held up by thrust rather than by displacement.
+     * Whether this hull is built to fly on thrust — regardless of whether the engines are running.
      *
-     * <p>True only once something aboard is actually producing lift — a ship with thrusters but no
-     * fuel is not flying, it is falling.
+     * <p>Two things this deliberately is NOT. It is not "is it producing lift right now": a ship whose
+     * engines died is still an airframe and must come down on the airframe's terms, not drop out of the
+     * flight model into the buoyancy path's fall. And it is not "does it carry any thrust block": a
+     * sailing boat with two side propellers for steering has thrust blocks and no vertical thrust
+     * whatsoever, and moving it onto a path that never checks for water would sink it through the
+     * seabed. The question is specifically whether anything aboard pushes vertically.
      */
-    private boolean hasThrustLift() {
-        if (ship.model == null || ship.model.thrustBlocks.isEmpty()) return false;
-        return liftRatio() > 0f;
+    private boolean isThrustLifted() {
+        if (ship.model == null) return false;
+        for (anon.def9a2a4.blockships.ShipModel.ThrustBlock tb : ship.model.thrustBlocks) {
+            if (tb.axis() == anon.def9a2a4.blockships.ShipThrust.Axis.VERTICAL) return true;
+        }
+        return false;
     }
 
-    private void applyAirshipVerticalPhysics() {
+    private void applyAirshipVerticalPhysics(Location vehicleLoc) {
         ShipConfig config = ship.config;
 
+        // Displacement-lifted hulls (prefab `type: airship`, or any negative-density build) keep the
+        // original model exactly: full manual control, no gravity, no lift arithmetic. This split is
+        // FIRST and gates the whole derivation on purpose. A prefab's stats take an early-out in
+        // computeEffectiveStats, so its liftRatio() is permanently 0 — deriving the climb ceiling from
+        // lift unconditionally would give every balloon in the game a ceiling of zero and ground the
+        // plugin's flagship ship. test-bot asserts the prefab climbs; that assertion is the tripwire.
+        boolean displacementLift = ship.isAirship;
+
+        float lift = displacementLift ? 1.0f : Math.max(0f, liftRatio());
+        // Only SURPLUS lift climbs. At or below 1.0 the ceiling is zero, so the Space branch below can
+        // only ever compute min(v + a, 0) — a ship that cannot hold itself up cannot gain altitude by
+        // any input, which falls out of the arithmetic rather than depending on gravity out-racing the
+        // climb acceleration. Scaling the ceiling and not the acceleration keeps a marginal ship
+        // responsive: it reaches its (small) climb rate at once, it just does not go far.
+        float climbCap = displacementLift
+            ? effectiveMaxVerticalSpeed
+            : effectiveMaxVerticalSpeed
+                * Math.min(1f, Math.max(0f, lift - 1f) / Math.max(0.01f, config.climbSurplusFull));
+        // Sink is driven by how much lift is MISSING, so the whole range stays distinguishable. Keying
+        // it on lift instead (the previous lift^n) saturated: lift 0.5 and lift 0 came out 14% apart,
+        // so a half-powered ship and a dead one fell at nearly the same speed.
+        float sinkFrac = lift >= 1f ? 0f
+            : (float) Math.pow(1f - lift, Math.max(0.05f, config.sinkSpeedExponent));
+        float terminalSink = displacementLift ? 0f : config.maxSinkSpeed * sinkFrac;
+        float sinkAccel = displacementLift ? 0f : GRAVITY_PER_TICK * sinkFrac;
+
         if (ship.hasDriver && ship.isSpacePressed) {
-            currentYVelocity = Math.min(currentYVelocity + effectiveLiftAcceleration, effectiveMaxVerticalSpeed);
+            currentYVelocity = Math.min(currentYVelocity + effectiveLiftAcceleration, climbCap);
             if (Math.abs(currentSpeed) < config.verticalForwardNudge) {
                 currentSpeed = config.verticalForwardNudge;
             }
         } else if (ship.hasDriver && ship.isSprintPressed) {
-            currentYVelocity = Math.max(currentYVelocity - effectiveDescendAcceleration, -effectiveMaxVerticalSpeed);
+            // Descending always works — there is no story in which lack of lift stops you going down.
+            // The floor takes the larger of the two: without it, pressing Sprint on a failing ship
+            // whose natural terminal exceeds the climb speed would SLOW the fall.
+            float floor = Math.max(effectiveMaxVerticalSpeed, terminalSink);
+            currentYVelocity = Math.max(currentYVelocity - effectiveDescendAcceleration, -floor);
             if (Math.abs(currentSpeed) < config.verticalForwardNudge) {
                 currentSpeed = config.verticalForwardNudge;
             }
+        } else if (!ship.hasDriver && displacementLift) {
+            // A parked balloon holds station rather than drifting. Only balloons: doing this for a
+            // thrust-lifted hull pinned its velocity to 0 every tick, so it could never integrate a
+            // fall and an abandoned flier hovered indefinitely.
+            currentYVelocity = 0.0f;
         } else {
-            if (!ship.hasDriver) {
-                currentYVelocity = 0.0f;
-            } else {
-                currentYVelocity *= config.verticalDrag;
-            }
+            currentYVelocity *= config.verticalDrag;
         }
 
-        // Thrust-lifted ships only: cancel gravity in proportion to the lift being produced. At
-        // liftRatio >= 1 the ship holds altitude exactly as a balloon does; below that it sinks, and
-        // the further below, the faster. Combined with thrust spool-down, losing power becomes a
-        // couple of seconds of decaying lift and then a progressive descent, not a dead drop.
-        //
-        // The support curve is lift^liftFalloffExponent, not lift. Linear made being under-powered
-        // almost free: at lift 0.5 a ship still got half its weight cancelled, and with verticalDrag
-        // at 0.9 the steady-state sink was a gentle -0.8*(1-lift) blocks/tick, so an obviously
-        // under-built ship still glided. Raising the exponent concentrates the useful range near 1.0
-        // — you either have enough thrust to fly or you are coming down.
-        //
-        // A lighter-than-air hull (ship.isAirship — a prefab, or a negative-density build) is
-        // deliberately untouched here: it floats by displacement and always has, and prefab models
-        // carry no weight data to compute a lift ratio from at all.
-        if (!ship.isAirship) {
-            float lift = Math.max(0f, Math.min(1f, liftRatio()));
-            float support = (float) Math.pow(lift, Math.max(0.1f, config.liftFalloffExponent));
-            float residualGravity = GRAVITY_PER_TICK * (1f - support);
-            if (residualGravity > 0f) {
-                currentYVelocity -= residualGravity;
-                // Terminal velocity. Without a clamp the descent accelerated without bound until the
-                // ground probe caught it, so a ship that ran out of fuel high up arrived at whatever
-                // speed the fall length happened to produce. Falling is capped at the same vertical
-                // speed the ship can climb at, which keeps a power-loss descent survivable and
-                // readable.
-                if (currentYVelocity < -effectiveMaxVerticalSpeed) {
-                    currentYVelocity = -effectiveMaxVerticalSpeed;
-                }
-                // Land rather than sink through the floor. Same hull-underside probe the buoyancy
-                // path uses, so a ship set down by either route stops in the same place.
-                if (currentYVelocity < 0f && hullRestingOnGround()) {
-                    currentYVelocity = 0.0f;
-                }
-            }
+        // Gravity, as a pull toward the deficit's terminal at the deficit's rate. A no-op at lift >= 1
+        // and for displacement hulls, so a balloon is untouched. Holding Space when you cannot climb
+        // still points what thrust there is downward, easing the target — scaled by lift, so a ship
+        // with none gets no help at all.
+        if (terminalSink > 0f || sinkAccel > 0f) {
+            float hold = (ship.hasDriver && ship.isSpacePressed)
+                ? 1f - (1f - config.liftHoldSinkFactor) * Math.min(1f, lift)
+                : 1f;
+            currentYVelocity = moveToward(currentYVelocity, -terminalSink * hold, sinkAccel);
         }
 
-        if (Math.abs(currentYVelocity) < 0.01f) {
+        // Land rather than pass through. Outside the gravity branch on purpose: a Sprint descent at
+        // lift >= 1 produces no residual gravity at all and previously got no ground check whatsoever.
+        currentYVelocity = clampFallToGround(vehicleLoc, currentYVelocity);
+
+        // Settle-to-rest, and the single exit that fires refreshCarrierTracking — keep it that way, or
+        // deck-standers get collision jitter after a landing with nothing to clear it.
+        //
+        // The dead band applies only when nothing is pulling the ship down. It used to be
+        // unconditional, which silently truncated the gentle end of the sink curve: at lift 0.99 the
+        // per-tick acceleration is 0.003, so velocity was zeroed before it could ever accumulate toward
+        // its 0.02 terminal and the ship hovered instead of drifting down at 0.4 blocks/s. That is
+        // precisely the "slowly losing altitude" case the curve exists to express. A velocity of exactly
+        // zero still settles, which is what clampFallToGround returns on touchdown.
+        boolean settled = currentYVelocity == 0.0f
+            || (Math.abs(currentYVelocity) < 0.01f && terminalSink <= 0f);
+        if (settled) {
             currentYVelocity = 0.0f;
             if (wasVerticallyMoving) {
                 wasVerticallyMoving = false;

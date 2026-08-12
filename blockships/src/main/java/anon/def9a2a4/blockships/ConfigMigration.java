@@ -18,7 +18,7 @@ public final class ConfigMigration {
     private ConfigMigration() {}
 
     /** Bump when adding a migration step below. */
-    private static final int CURRENT_VERSION = 1;
+    private static final int CURRENT_VERSION = 2;
 
     private static final String VERSION_KEY = "config-version";
 
@@ -48,6 +48,24 @@ public final class ConfigMigration {
             }
             if (cfg.contains("custom-ships.stats.vertical-engine-scale")) {
                 cfg.set("custom-ships.stats.vertical-engine-scale", null);
+                changed = true;
+            }
+        }
+
+        // v1 -> v2: the vertical model was rebuilt. Descent used to cancel gravity in proportion to
+        // lift^lift-falloff-exponent; it now scales with how much lift is MISSING, (1 - lift)^sink-speed-exponent.
+        //
+        // The key is DELETED rather than renamed on purpose. The two exponents point opposite ways —
+        // raising the old one made descent harsher, raising the new one makes it gentler — so carrying
+        // a server's tuned value across would silently invert its intent. Better to drop it and let the
+        // new default apply than to honour a number that now means the reverse.
+        if (version < 2) {
+            if (cfg.contains("custom-ships.stats.lift-falloff-exponent")) {
+                cfg.set("custom-ships.stats.lift-falloff-exponent", null);
+                plugin.getLogger().info(
+                    "Config upgrade: custom-ships.stats.lift-falloff-exponent removed. Descent is now "
+                  + "shaped by sink-speed-exponent, which scales with missing lift rather than with lift "
+                  + "— the two run in opposite directions, so the old value was not carried over.");
                 changed = true;
             }
         }

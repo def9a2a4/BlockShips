@@ -841,9 +841,18 @@ public class ShipInstance {
         // Lift only matters for a ship that is trying to hold itself up with thrust.
         if (t.vertical() > 0 || model.thrustBlocks.stream()
                 .anyMatch(tb -> tb.axis() == anon.def9a2a4.blockships.ShipThrust.Axis.VERTICAL)) {
-            int liftPercent = java.lang.Math.round(physics.liftRatio() * 100);
-            String liftColor = liftPercent >= 100 ? "§a" : liftPercent >= 75 ? "§e" : "§c";
+            // In flight the useful number is not the percentage, it is "am I going down, and how
+            // fast" — so a sinking ship shows its actual descent rate. A percentage alone made a
+            // failing ship's situation something the pilot had to work out mid-emergency.
+            float lift = physics.liftRatio();
+            int liftPercent = java.lang.Math.round(lift * 100);
+            String liftColor = lift >= 1f ? "§a" : lift >= 0.75f ? "§e" : "§c";
             bar.append("  §7lift ").append(liftColor).append(liftPercent).append('%');
+            if (lift < 1f) {
+                float sinkPerSec = config.maxSinkSpeed
+                    * (float) java.lang.Math.pow(1f - lift, config.sinkSpeedExponent) * 20f;
+                bar.append(" §c▼").append(String.format("%.1f", sinkPerSec));
+            }
         }
     }
 

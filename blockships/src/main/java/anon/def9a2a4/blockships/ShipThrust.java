@@ -31,11 +31,11 @@ public final class ShipThrust {
 
     /** Default thrust per block type; overridable under {@code custom-ships.stats.thrust}. */
     private static final Map<String, Integer> DEFAULT_THRUST = Map.of(
-        "mech:fan", 1,
-        "mech:propeller", 4,
-        "mech:large_propeller", 12,
-        "mech:huge_propeller", 30,
-        "mech:thruster", 15,
+        "mech:fan", 10,
+        "mech:propeller", 32,
+        "mech:large_propeller", 100,
+        "mech:huge_propeller", 250,
+        "mech:thruster", 50,
         "mech:reaction_wheel", 10
     );
 

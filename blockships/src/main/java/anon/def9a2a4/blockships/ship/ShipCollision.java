@@ -41,8 +41,13 @@ public class ShipCollision {
      * parked ships still react when hit.
      */
     public void detect() {
+        // Vertical velocity counts as movement. Without it a ship descending straight down — no
+        // throttle, no turn — ran no terrain checks at all, so a driverless fall was invisible to
+        // collision entirely. It only ever appeared to work because the pilot's Space/Sprint applies a
+        // small forward nudge that kept currentSpeed above the threshold.
         boolean isMoving = Math.abs(ship.physics.currentSpeed) > 0.001f ||
-                          Math.abs(ship.physics.currentRotationVelocity) > 0.01f;
+                          Math.abs(ship.physics.currentRotationVelocity) > 0.01f ||
+                          Math.abs(ship.physics.currentYVelocity) > 0.001f;
         boolean hasPreviousForce = ship.physics.collisionForce.lengthSquared() > 0.001f;
 
         // Reuse work vector instead of allocating new one

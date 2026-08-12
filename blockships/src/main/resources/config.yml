@@ -118,22 +118,57 @@ custom-ships:
     # Ticks for thrust to ramp up or down. Rotation power is all-or-nothing, so without this an engine
     # running dry would cut every propeller in the same tick and drop a flying ship like a stone.
     thrust-spool-ticks: 40
-    # How sharply lift stops holding a ship up once it drops below 1.0. Gravity is cancelled in
-    # proportion to lift^this, so 1.0 is a straight line and higher numbers punish being under-powered
-    # much harder. At 3.0, lift 0.9 still supports 73% of the ship's weight but lift 0.5 supports only
-    # 12% — "nearly enough thrust" stops being nearly good enough, and a ship that loses a propeller
-    # bank drops noticeably instead of gliding down. Lower it toward 1.0 for a forgiving descent.
-    lift-falloff-exponent: 3.0
+    # ── Flight ────────────────────────────────────────────────────────────────────────────────────
+    # Two separate questions, deliberately kept apart:
+    #   "can it hold itself up?"  -> lift = downward thrust vs SIGNED weight. 1.0 = neutral.
+    #                                Below 1.0 you cannot climb at all; how far below sets fall speed.
+    #                                A lighter-than-air hull starts at 1.0 for free.
+    #   "how fast does it move up/down?" -> the vertical ratio: buoyancy + sails + vertical thrust.
+    # So lift decides WHETHER you fly, the vertical ratio decides HOW FAST — a heavy helicopter can
+    # have a high ceiling and no permission to use it, and a balloon gains speed from adding fans.
+    #
+    # How fast a ship falls when it cannot hold itself up. Sink rate is
+    # max-sink-speed * (1 - lift)^sink-speed-exponent, so it is driven by how much lift is MISSING.
+    # 0.5 = 10 blocks/sec at zero lift. Values above 0.08 / (1 - vertical-drag) = 0.8 do nothing,
+    # because vertical drag becomes the limit first and the curve flattens out.
+    max-sink-speed: 0.5
+    # Shape of that curve. BELOW 1.0 makes a small shortfall immediately noticeable while keeping the
+    # badly-under-powered end well spread out; above 1.0 forgives near-misses and lumps everything
+    # worse than about half lift into one plummet. At 0.7: lift 0.99 drifts down at 0.4 blocks/sec,
+    # 0.9 sinks at 2, 0.5 at 6, 0 falls at 10 — every step stays distinguishable.
+    # (Note this runs OPPOSITE to the old lift-falloff-exponent it replaces: raising this is gentler.)
+    sink-speed-exponent: 0.7
+    # Holding Space with less than 1.0 lift cannot gain altitude — it points what thrust there is
+    # downward and slows the fall to this fraction of its free rate. Scaled by how much lift you have,
+    # so a ship with none gets no help at all.
+    lift-hold-sink-factor: 0.35
+    # Only SURPLUS lift climbs. Lift this far above 1.0 earns the full vertical speed; less climbs
+    # proportionally slower, and lift at or below 1.0 holds altitude but never gains any. Scales the
+    # ceiling rather than the acceleration, so a marginal ship still feels responsive — it just does
+    # not go anywhere fast.
+    climb-surplus-full: 0.25
+    # How much sail power feeds vertical SPEED (not lift). Sails catching air is what makes a rigged
+    # airship rise faster than a bare one; it never lets a heavy hull fly, since that is lift's job.
+    sail-vertical-factor: 0.5
     # Thrust points per defCoreLib propulsion block, counted only while the block is actually powered
     # (or, for the thruster, burning). Which stat a block feeds depends on how it is mounted: along
     # the hull adds speed, across it adds turn rate, and flat adds lift. A reaction wheel always feeds
     # turn rate whichever way it sits.
+    #
+    # Scale: these are compared against block WEIGHT (blocks.yml), where oak is 2. A huge propeller at
+    # 250 therefore lifts roughly a 125-block oak hull on its own — that is the "helicopter" budget,
+    # and it is what makes a heavier-than-air flier buildable rather than theoretical.
+    #
+    # KEEP IN SYNC with ShipThrust.DEFAULT_THRUST. These are read as
+    # getConfig().getInt(path, DEFAULT_THRUST), so whatever is written here WINS and the Java defaults
+    # only apply to a config that predates the key. Changing one and not the other means a fresh
+    # install and an upgraded server quietly play different games.
     thrust:
-      fan: 1
-      propeller: 4
-      large-propeller: 12
-      huge-propeller: 30
-      thruster: 15
+      fan: 10
+      propeller: 32
+      large-propeller: 100
+      huge-propeller: 250
+      thruster: 50
       reaction-wheel: 10
     # Sail contribution capped at this ratio
     sail-cap-ratio: 0.8
