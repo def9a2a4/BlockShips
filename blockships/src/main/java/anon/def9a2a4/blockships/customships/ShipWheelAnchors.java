@@ -48,7 +48,7 @@ public final class ShipWheelAnchors {
         if (manager == null) return;
         try {
             anon.def9a2a4.corelib.CoreLibPlugin.getInstance().registerAnchorProvider(PLUGIN_ID, block -> {
-                ShipWheelData data = manager.getWheelAt(block.getLocation());
+                ShipWheelData data = manager.anchorWheelFor(block);
                 return data == null ? null : new WheelAnchor(plugin, block, data);
             });
         } catch (Throwable t) {

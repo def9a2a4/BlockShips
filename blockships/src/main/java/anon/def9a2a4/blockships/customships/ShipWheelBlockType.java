@@ -26,11 +26,13 @@ import java.util.UUID;
  * handler never runs, and no catch-up sweep can help (they all require the PDC to already be present). That
  * is why {@link #stamp} exists and why every path that creates a wheel block must call it.
  *
- * <p><b>The type is deliberately inert.</b> No recipes, no {@code onInteract}, no {@code interactGUI}, no
- * storage, no states, no collision, no lifecycle callbacks. BlockShips owns every one of those behaviours,
- * and each would be a handler-ordering or double-restore hazard — in particular an {@code onBlockRemoved}
- * callback would fire during mechanism <i>capture</i> as well as on a real break. The only things wanted from
- * corelib are the identity PDC and its restore-on-landing.
+ * <p><b>The type is nearly inert.</b> No recipes, no {@code onInteract}, no {@code interactGUI}, no storage,
+ * no states, no collision — BlockShips owns all of those and each would be a handler-ordering or
+ * double-restore hazard. The one callback it does take is {@code onBlockRemoved}, which is how BlockShips
+ * learns about the removal routes that never fire {@code BlockBreakEvent} (explosion, fire, fluid,
+ * {@code /setblock}, piston, drill); every one of those used to leave a record behind at an empty cell.
+ * It is guarded by {@code isCapturingForMechanism()}, which is exactly what distinguishes a real removal
+ * from assembly airing the wheel out.
  */
 public final class ShipWheelBlockType {
 
@@ -98,6 +100,22 @@ public final class ShipWheelBlockType {
                     // (These two are mutually exclusive and build() throws if both are set — and that throw
                     // would be swallowed below, silently disabling registration.)
                     .cancelPistons(true)
+                    // Told when the ENGINE removes a wheel block by a route that never fires
+                    // BlockBreakEvent: explosion, fire, fluid, /setblock, /fill, piston break, drill. Those
+                    // all left the record behind pointing at an empty cell — the orphan state a planted head
+                    // gets adopted into. isCapturingForMechanism() is the discriminator that makes this safe:
+                    // assembly airs the wheel out through the same plumbing, and corelib raises that flag
+                    // around exactly the removal callback. (An older comment here argued a callback was
+                    // impossible for that reason; the flag is public API and answers it.)
+                    .onBlockRemoved((block, state) -> {
+                        try {
+                            if (CoreLibPlugin.getInstance().getRegistry().isCapturingForMechanism()) return;
+                            ShipWheelManager mgr = plugin.getShipWheelManager();
+                            if (mgr != null) mgr.onEngineRemovedWheelBlock(block);
+                        } catch (Throwable t) {
+                            plugin.getLogger().warning("Ship-wheel removal callback failed: " + t.getMessage());
+                        }
+                    })
                     .build());
             texture = tex;
         } catch (Throwable t) {

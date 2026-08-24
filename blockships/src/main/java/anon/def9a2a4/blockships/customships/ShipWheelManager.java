@@ -300,65 +300,95 @@ public class ShipWheelManager {
     }
 
     /**
-     * Removes a ship wheel at the given location.
+     * Is {@code block} still this wheel's own block?
+     *
+     * <p>The gate on every world write in {@link #teardownWheel}. Without it a teardown working from the
+     * wheel's cached cell happily deletes whatever a player has since built there — see the {@link
+     * ShipInstance} callers, which capture the cell while the ship is still assembled (so it is the launch
+     * cell, standing empty and open to anyone) and then air it out.
      */
-    public void removeWheel(Location location) {
-        ShipWheelData wheelData = byCachedCell(location);
-        if (wheelData != null) {
-            placedWheels.remove(wheelData.getWheelId());
-            // If assembled, destroy the ship too
-            if (wheelData.isAssembled()) {
-                ShipInstance ship = ShipRegistry.byId(wheelData.getAssembledShipUUID());
-                if (ship != null) {
+    private boolean ownsBlock(ShipWheelData wheel, Block block) {
+        Material t = block.getType();
+        if (t != Material.PLAYER_HEAD && t != Material.PLAYER_WALL_HEAD) return false;
+        UUID stamped = ShipWheelBlockType.readWheelId(block);
+        if (stamped != null) return stamped.equals(wheel.getWheelId());
+        // Unstamped — a wheel that predates identity. The cache is all we have, so use it, but only when it
+        // is unambiguous (exactly this wheel is recorded at exactly this cell).
+        return byCachedCell(block.getLocation()) == wheel;
+    }
+
+    /**
+     * The single teardown path. Deregisters the wheel and optionally destroys its ship, drops its item and
+     * clears its cell — but <b>only ever touches the world when the cell still holds this wheel's block</b>.
+     *
+     * @param dropItem    drop a ship-wheel item at the cell (callers that drop it themselves pass false)
+     * @param airBlock    clear the cell (callers that clear it themselves pass false)
+     * @param destroyShip tear down the linked ship as well
+     */
+    private void teardownWheel(ShipWheelData wheel, boolean dropItem, boolean airBlock, boolean destroyShip) {
+        if (wheel == null) return;
+        placedWheels.remove(wheel.getWheelId());
+
+        Location cell = wheel.getBlockLocation();
+        Block block = (cell != null && cell.getWorld() != null) ? cell.getBlock() : null;
+        boolean owned = block != null && ownsBlock(wheel, block);
+
+        if (destroyShip && wheel.isAssembled()) {
+            ShipInstance ship = ShipRegistry.byId(wheel.getAssembledShipUUID());
+            if (ship != null) {
+                // destroyWithCleanup, not destroy(): it also deletes the ships/<id>.yml sidecar, and it must
+                // read the world BEFORE destroy() removes the vehicle. Reimplementing that inline gets a null
+                // world and silently leaves a phantom that recovers on the next restart.
+                if (plugin instanceof BlockShipsPlugin bsp && bsp.getDisplayShip() != null) {
+                    ship.destroyWithCleanup(bsp.getDisplayShip().getShipWorldData());
+                } else {
                     ship.destroy();
                 }
             }
         }
+
+        if (owned) {
+            ShipGlue.clear(block);
+            ShipWheelAnchors.forget(block);
+            ShipWheelMenu.forgetDockedThrust(cell);
+            if (dropItem && plugin instanceof BlockShipsPlugin bsp && bsp.getDisplayShip() != null) {
+                block.getWorld().dropItemNaturally(cell.clone().add(0.5, 0.5, 0.5),
+                    bsp.getDisplayShip().createShipWheelItem());
+            }
+            if (airBlock) block.setType(Material.AIR);
+        } else if (block != null) {
+            // Still drop the cell-keyed caches — those harm nobody and would otherwise leak.
+            ShipWheelAnchors.forget(block);
+            ShipWheelMenu.forgetDockedThrust(cell);
+            plugin.getLogger().info("Wheel " + wheel.getWheelId() + " deregistered, but " + locationKey(cell)
+                + " no longer holds its block — leaving that cell alone.");
+        }
+
+        saveAll();
+    }
+
+    /**
+     * Deregisters a wheel and destroys its ship. The caller has already cancelled the break and airs the
+     * block + drops the item itself (that is what {@code onShipWheelBreak} does), so this does neither.
+     */
+    public void removeWheel(ShipWheelData wheelData) {
+        teardownWheel(wheelData, false, false, true);
     }
 
     /**
      * Breaks a ship wheel block after the ship has already been disassembled.
      * Removes from tracking, drops the wheel item, and sets block to air.
-     * Use this instead of removeWheel() when the ship is already destroyed/disassembled.
      */
-    public void breakWheelBlock(Location location) {
-        ShipWheelData wheelData = byCachedCell(location);
-        if (wheelData == null) return;
-        placedWheels.remove(wheelData.getWheelId());
-
-        // Drop the wheel's glue before the block goes. Setting the cell to AIR destroys the skull tile
-        // entity and its PDC anyway, so this is belt-and-braces — but it also drops the cached hull
-        // connectors, which nothing else would.
-        ShipGlue.clear(location.getBlock());
-        ShipWheelAnchors.forget(location.getBlock());
-        ShipWheelMenu.forgetDockedThrust(location);
-
-        // Drop ship wheel item
-        org.bukkit.World world = location.getWorld();
-        if (world != null && plugin instanceof BlockShipsPlugin bsp) {
-            ItemStack wheelItem = bsp.getDisplayShip().createShipWheelItem();
-            world.dropItemNaturally(location.clone().add(0.5, 0.5, 0.5), wheelItem);
-            location.getBlock().setType(Material.AIR);
-        }
-
-        saveAll();
+    public void breakWheelBlock(ShipWheelData wheelData) {
+        teardownWheel(wheelData, true, true, false);
     }
 
     /**
      * Removes a ship wheel block without dropping the wheel item.
      * Used when a ship is fully destroyed so the wheel is lost along with the ship.
      */
-    public void destroyWheelBlock(Location location) {
-        ShipWheelData wd = byCachedCell(location);
-        if (wd == null) return;
-        placedWheels.remove(wd.getWheelId());
-        ShipGlue.clear(location.getBlock());
-        ShipWheelAnchors.forget(location.getBlock());
-        ShipWheelMenu.forgetDockedThrust(location);
-        if (location.getWorld() != null) {
-            location.getBlock().setType(Material.AIR);
-        }
-        saveAll();
+    public void destroyWheelBlock(ShipWheelData wheelData) {
+        teardownWheel(wheelData, false, true, false);
     }
 
     /** Bounds the mismatch WARNING to once per (wheel id, cell) — this runs on every right-click. */
@@ -470,6 +500,70 @@ public class ShipWheelManager {
         plugin.getLogger().info("Adopted legacy ship wheel at " + locationKey(block.getLocation())
             + " as " + candidate.getWheelId() + ".");
         return candidate;
+    }
+
+    /**
+     * The engine removed a wheel block by a route that never reaches {@code BlockBreakEvent} — an explosion,
+     * fire, a fluid break, {@code /setblock}, {@code /fill}, a piston break, or a corelib drill boring it out.
+     *
+     * <p>Before this, every one of those left the block gone and the record behind, pointing at an empty cell.
+     * That orphan is the raw material for impersonation: it is exactly the state a planted head can be adopted
+     * into. Nothing else covers these paths — BlockShips listens to {@code BlockBreakEvent} and nothing else.
+     *
+     * <p><b>Does not drop an item</b>, deliberately. Each corelib path has its own considered drop policy and
+     * they disagree on purpose: {@code handleExplosion} already drops the real wheel, {@code onBlockBurn}
+     * drops nothing ("consumed by fire"), and {@code onBlockDestroy} sets {@code setWillDrop(false)} so a
+     * destroy-mode command cannot leak a head. Dropping here would duplicate the wheel on every explosion.
+     */
+    public void onEngineRemovedWheelBlock(Block block) {
+        if (block == null) return;
+        UUID id = ShipWheelBlockType.readWheelId(block);
+        ShipWheelData wheel = (id != null) ? placedWheels.get(id) : byCachedCell(block.getLocation());
+        if (wheel == null) return;
+
+        // Second guard, independent of corelib's capture-depth counter. Assembly airs the wheel out through
+        // the same removal plumbing, so if that counter ever failed to cover a path we would delete the
+        // record of a ship that is about to sail — which surfaces much later as "cannot be disassembled".
+        // An assembled ship's cell is empty by construction, so a LOADED wheel here is never a real removal.
+        if (resolveWheelState(wheel).state() == WheelState.LOADED) {
+            plugin.getLogger().severe("Refusing to drop the record for wheel " + wheel.getWheelId()
+                + ": its ship is loaded, so this removal is an assembly capture that was not flagged as one. "
+                + "Please report this at " + BlockShipsPlugin.ISSUES_URL);
+            return;
+        }
+
+        placedWheels.remove(wheel.getWheelId());
+        ShipGlue.clear(block);
+        ShipWheelAnchors.forget(block);
+        ShipWheelMenu.forgetDockedThrust(block.getLocation());
+        saveAll();
+        plugin.getLogger().info("Ship wheel " + wheel.getWheelId() + " at "
+            + locationKey(block.getLocation()) + " was destroyed by the world; record removed.");
+    }
+
+    /**
+     * Wheel lookup for the defCoreLib glue-anchor provider. Id first, <b>ignoring the cached cell</b>, with a
+     * cached-cell fallback.
+     *
+     * <p>Deliberately NOT {@link #getWheelAtBlock}. This is called from inside {@code disassemble()}'s landed-
+     * anchor rebind loop, at a moment when the cache is legitimately mid-move — so the mismatch refusal would
+     * fire, return null, and corelib would fall back to a BlockAnchor and prune the ship's glue. That is the
+     * exact bug {@link #verifyWheelLanded} and the hoisted relocate exist to fix; routing this through the
+     * refusing resolver would reintroduce it.
+     *
+     * <p>The cached-cell fallback is what keeps a wheel that predates the identity stamp anchorable — it has
+     * no id to match, so id-only resolution would return null and prune its glue on every landing. It can go
+     * once legacy wheels are gone.
+     */
+    public @Nullable ShipWheelData anchorWheelFor(@Nullable Block block) {
+        if (block == null) return null;
+        Material type = block.getType();
+        // The provider had no material guard at all: any block sitting at a recorded cell claimed the wheel's
+        // anchor, and WheelAnchor.originBlock() then wrote glue offsets into that block's PDC.
+        if (type != Material.PLAYER_HEAD && type != Material.PLAYER_WALL_HEAD) return null;
+        UUID id = ShipWheelBlockType.readWheelId(block);
+        if (id != null) return placedWheels.get(id);
+        return byCachedCell(block.getLocation());
     }
 
     /** The {@code textures} profile property of a skull BLOCK, or null. The DisplayShip helper is item-only. */

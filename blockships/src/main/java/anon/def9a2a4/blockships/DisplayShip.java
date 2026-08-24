@@ -1492,27 +1492,19 @@ public class DisplayShip implements Listener {
             return;
         }
 
-        // Check if this is a ship wheel collider - open menu regardless of shift
+        // Check if this is a ship wheel collider - open menu regardless of shift.
+        //
+        // Resolve by SHIP, not by the tag's coordinates. The tag is re-stamped on every assembleShip so it is
+        // not stale — but while the ship is assembled its wheel cell is AIR, so no block- or location-based
+        // lookup can resolve it at all. The tag's job here is only "this shulker is the wheel collider";
+        // its X,Y,Z payload is vestigial and is no longer parsed.
         if (wheelLocation != null) {
-            // Parse location from tag: "X,Y,Z"
-            String[] coords = wheelLocation.split(",");
-            if (coords.length == 3) {
-                try {
-                    int x = Integer.parseInt(coords[0]);
-                    int y = Integer.parseInt(coords[1]);
-                    int z = Integer.parseInt(coords[2]);
-                    Location loc = new Location(shulker.getWorld(), x, y, z);
-
-                    ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
-                    ShipWheelData wheelData = manager.getWheelAt(loc);
-                    if (wheelData != null) {
-                        ShipWheelMenu.openMenu(player, wheelData);
-                        e.setCancelled(true);
-                        return;
-                    }
-                } catch (NumberFormatException ignored) {
-                    // Invalid wheel location tag - continue with normal interaction
-                }
+            ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
+            ShipWheelData wheelData = manager.getWheelByShipUUID(shipId);
+            if (wheelData != null) {
+                ShipWheelMenu.openMenu(player, wheelData);
+                e.setCancelled(true);
+                return;
             }
         }
 
@@ -2178,10 +2170,19 @@ public class DisplayShip implements Listener {
      * Helper: Check if a block is a placed ship wheel
      */
     private boolean isShipWheelBlock(Block block) {
-        Material type = block.getType();
-        if (type != Material.PLAYER_HEAD && type != Material.PLAYER_WALL_HEAD) return false;
-        ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
-        return manager.getWheelAt(block.getLocation()) != null;
+        return resolveWheelBlock(block) != null;
+    }
+
+    /**
+     * Resolve a block to its wheel, by the block's own identity.
+     *
+     * <p>Callers should use THIS and keep the result rather than calling {@code isShipWheelBlock} and then
+     * looking the wheel up again: resolution now reads the block's PDC (and may adopt a legacy wheel), so
+     * doing it twice per event is real work, and the two answers could differ.
+     */
+    private @org.jetbrains.annotations.Nullable ShipWheelData resolveWheelBlock(Block block) {
+        if (block == null) return null;
+        return ((BlockShipsPlugin) plugin).getShipWheelManager().getWheelAtBlock(block);
     }
 
     /**
@@ -2332,16 +2333,11 @@ public class DisplayShip implements Listener {
         if (event.getHand() != EquipmentSlot.HAND) return;
 
         Block block = event.getClickedBlock();
-        if (block == null || !isShipWheelBlock(block)) return;
+        ShipWheelData wheelData = resolveWheelBlock(block);
+        if (wheelData == null) return;
 
-        Player player = event.getPlayer();
-        ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
-        ShipWheelData wheelData = manager.getWheelAt(block.getLocation());
-
-        if (wheelData != null) {
-            ShipWheelMenu.openMenu(player, wheelData);
-            event.setCancelled(true);
-        }
+        ShipWheelMenu.openMenu(event.getPlayer(), wheelData);
+        event.setCancelled(true);
     }
 
     /**
@@ -2565,7 +2561,8 @@ public class DisplayShip implements Listener {
     @EventHandler(priority = org.bukkit.event.EventPriority.HIGHEST)
     public void onShipWheelBreak(BlockBreakEvent event) {
         Block block = event.getBlock();
-        if (!isShipWheelBlock(block)) return;
+        ShipWheelData wheelData = resolveWheelBlock(block);
+        if (wheelData == null) return;
 
         // Respect a break already cancelled by another protection plugin (GriefPrevention/Towny/etc.):
         // leave the wheel intact instead of manually breaking + dropping it.
@@ -2584,26 +2581,22 @@ public class DisplayShip implements Listener {
         event.setCancelled(true);
 
         ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
-        ShipWheelData wheelData = manager.getWheelAt(block.getLocation());
 
-        if (wheelData != null) {
-            // Check if ship is assembled - warn player
-            if (wheelData.isAssembled()) {
-                Player player = event.getPlayer();
-                player.sendMessage("§cWarning: Breaking this wheel will destroy the assembled ship!");
-            }
+        // No isAssembled() warning here: assembly airs the wheel out of the world, so a BlockBreakEvent can
+        // never fire on an assembled wheel's cell. Under the old location keying that branch WAS reachable —
+        // by planting a head on the vacated cell — which was the user-visible face of the impersonation bug.
 
-            // Remove wheel (this also destroys the ship if assembled)
-            manager.removeWheel(block.getLocation());
+        // Remove wheel (this also destroys the ship if assembled). removeWheel neither airs the block nor
+        // drops the item, because this handler does both itself just below.
+        manager.removeWheel(wheelData);
 
-            // Manually remove the block since we cancelled the event
-            block.setType(Material.AIR);
+        // Manually remove the block since we cancelled the event
+        block.setType(Material.AIR);
 
-            // Drop ship wheel item
-            World world = block.getWorld();
-            ItemStack wheelItem = createShipWheelItem();
-            world.dropItemNaturally(block.getLocation(), wheelItem);
-        }
+        // Drop ship wheel item
+        World world = block.getWorld();
+        ItemStack wheelItem = createShipWheelItem();
+        world.dropItemNaturally(block.getLocation(), wheelItem);
     }
 
     /**

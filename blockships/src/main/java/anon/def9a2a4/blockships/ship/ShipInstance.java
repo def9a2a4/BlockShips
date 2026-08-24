@@ -1381,8 +1381,6 @@ public class ShipInstance {
                     // are all dropped from Mechanism.destroy() via destroyWithCleanup() below (leads fall back
                     // to Paper's tickLeash when the holder shulker is removed). Do NOT re-add a native drop loop
                     // that reads the mechanism's inventories/colliders here, or items duplicate.
-                    // Capture wheel location before entities are removed
-                    Location wheelLoc = wheelData.getBlockLocation();
                     // Destroy entities and clean up persistence
                     if (bsp.getDisplayShip() != null) {
                         destroyWithCleanup(bsp.getDisplayShip().getShipWorldData());
@@ -1390,8 +1388,11 @@ public class ShipInstance {
                         destroy();
                     }
                     wheelData.setAssembledShipUUID(null);
-                    // Remove wheel block from world and tracking (without dropping wheel item)
-                    manager.destroyWheelBlock(wheelLoc);
+                    // Remove wheel block from world and tracking (without dropping wheel item). Pass the
+                    // RECORD, not a captured Location: the cell was read while the ship was still assembled,
+                    // so it is the launch cell — empty for the whole voyage and free for anyone to build on.
+                    // destroyWheelBlock now refuses to air out a cell that is not this wheel's own block.
+                    manager.destroyWheelBlock(wheelData);
                     // Spawn explosions
                     spawnDestructionExplosions(world, explosionLocations);
                     return;
@@ -1401,9 +1402,9 @@ public class ShipInstance {
                 boolean disassembled = manager.disassembleShip(null, wheelData, true);
 
                 if (disassembled) {
-                    // 4. Break the ship wheel block
-                    Location wheelLoc = wheelData.getBlockLocation();
-                    manager.breakWheelBlock(wheelLoc);
+                    // 4. Break the ship wheel block (disassembleShip has already relocated the record to
+                    //    wherever the wheel actually landed, and verified that it did).
+                    manager.breakWheelBlock(wheelData);
 
                     // 5. Spawn explosions at saved locations
                     spawnDestructionExplosions(world, explosionLocations);
