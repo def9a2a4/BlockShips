@@ -908,6 +908,14 @@ public class BlockShipsPlugin extends JavaPlugin {
                 return true;
             }
 
+            if (args[0].equalsIgnoreCase("wheels")) {
+                if (!sender.hasPermission("blockships.admin")) {
+                    sender.sendMessage("§cYou don't have permission to use admin commands.");
+                    return true;
+                }
+                return handleWheelsCommand(sender, args);
+            }
+
             if (args[0].equalsIgnoreCase("killentities")) {
                 if (!sender.hasPermission("blockships.admin")) {
                     sender.sendMessage("§cYou don't have permission to use admin commands.");
@@ -1123,6 +1131,192 @@ public class BlockShipsPlugin extends JavaPlugin {
     }
 
     @Override
+    /**
+     * {@code /blockships wheels <inspect|list|adopt|purge>} — the diagnostic + repair surface for wheel
+     * identity.
+     *
+     * <p>{@code inspect} is not a convenience: a wheel's identity lives in its block's PDC, which nothing
+     * else in the game can show you. It is the only way to falsify "identity survived the voyage", because
+     * the legacy-adoption fallback silently re-stamps a wheel that lost its PDC, so every behavioural check
+     * would still pass while the thing they test for is broken.
+     */
+    private boolean handleWheelsCommand(CommandSender sender, String[] args) {
+        String sub = args.length >= 2 ? args[1].toLowerCase() : "help";
+        ShipWheelManager mgr = shipWheelManager;
+
+        if (!anon.def9a2a4.blockships.customships.ShipWheelBlockType.isRegistered()) {
+            sender.sendMessage("§c⚠ The ship wheel is NOT registered with DefCoreLib this session. New wheels "
+                + "cannot be stamped and legacy wheels cannot be adopted. Check the startup log.");
+        }
+
+        switch (sub) {
+            case "inspect": {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("§cThis must be run by a player (it inspects the block you are looking at).");
+                    return true;
+                }
+                org.bukkit.block.Block b = p.getTargetBlockExact(8);
+                if (b == null) {
+                    sender.sendMessage("§cLook at a block within 8 blocks.");
+                    return true;
+                }
+                Location l = b.getLocation();
+                sender.sendMessage("§e── " + l.getBlockX() + ", " + l.getBlockY() + ", " + l.getBlockZ()
+                    + " in " + l.getWorld().getName() + " ──");
+                sender.sendMessage("§7material: §f" + b.getType());
+                String typeId = null;
+                try {
+                    var chb = anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getRegistry().getTypeFromBlock(b);
+                    if (chb != null) typeId = chb.fullId();
+                } catch (Throwable ignored) { /* engine absent */ }
+                sender.sendMessage("§7corelib:block_type: " + (typeId == null ? "§8(none)" : "§f" + typeId));
+                java.util.UUID wid = anon.def9a2a4.blockships.customships.ShipWheelBlockType.readWheelId(b);
+                sender.sendMessage("§7blockships:wheel_id: " + (wid == null ? "§8(none)" : "§f" + wid));
+                if (wid != null) {
+                    ShipWheelData rec = mgr.getWheelById(wid);
+                    if (rec == null) {
+                        sender.sendMessage("§c  → no record for that id (stamped but unknown).");
+                    } else {
+                        Location c = rec.getBlockLocation();
+                        boolean here = c != null && c.getWorld() != null
+                            && c.getWorld().equals(l.getWorld()) && c.getBlockX() == l.getBlockX()
+                            && c.getBlockY() == l.getBlockY() && c.getBlockZ() == l.getBlockZ();
+                        sender.sendMessage("§7  record cell: §f" + fmt(c) + (here ? " §a(matches)" : " §c(MISMATCH)"));
+                        sender.sendMessage("§7  state: §f" + mgr.resolveWheelState(rec).state());
+                        if (!here) sender.sendMessage("§7  repair: §e/blockships wheels adopt " + wid);
+                    }
+                }
+                ShipWheelData byCell = mgr.getWheelAt(l);
+                if (byCell != null && (wid == null || !byCell.getWheelId().equals(wid))) {
+                    sender.sendMessage("§7record caching this cell: §f" + byCell.getWheelId()
+                        + " §7(state " + mgr.resolveWheelState(byCell).state() + ")");
+                }
+                return true;
+            }
+            case "list": {
+                var wheels = new java.util.ArrayList<>(mgr.getWheels());
+                if (wheels.isEmpty()) {
+                    sender.sendMessage("§7No ship wheels recorded.");
+                    return true;
+                }
+                sender.sendMessage("§e" + wheels.size() + " ship wheel(s):");
+                int shown = 0;
+                for (ShipWheelData w : wheels) {
+                    if (shown++ >= 30) {
+                        sender.sendMessage("§7… and " + (wheels.size() - 30) + " more (see ship_wheels.yml).");
+                        break;
+                    }
+                    boolean healthy = mgr.isRecordHealthy(w);
+                    sender.sendMessage((healthy ? "§a✔ " : "§c✘ ") + "§f" + w.getWheelId()
+                        + " §7at " + fmt(w.getBlockLocation())
+                        + " §7[" + mgr.resolveWheelState(w).state() + "]");
+                }
+                return true;
+            }
+            case "adopt": {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("§cThis must be run by a player (it targets the block you are looking at).");
+                    return true;
+                }
+                if (args.length < 3) {
+                    sender.sendMessage("§cUsage: §e/blockships wheels adopt <wheelId>");
+                    sender.sendMessage("§7Deliberately NOT proximity-targeted: a broken record's stored location "
+                        + "is exactly the thing that is wrong, so nearest-wheel would grab a healthy neighbour.");
+                    return true;
+                }
+                java.util.UUID id;
+                try {
+                    id = java.util.UUID.fromString(args[2]);
+                } catch (IllegalArgumentException e) {
+                    sender.sendMessage("§cThat is not a wheel id. Use §e/blockships wheels list§c.");
+                    return true;
+                }
+                ShipWheelData rec = mgr.getWheelById(id);
+                if (rec == null) {
+                    sender.sendMessage("§cNo record with id " + id + ".");
+                    return true;
+                }
+                org.bukkit.block.Block target = p.getTargetBlockExact(8);
+                if (target == null) {
+                    sender.sendMessage("§cLook at the wheel block you want this record to point at.");
+                    return true;
+                }
+                // Confirm token echoes the id, so a mistyped or stale confirmation cannot land on the wrong
+                // wheel the way a bare "confirm" literal can.
+                String token = id.toString().substring(0, 8);
+                if (args.length < 4 || !args[3].equalsIgnoreCase(token)) {
+                    sender.sendMessage("§eAdopt §f" + id + "§e → " + fmt(target.getLocation()) + "§e?");
+                    sender.sendMessage("§7Currently recorded at " + fmt(rec.getBlockLocation()) + ".");
+                    sender.sendMessage("§7Confirm: §e/blockships wheels adopt " + id + " " + token);
+                    return true;
+                }
+                ShipWheelManager.AdoptResult res = mgr.adoptWheel(rec, target);
+                switch (res) {
+                    case OK -> {
+                        getLogger().info(sender.getName() + " adopted wheel " + id + ": "
+                            + fmt(rec.getBlockLocation()) + " → " + fmt(target.getLocation()));
+                        sender.sendMessage("§aAdopted. The block now carries this wheel's identity.");
+                    }
+                    case NOT_IDLE -> sender.sendMessage("§cThat wheel's ship is assembled or recoverable — "
+                        + "refusing. Disassemble it first.");
+                    case NOT_A_HEAD -> sender.sendMessage("§cThat block is not a player head.");
+                    case OTHER_WHEEL_BLOCK -> sender.sendMessage("§cThat block already belongs to a different "
+                        + "wheel. Refusing to steal it.");
+                    case CELL_TAKEN -> sender.sendMessage("§cAnother record already claims that cell.");
+                    case STAMP_FAILED -> sender.sendMessage("§cCould not stamp the block (is it a skull, and is "
+                        + "the wheel registered with DefCoreLib?).");
+                }
+                return true;
+            }
+            case "purge": {
+                if (args.length < 3) {
+                    sender.sendMessage("§cUsage: §e/blockships wheels purge <wheelId>");
+                    return true;
+                }
+                java.util.UUID id;
+                try {
+                    id = java.util.UUID.fromString(args[2]);
+                } catch (IllegalArgumentException e) {
+                    sender.sendMessage("§cThat is not a wheel id.");
+                    return true;
+                }
+                ShipWheelData rec = mgr.getWheelById(id);
+                if (rec == null) {
+                    sender.sendMessage("§cNo record with id " + id + ".");
+                    return true;
+                }
+                String token = id.toString().substring(0, 8);
+                if (args.length < 4 || !args[3].equalsIgnoreCase(token)) {
+                    sender.sendMessage("§c§l⚠ §cPurge DELETES this record. Its ship, if any, becomes unreachable "
+                        + "through this wheel.");
+                    sender.sendMessage("§7" + id + " at " + fmt(rec.getBlockLocation())
+                        + " [" + mgr.resolveWheelState(rec).state() + "], assembled=" + rec.isAssembled());
+                    sender.sendMessage("§7Confirm: §e/blockships wheels purge " + id + " " + token);
+                    return true;
+                }
+                getLogger().warning(sender.getName() + " purged wheel record " + id + " at "
+                    + fmt(rec.getBlockLocation()));
+                mgr.purgeWheel(rec);
+                sender.sendMessage("§aRecord purged.");
+                return true;
+            }
+            default: {
+                sender.sendMessage("§e/blockships wheels inspect §7— show the identity on the block you're looking at");
+                sender.sendMessage("§e/blockships wheels list §7— every record, with a health mark");
+                sender.sendMessage("§e/blockships wheels adopt <id> §7— point a record at the block you're looking at");
+                sender.sendMessage("§e/blockships wheels purge <id> §7— delete a record that has no wheel left");
+                return true;
+            }
+        }
+    }
+
+    /** Short "world x, y, z" for command output. */
+    private static String fmt(Location l) {
+        if (l == null || l.getWorld() == null) return "(unknown)";
+        return l.getWorld().getName() + " " + l.getBlockX() + ", " + l.getBlockY() + ", " + l.getBlockZ();
+    }
+
+    @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!command.getName().equalsIgnoreCase("blockships")) {
             return null;
@@ -1150,6 +1344,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                 subcommands.add("forcedisassembleall");
                 subcommands.add("forceclearwheel");
                 subcommands.add("killentities");
+                subcommands.add("wheels");
             }
 
             for (String sub : subcommands) {
@@ -1178,6 +1373,20 @@ public class BlockShipsPlugin extends JavaPlugin {
                 // Complete with "confirm" for dangerous commands
                 if ("confirm".startsWith(args[1].toLowerCase())) {
                     completions.add("confirm");
+                }
+            } else if (subcommand.equals("wheels") && sender.hasPermission("blockships.admin")) {
+                for (String s : new String[]{"inspect", "list", "adopt", "purge"}) {
+                    if (s.startsWith(args[1].toLowerCase())) completions.add(s);
+                }
+            }
+        } else if (args.length == 3 && args[0].equalsIgnoreCase("wheels")
+                && sender.hasPermission("blockships.admin")
+                && (args[1].equalsIgnoreCase("adopt") || args[1].equalsIgnoreCase("purge"))) {
+            // Complete wheel ids — these are UUIDs nobody is going to type from memory.
+            if (shipWheelManager != null) {
+                for (ShipWheelData w : shipWheelManager.getWheels()) {
+                    String id = w.getWheelId().toString();
+                    if (id.startsWith(args[2].toLowerCase())) completions.add(id);
                 }
             }
         }

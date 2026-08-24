@@ -502,6 +502,78 @@ public class ShipWheelManager {
         return candidate;
     }
 
+    /** A wheel by its id, or null. */
+    public @Nullable ShipWheelData getWheelById(UUID id) {
+        return id == null ? null : placedWheels.get(id);
+    }
+
+    /** Why an {@link #adoptWheel} attempt was refused, or {@code OK}. */
+    public enum AdoptResult {
+        OK,
+        /** The ship is assembled, sailing or merely parked-and-recoverable. Never retarget a live ship. */
+        NOT_IDLE,
+        /** The target cell does not hold a player head. */
+        NOT_A_HEAD,
+        /** The target block already belongs to a DIFFERENT wheel. */
+        OTHER_WHEEL_BLOCK,
+        /** Another record already caches the target cell. */
+        CELL_TAKEN,
+        /** The stamp could not be written (no engine, not a tile entity, registration failed). */
+        STAMP_FAILED
+    }
+
+    /**
+     * Point a record at a block and stamp the block with its id — the repair for a record and block that
+     * disagree, which {@link #getWheelAtBlock} refuses to resolve on its own.
+     *
+     * <p>Every guard here is load-bearing, because this is the one operation that can deliberately move a
+     * wheel's identity onto a block of the caller's choosing. Without them it is a ship-hijack primitive: an
+     * operator could retarget any record onto a head planted on a sailing ship's vacated cell and then break
+     * it to destroy a ship they never touched. Hence: the ship must be idle, the block must not already
+     * belong to someone else, and no other record may claim the cell.
+     */
+    public AdoptResult adoptWheel(ShipWheelData record, Block target) {
+        if (resolveWheelState(record).state() != WheelState.NOT_ASSEMBLED) return AdoptResult.NOT_IDLE;
+        Material t = target.getType();
+        if (t != Material.PLAYER_HEAD && t != Material.PLAYER_WALL_HEAD) return AdoptResult.NOT_A_HEAD;
+        UUID stamped = ShipWheelBlockType.readWheelId(target);
+        if (stamped != null && !stamped.equals(record.getWheelId())) return AdoptResult.OTHER_WHEEL_BLOCK;
+        ShipWheelData resident = byCachedCell(target.getLocation());
+        if (resident != null && resident != record) return AdoptResult.CELL_TAKEN;
+        if (!ShipWheelBlockType.stamp(target, record.getWheelId())) return AdoptResult.STAMP_FAILED;
+
+        Location old = record.getBlockLocation();
+        if (old != null && old.getWorld() != null) ShipWheelAnchors.forget(old.getBlock());
+        relocate(record, target.getLocation(), record.getFacing());
+        mismatchLogged.clear();  // the state that was being warned about is gone
+        saveAll();
+        return AdoptResult.OK;
+    }
+
+    /** Drops a record outright. The block, if any, is left alone — purge is for records with no wheel. */
+    public void purgeWheel(ShipWheelData wheel) {
+        if (wheel == null) return;
+        placedWheels.remove(wheel.getWheelId());
+        Location cell = wheel.getBlockLocation();
+        if (cell != null && cell.getWorld() != null) {
+            ShipWheelAnchors.forget(cell.getBlock());
+            ShipWheelMenu.forgetDockedThrust(cell);
+        }
+        saveAll();
+    }
+
+    /**
+     * Does the block at this wheel's cached cell actually carry its identity? The predicate behind
+     * {@code /blockships wheels list}'s health column.
+     */
+    public boolean isRecordHealthy(ShipWheelData wheel) {
+        if (wheel.isAssembled()) return true;  // cell is legitimately empty while sailing
+        Location cell = wheel.getBlockLocation();
+        if (cell == null || cell.getWorld() == null) return false;
+        if (!cell.getWorld().isChunkLoaded(cell.getBlockX() >> 4, cell.getBlockZ() >> 4)) return true;  // unknown
+        return ownsBlock(wheel, cell.getBlock());
+    }
+
     /**
      * The engine removed a wheel block by a route that never reaches {@code BlockBreakEvent} — an explosion,
      * fire, a fluid break, {@code /setblock}, {@code /fill}, a piston break, or a corelib drill boring it out.

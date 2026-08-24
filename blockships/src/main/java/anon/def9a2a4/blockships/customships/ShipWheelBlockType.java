@@ -109,7 +109,8 @@ public final class ShipWheelBlockType {
                     // impossible for that reason; the flag is public API and answers it.)
                     .onBlockRemoved((block, state) -> {
                         try {
-                            if (CoreLibPlugin.getInstance().getRegistry().isCapturingForMechanism()) return;
+                            if (anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getRegistry()
+                                    .isCapturingForMechanism()) return;
                             ShipWheelManager mgr = plugin.getShipWheelManager();
                             if (mgr != null) mgr.onEngineRemovedWheelBlock(block);
                         } catch (Throwable t) {
