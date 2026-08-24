@@ -8,9 +8,6 @@ config-version: 2
 # Set to false to disable outdated resource file warnings on startup
 warn-config-mismatch: true
 
-# Whether ship blocks emit dynamic light (requires DynLight plugin)
-# https://github.com/def9a2a4/DynLight
-ship-lights: true
 
 # Integrations with other plugins
 plugins:
@@ -53,7 +50,6 @@ recipe-unlock:
 
 # Custom block ships configuration (assembled from ship wheels)
 custom-ships:
-  display-offset: [0, -2, 0]  # Offset for BlockDisplay entities (compensates for ArmorStand base height)
   collision-offset: [0.5, 0, 0.5]    # Additional offset for collision boxes
   assembly-nudge-height: 0.2  # Teleport nearby players up by this amount on assemble/disassemble (0 to disable)
   max-ship-size: 1000  # Maximum number of blocks in a custom ship

@@ -160,7 +160,6 @@ public class ShipWorldData {
         persistedShipIds.add(ship.id);
 
         YamlConfiguration config = buildShipMetadataConfig(ship);
-        config.set("entity_count", ship.countEntities());
 
         // Deliberately SYNCHRONOUS, not routed onto ioExecutor: migrateNativeShip writes the migrated marker
         // through here and reapStragglerEntities reads it back in the same chunk iteration
@@ -184,8 +183,6 @@ public class ShipWorldData {
         String worldName = world.getName();
         UUID shipId = ship.id;
         YamlConfiguration config = buildShipMetadataConfig(ship);
-        int entityCount = ship.countEntities();
-        config.set("entity_count", entityCount);
 
         // Maintain the persisted-id set on the MAIN thread here, BEFORE the async submit — not inside the lambda —
         // so a main-thread reap consumer never observes a false-absent id while the write is still queued.
@@ -378,9 +375,6 @@ public class ShipWorldData {
             }
         }
 
-        // Entity count for recovery validation (default 0 for legacy data)
-        int entityCount = config.getInt("entity_count", 0);
-
         // Internal yaw for chunk recovery (absent in legacy metadata -> NaN -> fall back to vehicle NBT)
         float currentYaw = config.contains("current_yaw")
             ? (float) config.getDouble("current_yaw") : Float.NaN;
@@ -397,8 +391,7 @@ public class ShipWorldData {
             woodType,
             balloonColor,
             inventoryData,
-            modelData,
-            entityCount
+            modelData
         );
         state.migrated = config.getBoolean("migrated", false);
         return state;

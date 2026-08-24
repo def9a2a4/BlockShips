@@ -874,6 +874,8 @@ public class ShipPhysics {
         currentYaw = snappedYaw;
         float snappedPitch = 0.0f;
 
+        // NOTE: always true — ShipInstance.mechanism is final and its constructor dereferences mechanism.id().
+        // Kept as a block only to avoid re-indenting the whole body; the native fallthrough is empty.
         if (ship.mechanism != null) {
             // Delegated (M1): defCoreLib owns the colliders, so ship.updateCollisionPositions() is a no-op
             // (empty native `colliders` list) and findPlayersOnDeck's shipTag filter matches nothing. Capture

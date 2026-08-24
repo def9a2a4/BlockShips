@@ -572,6 +572,9 @@ public class ShipInstance {
         collision.applyResponse();  // Apply collision response
         cachedVehicleLoc = vehicle.getLocation();  // Refresh after physics moved the vehicle
 
+        // NOTE: always true — `mechanism` is final and the constructor dereferences `mechanism.id()`, so a null
+        // would NPE before the object exists. Kept as a block only to avoid re-indenting the whole body; there
+        // is no native fallthrough left (the tail after this block is empty).
         if (mechanism != null) {
             // Delegated movement (M2): defCoreLib owns the displays/colliders. physics.update()+applyResponse
             // already positioned the vehicle this tick; sync the mechanism to it and apply the rotation delta
@@ -1470,24 +1473,22 @@ public class ShipInstance {
         }
         if (task != null) task.cancel();
         if (idleCheckTask != null) idleCheckTask.cancel();
-        if (mechanism != null) {
-            // Delegated safe-dismount: mechanism.destroy() below removes the seat shulkers via Entity.remove(),
-            // which ejects any seated player IN PLACE without firing VehicleExitEvent — so the safe-position
-            // teleport + fall-distance reset would be skipped. Explicitly removePassenger over seatShulkers first
-            // (fires VehicleExitEvent), BEFORE tearing the mechanism down while the seats still exist and the ship
-            // is still registered.
-            for (Shulker seat : seatShulkers) {
-                if (seat != null && seat.isValid()) {
-                    for (Entity passenger : seat.getPassengers()) {
-                        if (passenger instanceof Player p) seat.removePassenger(p);
-                    }
+        // Safe-dismount: mechanism.destroy() below removes the seat shulkers via Entity.remove(), which ejects
+        // any seated player IN PLACE without firing VehicleExitEvent — so the safe-position teleport +
+        // fall-distance reset would be skipped. Explicitly removePassenger over seatShulkers first (fires
+        // VehicleExitEvent), BEFORE tearing the mechanism down while the seats still exist and the ship is
+        // still registered.
+        for (Shulker seat : seatShulkers) {
+            if (seat != null && seat.isValid()) {
+                for (Entity passenger : seat.getPassengers()) {
+                    if (passenger instanceof Player p) seat.removePassenger(p);
                 }
             }
-            // Delegated (M1): defCoreLib owns the parent/displays/colliders — tear them down via the Mechanism
-            // (removes entities WITHOUT restoring blocks). Idempotent if disassemble() already ran. The external
-            // vehicle is still removed at the end.
-            try { mechanism.destroy(); } catch (Throwable ignored) {}
         }
+        // defCoreLib owns the parent/displays/colliders — tear them down via the Mechanism (removes entities
+        // WITHOUT restoring blocks). Idempotent if disassemble() already ran. The external vehicle is still
+        // removed at the end.
+        try { mechanism.destroy(); } catch (Throwable ignored) {}
         // Remove root vehicle (defCoreLib owns the borrowed vehicle's displays/colliders; mechanism.destroy above
         // tore them down, but the vehicle ArmorStand itself is BlockShips-owned and removed here).
         if (vehicle != null && vehicle.isValid()) vehicle.remove();
