@@ -196,6 +196,7 @@ public class BlockShipsPlugin extends JavaPlugin {
             sender.sendMessage("§e/blockships recipes [player] §7- Unlock all BlockShips recipes");
         }
         if (sender.hasPermission("blockships.admin")) {
+            sender.sendMessage("§e/blockships wheels §7- Inspect, list, adopt or purge ship-wheel identity records");
             sender.sendMessage("§e/blockships forcedisassembleall §7- Force-disassemble all assembled ships §c§l[DANGEROUS]");
             sender.sendMessage("§e/blockships killentities §7- Remove all BlockShips entities from worlds §c§l[DANGEROUS]");
         }
@@ -1130,7 +1131,6 @@ public class BlockShipsPlugin extends JavaPlugin {
         }
     }
 
-    @Override
     /**
      * {@code /blockships wheels <inspect|list|adopt|purge>} — the diagnostic + repair surface for wheel
      * identity.

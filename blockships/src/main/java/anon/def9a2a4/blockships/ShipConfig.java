@@ -20,8 +20,9 @@ public class ShipConfig {
     // Physics
     public final float activeDeceleration;
     public final float mountedDrag;
-    public final float unmannedDrag;
-    public final float idleDrag;
+    /** Drag applied whenever nobody is driving. Was split into unmanned/idle by player proximity; that
+     *  tier was decided by a flag sampled once at driver dismount, so it has been collapsed. */
+    public final float noDriverDrag;
     public final float rotationDeceleration;
     public final float minMovementThreshold;
     public final float deckPhysicsMinVelocity;
@@ -128,8 +129,7 @@ public class ShipConfig {
         this.rotationAcceleration = b.rotationAcceleration;
         this.activeDeceleration = b.activeDeceleration;
         this.mountedDrag = b.mountedDrag;
-        this.unmannedDrag = b.unmannedDrag;
-        this.idleDrag = b.idleDrag;
+        this.noDriverDrag = b.noDriverDrag;
         this.rotationDeceleration = b.rotationDeceleration;
         this.minMovementThreshold = b.minMovementThreshold;
         this.deckPhysicsMinVelocity = b.deckPhysicsMinVelocity;
@@ -221,8 +221,7 @@ public class ShipConfig {
             // Physics
             .activeDeceleration((float) cfg.getDouble(p + "controls.active-deceleration", 0.025))
             .mountedDrag((float) cfg.getDouble(p + "controls.mounted-drag", 0.99))
-            .unmannedDrag((float) cfg.getDouble(p + "controls.unmanned-drag", 0.97))
-            .idleDrag((float) cfg.getDouble(p + "controls.idle-drag", 0.93))
+            .noDriverDrag((float) cfg.getDouble(p + "controls.no-driver-drag", 0.93))
             .rotationDeceleration((float) cfg.getDouble(p + "controls.rotation-deceleration", 0.15))
             .minMovementThreshold((float) cfg.getDouble(p + "controls.min-movement-threshold", 0.01))
             .deckPhysicsMinVelocity((float) cfg.getDouble("physics.deck-physics-min-velocity", 0.1))
@@ -366,8 +365,7 @@ public class ShipConfig {
         float rotationAcceleration = 0.3f;
         float activeDeceleration = 0.025f;
         float mountedDrag = 0.99f;
-        float unmannedDrag = 0.97f;
-        float idleDrag = 0.93f;
+        float noDriverDrag = 0.93f;
         float rotationDeceleration = 0.15f;
         float minMovementThreshold = 0.01f;
         float deckPhysicsMinVelocity = 0.1f;
@@ -450,8 +448,7 @@ public class ShipConfig {
         Builder rotationAcceleration(float v) { rotationAcceleration = v; return this; }
         Builder activeDeceleration(float v) { activeDeceleration = v; return this; }
         Builder mountedDrag(float v) { mountedDrag = v; return this; }
-        Builder unmannedDrag(float v) { unmannedDrag = v; return this; }
-        Builder idleDrag(float v) { idleDrag = v; return this; }
+        Builder noDriverDrag(float v) { noDriverDrag = v; return this; }
         Builder rotationDeceleration(float v) { rotationDeceleration = v; return this; }
         Builder minMovementThreshold(float v) { minMovementThreshold = v; return this; }
         Builder deckPhysicsMinVelocity(float v) { deckPhysicsMinVelocity = v; return this; }

@@ -24,8 +24,8 @@ public class ShipInstance {
     private static double ROTATION_THRESHOLD = 0.01;
     private static int IDLE_TICKS_BEFORE_STOP = 40;
     private static int IDLE_CHECK_INTERVAL = 20;
+    /** Fallback radius for {@code carryRidersUp} when the collision radius has not been computed yet. */
     private static float PLAYER_PROXIMITY_RADIUS = 10.0f;
-    private static float PLAYER_PROXIMITY_RADIUS_SQ = 100.0f;  // Squared for fast distance checks
     private static boolean SHIP_LIGHTS_ENABLED = true;
     private static boolean TNT_ENABLED = false;
     private static int TNT_FUSE_TICKS = 80;
@@ -43,7 +43,6 @@ public class ShipInstance {
         IDLE_TICKS_BEFORE_STOP = cfg.getInt("physics.idle-ticks-before-stop", 40);
         IDLE_CHECK_INTERVAL = cfg.getInt("physics.idle-check-interval", 20);
         PLAYER_PROXIMITY_RADIUS = (float) cfg.getDouble("physics.player-proximity-radius", 10.0);
-        PLAYER_PROXIMITY_RADIUS_SQ = PLAYER_PROXIMITY_RADIUS * PLAYER_PROXIMITY_RADIUS;
         SHIP_LIGHTS_ENABLED = cfg.getBoolean("ship-lights", true);
         TNT_ENABLED = cfg.getBoolean("cannons.tnt-enabled", false);
         TNT_FUSE_TICKS = cfg.getInt("cannons.tnt-fuse-ticks", 80);
@@ -124,7 +123,6 @@ public class ShipInstance {
 
     // Driver and player tracking (public for delegates)
     public boolean hasDriver = false;
-    public boolean hasPlayersNearby = false;
 
     // Input state tracking (set by ShipSteeringListener, read by ShipPhysics)
     public boolean isForwardPressed = false;
@@ -512,18 +510,10 @@ public class ShipInstance {
             calculateCollisionRadius();
         }
 
-        // Optimization: Check if any players are nearby using player list + squared distance
-        // Much faster than getNearbyEntities which searches all entity types in a large area
-        hasPlayersNearby = false;
-        for (Player player : currentVehicleLoc.getWorld().getPlayers()) {
-            if (player.getLocation().distanceSquared(currentVehicleLoc) <= PLAYER_PROXIMITY_RADIUS_SQ) {
-                hasPlayersNearby = true;
-                break;
-            }
-        }
-
-        // The mechanism owns collider/shulker positioning for delegated ships; nothing to sync here beyond
-        // the radius + nearby-player flags computed above.
+        // The mechanism owns collider/shulker positioning for delegated ships, so seeding collisionRadius
+        // above is all this still does. (It also used to compute a hasPlayersNearby flag for a
+        // player-proximity drag tier — removed: this method's only call chain runs at driver dismount, so
+        // that flag was a single stale sample that then decided drag for the entire coast-down.)
     }
 
     /**

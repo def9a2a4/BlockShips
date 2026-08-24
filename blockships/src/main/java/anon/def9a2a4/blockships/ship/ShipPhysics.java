@@ -389,14 +389,12 @@ public class ShipPhysics {
 
         // Apply drag when not actively throttling (a driverless ship always drags -> coasts to a stop)
         if (!throttling) {
-            float dragMultiplier;
-            if (ship.hasDriver) {
-                dragMultiplier = config.mountedDrag;
-            } else if (ship.hasPlayersNearby) {
-                dragMultiplier = config.unmannedDrag;
-            } else {
-                dragMultiplier = config.idleDrag;
-            }
+            // Two no-driver drags (unmanned = a player is nearby, idle = nobody is watching) used to live
+            // here. The distinction was already dead: hasPlayersNearby was only ever written by
+            // updateCollisionPositions, whose sole call chain runs at driver dismount — so the flag was one
+            // stale sample taken when the driver stood up, and the whole coast-down after that used it.
+            // Collapsed to idle-drag's value, the nobody-watching one.
+            float dragMultiplier = ship.hasDriver ? config.mountedDrag : config.noDriverDrag;
 
             // Apply extra drag in water (reuse work location)
             if (isWaterOrWaterlogged(reuseLocation(vehicleLoc).subtract(0, 0.5, 0).getBlock())) {
