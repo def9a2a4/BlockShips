@@ -1213,7 +1213,7 @@ public class DisplayShip implements Listener {
      *  slabs/doors keep their state) with a {@code display_yaw} rotation baked in; heads/skulls and banners become
      *  ItemDisplay parts (via {@link CustomShipRender}) with their captured NBT + HEAD/FIXED transform. Parts stay
      *  in {@code model.parts} order so the block index == collider/seat index. Transforms are vehicle-relative
-     *  ({@code p.local}); the mechanism supplies the ride-offset (== the native customDisplayOffset) and the heading
+     *  ({@code p.local}); the mechanism supplies the ride-offset (what the retired native display-offset did) and the heading
      *  (via currentYaw), so no initialRotation/positionOffset/displayOffset is baked in here. */
     private java.util.List<anon.def9a2a4.corelib.MechanismRegistry.PartSpec> buildCustomParts(ShipModel model) {
         java.util.List<anon.def9a2a4.corelib.MechanismRegistry.PartSpec> parts = new java.util.ArrayList<>();
