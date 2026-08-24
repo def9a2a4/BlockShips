@@ -24,7 +24,6 @@ public final class ShipTags {
     public static final String PARENT_TAG = "shipparent";
     public static final String CARRIER_TAG = "shipcarrier";
     public static final String COLLIDER_TAG = "shipcollider";
-    public static final String DYNLIGHT_PREFIX = "dynlight:";
 
     private ShipTags() {} // Prevent instantiation
 
@@ -63,10 +62,6 @@ public final class ShipTags {
 
     public static String cannonTag(int obsidianBlockIndex) {
         return CANNON_PREFIX + obsidianBlockIndex;
-    }
-
-    public static String dynlightTag(int lightLevel) {
-        return DYNLIGHT_PREFIX + lightLevel;
     }
 
     /**

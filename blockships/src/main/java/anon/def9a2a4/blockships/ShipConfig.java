@@ -96,7 +96,6 @@ public class ShipConfig {
     public final float mobLargeMass;
 
     // Custom ship offsets (cached to avoid config reads every tick)
-    public final Vector3f customDisplayOffset;
     public final Vector3f customCollisionOffset;
 
     // Sound settings
@@ -188,7 +187,6 @@ public class ShipConfig {
         this.mobSmallMass = b.mobSmallMass;
         this.mobMediumMass = b.mobMediumMass;
         this.mobLargeMass = b.mobLargeMass;
-        this.customDisplayOffset = b.customDisplayOffset;
         this.customCollisionOffset = b.customCollisionOffset;
         this.soundMinSpeed = b.soundMinSpeed;
         this.airshipSoundMinSpeed = b.airshipSoundMinSpeed;
@@ -282,7 +280,6 @@ public class ShipConfig {
             .mobMediumMass((float) cfg.getDouble("entity-masses.mob-medium", 50.0))
             .mobLargeMass((float) cfg.getDouble("entity-masses.mob-large", 200.0))
             // Custom ship offsets (only used for custom ships, but loaded for all)
-            .customDisplayOffset(ShipModel.readVector3fFromConfig(cfg, "custom-ships.display-offset", new Vector3f(0, 1.975f, 0)))
             .customCollisionOffset(ShipModel.readVector3fFromConfig(cfg, "custom-ships.collision-offset", new Vector3f(0, 0, 0)))
             // Movement sound settings (per-ship with fallback to global)
             .soundMinSpeed((float) cfg.getDouble(p + "movement-sounds.min-speed", cfg.getDouble("sounds.min-speed", 0.1)))
@@ -426,7 +423,6 @@ public class ShipConfig {
         float mobSmallMass = 10.0f;
         float mobMediumMass = 50.0f;
         float mobLargeMass = 200.0f;
-        Vector3f customDisplayOffset = new Vector3f(0, 1.975f, 0);
         Vector3f customCollisionOffset = new Vector3f(0, 0, 0);
         float soundMinSpeed = 0.1f;
         float airshipSoundMinSpeed = 0.45f;
@@ -507,7 +503,6 @@ public class ShipConfig {
         Builder mobSmallMass(float v) { mobSmallMass = v; return this; }
         Builder mobMediumMass(float v) { mobMediumMass = v; return this; }
         Builder mobLargeMass(float v) { mobLargeMass = v; return this; }
-        Builder customDisplayOffset(Vector3f v) { customDisplayOffset = v; return this; }
         Builder customCollisionOffset(Vector3f v) { customCollisionOffset = v; return this; }
         Builder soundMinSpeed(float v) { soundMinSpeed = v; return this; }
         Builder airshipSoundMinSpeed(float v) { airshipSoundMinSpeed = v; return this; }

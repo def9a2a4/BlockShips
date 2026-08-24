@@ -26,7 +26,6 @@ public class ShipInstance {
     private static int IDLE_CHECK_INTERVAL = 20;
     /** Fallback radius for {@code carryRidersUp} when the collision radius has not been computed yet. */
     private static float PLAYER_PROXIMITY_RADIUS = 10.0f;
-    private static boolean SHIP_LIGHTS_ENABLED = true;
     private static boolean TNT_ENABLED = false;
     private static int TNT_FUSE_TICKS = 80;
     private static boolean POSITION_SYNC_ENABLED = true;
@@ -43,7 +42,6 @@ public class ShipInstance {
         IDLE_TICKS_BEFORE_STOP = cfg.getInt("physics.idle-ticks-before-stop", 40);
         IDLE_CHECK_INTERVAL = cfg.getInt("physics.idle-check-interval", 20);
         PLAYER_PROXIMITY_RADIUS = (float) cfg.getDouble("physics.player-proximity-radius", 10.0);
-        SHIP_LIGHTS_ENABLED = cfg.getBoolean("ship-lights", true);
         TNT_ENABLED = cfg.getBoolean("cannons.tnt-enabled", false);
         TNT_FUSE_TICKS = cfg.getInt("cannons.tnt-fuse-ticks", 80);
         POSITION_SYNC_ENABLED = cfg.getBoolean("physics.position-sync-enabled", true);
@@ -450,21 +448,6 @@ public class ShipInstance {
      * All matrix/vector parameters are used as scratch space - callers can pass work fields
      * for zero-alloc usage in the tick loop, or temporary locals elsewhere.
      */
-    private static void computeColliderWorldPos(
-            Matrix4f R_full, Matrix4f T_collision, Matrix4f localBase, Vector3f perBlockOffset,
-            Location vehicleLoc,
-            Matrix4f workWorld, Vector3f workOffset, Vector3f workPerBlockOff, Vector3f outPos) {
-        workWorld.set(R_full).mul(T_collision).mul(localBase);
-        workWorld.getTranslation(workOffset);
-        workPerBlockOff.set(perBlockOffset);
-        R_full.transformPosition(workPerBlockOff);
-        outPos.set(
-            (float) vehicleLoc.getX() + workOffset.x + workPerBlockOff.x,
-            (float) vehicleLoc.getY() + workOffset.y + workPerBlockOff.y,
-            (float) vehicleLoc.getZ() + workOffset.z + workPerBlockOff.z
-        );
-    }
-
     /**
      * Live world-space collider boxes for this ship (M3). defCoreLib owns the colliders, so read them via the
      * Mechanism block-index read-API. Both {@link ShipCollision} and {@link ShipCollisionCoordinator} consume
@@ -1038,10 +1021,6 @@ public class ShipInstance {
      * Deserializes a Base64 skull profile string into a PlayerProfile.
      * Delegates to BlockStructureScanner for the actual implementation.
      */
-    private static com.destroystokyo.paper.profile.PlayerProfile deserializeSkullProfile(String textureBase64) {
-        return anon.def9a2a4.blockships.customships.BlockStructureScanner.deserializeProfile(textureBase64);
-    }
-
     // ===== Seat Management Methods =====
 
     /**

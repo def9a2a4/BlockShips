@@ -227,7 +227,7 @@ physics:
   movement-threshold: 0.001
   # Minimum rotation (degrees) required to update armor stands and displays
   rotation-threshold: 0.001
-  # Radius in blocks to check for nearby players (for unmanned drag detection)
+  # Fallback radius in blocks for carrying riders up when a ship's collision radius is not yet known
   player-proximity-radius: 2.0
   # Display entity transform interpolation duration in ticks (1-4, default: 2)
   # Controls rotation/scale smoothing. Position follows vehicle instantly.
@@ -372,10 +372,9 @@ ships:
       active-deceleration: 0.025
       # Mounted drag: Speed multiplier when driver aboard but not pressing W/S (multiplicative)
       mounted-drag: 0.995
-      # Unmanned drag: Speed multiplier when players nearby but not driving (multiplicative)
-      unmanned-drag: 0.99
-      # Idle drag: Speed multiplier when no players nearby (multiplicative)
-      idle-drag: 0.98
+      # No-driver drag: Speed multiplier whenever nobody is driving (multiplicative).
+      # Replaces the old unmanned-drag/idle-drag pair, which were selected by player proximity.
+      no-driver-drag: 0.98
       # Minimum movement threshold: Below this speed, ship stops completely (prevents creeping)
       min-movement-threshold: 0.01
 
@@ -451,8 +450,7 @@ ships:
       acceleration: 0.02
       active-deceleration: 0.025
       mounted-drag: 0.995
-      unmanned-drag: 0.99
-      idle-drag: 0.98
+      no-driver-drag: 0.98
       min-movement-threshold: 0.01
 
       rotation-speed: 1.5
@@ -501,8 +499,7 @@ ships:
       acceleration: 0.015
       active-deceleration: 0.02
       mounted-drag: 0.995
-      unmanned-drag: 0.99
-      idle-drag: 0.98
+      no-driver-drag: 0.98
       min-movement-threshold: 0.01
 
       rotation-speed: 1.2

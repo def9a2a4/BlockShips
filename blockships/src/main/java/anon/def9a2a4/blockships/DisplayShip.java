@@ -780,10 +780,6 @@ public class DisplayShip implements Listener {
         return item;
     }
 
-    private ItemStack makeShipKit(String shipType, ItemStack banner, String woodType) {
-        return createShipKit(shipType, banner, woodType, plugin);
-    }
-
     /**
      * Creates a ship kit with balloon color support for airships.
      */
