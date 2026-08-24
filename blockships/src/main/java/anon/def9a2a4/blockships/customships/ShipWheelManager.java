@@ -121,7 +121,39 @@ public class ShipWheelManager {
      *
      * @return true if the file was written successfully, false if saving failed.
      */
+    /** While true, {@link #saveAll()} only marks the set dirty; {@link #endBatch()} does the one real write. */
+    private boolean batching = false;
+    private boolean batchDirty = false;
+
+    /**
+     * Coalesce the saves inside a bulk operation into one write.
+     *
+     * <p>{@code saveAll} rewrites the whole file, and {@code disassembleShip} calls it twice per ship — so a
+     * bulk command over N ships did O(N²) row serializations and 2N+1 file writes in a single tick. Every
+     * one of those is now atomic (temp write + rename), which makes the cost worse, not better.
+     *
+     * <p>Deliberately explicit begin/end rather than a lambda wrapper: the one caller mutates a pile of local
+     * tallies, and forcing those through effectively-final holders would obscure it. Must be paired in a
+     * {@code finally}.
+     */
+    public void beginBatch() {
+        batching = true;
+        batchDirty = false;
+    }
+
+    /** Ends a {@link #beginBatch()} and flushes if anything changed. @return false if the write failed. */
+    public boolean endBatch() {
+        batching = false;
+        if (!batchDirty) return true;
+        batchDirty = false;
+        return saveAll();
+    }
+
     public boolean saveAll() {
+        if (batching) {
+            batchDirty = true;
+            return true;
+        }
         File wheelsFile = new File(plugin.getDataFolder(), WHEELS_FILE);
         org.bukkit.configuration.file.YamlConfiguration config = new org.bukkit.configuration.file.YamlConfiguration();
 

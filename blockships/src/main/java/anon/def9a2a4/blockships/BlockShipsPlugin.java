@@ -788,17 +788,24 @@ public class BlockShipsPlugin extends JavaPlugin {
                     Set<UUID> persisted = collectPersistedShipIds();
                     WheelStats ws = classifyWheels(persisted);
                     int willDisassemble = ws.registeredWithWheel.size();
-                    int untouched = ws.unloadedPersisted.size() + ws.orphan.size();
+                    int orphaned = ws.orphan.size();
+                    int untouched = ws.unloadedPersisted.size();
 
                     sendStatsBreakdown(sender, persisted, ws);
                     sender.sendMessage("");
                     sender.sendMessage("§c§l⚠ WARNING ⚠");
                     sender.sendMessage("§cThis will §lFORCE-DISASSEMBLE§c the §e" + willDisassemble
                         + "§c currently active ship(s).");
+                    if (orphaned > 0) {
+                        // Orphans used to be skipped, which stranded their blocks permanently. They are now
+                        // actionable: any that still have a live mechanism get their blocks landed.
+                        sender.sendMessage("§e" + orphaned + " orphaned wheel(s) will also be cleared. Any"
+                            + " whose ship is still holding blocks will have those returned to the world"
+                            + " §7(except prefab ships, which hold none).");
+                    }
                     if (untouched > 0) {
-                        sender.sendMessage("§7" + untouched + " assembled wheel(s) are not currently active ("
-                            + ws.unloadedPersisted.size() + " unloaded, " + ws.orphan.size()
-                            + " orphaned - see above) and will be left untouched.");
+                        sender.sendMessage("§7" + untouched + " assembled wheel(s) are in unloaded chunks"
+                            + " and will be left untouched.");
                     }
                     sender.sendMessage("");
                     sender.sendMessage("§7Type §e/blockships forcedisassembleall confirm §7to confirm.");
@@ -812,6 +819,10 @@ public class BlockShipsPlugin extends JavaPlugin {
                 int orphansLanded = 0;
                 int orphansDiscarded = 0;
 
+                // Coalesce the per-ship saves into one write at the end — disassembleShip saves twice per
+                // ship and each save rewrites the whole file, so this loop was O(N²) on the main thread.
+                shipWheelManager.beginBatch();
+                try {
                 // Get all wheels and force-disassemble assembled ones.
                 // Copy to avoid ConcurrentModificationException (disassembly updates wheel locations).
                 for (ShipWheelData wheelData : new ArrayList<>(shipWheelManager.getWheels())) {
@@ -862,6 +873,9 @@ public class BlockShipsPlugin extends JavaPlugin {
                         getLogger().log(Level.WARNING,
                             "forcedisassembleall: exception disassembling " + where, e);
                     }
+                }
+                } finally {
+                    if (!shipWheelManager.endBatch()) saveErrors++;
                 }
 
                 getLogger().info(sender.getName() + " ran forcedisassembleall: disassembled " + count
