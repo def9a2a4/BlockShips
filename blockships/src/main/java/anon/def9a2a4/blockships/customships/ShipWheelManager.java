@@ -335,6 +335,14 @@ public class ShipWheelManager {
 
         if (destroyShip && wheel.isAssembled()) {
             ShipInstance ship = ShipRegistry.byId(wheel.getAssembledShipUUID());
+            if (ship == null) {
+                // Orphan: no ShipInstance, but a live mechanism may still be holding this ship's blocks
+                // (lost or corrupt sidecar). Land them rather than stranding them — breaking the wheel used
+                // to deregister the wheel and leave the blocks in limbo.
+                if (plugin instanceof BlockShipsPlugin obsp) {
+                    anon.def9a2a4.blockships.ShipOrphans.disassembleOrphan(obsp, wheel.getAssembledShipUUID());
+                }
+            }
             if (ship != null) {
                 // destroyWithCleanup, not destroy(): it also deletes the ships/<id>.yml sidecar, and it must
                 // read the world BEFORE destroy() removes the vehicle. Reimplementing that inline gets a null
@@ -856,20 +864,43 @@ public class ShipWheelManager {
     }
 
     /**
-     * Self-heal a wheel that resolved {@link WheelState#ORPHAN}: clear the stale link (persisting it) and reap
-     * ONLY the BlockShips-owned orphan root vehicle ({@code ShipTags.shipRootTag}). Never sweeps
-     * {@code corelib:mech:*} — defCoreLib owns and reaps those itself, guarded by its own recovery/persistence
-     * latches BlockShips cannot replicate.
+     * Self-heal a wheel that resolved {@link WheelState#ORPHAN}: land any blocks still held, clear the stale
+     * link, and reap the leftover root vehicle.
+     *
+     * <p><b>Land before unlinking.</b> This used to null the link first and then reap, which is how an orphan
+     * record at an empty cell got manufactured in the first place — and if a mechanism was still holding the
+     * ship's blocks, they went with it.
+     *
+     * <p>The old javadoc claimed this "never sweeps {@code corelib:mech:*}". That was false: the only entity
+     * that ever carries {@code shipRootTag} is the corelib-spawned ArmorStand BlockShips adopts as its
+     * vehicle, which by construction also carries {@code corelib:mech:{id}:vehicle}. The reap is still
+     * correct — it only runs once the mechanism is provably gone — but it is a corelib-tagged entity, and
+     * {@code isCorelibTagged} is deliberately NOT used as a filter here for that reason.
      */
     private void reconcileOrphan(ShipWheelData wheel) {
         UUID uuid = wheel.getAssembledShipUUID();
+        if (uuid == null) {
+            wheel.setAssembledShipUUID(null);
+            saveAll();
+            return;
+        }
+
+        // If a mechanism is somehow still live for this id, get the blocks back into the world before the
+        // link goes — after that we have no way to reach it.
+        if (plugin instanceof BlockShipsPlugin bsp) {
+            anon.def9a2a4.blockships.ShipOrphans.disassembleOrphan(bsp, uuid);
+        }
+
         wheel.setAssembledShipUUID(null);
         saveAll();
-        if (uuid == null) return;
+
         Location near = wheel.getBlockLocation();
         if (near == null || near.getWorld() == null) return;
         String rootTag = anon.def9a2a4.blockships.ShipTags.shipRootTag(uuid);
-        for (org.bukkit.entity.Entity e : near.getWorld().getEntities()) {
+        // Bounded, not world.getEntities(): this runs from five call sites, two of them player-interactive
+        // (assemble, disassemble), and an unbounded whole-world entity walk on a click is a stall waiting to
+        // happen. corelib bounds the equivalent sweep the same way, around the persisted pivot.
+        for (org.bukkit.entity.Entity e : near.getWorld().getNearbyEntities(near, 96, 96, 96)) {
             if (e instanceof org.bukkit.entity.ArmorStand && e.getScoreboardTags().contains(rootTag)) {
                 e.remove();
             }

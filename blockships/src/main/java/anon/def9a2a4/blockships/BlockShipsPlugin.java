@@ -809,17 +809,35 @@ public class BlockShipsPlugin extends JavaPlugin {
                 int failed = 0;
                 int skipped = 0;
                 int saveErrors = 0;
+                int orphansLanded = 0;
+                int orphansDiscarded = 0;
 
                 // Get all wheels and force-disassemble assembled ones.
                 // Copy to avoid ConcurrentModificationException (disassembly updates wheel locations).
                 for (ShipWheelData wheelData : new ArrayList<>(shipWheelManager.getWheels())) {
                     if (!wheelData.isAssembled()) continue;
 
-                    // Skip ships that are not active (unloaded/gone). Calling disassembleShip on them
-                    // would silently sever the wheel link (ShipWheelManager clears it when the ship
-                    // is not registered), corrupting a ship that still exists in an unloaded chunk.
+                    // Not registered as a ShipInstance. Two very different cases hide behind that:
+                    //
+                    //  - a LIVE mechanism with no ShipInstance (lost/corrupt sidecar) — an orphan. Its blocks
+                    //    are real and in the world, and skipping it strands them forever. Land them.
+                    //  - genuinely unloaded or gone. Still skipped: calling disassembleShip would sever the
+                    //    wheel link and corrupt a ship that still exists in an unloaded chunk.
+                    //
+                    // Prefab (blockFree) orphans are NOT landed — defCoreLib discards those instead of
+                    // restoring blocks, so "recovered" would be a lie. They stay in the skipped count.
                     if (ShipRegistry.byId(wheelData.getAssembledShipUUID()) == null) {
-                        skipped++;
+                        UUID orphanId = wheelData.getAssembledShipUUID();
+                        ShipOrphans.Outcome oc = ShipOrphans.disassembleOrphan(this, orphanId);
+                        if (oc == ShipOrphans.Outcome.LANDED) {
+                            orphansLanded++;
+                            wheelData.setAssembledShipUUID(null);
+                        } else if (oc == ShipOrphans.Outcome.DISCARDED_BLOCK_FREE) {
+                            orphansDiscarded++;
+                            wheelData.setAssembledShipUUID(null);
+                        } else {
+                            skipped++;
+                        }
                         continue;
                     }
 
@@ -849,14 +867,15 @@ public class BlockShipsPlugin extends JavaPlugin {
                 getLogger().info(sender.getName() + " ran forcedisassembleall: disassembled " + count
                     + " ship(s)" + (failed > 0 ? ", " + failed + " failed" : "")
                     + (saveErrors > 0 ? ", " + saveErrors + " with save errors" : "")
+                    + (orphansLanded > 0 ? ", " + orphansLanded + " orphan(s) landed" : "")
+                    + (orphansDiscarded > 0 ? ", " + orphansDiscarded + " block-free orphan(s) discarded" : "")
                     + (skipped > 0 ? ", " + skipped + " skipped (not active)" : ""));
 
-                // disassembleShip mutates in-memory wheel state (clears the link, updates the block
-                // location) but does not persist. Save once here so ship_wheels.yml isn't stale
-                // until an unrelated save fires (a restart in that window would reload wheels flagged
-                // assembled pointing at ships that no longer exist). Gate on count so a no-op run
-                // doesn't rewrite the file.
-                if (count > 0 && !shipWheelManager.saveAll()) {
+                // disassembleShip DOES persist (twice, in fact — once per branch and once at the tail), so
+                // this trailing save is belt-and-braces rather than the only write. It still earns its keep
+                // for the orphan branches above, which clear links without going through disassembleShip.
+                // Gate on having changed something so a no-op run doesn't rewrite the file.
+                if ((count > 0 || orphansLanded > 0 || orphansDiscarded > 0) && !shipWheelManager.saveAll()) {
                     sender.sendMessage("§cFailed to save wheel state - check the server console for details.");
                 }
 
@@ -869,6 +888,14 @@ public class BlockShipsPlugin extends JavaPlugin {
                 if (saveErrors > 0) {
                     sender.sendMessage("§c" + saveErrors + " of those were disassembled but their on-disk"
                         + " cleanup failed to save - check the server console for details.");
+                }
+                if (orphansLanded > 0) {
+                    sender.sendMessage("§a" + orphansLanded + " orphaned ship(s) had no data left, but their"
+                        + " blocks were returned to the world.");
+                }
+                if (orphansDiscarded > 0) {
+                    sender.sendMessage("§e" + orphansDiscarded + " orphaned prefab ship(s) were removed."
+                        + " §7Prefabs hold no world blocks, so there was nothing to return.");
                 }
                 if (skipped > 0) {
                     sender.sendMessage("§7" + skipped + " assembled wheel(s) were skipped (not active -"
