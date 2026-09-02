@@ -942,12 +942,6 @@ public class ShipWheelManager {
         return ownsBlock(wheel, cell.getBlock()) ? Health.OK : Health.BROKEN;
     }
 
-    /** @deprecated prefer {@link #recordHealth}; kept so callers that only want a yes/no still compile. */
-    @Deprecated
-    public boolean isRecordHealthy(ShipWheelData wheel) {
-        Health h = recordHealth(wheel);
-        return h == Health.OK || h == Health.SAILING || h == Health.UNKNOWN;
-    }
 
     /**
      * The engine removed a wheel block by a route that never reaches {@code BlockBreakEvent} — an explosion,
