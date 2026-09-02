@@ -29,8 +29,9 @@ import java.util.UUID;
  * <p><b>The type is nearly inert.</b> No recipes, no {@code onInteract}, no {@code interactGUI}, no storage,
  * no states, no collision — BlockShips owns all of those and each would be a handler-ordering or
  * double-restore hazard. The one callback it does take is {@code onBlockRemoved}, which is how BlockShips
- * learns about the removal routes that never fire {@code BlockBreakEvent} (explosion, fire, fluid,
- * {@code /setblock}, piston, drill); every one of those used to leave a record behind at an empty cell.
+ * learns about the removal routes that never fire {@code BlockBreakEvent} (explosion, fire, fluid, piston,
+ * drill); every one of those used to leave a record behind at an empty cell. <b>Not</b> {@code /setblock} or
+ * {@code /fill} — see the note on {@code onBlockRemoved} below.
  * It is guarded by {@code isCapturingForMechanism()}, which is exactly what distinguishes a real removal
  * from assembly airing the wheel out.
  */
@@ -129,6 +130,34 @@ public final class ShipWheelBlockType {
                     // blockships:custom_item_id, so the two wheel items do not stack. Everything functional
                     // accepts both (isShipWheel, ingredientMatches); corelib has no per-type createItem hook.
                     .drops(anon.def9a2a4.corelib.CustomHeadBlock.DropRule.self())
+                    // Rebind the record to the block the instant a carried wheel lands.
+                    //
+                    // The MOVED arm of anchorWheelFor already self-heals this, but only for a GLUED wheel:
+                    // corelib offers a landed block to the anchor provider only when it has glue offsets, so
+                    // an unglued wheel is not re-bound at landing. It does get healed on the mover's NEXT
+                    // stroke (GlueManager re-consults the provider for every block, every stroke), so the
+                    // residual gap is narrow — a mover that lands a wheel and then never strokes again. This
+                    // closes it.
+                    //
+                    // onRestore is the right seam because it fires immediately AFTER restoreConfigPdc, so
+                    // wheel_id is back on the block and anchorWheelFor can read it. Reusing anchorWheelFor
+                    // rather than reimplementing the relocate keeps the MOVED / DUPLICATE_CLAIM / UNOBSERVABLE
+                    // decision in one place; it is idempotent and returns quietly when nothing moved.
+                    //
+                    // catch(Throwable), not catch(RuntimeException): this runs inside placeBlock, whose own
+                    // guard is a catch(RuntimeException), and disassemble's per-block guard is one too — so
+                    // an Error would escape BOTH, skip dropBlockAsItem, and abort the landing loop half-way
+                    // through a teardown.
+                    .onRestore(block -> {
+                        try {
+                            BlockShipsPlugin bsp = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager()
+                                .getPlugin("BlockShips");
+                            if (bsp == null || bsp.getShipWheelManager() == null) return;
+                            bsp.getShipWheelManager().anchorWheelFor(block);
+                        } catch (Throwable ignored) {
+                            // The next mover stroke, or the next right-click, heals it instead.
+                        }
+                    })
                     // A wheel must never be shoved away from its record, because the record's cached cell is
                     // how a DOCKED wheel is recognised. breakOnPiston is NOT the alternative it looks like:
                     // it would let a piston delete the wheel and hand back an item, silently unmooring the
@@ -149,9 +178,15 @@ public final class ShipWheelBlockType {
                     // hull with no event either way, so the wheel flag is a point fix, not a protection fix.
                     .drillable(false)
                     // Told when the ENGINE removes a wheel block by a route that never fires
-                    // BlockBreakEvent: explosion, fire, fluid, /setblock, /fill, piston break, drill. Those
-                    // all left the record behind pointing at an empty cell — the orphan state a planted head
-                    // gets adopted into. isCapturingForMechanism() is the discriminator that makes this safe:
+                    // BlockBreakEvent: explosion, fire, fluid, piston break, drill. Those all left the record
+                    // behind pointing at an empty cell — the orphan state a planted head gets adopted into.
+                    //
+                    // NOT /setblock or /fill, despite what this comment used to claim. corelib's only hook
+                    // for those is BlockDestroyEvent, and Paper's own javadoc says it "does not fire anytime
+                    // a block is set to air, but only with more direct triggers" — and air is the default
+                    // mode. So `/setblock ~ ~ ~ air` on a docked wheel still orphans the record, and the
+                    // repair for that is `/blockships wheels adopt|purge`, not this callback.
+                    // isCapturingForMechanism() is the discriminator that makes this safe:
                     // assembly airs the wheel out through the same plumbing, and corelib raises that flag
                     // around exactly the removal callback. (An older comment here argued a callback was
                     // impossible for that reason; the flag is public API and answers it.)

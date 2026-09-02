@@ -2419,7 +2419,7 @@ public class DisplayShip implements Listener {
         // Re-resolve the record from the id the holder carries, EVERY click. The holder used to keep a hard
         // ShipWheelData reference, which is how a menu outlives the record behind it: seven paths deregister
         // a wheel (a player breaks it; the ship is destroyed with destroyOnDeath while you have the menu open
-        // from the collider; an admin purges it; an explosion or /setblock removes the block; a landing that
+        // from the collider; an admin purges it; an explosion removes the block; a landing that
         // could not place its wheel; the protected-anchor arm of disassembleShip), and three of those reopen
         // this menu a tick later on the now-detached object. Acting on it then writes through a cached cell
         // that may now hold somebody else's block — assembleShip would flood-fill their build into a ship,

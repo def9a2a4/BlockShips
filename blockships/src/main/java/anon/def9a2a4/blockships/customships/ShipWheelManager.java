@@ -502,7 +502,10 @@ public class ShipWheelManager {
 
         // Unstamped: a wheel predating the identity stamp, where the record's own cached cell is all there is.
         //
-        // An ASSEMBLED wheel can never own a block. Its cell is empty by construction — assembly airs the head
+        // An assembled wheel can never own a block THROUGH THIS ARM — the scope matters, and the sentence
+        // below used to read as a method-wide invariant. It is not one: the stamp-first return above hands
+        // back true for a stamped block of an assembled wheel, which is exactly the mid-landing case that
+        // return exists for. Its cell is empty by construction — assembly airs the head
         // out of the world — so anything standing there belongs to somebody else. Without this clause the
         // legacy arm becomes a cell-keyed write authority: a wheel sails, a player builds a wheel-textured
         // head on the vacated dock (which happens whenever stamping is unavailable), the ship is destroyed,
@@ -974,7 +977,9 @@ public class ShipWheelManager {
 
     /**
      * The engine removed a wheel block by a route that never reaches {@code BlockBreakEvent} — an explosion,
-     * fire, a fluid break, {@code /setblock}, {@code /fill}, a piston break, or a corelib drill boring it out.
+     * fire, a fluid break, a piston break, or a corelib drill boring it out. NOT {@code /setblock} or
+     * {@code /fill} in their default (air) mode — Paper's {@code BlockDestroyEvent} explicitly does not fire
+     * for a block set to air, so those still strand the record and need {@code /blockships wheels purge}.
      *
      * <p>Before this, every one of those left the block gone and the record behind, pointing at an empty cell.
      * That orphan is the raw material for impersonation: it is exactly the state a planted head can be adopted
@@ -1010,6 +1015,12 @@ public class ShipWheelManager {
 
         // A wheel whose ship is out is not this block, whatever this block is. Both states below have a cell
         // that is legitimately EMPTY — assembly airs the head out — so anything standing there was planted.
+        //
+        // READ THE WHOLE SWITCH BEFORE CHANGING IT. Only LOADED and UNLOADED_RECOVERABLE return; ORPHAN and
+        // NOT_ASSEMBLED both fall through to the reap at the bottom, and NOT_ASSEMBLED is the NORMAL PATH —
+        // an ordinary docked wheel destroyed by an explosion. Only the ORPHAN case carries commentary, which
+        // makes the reap read as if it were orphan-gated; "tightening" it to match would silently stop every
+        // explosion-destroyed docked wheel from being cleaned up.
         WheelState st = resolveWheelState(wheel).state();
         if (st == WheelState.LOADED) {
             // Independent of corelib's capture-depth counter: assembly airs the wheel out through this same
