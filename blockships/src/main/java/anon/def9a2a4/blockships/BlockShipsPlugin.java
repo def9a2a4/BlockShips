@@ -269,8 +269,9 @@ public class BlockShipsPlugin extends JavaPlugin {
                 // Guard against a wheel whose world was unloaded at runtime - isChunkLoaded()
                 // dereferences the world and would otherwise NPE / throw "World unloaded".
                 Location wl = wheel.getBlockLocation();
-                boolean loaded = wl != null && wl.getWorld() != null && wl.isWorldLoaded()
-                    && wl.isChunkLoaded();
+                // isWorldLoaded FIRST. The order was inverted: getWorld() is the call that throws, and it
+                // sat ahead of the very predicate meant to guard it, so the guard never ran.
+                boolean loaded = wl != null && wl.isWorldLoaded() && wl.isChunkLoaded();
                 if (loaded) s.unassembledLoaded++; else s.unassembledUnloaded++;
             }
         }
@@ -481,7 +482,8 @@ public class BlockShipsPlugin extends JavaPlugin {
     /** Builds a human-readable "ship &lt;uuid&gt; (wheel at &lt;world&gt; x,y,z)" descriptor for console logs. */
     private String describeWheel(ShipWheelData wheelData) {
         Location loc = wheelData.getBlockLocation();
-        String world = (loc != null && loc.getWorld() != null) ? loc.getWorld().getName() : "?";
+        String world = anon.def9a2a4.blockships.util.LocationUtil.worldName(loc);
+        if (world == null) world = "?";
         String coords = (loc != null)
             ? loc.getBlockX() + "," + loc.getBlockY() + "," + loc.getBlockZ()
             : "?";
@@ -1266,13 +1268,23 @@ public class BlockShipsPlugin extends JavaPlugin {
                 sender.sendMessage("§e" + wheels.size() + " ship wheel(s):");
                 // Broken first. The cap is what makes this matter: the wheel an operator is hunting is
                 // exactly the one that must not fall off the end of an arbitrarily-ordered list.
+                //
+                // Health is computed ONCE PER WHEEL into a map, not inside the comparator. A comparator's key
+                // extractor runs on every comparison — O(n log n) times — and recordHealth is not cheap: each
+                // call walks resolveWheelState into isPersistedShip, which copies the entire persisted-ship
+                // id set, and then does up to two tile-entity reads via ownsBlock. It is also not guaranteed
+                // stable across calls (a chunk can load mid-sort), and a key that changes underneath
+                // List.sort raises "Comparison method violates its general contract!".
+                java.util.Map<java.util.UUID, ShipWheelManager.Health> healths = new java.util.HashMap<>();
+                for (ShipWheelData w : wheels) healths.put(w.getWheelId(), mgr.recordHealth(w));
                 java.util.List<ShipWheelData> ordered = new java.util.ArrayList<>(wheels);
-                ordered.sort(java.util.Comparator.comparingInt((ShipWheelData w) -> switch (mgr.recordHealth(w)) {
-                    case BROKEN -> 0;
-                    case UNKNOWN -> 1;
-                    case SAILING -> 2;
-                    case OK -> 3;
-                }));
+                ordered.sort(java.util.Comparator.comparingInt(
+                    (ShipWheelData w) -> switch (healths.get(w.getWheelId())) {
+                        case BROKEN -> 0;
+                        case UNKNOWN -> 1;
+                        case SAILING -> 2;
+                        case OK -> 3;
+                    }));
                 int shown = 0;
                 for (ShipWheelData w : ordered) {
                     if (shown++ >= 30) {
@@ -1283,7 +1295,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                     // "fine", so the two situations an operator actually needs to spot — a ship that is out,
                     // and a record whose block is gone — both printed as a green tick, right next to a state
                     // column that might say ORPHAN.
-                    ShipWheelManager.Health health = mgr.recordHealth(w);
+                    ShipWheelManager.Health health = healths.get(w.getWheelId());
                     String glyph = switch (health) {
                         case OK -> "§a✔ ";
                         case SAILING -> "§b⛵ ";
@@ -1422,8 +1434,11 @@ public class BlockShipsPlugin extends JavaPlugin {
 
     /** Short "world x, y, z" for command output. */
     private static String fmt(Location l) {
-        if (l == null || l.getWorld() == null) return "(unknown)";
-        return l.getWorld().getName() + " " + l.getBlockX() + ", " + l.getBlockY() + ", " + l.getBlockZ();
+        // This formats output ABOUT broken records, so it is exactly where an unloaded world turns up — and
+        // a bare getWorld() threw straight past the "(unknown)" fallback that exists for this case.
+        String w = anon.def9a2a4.blockships.util.LocationUtil.worldName(l);
+        if (w == null) return "(unknown)";
+        return w + " " + l.getBlockX() + ", " + l.getBlockY() + ", " + l.getBlockZ();
     }
 
     @Override

@@ -2566,8 +2566,8 @@ public class DisplayShip implements Listener {
         // offsets into the wheel block standing there.
         org.bukkit.Location cell = wheelData.getBlockLocation();
         if (action != ShipWheelMenu.MenuAction.TOGGLE_LOCK) {
-            ShipWheelManager.WheelResolution res = manager.resolveWheelState(wheelData);
-            ShipInstance ship = res.ship();
+            ShipInstance ship = ((BlockShipsPlugin) plugin).getShipWheelManager()
+                .resolveWheelState(wheelData).ship();
             // Fall back to the dock rather than failing open. ship() is null for UNLOADED_RECOVERABLE and
             // ORPHAN, and vehicle can be invalid, so "no live ship" is a reachable state for a wheel whose
             // menu is open — and an ungated action is worse than one gated on a stale-but-real cell.

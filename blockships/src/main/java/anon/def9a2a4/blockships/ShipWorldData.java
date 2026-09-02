@@ -532,6 +532,13 @@ public class ShipWorldData {
         // after this delete and recreates the sidecar, pinning the wheel that links to it as permanently
         // "still loading". Bump FIRST, so a job that starts between here and the delete still loses.
         deletionGenerations.merge(shipId, 1L, Long::sum);
+        // Opportunistic eviction, so the map does not grow by one entry per ship ever deleted for the life of
+        // the process. An entry only means something while a write queued BEFORE the delete is still in
+        // flight, and pendingIOOperations is incremented on the MAIN THREAD before each submit — so reading
+        // zero here proves no such write exists, and every future write will capture the post-clear value and
+        // compare against it consistently. Clearing at any other moment would be wrong: a queued write that
+        // captured 1 would see 0, decide nothing had changed, and resurrect the sidecar.
+        if (pendingIOOperations.get() == 0) deletionGenerations.clear();
         // Update cache to indicate file no longer exists
         metadataExistsCache.put(world.getName() + ":" + shipId, false);
         // Maintain the persisted-id set (main thread). The sidecar is about to be deleted; drop it from the set so
