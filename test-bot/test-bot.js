@@ -176,7 +176,15 @@ async function runControlSequence(startPos) {
     log(`Dismount error: ${e.message}`)
   }
 
-  // Use player position after dismount (more reliable than vehicle position)
+  // Use player position after dismount (more reliable than vehicle position).
+  //
+  // The settle wait is load-bearing, not politeness. While the bot is a passenger the server sends it no
+  // position packets, so bot.entity.position is FROZEN at wherever it was when it mounted; the real value
+  // only arrives with the teleport that follows the dismount. customDismount returns the moment bot.vehicle
+  // clears, which is before that packet lands — so reading immediately gave a stale position, and for a ship
+  // that started and ended near the same spot it read as exactly 0.00 movement. A bit-for-bit zero after a
+  // multi-second drive with a gravity drop is the signature of this race, not of a ship that did not move.
+  await new Promise(resolve => setTimeout(resolve, 500))
   const endPos = bot.entity.position.clone()
   const dx = endPos.x - startPos.x
   const dy = endPos.y - startPos.y
@@ -251,8 +259,12 @@ async function testShipControls(shipType) {
     passed = false
   }
 
-  if (dx > -2.0) {
-    fail(shipType, `Expected >=2 blocks westward (negative X), got dX=${dx.toFixed(2)} (moved ${dx > 0 ? 'east' : dx < 0 ? 'west but <2' : 'nowhere'})`)
+  // Directional check on Z (north), NOT X. These ships are driven NORTH — the westward component is a
+  // side effect of the forward+A / back+D turn sequence, not thrust, so asserting on dX was measuring turn
+  // radius and calling it propulsion. The passing runs show the same thing: bigship moves ~40 blocks total
+  // with only ~6 of them west. chunk-test.js was already corrected this way in a1ac6f8.
+  if (dz > -2.0) {
+    fail(shipType, `Expected >=2 blocks northward (negative Z), got dZ=${dz.toFixed(2)} (moved ${dz > 0 ? 'south' : dz < 0 ? 'north but <2' : 'nowhere'})`)
     passed = false
   }
 
@@ -329,8 +341,9 @@ async function testCustomShipBase(testName, buildConfig, isAirship = false) {
     passed = false
   }
 
-  if (dx > -2.0) {
-    fail(testName, `Expected >=2 blocks westward (negative X), got dX=${dx.toFixed(2)} (moved ${dx > 0 ? 'east' : dx < 0 ? 'west but <2' : 'nowhere'})`)
+  // Z, not X — see the note in testShipControls above.
+  if (dz > -2.0) {
+    fail(testName, `Expected >=2 blocks northward (negative Z), got dZ=${dz.toFixed(2)} (moved ${dz > 0 ? 'south' : dz < 0 ? 'north but <2' : 'nowhere'})`)
     passed = false
   }
 
