@@ -284,13 +284,28 @@ public class ShipWheelManager {
                     quarantined++;
                     continue;
                 }
+                // Two records sharing a cached cell is NOT corruption, and quarantining one was destructive.
+                //
+                // A sailing wheel's record keeps caching its launch cell for the whole voyage (the cache is
+                // only rewritten on landing or adoption), and that cell stands empty and buildable — so
+                // "assembled wheel A and docked wheel B share a cell" is the success state of id keying, not a
+                // fault. Dropping one of them from placedWheels made it invisible to every lookup, command and
+                // save while its block sat in the world still stamped, so that wheel's menu was dead for the
+                // whole session and its ship unreachable. Which one lost was decided by HashMap iteration
+                // order via the previous save, and because quarantined rows are re-emitted AFTER live ones the
+                // loser stayed second in the file and was re-quarantined on every boot after.
+                //
+                // Warn only, and only when BOTH rows are docked, which is the one case that really is odd. The
+                // gate has to sit on both sides of the add() — testing it only before the check would still
+                // quarantine the legitimate pair whenever the assembled row happened to be read first.
+                // isAssembled() is usable here (fromMap sets the link from ship_uuid) and is the only thing
+                // that is: resolveWheelState would misread every linked row, since ShipRegistry is empty and
+                // no chunk is loaded this early.
                 String cell = locationKey(data.getBlockLocation());
-                if (!seenCells.add(cell)) {
-                    plugin.getLogger().warning("Two wheels recorded at " + cell
-                        + "; keeping the first and quarantining the later row.");
-                    unresolvedRows.add(row);
-                    quarantined++;
-                    continue;
+                if (!data.isAssembled() && cell != null && !seenCells.add(cell)) {
+                    plugin.getLogger().warning("Two docked wheels are recorded at " + cell + " ("
+                        + data.getWheelId() + " and an earlier row). Keeping both — wheels are identified by "
+                        + "their id, not their cell. Check them with /blockships wheels list.");
                 }
                 placedWheels.put(data.getWheelId(), data);
                 loaded++;
@@ -376,21 +391,61 @@ public class ShipWheelManager {
      *         must undo the placement. This genuinely can fail (defCoreLib missing, registration failed, the
      *         block is not a tile entity), so the caller's failure branch is live — it is not dead code.
      */
-    public boolean placeWheel(Location location, BlockFace facing) {
+    public PlaceResult placeWheel(Location location, BlockFace facing) {
+        // Is a live ship's dock here? Its cell stands empty for the whole voyage, so it is buildable and
+        // nothing stopped a second wheel being planted on it. That no longer steals the record (identity is
+        // the block's own stamp), but it is still a trap: when the ship comes home its wheel cannot land on
+        // an occupied cell, so it is dropped as a generic item and the ship loses its identity, glue and lock.
+        //
+        // Iterates every record at the cell rather than asking byCachedCell. That helper returns the FIRST
+        // HashMap match, which is arbitrary now that two records may legitimately share a cell — and this
+        // block goes on to DELETE a record, so picking the wrong one by hash order would be destructive.
+        List<ShipWheelData> residents = new ArrayList<>();
+        for (ShipWheelData w : placedWheels.values()) {
+            if (cellsAgree(location, w.getBlockLocation())) residents.add(w);
+        }
+        for (ShipWheelData r : residents) {
+            WheelState st = resolveWheelState(r).state();
+            if (st == WheelState.LOADED || st == WheelState.UNLOADED_RECOVERABLE) return PlaceResult.CELL_RESERVED;
+        }
+        // Everything left is docked or orphaned, i.e. a record that believes its wheel is HERE — and it
+        // plainly is not, because the player just placed a fresh head in this cell. Reap rather than refuse:
+        // a stale record must not be able to make a cell permanently unusable.
+        for (ShipWheelData r : residents) {
+            plugin.getLogger().info("Dropping stale wheel record " + r.getWheelId() + " at "
+                + locationKey(location) + ": a new wheel is being placed there.");
+            placedWheels.remove(r.getWheelId());
+        }
+
         ShipWheelData wheelData = new ShipWheelData(location, facing);
 
         // Stamp BEFORE recording. If the stamp fails the block is not a wheel and must not be tracked as one:
         // an untracked head is merely litter, whereas a tracked-but-unmarked cell is the ghost-record state
         // that lets any later head at those coordinates impersonate this wheel.
         if (!ShipWheelBlockType.stamp(location.getBlock(), wheelData.getWheelId())) {
-            return false;
+            return PlaceResult.STAMP_FAILED;
         }
 
         placedWheels.put(wheelData.getWheelId(), wheelData);
         // The block is stamped by this point, so a crash before the next save would leave a marked block with
         // no record. Persist immediately rather than waiting for some unrelated path to save.
         saveAll();
-        return true;
+        return PlaceResult.OK;
+    }
+
+    /**
+     * Why {@link #placeWheel} did or did not record a wheel.
+     *
+     * <p>An enum rather than a boolean because the two failures need different words: the caller's single
+     * failure branch used to blame a DefCoreLib registration error for everything, which would be flatly
+     * wrong — and unactionable — for a player who simply picked a cell another ship is going to land on.
+     */
+    public enum PlaceResult {
+        OK,
+        /** The block could not be stamped with its identity (defCoreLib missing, registration failed). */
+        STAMP_FAILED,
+        /** A ship that is currently out has this cell as its dock, and needs it back. */
+        CELL_RESERVED
     }
 
     /**
@@ -492,9 +547,15 @@ public class ShipWheelManager {
         if (wheel == null) return;
         placedWheels.remove(wheel.getWheelId());
 
+        // ownedBlock, not a hand-rolled getBlock() + ownsBlock: it also refuses an unloaded chunk rather than
+        // force-loading one from a teardown. Order no longer matters here — the old ownsBlock consulted
+        // byCachedCell, which scans placedWheels, so running it AFTER the remove above meant it could never
+        // find this wheel and every unstamped wheel silently read as un-owned: no item dropped, the head left
+        // standing, and the log below claiming the cell no longer held it.
         Location cell = wheel.getBlockLocation();
-        Block block = (cell != null && cell.getWorld() != null) ? cell.getBlock() : null;
-        boolean owned = block != null && ownsBlock(wheel, block);
+        Block block = ownedBlock(wheel);
+        boolean owned = block != null;
+        if (block == null && cell != null && liveWorld(cell) != null) block = cell.getBlock();
 
         if (destroyShip && wheel.isAssembled()) {
             ShipInstance ship = ShipRegistry.byId(wheel.getAssembledShipUUID());
@@ -686,19 +747,31 @@ public class ShipWheelManager {
         String declared = ShipWheelBlockType.texture();
         if (declared == null) return null;
 
-        // Load-bearing: markBlock writes BLOCK_TYPE_KEY unconditionally, so defining "unclaimed" as "has no
-        // wheel_id" would let us stamp over a HeadSmith head, a rotator or a hoist that a player put on a
-        // vacated cell — handing them control of someone else's ship. It also excludes vanilla-placed wheel
-        // ITEMS, which corelib marks on place.
+        // Refuse a block that belongs to some OTHER corelib type — a rotator, a hoist, anything a player may
+        // have put on a vacated cell — because stamping it would overwrite its block_type and destroy its
+        // identity while handing its cell to this ship.
+        //
+        // Narrowed from "carries any corelib type" to "carries a type that is not ours". The blanket form
+        // also refused the wheel's OWN blocks, which is the case that actually needs repairing: a wheel whose
+        // landing restored its corelib mark but lost its wheel_id is corelib-typed, so it was permanently
+        // unadoptable — dead on right-click and, before the drop rule existed, destroying the item on break.
+        // Of the three hazards the blanket form was written for, only one was ever real: a HeadSmith head
+        // carries no corelib type at all (the texture gate is what stops those), while rotators and hoists do
+        // and are still refused here. Vanilla-placed wheel ITEMS are now deliberately admitted — they are our
+        // own type, and requiring the texture plus an idle record at that exact cell is guard enough.
         try {
-            if (anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getRegistry().getTypeFromBlock(block) != null) {
-                return null;
-            }
+            var chb = anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getRegistry().getTypeFromBlock(block);
+            if (chb != null && !ShipWheelBlockType.isWheelTypeId(chb.fullId())) return null;
         } catch (Throwable t) {
             return null;  // no engine, no adoption
         }
 
-        if (!declared.equals(skullBlockTexture(block))) return null;
+        // Shared with ownsBlock so the two cannot disagree about what a wheel looks like. Also refuses a head
+        // whose skin cannot be read at all — including a wheel that landed BLANK because its type was not
+        // registered at the time. That is correct and must stay: such a block carries no evidence of being a
+        // wheel, and "any untextured player head at a recorded cell" is exactly the impersonation primitive
+        // the identity re-key exists to close. Recovery for that case is the explicit wheels adopt command.
+        if (!ShipWheelBlockType.hasDeclaredSkin(block)) return null;
 
         ShipWheelData candidate = byCachedCell(block.getLocation());
         if (candidate == null) return null;
@@ -732,6 +805,8 @@ public class ShipWheelManager {
         OTHER_WHEEL_BLOCK,
         /** Another record already caches the target cell. */
         CELL_TAKEN,
+        /** The target block is some other corelib block type — a rotator, a hoist — not a wheel. */
+        OTHER_TYPE_BLOCK,
         /** The stamp could not be written (no engine, not a tile entity, registration failed). */
         STAMP_FAILED
     }
@@ -752,13 +827,57 @@ public class ShipWheelManager {
         if (t != Material.PLAYER_HEAD && t != Material.PLAYER_WALL_HEAD) return AdoptResult.NOT_A_HEAD;
         UUID stamped = ShipWheelBlockType.readWheelId(target);
         if (stamped != null && !stamped.equals(record.getWheelId())) return AdoptResult.OTHER_WHEEL_BLOCK;
+
+        // Refuse a block belonging to another corelib type. stamp() calls markBlock, which OVERWRITES
+        // block_type — so adopting onto a rotator or hoist would silently destroy that block's identity and
+        // leave its owner with a dead machine. Same predicate as adoptLegacyWheel, so the two agree about
+        // what counts as "ours"; a blank untextured head (a landing whose type did not resolve) carries no
+        // corelib type at all and is still adoptable here, which is the point — this command is that block's
+        // only repair.
+        try {
+            var chb = anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getRegistry().getTypeFromBlock(target);
+            if (chb != null && !ShipWheelBlockType.isWheelTypeId(chb.fullId())) return AdoptResult.OTHER_TYPE_BLOCK;
+        } catch (Throwable ignored) {
+            // No engine to ask. stamp() below will fail on its own if that is really the case.
+        }
+
         ShipWheelData resident = byCachedCell(target.getLocation());
         if (resident != null && resident != record) return AdoptResult.CELL_TAKEN;
-        if (!ShipWheelBlockType.stamp(target, record.getWheelId())) return AdoptResult.STAMP_FAILED;
 
         Location old = record.getBlockLocation();
-        if (old != null && old.getWorld() != null) ShipWheelAnchors.forget(old.getBlock());
+
+        // Carry the frozen structure across BEFORE stamping the new block.
+        //
+        // A lock lives as glue offsets in the WHEEL BLOCK's own PDC, not in the record — so moving the record
+        // without moving them left isLocked() true and the frozen set empty, and the next assembly died with
+        // "Nothing left of the locked structure". Read from the old block while the record still points at it;
+        // the offsets are relative to the wheel, so re-writing them under the new block is all it takes.
+        Set<Location> frozen = null;
+        if (record.isLocked() && old != null && liveWorld(old) != null
+                && liveWorld(old).isChunkLoaded(old.getBlockX() >> 4, old.getBlockZ() >> 4)) {
+            try {
+                frozen = new HashSet<>(ShipGlue.rawGlueCells(old.getBlock()));
+            } catch (Throwable ignored) {
+                frozen = null;
+            }
+        }
+
+        if (!ShipWheelBlockType.stamp(target, record.getWheelId())) return AdoptResult.STAMP_FAILED;
+
+        if (old != null && liveWorld(old) != null) {
+            ShipGlue.clear(old.getBlock());
+            ShipWheelAnchors.forget(old.getBlock());
+            ShipWheelMenu.forgetDockedThrust(old);
+        }
         relocate(record, target.getLocation(), record.getFacing());
+        if (frozen != null && !frozen.isEmpty()) {
+            try {
+                ShipGlue.writeCells(target, frozen);
+            } catch (Throwable t) {
+                plugin.getLogger().warning("Adopted wheel " + record.getWheelId() + " but could not carry its "
+                    + "locked structure across; unlock and re-lock it. (" + t.getMessage() + ")");
+            }
+        }
         mismatchLogged.clear();  // the state that was being warned about is gone
         saveAll();
         return AdoptResult.OK;
@@ -776,16 +895,46 @@ public class ShipWheelManager {
         saveAll();
     }
 
+    /** What {@code /blockships wheels list} can say about a record without leaving its cell. */
+    public enum Health {
+        /** The cell holds this wheel's block. */
+        OK,
+        /** The ship is out; the cell is legitimately empty and there is nothing to check. */
+        SAILING,
+        /** The cell's chunk is not loaded, so the question cannot be answered right now. */
+        UNKNOWN,
+        /** The cell does not hold this wheel's block. */
+        BROKEN
+    }
+
     /**
-     * Does the block at this wheel's cached cell actually carry its identity? The predicate behind
-     * {@code /blockships wheels list}'s health column.
+     * Does the block at this wheel's cached cell actually carry its identity?
+     *
+     * <p>Four answers rather than a boolean, because the boolean version had to fold three genuinely
+     * different situations into "healthy" and so reported the two states an operator most needs to find —
+     * a sailing ship and a wheel that is simply gone — identically to a wheel that is fine. Worse, it did it
+     * beside a state column that was already printing {@code ORPHAN}, so the list contradicted itself.
+     *
+     * <p>{@code UNKNOWN} deliberately fails OPEN where {@link #ownedBlock} fails closed: this decides what to
+     * print, not whether to act, and marking every wheel in an unloaded chunk as broken would bury the real
+     * ones. Do not merge the two.
      */
-    public boolean isRecordHealthy(ShipWheelData wheel) {
-        if (wheel.isAssembled()) return true;  // cell is legitimately empty while sailing
+    public Health recordHealth(ShipWheelData wheel) {
+        // resolveWheelState, not the raw isAssembled() flag: an ORPHAN's link is non-null but its ship is
+        // gone, and calling that "sailing" is how a dead record used to render as healthy.
+        if (resolveWheelState(wheel).state() != WheelState.NOT_ASSEMBLED) return Health.SAILING;
         Location cell = wheel.getBlockLocation();
-        if (cell == null || cell.getWorld() == null) return false;
-        if (!cell.getWorld().isChunkLoaded(cell.getBlockX() >> 4, cell.getBlockZ() >> 4)) return true;  // unknown
-        return ownsBlock(wheel, cell.getBlock());
+        World w = liveWorld(cell);
+        if (w == null) return Health.UNKNOWN;
+        if (!w.isChunkLoaded(cell.getBlockX() >> 4, cell.getBlockZ() >> 4)) return Health.UNKNOWN;
+        return ownsBlock(wheel, cell.getBlock()) ? Health.OK : Health.BROKEN;
+    }
+
+    /** @deprecated prefer {@link #recordHealth}; kept so callers that only want a yes/no still compile. */
+    @Deprecated
+    public boolean isRecordHealthy(ShipWheelData wheel) {
+        Health h = recordHealth(wheel);
+        return h == Health.OK || h == Health.SAILING || h == Health.UNKNOWN;
     }
 
     /**
@@ -972,20 +1121,6 @@ public class ShipWheelManager {
         return fallback;
     }
 
-    /** The {@code textures} profile property of a skull BLOCK, or null. The DisplayShip helper is item-only. */
-    private static @Nullable String skullBlockTexture(Block block) {
-        try {
-            if (!(block.getState(false) instanceof org.bukkit.block.Skull skull)) return null;
-            com.destroystokyo.paper.profile.PlayerProfile profile = skull.getPlayerProfile();
-            if (profile == null) return null;
-            for (com.destroystokyo.paper.profile.ProfileProperty p : profile.getProperties()) {
-                if ("textures".equals(p.getName())) return p.getValue();
-            }
-        } catch (Throwable ignored) {
-            // A skull whose profile has not resolved yet, or an odd tile state — not adoptable right now.
-        }
-        return null;
-    }
 
     /**
      * Gets wheel data whose CACHED cell is this location.
@@ -1053,7 +1188,24 @@ public class ShipWheelManager {
      */
     public @Nullable String toggleLock(Player player, ShipWheelData wheelData, boolean refreeze) {
         Location wheelLoc = wheelData.getBlockLocation();
-        Block wheelBlock = wheelLoc.getBlock();
+        // Both arms below write glue offsets into whatever block is here — ShipGlue.writeCells REPLACES the
+        // block's offset array, so on a foreign block it deletes that block's own glue and substitutes this
+        // ship's hull. The only gate used to be "not air", which admits everything. A menu opened before this
+        // wheel was destroyed, plus a corelib rotator or hoist since placed on the vacated cell (both store
+        // their offsets in the same skull PDC), was enough to silently rebind a neighbour's structure.
+        //
+        // Deliberately NOT gated on state first: an ORPHAN wheel reports isAssembled() true but reaches the
+        // unlock arm below anyway (it gates on ship() == null, which an orphan satisfies), so a state check
+        // ahead of this would wave through exactly the case that needs stopping.
+        Block wheelBlock = ownedBlock(wheelData);
+        if (wheelBlock == null) {
+            if (player != null) {
+                player.sendMessage("§cThat ship wheel isn't where its record says it is — nothing was changed. "
+                    + "If it was moved, right-click the wheel itself; if it's gone, ask an admin for "
+                    + "/blockships wheels adopt.");
+            }
+            return null;
+        }
 
         // ── Unlock ──────────────────────────────────────────────────────────────────────────────────────
         if (wheelData.isLocked() && !refreeze) {
@@ -1283,15 +1435,23 @@ public class ShipWheelManager {
      * without a {@code wheel_id}, and the lookup-time legacy fallback adopts it on first interaction. Only a
      * cell holding no head at all, or a head belonging to a <i>different</i> wheel, counts as "did not land".
      */
-    private void verifyWheelLanded(ShipWheelData wheelData, Location cell) {
-        if (cell == null || cell.getWorld() == null) return;
+    private void verifyWheelLanded(ShipWheelData wheelData, Location cell, boolean cellWasOccupied) {
+        if (cell == null || liveWorld(cell) == null) return;
         Block landed = cell.getBlock();
         Material type = landed.getType();
         boolean isHead = type == Material.PLAYER_HEAD || type == Material.PLAYER_WALL_HEAD;
         UUID landedId = ShipWheelBlockType.readWheelId(landed);
-        if (isHead && (landedId == null || landedId.equals(wheelData.getWheelId()))) {
-            return;  // our wheel, or an unstamped head we will adopt later
-        }
+
+        // Our own stamped wheel: unambiguous, always accepted.
+        if (isHead && wheelData.getWheelId().equals(landedId)) return;
+
+        // An UNSTAMPED head is accepted only if this cell was empty before the landing. The tolerance exists
+        // for a legacy wheel, which lands carrying no id and gets adopted on the next right-click — but it is
+        // indistinguishable from a plain player head that was already standing here, and accepting one of
+        // those hands the record to a squatter: the wheel itself was dropped as an item (corelib's landing
+        // takes "solid wins" on an occupied cell), so the record would go on pointing at somebody else's
+        // block, and every wheel→block write would follow it there.
+        if (isHead && landedId == null && !cellWasOccupied) return;
         placedWheels.remove(wheelData.getWheelId());
         ShipWheelAnchors.forget(landed);
         plugin.getLogger().warning("Wheel " + wheelData.getWheelId() + " did not land at "
@@ -1317,6 +1477,21 @@ public class ShipWheelManager {
         }
         if (wr.state() == WheelState.ORPHAN) {
             reconcileOrphan(wheelData);
+        }
+
+        // The flood fill is about to be seeded from the record's cell, and everything it reaches will be
+        // AIRED OUT of the world and carried away as a ship. The only test on that seed was "not air", so a
+        // record left pointing at a vacated cell — which is what several failure paths produce — would suck
+        // in whatever a neighbour has since built there and delete it from the world. WorldGuard is checked
+        // per-cell later, so this bites everywhere outside a region.
+        //
+        // Placed AFTER the state switch above on purpose: by here LOADED and UNLOADED_RECOVERABLE have
+        // already been refused with their own accurate messages, and an ORPHAN has just had its dead link
+        // cleared, so the wheel is genuinely docked and its block genuinely ought to be under us.
+        if (ownedBlock(wheelData) == null) {
+            player.sendMessage("§cThis ship wheel's block isn't at the recorded spot, so there's nothing to "
+                + "assemble from. Right-click the wheel block itself to re-sync it.");
+            return false;
         }
 
         Location wheelLoc = wheelData.getBlockLocation();
@@ -1617,6 +1792,37 @@ public class ShipWheelManager {
         boolean anchorProtected = wgOn && force
             && anon.def9a2a4.blockships.integration.WorldGuardHook.get().isBuildDenied(newWheelLocation, player);
 
+        // Is something already standing on the cell the wheel is about to land in?
+        //
+        // Sampled here, BEFORE the relocate below and before the place policy's closure captures
+        // anchorProtected, because it changes what both of those should do. If corelib's landing would take
+        // its "solid wins" branch at this cell, the wheel head is NOT placed: an explosion effect plays and
+        // the wheel is dropped as a GENERIC item — one minted from the block type, carrying no wheel_id — so
+        // the ship's identity, glue and structure lock are all lost while a record survives pointing at a
+        // block that belongs to somebody else.
+        //
+        // Asked of corelib rather than reimplemented. The predicate consults two material sets that live on
+        // opposite sides of a visibility boundary there, so any copy made here would necessarily be a partial
+        // one written against BlockShips' own lists — which already differ (leaf litter, bushes, nether wart
+        // and cocoa are fragile to corelib and not to us), and would drift further every time either list
+        // changes. A false positive here is not cheap: it would refuse landings that work today.
+        boolean anchorCellOccupied = !anchorProtected
+            && anon.def9a2a4.corelib.MechanismRegistry.landingSolidWouldWin(newWheelLocation.getBlock().getType());
+        if (anchorCellOccupied) {
+            // Degrade to the protected-anchor path rather than refusing the disassembly.
+            //
+            // Refusing was the obvious fix and is the wrong one: the anchor cell IS the ship's pivot, hidden
+            // underneath the ship's own block displays and quite possibly inside terrain the player cannot
+            // break or a region they cannot build in. A captain who cannot land is stuck with no in-game
+            // remedy at all, whereas the branch below lands the hull, hands the wheel back as an item, and
+            // deregisters cleanly so the record never comes to alias a stranger's block. Losing the glue and
+            // the lock is a bad outcome; losing the ship is a worse one.
+            anchorProtected = true;
+            plugin.getLogger().info("Wheel anchor cell " + locationKey(newWheelLocation)
+                + " is occupied by " + newWheelLocation.getBlock().getType()
+                + "; landing the hull and returning wheel " + wheelData.getWheelId() + " as an item.");
+        }
+
         // Move the wheel's cached cell BEFORE disassembly, not after — this is load-bearing, not tidying.
         //
         // defCoreLib's disassemble() rebinds landed glue anchors near the end of its run: it asks the anchor
@@ -1760,14 +1966,34 @@ public class ShipWheelManager {
                 wWorld.dropItemNaturally(newWheelLocation.clone().add(0.5, 0.5, 0.5),
                     bsp.getDisplayShip().createShipWheelItem());
             }
-            placedWheels.remove(wheelData.getWheelId());
-            if (oldWheelCell != null && oldWheelCell.getWorld() != null) {
-                ShipGlue.clear(oldWheelCell.getBlock());
-                ShipWheelAnchors.forget(oldWheelCell.getBlock());
+            // Clear the launch cell's glue BEFORE deregistering, and only if that cell still holds this
+            // wheel. oldWheelCell was captured while the ship was still assembled, so it is the cell the
+            // wheel left at launch — empty for the whole voyage and free for anyone to build on. ShipGlue
+            // .clear is a persistent PDC write, so running it unconditionally wipes the glue off whatever is
+            // standing there now. (The ordering also matters: ownedBlock consults ownsBlock, whose legacy arm
+            // needs the record to still describe the wheel.)
+            Block oldBlock = ownedBlock(wheelData);
+            if (oldBlock != null && cellsAgree(oldWheelCell, oldBlock.getLocation())) {
+                ShipGlue.clear(oldBlock);
+                ShipWheelAnchors.forget(oldBlock);
             }
+            if (oldWheelCell != null) ShipWheelMenu.forgetDockedThrust(oldWheelCell);
+            placedWheels.remove(wheelData.getWheelId());
             saveAll();
+            if (player != null) {
+                player.sendMessage(anchorCellOccupied
+                    ? "§eSomething was standing where the wheel had to land, so the wheel came back to you as "
+                      + "an item — this ship is no longer tracked."
+                    : "§eThe wheel couldn't be placed in that protected region, so it came back to you as an "
+                      + "item — this ship is no longer tracked.");
+                player.sendMessage("§7Place the wheel again to start a new ship. Its glue and structure lock "
+                    + "are not carried over.");
+            }
         } else {
-            verifyWheelLanded(wheelData, newWheelLocation);
+            // anchorCellOccupied is false on this arm by construction (an occupied cell diverts to the
+            // protected-anchor branch above), so this is the "cell was clear" case — pass it through anyway
+            // rather than hard-coding false, so the two stay linked if that ever changes.
+            verifyWheelLanded(wheelData, newWheelLocation, anchorCellOccupied);
         }
 
         // Destroy the ship
@@ -2044,6 +2270,19 @@ public class ShipWheelManager {
 
                 return true;
             }
+        }
+
+        // Everything below classifies the world starting from the record's cell, and it is NOT read-only: it
+        // overwrites this wheel's stored detection stats, recomputes its buoyancy data, and spawns a waterline
+        // shulker at the result. Pointed at a cell the wheel no longer occupies, it reports a neighbour's
+        // structure as this ship and leaves a marker entity in their build.
+        //
+        // Note this is reached whenever the assembled branch above did not return — including for an ORPHAN,
+        // whose isAssembled() is true but whose ShipInstance is gone, so it falls straight through to here.
+        if (ownedBlock(wheelData) == null) {
+            player.sendMessage("§cNo ship wheel at that location — it may still be assembled, still loading, "
+                + "or the wheel may have been moved or destroyed.");
+            return false;
         }
 
         // Get max ship size from config

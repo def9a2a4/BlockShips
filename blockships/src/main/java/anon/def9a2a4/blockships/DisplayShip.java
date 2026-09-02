@@ -2321,23 +2321,27 @@ public class DisplayShip implements Listener {
 
         // Register with ShipWheelManager
         ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
-        boolean success = manager.placeWheel(targetBlock.getLocation(), wheelFacing);
+        ShipWheelManager.PlaceResult result = manager.placeWheel(targetBlock.getLocation(), wheelFacing);
 
-        if (success) {
+        if (result == ShipWheelManager.PlaceResult.OK) {
             // Consume item (unless creative mode)
             if (player.getGameMode() != GameMode.CREATIVE) {
                 item.setAmount(item.getAmount() - 1);
             }
             event.setCancelled(true);
         } else {
-            // Reachable: placeWheel fails when the block could not be stamped with its identity (defCoreLib
-            // missing, registration failed, target not a tile entity). Cancel as well as reverting — without
-            // the cancel vanilla places a plain head here AND consumes the item, which is exactly the
-            // untracked look-alike the guard above exists to prevent.
+            // Both failures share this cleanup. Cancel as well as reverting — without the cancel vanilla
+            // places a plain head here AND consumes the item, which is exactly the untracked look-alike the
+            // guard above exists to prevent. The item is not consumed on either path.
             targetBlock.setType(Material.AIR);
             event.setCancelled(true);
-            player.sendMessage("§cCouldn't place that ship wheel — its identity could not be written. "
-                + "Tell an admin to check the server log for a DefCoreLib registration error.");
+            if (result == ShipWheelManager.PlaceResult.CELL_RESERVED) {
+                player.sendMessage("§cThat spot is another ship's dock — it's out sailing right now and will "
+                    + "need to land there. Put your wheel somewhere else.");
+            } else {
+                player.sendMessage("§cCouldn't place that ship wheel — its identity could not be written. "
+                    + "Tell an admin to check the server log for a DefCoreLib registration error.");
+            }
         }
     }
 

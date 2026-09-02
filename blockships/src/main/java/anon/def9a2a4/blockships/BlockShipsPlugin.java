@@ -926,26 +926,51 @@ public class BlockShipsPlugin extends JavaPlugin {
                     sender.sendMessage("§cYou don't have permission to use admin commands.");
                     return true;
                 }
-                if (!(sender instanceof org.bukkit.entity.Player p)) {
-                    sender.sendMessage("§cThis command must be run by a player (it targets the nearest wheel).");
+                // Targeted BY ID, not by proximity. getNearestWheel measures from each record's STORED cell —
+                // which, for the stuck wheel this command exists to repair, is precisely the field that is
+                // wrong, and is usually an empty cell the ship left at launch. So the old form could silently
+                // select a healthy neighbour instead. Worse, the preview and the action each re-ran the
+                // nearest-wheel search, so an admin could walk two blocks between them and confirm onto a
+                // different wheel than the one they were shown.
+                if (args.length < 2) {
+                    sender.sendMessage("§cUsage: §e/blockships forceclearwheel <wheelId> <first8>");
+                    sender.sendMessage("§7Find the id with §e/blockships wheels list§7 — broken records sort first.");
+                    if (sender instanceof org.bukkit.entity.Player p) {
+                        ShipWheelData near = shipWheelManager.getNearestWheel(p.getLocation(), 32.0);
+                        if (near != null) {
+                            sender.sendMessage("§7Nearest recorded wheel: §f" + near.getWheelId()
+                                + " §7at " + fmt(near.getBlockLocation())
+                                + " §7[" + shipWheelManager.resolveWheelState(near).state() + "]");
+                        }
+                    }
                     return true;
                 }
-                ShipWheelData target = shipWheelManager.getNearestWheel(p.getLocation(), 16.0);
+                java.util.UUID fcId;
+                try {
+                    fcId = java.util.UUID.fromString(args[1]);
+                } catch (IllegalArgumentException e) {
+                    sender.sendMessage("§cThat is not a wheel id. Use §e/blockships wheels list§c to find it.");
+                    return true;
+                }
+                ShipWheelData target = shipWheelManager.getWheelById(fcId);
                 if (target == null) {
-                    sender.sendMessage("§cNo placed ship wheel found within 16 blocks.");
+                    sender.sendMessage("§cNo record with id " + fcId + ".");
                     return true;
                 }
-                if (args.length < 2 || !args[1].equalsIgnoreCase("confirm")) {
-                    Location bl = target.getBlockLocation();
-                    sender.sendMessage("§eNearest wheel: §7" + bl.getBlockX() + ", " + bl.getBlockY() + ", "
-                        + bl.getBlockZ() + " §e(assembled=" + target.isAssembled() + ").");
+                // ID-derived token rather than the literal "confirm", matching wheels adopt/purge: a stale or
+                // mistyped confirmation then cannot land on a wheel the admin never looked at.
+                String fcToken = fcId.toString().substring(0, 8);
+                if (args.length < 3 || !args[2].equalsIgnoreCase(fcToken)) {
+                    sender.sendMessage("§eWheel §f" + fcId + " §7at " + fmt(target.getBlockLocation())
+                        + " §7[" + shipWheelManager.resolveWheelState(target).state() + "]");
                     sender.sendMessage("§c§l⚠ §cForce-clear bypasses the recoverable check: it UNLINKS the wheel and "
                         + "reaps its orphan root vehicle. Use ONLY for a wheel stuck 'loading' by an unrecoverable ship.");
-                    sender.sendMessage("§7Type §e/blockships forceclearwheel confirm §7to confirm.");
+                    sender.sendMessage("§7Confirm: §e/blockships forceclearwheel " + fcId + " " + fcToken);
                     return true;
                 }
                 shipWheelManager.forceClearWheelLink(target);
-                getLogger().info(sender.getName() + " force-cleared wheel at " + target.getBlockLocation());
+                getLogger().info(sender.getName() + " force-cleared wheel " + fcId + " at "
+                    + fmt(target.getBlockLocation()));
                 sender.sendMessage("§aWheel force-cleared. You can now re-assemble.");
                 return true;
             }
@@ -1241,16 +1266,37 @@ public class BlockShipsPlugin extends JavaPlugin {
                     return true;
                 }
                 sender.sendMessage("§e" + wheels.size() + " ship wheel(s):");
+                // Broken first. The cap is what makes this matter: the wheel an operator is hunting is
+                // exactly the one that must not fall off the end of an arbitrarily-ordered list.
+                java.util.List<ShipWheelData> ordered = new java.util.ArrayList<>(wheels);
+                ordered.sort(java.util.Comparator.comparingInt(w -> switch (mgr.recordHealth(w)) {
+                    case BROKEN -> 0;
+                    case UNKNOWN -> 1;
+                    case SAILING -> 2;
+                    case OK -> 3;
+                }));
                 int shown = 0;
-                for (ShipWheelData w : wheels) {
+                for (ShipWheelData w : ordered) {
                     if (shown++ >= 30) {
-                        sender.sendMessage("§7… and " + (wheels.size() - 30) + " more (see ship_wheels.yml).");
+                        sender.sendMessage("§7… and " + (ordered.size() - 30) + " more (see ship_wheels.yml).");
                         break;
                     }
-                    boolean healthy = mgr.isRecordHealthy(w);
-                    sender.sendMessage((healthy ? "§a✔ " : "§c✘ ") + "§f" + w.getWheelId()
+                    // Four states, not two. The old boolean folded "sailing" and "chunk not loaded" in with
+                    // "fine", so the two situations an operator actually needs to spot — a ship that is out,
+                    // and a record whose block is gone — both printed as a green tick, right next to a state
+                    // column that might say ORPHAN.
+                    ShipWheelManager.Health health = mgr.recordHealth(w);
+                    String glyph = switch (health) {
+                        case OK -> "§a✔ ";
+                        case SAILING -> "§b⛵ ";
+                        case UNKNOWN -> "§7? ";
+                        case BROKEN -> "§c✘ ";
+                    };
+                    sender.sendMessage(glyph + "§f" + w.getWheelId()
                         + " §7at " + fmt(w.getBlockLocation())
-                        + " §7[" + mgr.resolveWheelState(w).state() + "]");
+                        + " §7[" + mgr.resolveWheelState(w).state() + "]"
+                        + (health == ShipWheelManager.Health.BROKEN
+                            ? " §c— no wheel block there; §e/blockships wheels adopt " + w.getWheelId() : ""));
                 }
                 return true;
             }
@@ -1291,19 +1337,46 @@ public class BlockShipsPlugin extends JavaPlugin {
                     sender.sendMessage("§7Confirm: §e/blockships wheels adopt " + id + " " + token);
                     return true;
                 }
+                // Capture BEFORE the call: adoptWheel relocates the record, so reading it afterwards printed
+                // the new cell on both sides of the arrow and the audit line recorded nothing at all.
+                String before = fmt(rec.getBlockLocation());
+                boolean wasLocked = rec.isLocked();
                 ShipWheelManager.AdoptResult res = mgr.adoptWheel(rec, target);
                 switch (res) {
                     case OK -> {
                         getLogger().info(sender.getName() + " adopted wheel " + id + ": "
-                            + fmt(rec.getBlockLocation()) + " → " + fmt(target.getLocation()));
+                            + before + " → " + fmt(target.getLocation()));
                         sender.sendMessage("§aAdopted. The block now carries this wheel's identity.");
+                        if (wasLocked) {
+                            sender.sendMessage("§7Its locked structure was carried across. If assembly reports "
+                                + "missing blocks, unlock and re-lock the wheel.");
+                        }
                     }
                     case NOT_IDLE -> sender.sendMessage("§cThat wheel's ship is assembled or recoverable — "
                         + "refusing. Disassemble it first.");
                     case NOT_A_HEAD -> sender.sendMessage("§cThat block is not a player head.");
                     case OTHER_WHEEL_BLOCK -> sender.sendMessage("§cThat block already belongs to a different "
                         + "wheel. Refusing to steal it.");
-                    case CELL_TAKEN -> sender.sendMessage("§cAnother record already claims that cell.");
+                    case OTHER_TYPE_BLOCK -> sender.sendMessage("§cThat block is a different DefCoreLib block "
+                        + "(a rotator, hoist, or similar). Adopting it would destroy its identity.");
+                    case CELL_TAKEN -> {
+                        // Name the other record. Without it the operator has to eyeball a capped, arbitrarily
+                        // ordered wheels list to find what they are colliding with.
+                        ShipWheelData other = null;
+                        for (ShipWheelData w : mgr.getWheels()) {
+                            org.bukkit.Location c = w.getBlockLocation();
+                            if (w != rec && c != null && c.getWorld() != null
+                                && c.getWorld().equals(target.getWorld())
+                                && c.getBlockX() == target.getX() && c.getBlockY() == target.getY()
+                                && c.getBlockZ() == target.getZ()) { other = w; break; }
+                        }
+                        sender.sendMessage("§cAnother record already claims that cell"
+                            + (other == null ? "." : ": §f" + other.getWheelId()));
+                        if (other != null) {
+                            sender.sendMessage("§7Move or drop that one first — §e/blockships wheels purge "
+                                + other.getWheelId());
+                        }
+                    }
                     case STAMP_FAILED -> sender.sendMessage("§cCould not stamp the block (is it a skull, and is "
                         + "the wheel registered with DefCoreLib?).");
                 }
@@ -1409,11 +1482,20 @@ public class BlockShipsPlugin extends JavaPlugin {
                         completions.add(player.getName());
                     }
                 }
-            } else if ((subcommand.equals("forcedisassembleall") || subcommand.equals("killentities") || subcommand.equals("forceclearwheel"))
+            } else if ((subcommand.equals("forcedisassembleall") || subcommand.equals("killentities"))
                     && sender.hasPermission("blockships.admin")) {
-                // Complete with "confirm" for dangerous commands
+                // Complete with "confirm" for dangerous commands. forceclearwheel is deliberately NOT in this
+                // list any more — its second argument is a wheel id, and offering "confirm" there both fails
+                // and hides the completions that would actually help.
                 if ("confirm".startsWith(args[1].toLowerCase())) {
                     completions.add("confirm");
+                }
+            } else if (subcommand.equals("forceclearwheel") && sender.hasPermission("blockships.admin")) {
+                if (shipWheelManager != null) {
+                    for (ShipWheelData w : shipWheelManager.getWheels()) {
+                        String id = w.getWheelId().toString();
+                        if (id.startsWith(args[1].toLowerCase())) completions.add(id);
+                    }
                 }
             } else if (subcommand.equals("wheels") && sender.hasPermission("blockships.admin")) {
                 for (String s : new String[]{"inspect", "list", "adopt", "purge"}) {
@@ -1429,6 +1511,14 @@ public class BlockShipsPlugin extends JavaPlugin {
                     String id = w.getWheelId().toString();
                     if (id.startsWith(args[2].toLowerCase())) completions.add(id);
                 }
+            }
+        } else if (args.length == 3 && args[0].equalsIgnoreCase("forceclearwheel")
+                && sender.hasPermission("blockships.admin")) {
+            // The confirm token is the first 8 characters of the id just typed.
+            try {
+                completions.add(java.util.UUID.fromString(args[1]).toString().substring(0, 8));
+            } catch (IllegalArgumentException ignored) {
+                // Not a well-formed id yet; nothing useful to offer.
             }
         }
 

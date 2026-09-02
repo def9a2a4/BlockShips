@@ -128,6 +128,22 @@ public class ShipDetector {
                     continue;
                 }
 
+                // Never absorb ANOTHER ship's wheel.
+                //
+                // blocks.yml allows player_head (a wheel has to be scannable — it is this ship's own anchor),
+                // and this fill had no way to tell one wheel from another. So a neighbour who docked their
+                // ship against your hull had their wheel swallowed into YOUR mechanism on assembly: aired out
+                // of the world along with everything else, with their record left pointing at an empty cell.
+                //
+                // Excluded rather than refused, deliberately. Making a foreign wheel abort the assembly would
+                // be a griefing primitive in reverse — park a wheel against someone's hull and their ship can
+                // never sail again, with a message they cannot act on if they cannot break the block. Skipping
+                // it just stops the fill there, exactly like any disallowed block.
+                if ((material == Material.PLAYER_HEAD || material == Material.PLAYER_WALL_HEAD)
+                        && isForeignWheel(block, startLocation)) {
+                    continue;
+                }
+
                 // Valid block, add to ship and frontier
                 shipBlocks.add(neighbor.clone());
                 frontier.add(neighbor.clone());
@@ -135,6 +151,28 @@ public class ShipDetector {
         }
 
         return new InternalScanResult(shipBlocks, exceededLimit, false);
+    }
+
+    /**
+     * Is this head a ship wheel belonging to some ship other than the one being scanned?
+     *
+     * <p>Identified by the block's own {@code wheel_id} stamp, so it costs a PDC read and only on heads. An
+     * <b>unstamped</b> head is not treated as foreign: it may be this ship's own pre-identity wheel, and
+     * wrongly excluding that would silently drop the anchor out of its own hull. The comparison is against
+     * the seed cell rather than the seed's id because the seed is this ship's wheel by construction — the
+     * caller has already established the scan starts from it.
+     */
+    private static boolean isForeignWheel(Block block, Location startLocation) {
+        if (block.getX() == startLocation.getBlockX()
+            && block.getY() == startLocation.getBlockY()
+            && block.getZ() == startLocation.getBlockZ()) {
+            return false;   // the seed itself
+        }
+        try {
+            return anon.def9a2a4.blockships.customships.ShipWheelBlockType.readWheelId(block) != null;
+        } catch (Throwable t) {
+            return false;   // unreadable: treat as an ordinary block rather than dropping it from the hull
+        }
     }
 
     /**
