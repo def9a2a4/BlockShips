@@ -40,6 +40,14 @@ build: $(DEFCORELIB_BUILD_DEP)
 	mkdir -p bin
 	cp blockships/build/libs/BlockShips-*.jar bin
 
+# Unit tests (blockships/src/test). Separate from `build` on purpose: `build` runs shadowJar, which does not
+# depend on `test`, and keeping it that way keeps the edit-compile loop fast. CI does NOT need this target —
+# .github/workflows/checks.yml runs `gradle build`, and Gradle's java plugin wires build -> check -> test, so
+# these run on every push already. This is the local one-liner.
+.PHONY: test
+test: $(DEFCORELIB_BUILD_DEP)
+	cd blockships && gradle test $(GRADLE_DEFCORELIB_ARGS)
+
 .PHONY: dump-issues
 dump-issues:
 	bash docs/dump-issues.sh
