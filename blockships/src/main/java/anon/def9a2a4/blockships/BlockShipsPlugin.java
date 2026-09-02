@@ -1244,9 +1244,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                         sender.sendMessage("§c  → no record for that id (stamped but unknown).");
                     } else {
                         Location c = rec.getBlockLocation();
-                        boolean here = c != null && c.getWorld() != null
-                            && c.getWorld().equals(l.getWorld()) && c.getBlockX() == l.getBlockX()
-                            && c.getBlockY() == l.getBlockY() && c.getBlockZ() == l.getBlockZ();
+                        boolean here = anon.def9a2a4.blockships.util.LocationUtil.cellsAgree(c, l);
                         sender.sendMessage("§7  record cell: §f" + fmt(c) + (here ? " §a(matches)" : " §c(MISMATCH)"));
                         sender.sendMessage("§7  state: §f" + mgr.resolveWheelState(rec).state());
                         if (!here) sender.sendMessage("§7  repair: §e/blockships wheels adopt " + wid);
@@ -1363,12 +1361,10 @@ public class BlockShipsPlugin extends JavaPlugin {
                         // Name the other record. Without it the operator has to eyeball a capped, arbitrarily
                         // ordered wheels list to find what they are colliding with.
                         ShipWheelData other = null;
+                        org.bukkit.Location targetCell = target.getLocation();
                         for (ShipWheelData w : mgr.getWheels()) {
-                            org.bukkit.Location c = w.getBlockLocation();
-                            if (w != rec && c != null && c.getWorld() != null
-                                && c.getWorld().equals(target.getWorld())
-                                && c.getBlockX() == target.getX() && c.getBlockY() == target.getY()
-                                && c.getBlockZ() == target.getZ()) { other = w; break; }
+                            if (w != rec && anon.def9a2a4.blockships.util.LocationUtil
+                                    .cellsAgree(w.getBlockLocation(), targetCell)) { other = w; break; }
                         }
                         sender.sendMessage("§cAnother record already claims that cell"
                             + (other == null ? "." : ": §f" + other.getWheelId()));

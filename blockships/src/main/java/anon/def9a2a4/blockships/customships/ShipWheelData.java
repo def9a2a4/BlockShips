@@ -87,8 +87,29 @@ public class ShipWheelData {
     // dirt no longer swallows the dirt. The frozen cells live in the glue store, not here. False = unlocked.
     private boolean naturalFrozen;
 
+    /**
+     * The name of {@link #blockLocation}'s world, captured whenever that location is set.
+     *
+     * <p>Exists so {@link #toMap} cannot throw. A {@code Location} holds a WEAK reference to its world, so
+     * {@code getWorld()} raises {@code IllegalArgumentException("World unloaded")} once that reference is
+     * collected — and {@code toMap} was reading it. A single wheel in a world unloaded at runtime therefore
+     * failed to serialise, and {@code saveAll}'s per-row catch dropped it: the record was PERMANENTLY
+     * DELETED from disk on the next save, while the log claimed the previous row had been preserved.
+     *
+     * <p>Every other field {@code toMap} writes is world-independent, so caching this one name makes the
+     * whole serialisation total for the unloaded-world case. It is a name rather than a {@code World} on
+     * purpose — a name survives an unload/reload cycle, whereas the {@code World} object does not.
+     *
+     * <p>Null only if the location handed in had no live world to begin with, which {@code toMap} then
+     * reports rather than throwing.
+     */
+    private @org.jetbrains.annotations.Nullable String worldName;
+
     public ShipWheelData(Location blockLocation, BlockFace facing) {
         this.blockLocation = blockLocation.clone();
+        // Via LocationUtil, not a bare getWorld(): otherwise this just moves the throw from save time to
+        // placement/load time. Both current callers hand in a live location, but nothing enforces that.
+        this.worldName = anon.def9a2a4.blockships.util.LocationUtil.worldName(blockLocation);
         this.facing = facing;
         this.assembledShipUUID = null;
         this.lastDetectedBlocks = null;
@@ -126,6 +147,22 @@ public class ShipWheelData {
     void updateBlockLocation(Location newLocation, BlockFace newFacing) {
         this.blockLocation = newLocation.clone();
         this.facing = newFacing;
+        // Keep worldName in step with the only other writer of blockLocation. Guarded: a relocation into a
+        // world that has since gone keeps the last known name rather than nulling it, so the row still
+        // serialises to somewhere real.
+        String w = anon.def9a2a4.blockships.util.LocationUtil.worldName(newLocation);
+        if (w != null) this.worldName = w;
+    }
+
+    /**
+     * The name of the world this wheel's cell is in, or null if it never had a live one.
+     *
+     * <p>Survives that world being unloaded, unlike {@code getBlockLocation().getWorld()}. Use this for
+     * anything that only needs to NAME the world — cache keys, serialised rows, operator output — and
+     * {@code LocationUtil.liveWorld} for anything that needs to touch it.
+     */
+    public @org.jetbrains.annotations.Nullable String getWorldName() {
+        return worldName;
     }
 
     public UUID getAssembledShipUUID() {
@@ -384,13 +421,22 @@ public class ShipWheelData {
      * Transient data (detection preview, particles) is not persisted.
      */
     public Map<String, Object> toMap() {
+        // TOTAL: this must not throw for any reachable state of this object. saveAll's per-row catch turns a
+        // throw here into permanent deletion of the row from disk, so "cannot serialise" and "should not
+        // exist" would become the same thing. Every read below is either a cached primitive or null-guarded.
         Map<String, Object> map = new HashMap<>();
         map.put("wheel_id", wheelId.toString());
-        map.put("world", blockLocation.getWorld().getName());
+        // The cached name, NOT blockLocation.getWorld() — see the worldName field. Falling back to a live
+        // read covers a record built before the cache existed; if both are absent the row is written
+        // world-less and fromMap quarantines it, which is recoverable, unlike deleting it.
+        String w = worldName != null
+            ? worldName : anon.def9a2a4.blockships.util.LocationUtil.worldName(blockLocation);
+        if (w != null) map.put("world", w);
         map.put("x", blockLocation.getBlockX());
         map.put("y", blockLocation.getBlockY());
         map.put("z", blockLocation.getBlockZ());
-        map.put("facing", facing.name());
+        // facing is non-null on every current path, but nothing enforces it and an NPE here costs the row.
+        map.put("facing", (facing == null ? BlockFace.NORTH : facing).name());
         if (assembledShipUUID != null) {
             map.put("ship_uuid", assembledShipUUID.toString());
         }
@@ -410,10 +456,12 @@ public class ShipWheelData {
      * @return The deserialized ShipWheelData, or null if world doesn't exist
      */
     public static ShipWheelData fromMap(Map<String, Object> map) {
-        String worldName = (String) map.get("world");
-        World world = Bukkit.getWorld(worldName);
+        // Null-checked before the lookup: Bukkit.getWorld(String) lower-cases its argument and so NPEs on
+        // null, and toMap now omits the key entirely rather than throwing when it has no world to name.
+        Object rawWorld = map.get("world");
+        World world = rawWorld instanceof String s ? Bukkit.getWorld(s) : null;
         if (world == null) {
-            return null;  // World doesn't exist (deleted/renamed)
+            return null;  // World doesn't exist (deleted/renamed), or was never recorded
         }
 
         Location loc = new Location(world,
