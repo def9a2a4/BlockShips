@@ -44,9 +44,9 @@ walking the hull.
 
 The sail **ratio** is capped at `sail-cap-ratio` (0.8) — the sail *power* is not. A fully rigged ship
 therefore reads 80% forward and not 100%: the last stretch is deliberately reserved for thrust, so that
-propulsion has something to do that canvas cannot. Turning and lift see the uncapped figure, so canvas
-past the cap is not wasted, it just stops buying speed. Sails are cheap, plateau early, and need no
-power.
+propulsion has something to do that canvas cannot. Turning sees the uncapped figure, and so does vertical
+speed, so canvas past the cap is not wasted — it just stops buying speed. **Lift ignores sails
+entirely** (see below); canvas holds nothing up. Sails are cheap, plateau early, and need no power.
 
 ## Propulsion
 
@@ -145,7 +145,7 @@ airship without them.
    mounted to. A reaction wheel is the exception: it is turn-only before its facing is even read, so
    the mount rule does not apply to it.
 5. **A "helicopter":** no buoyant blocks at all, flying on floor-mounted propellers. A propeller is a
-   *consumer*, so this needs a power source — a windmill or a redstone dynamo — on the same rotation
+   *consumer*, so this needs a power source — a windmill, water wheel or engine — on the same rotation
    network. Takes off, and stops climbing the moment power drops.
 
 ## Where this lives in the code

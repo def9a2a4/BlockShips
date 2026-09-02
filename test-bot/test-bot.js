@@ -288,8 +288,11 @@ async function testCustomShipBase(testName, buildConfig, isAirship = false) {
 
   say('Assembling ship...')
   try {
+    // clickWheelMenu registers its own windowOpen listener, so start it BEFORE the right-click that
+    // opens the window — otherwise the event can land before anything is listening for it.
+    const menuPromise = clickWheelMenu(bot, log, 'assemble')
     await bot.activateBlock(buildResult.wheelBlock)
-    if (!await clickWheelMenu(bot, log, 'assemble')) {
+    if (!await menuPromise) {
       fail(testName, 'Assembly menu interaction failed')
       return
     }
@@ -436,7 +439,6 @@ async function testWeirdBlocksShip() {
     // clickWheelMenu registers its own windowOpen listener as the last thing it does, so start it
     // BEFORE the right-click that opens the window — otherwise the event can land first and be missed.
     const menuPromise = clickWheelMenu(bot, log, 'detect')
-    await sleep(100)
     await bot.activateBlock(buildResult.wheelBlock)
     if (!await menuPromise) {
       fail(testName, 'Detect menu interaction failed')
@@ -460,7 +462,6 @@ async function testWeirdBlocksShip() {
   say('Assembling weird ship...')
   try {
     const menuPromise = clickWheelMenu(bot, log, 'assemble')
-    await sleep(100)
     await bot.activateBlock(buildResult.wheelBlock)
     if (!await menuPromise) {
       fail(testName, 'Assembly menu interaction failed')

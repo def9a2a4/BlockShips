@@ -149,8 +149,11 @@ async function spawnCustomAirshipAtFar() {
 
   // Activate wheel and assemble
   try {
+    // Start clickWheelMenu first: it registers the windowOpen listener, so the right-click that
+    // opens the window must come after it.
+    const menuPromise = clickWheelMenu(bot, log, 'assemble')
     await bot.activateBlock(result.wheelBlock)
-    if (!await clickWheelMenu(bot, log, 'assemble')) {
+    if (!await menuPromise) {
       log('Assembly menu interaction failed')
       return false
     }
