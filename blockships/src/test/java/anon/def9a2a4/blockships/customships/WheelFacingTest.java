@@ -77,13 +77,6 @@ class WheelFacingTest {
         return Math.toDegrees(Math.atan2(-face.getModX(), face.getModZ()));
     }
 
-    @Test
-    void everyCardinalIsItsOwnNearestCardinal() {
-        for (BlockFace face : CARDINALS) {
-            assertEquals(face, ShipWheelManager.floorHeadFacing(face), face + " should snap to itself");
-        }
-    }
-
     /**
      * A floor head at a cardinal rotation must yield that cardinal, NOT its opposite.
      *
@@ -99,8 +92,6 @@ class WheelFacingTest {
         for (BlockFace face : CARDINALS) {
             BlockFace derived = ShipWheelManager.floorHeadFacing(face);
             assertEquals(face, derived, "a floor head at " + face + " should read as " + face);
-            assertTrue(derived != face.getOppositeFace(),
-                "floor heads must not take the wall arm's inversion, at " + face);
         }
     }
 
@@ -112,12 +103,27 @@ class WheelFacingTest {
         }
     }
 
+    /**
+     * Each quarter turn individually, not just the round trip.
+     *
+     * <p>Asserting only that four 90s return to the start is worthless: it holds for 4 x -90 and for
+     * 4 x 180 alike, so it catches neither a sign flip nor a half-turn error — the two ways this can
+     * actually be wrong. Yaw runs SOUTH 0, WEST 90, NORTH 180, EAST 270, so +90 must walk
+     * SOUTH -> WEST -> NORTH -> EAST.
+     */
     @Test
-    void rotatingByFourQuarterTurnsReturnsToStart() {
-        for (BlockFace face : CARDINALS) {
-            BlockFace f = face;
-            for (int i = 0; i < 4; i++) f = BlockStructureScanner.rotateBlockFace(f, 90f);
-            assertEquals(face, f, face + " after four 90-degree turns");
+    void aQuarterTurnWalksTheCardinalsInYawOrder() {
+        BlockFace[] clockwise = {BlockFace.SOUTH, BlockFace.WEST, BlockFace.NORTH, BlockFace.EAST};
+        for (int i = 0; i < clockwise.length; i++) {
+            BlockFace from = clockwise[i];
+            BlockFace expected = clockwise[(i + 1) % clockwise.length];
+            assertEquals(expected, BlockStructureScanner.rotateBlockFace(from, 90f),
+                from + " + 90 should be " + expected);
+            assertEquals(clockwise[(i + 3) % clockwise.length],
+                BlockStructureScanner.rotateBlockFace(from, -90f),
+                from + " - 90 should go the other way");
+            assertEquals(clockwise[(i + 2) % clockwise.length],
+                BlockStructureScanner.rotateBlockFace(from, 180f), from + " + 180 should be opposite");
         }
     }
 
@@ -130,6 +136,28 @@ class WheelFacingTest {
             assertTrue(isCardinal(ShipWheelData.yawToBlockFace(once)),
                 "snapped yaw " + once + " did not resolve to a cardinal");
         }
+    }
+
+    /**
+     * Snapping must go to the NEAREST cardinal, not the one below.
+     *
+     * <p>Idempotence alone does not establish that: flooring to a multiple of 90 is just as idempotent
+     * and just as cardinal, while being wrong by up to 89 degrees. The cases that separate the two are
+     * the ones either side of a 45-degree boundary, so those are what this pins.
+     */
+    @Test
+    void snapToNearestCardinalRoundsRatherThanFloors() {
+        assertEquals(0f, ShipWheelData.snapToNearestCardinal(44f), 0.001f);
+        assertEquals(90f, ShipWheelData.snapToNearestCardinal(46f), 0.001f,
+            "46 is nearer 90 than 0 — flooring would give 0");
+        assertEquals(90f, ShipWheelData.snapToNearestCardinal(134f), 0.001f);
+        assertEquals(180f, ShipWheelData.snapToNearestCardinal(136f), 0.001f);
+        assertEquals(270f, ShipWheelData.snapToNearestCardinal(314f), 0.001f);
+        // 316 rounds up to 360, which must wrap to 0 rather than escaping the range.
+        assertEquals(0f, ShipWheelData.snapToNearestCardinal(316f), 0.001f,
+            "a snap past 315 must wrap to 0, not report 360");
+        // Negative yaws normalise first: -46 is 314.
+        assertEquals(270f, ShipWheelData.snapToNearestCardinal(-46f), 0.001f);
     }
 
     private static boolean isCardinal(BlockFace f) {

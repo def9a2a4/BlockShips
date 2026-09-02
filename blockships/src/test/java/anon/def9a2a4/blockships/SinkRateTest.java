@@ -1,55 +1,46 @@
 package anon.def9a2a4.blockships;
 
-import org.bukkit.configuration.file.YamlConfiguration;
-import org.bukkit.plugin.Plugin;
 import org.junit.jupiter.api.Test;
-
-import java.lang.reflect.Proxy;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The free-sink rates published in {@code docs/flight-model.md}.
+ * The free-sink rates published in {@code docs/flight-model.md}, checked against the SHIPPED
+ * {@code config.yml} (see {@link ShippedConfig} for why that distinction matters).
  *
- * <p>That table was hand-computed and one cell was wrong for a while. Since {@link
- * ShipStats#sinkBlocksPerSecond} is already {@code public static} and {@link ShipConfig#load} reads
- * nothing but a {@code FileConfiguration}, the whole column can simply be recomputed here — no
- * visibility had to be widened for this, and the {@code ShipConfig.Builder} stays private.
+ * <p>That table was hand-computed and one cell was wrong for a while. {@link
+ * ShipStats#sinkBlocksPerSecond} is already {@code public static}, so the whole column can simply be
+ * recomputed here — no production visibility had to be widened, and {@code ShipConfig.Builder} stays
+ * private.
  *
  * <p><b>Only the free-sink column is covered.</b> The "holding Space" column applies
  * {@code 1 - (1 - liftHoldSinkFactor) * min(1, lift)}, which lives inline in the private instance
  * method {@code ShipPhysics.applyAirshipVerticalPhysics} and needs a live {@code ShipInstance}.
- * Covering it means extracting that expression first; until then those six cells are still verified by
- * hand.
+ * Covering it means extracting that expression first; until then those six cells are verified by hand.
  */
 class SinkRateTest {
 
-    /** A {@code Plugin} that answers {@code getConfig()} and nothing else. */
-    private static ShipConfig defaultConfig() {
-        YamlConfiguration empty = new YamlConfiguration();
-        Plugin plugin = (Plugin) Proxy.newProxyInstance(
-            SinkRateTest.class.getClassLoader(),
-            new Class<?>[] {Plugin.class},
-            (p, method, args) -> {
-                if (method.getName().equals("getConfig")) return empty;
-                if (method.getName().equals("toString")) return "stub plugin";
-                if (method.getName().equals("equals")) return p == args[0];
-                if (method.getName().equals("hashCode")) return System.identityHashCode(p);
-                Class<?> r = method.getReturnType();
-                if (r == boolean.class) return false;
-                if (r.isPrimitive()) return 0;
-                return null;
-            });
-        // An empty config means every getter falls through to load()'s own defaults, which are the
-        // shipped ones — so this is the config a fresh server runs with.
-        return ShipConfig.load(plugin, "custom");
-    }
+    private static final ShipConfig CONFIG = ShippedConfig.load();
 
     private static void assertSink(float lift, float expected) {
-        float actual = ShipStats.sinkBlocksPerSecond(defaultConfig(), lift);
+        float actual = ShipStats.sinkBlocksPerSecond(CONFIG, lift);
         assertEquals(expected, actual, 0.05f,
             "lift " + lift + " should sink at " + expected + " b/s, got " + actual);
+    }
+
+    /**
+     * Guards the guard: if the shipped values ever drift from what this file assumes, fail HERE with a
+     * clear reason rather than leaving the table below to fail with a confusing arithmetic mismatch.
+     */
+    @Test
+    void theShippedConfigStillHasTheValuesThisTableWasComputedFrom() {
+        assertEquals(0.5f, CONFIG.maxSinkSpeed, 1e-6f,
+            "config.yml's max-sink-speed changed — recompute docs/flight-model.md's sink table");
+        assertEquals(0.7f, CONFIG.sinkSpeedExponent, 1e-6f,
+            "config.yml's sink-speed-exponent changed — recompute docs/flight-model.md's sink table");
+        assertEquals(0.35f, CONFIG.liftHoldSinkFactor, 1e-6f,
+            "config.yml's lift-hold-sink-factor changed — recompute the 'holding Space' column by hand");
     }
 
     @Test
@@ -64,22 +55,21 @@ class SinkRateTest {
 
     @Test
     void holdingAltitudeOrClimbingDoesNotSink() {
-        assertEquals(0f, ShipStats.sinkBlocksPerSecond(defaultConfig(), 1.0f));
-        assertEquals(0f, ShipStats.sinkBlocksPerSecond(defaultConfig(), 1.5f));
+        assertEquals(0f, ShipStats.sinkBlocksPerSecond(CONFIG, 1.0f));
+        assertEquals(0f, ShipStats.sinkBlocksPerSecond(CONFIG, 1.5f));
     }
 
     /** Negative lift is clamped to zero rather than producing a NaN out of {@code Math.pow}. */
     @Test
     void negativeLiftFallsAtTheTerminalRate() {
-        assertEquals(10.0f, ShipStats.sinkBlocksPerSecond(defaultConfig(), -2f), 0.05f);
+        assertEquals(10.0f, ShipStats.sinkBlocksPerSecond(CONFIG, -2f), 0.05f);
     }
 
     @Test
     void sinkRateIncreasesAsLiftFalls() {
-        ShipConfig config = defaultConfig();
         float previous = -1f;
         for (float lift = 0.95f; lift >= 0f; lift -= 0.05f) {
-            float rate = ShipStats.sinkBlocksPerSecond(config, lift);
+            float rate = ShipStats.sinkBlocksPerSecond(CONFIG, lift);
             assertTrue(rate > previous, "sink rate should rise as lift falls, but stalled at lift " + lift);
             previous = rate;
         }
