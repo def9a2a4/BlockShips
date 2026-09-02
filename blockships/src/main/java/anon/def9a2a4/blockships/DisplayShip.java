@@ -2194,19 +2194,36 @@ public class DisplayShip implements Listener {
     @EventHandler
     public void onPlaceShipWheel(PlayerInteractEvent event) {
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
-        // PlayerInteractEvent fires once per hand, and each hand is a separate interaction with its own
-        // result — cancelling the main-hand event does NOT suppress the off-hand one. Without this guard, a
-        // wheel in the off-hand while the main hand is empty reaches vanilla and plants an untracked head.
-        // Mirrors the guards on onShipWheelRightClick and onShulkerClick.
-        if (event.getHand() != EquipmentSlot.HAND) return;
 
+        // NO HAND GUARD, DELIBERATELY. PlayerInteractEvent fires once per hand and each hand is a separate
+        // interaction carrying only its own item, so an off-hand-only guard is the wrong shape in both
+        // directions. A previous `if (getHand() != HAND) return;` here sat ABOVE the item check and caused
+        // the exact bug its comment claimed to prevent: with an empty main hand (or a sword in it) and a
+        // wheel in the off hand, the main-hand pass saw a null item and returned WITHOUT cancelling, and the
+        // off-hand pass — the only one holding the wheel — was dropped on the floor. Vanilla then placed the
+        // head, corelib marked it from its own BlockPlaceEvent handler, and BlockShips never recorded it:
+        // an untracked look-alike that is dead on right-click, unrepairable, and destroys the item on break.
+        // Sword in main hand + wheel in off hand is entirely ordinary play.
+        //
+        // The invariant that replaces it: if the ACTING hand holds a wheel, this handler owns the
+        // interaction. Checking the item first is what enforces that for both hands.
+        //
+        // Do NOT "fix" the both-hands case with `if (hand == OFF_HAND && isShipWheel(mainHandItem)) return;`.
+        // It is redundant after a successful main-hand place (the cell then holds a head, so the occupancy
+        // arm below returns anyway) and actively harmful after a FAILED one: the stamp-failure branch reverts
+        // the cell to air while the main hand still holds a wheel, so the guard would skip the off-hand pass
+        // and let vanilla plant exactly the untracked head this exists to prevent.
         ItemStack item = event.getItem();
         if (!isShipWheel(item)) return;
 
         Block clickedBlock = event.getClickedBlock();
         if (clickedBlock == null) return;
 
-        // Don't place if clicking an existing ship wheel (let onShipWheelRightClick handle it)
+        // Clicking an existing wheel: onShipWheelRightClick owns this, for BOTH hands. Returning uncancelled
+        // is correct and load-bearing — cancelling here would mark the event cancelled before
+        // onShipWheelRightClick's own cancelled-check runs, and since both handlers sit at the same priority
+        // in the same listener their relative order is unspecified. That would make "right-click your wheel
+        // while holding a spare wheel" stop opening the menu, nondeterministically across JVMs.
         if (isShipWheelBlock(clickedBlock)) return;
 
         BlockFace face = event.getBlockFace();
@@ -2220,6 +2237,12 @@ public class DisplayShip implements Listener {
         // corelib adopts it while BlockShips has no record of it — an untracked look-alike that breaks into
         // nothing and can be minted indefinitely. Placing into replaceable cells instead keeps every wheel on
         // the tracked path, and routes MORE cells through the WorldGuard check below rather than fewer.
+        //
+        // Genuinely occupied cells still return WITHOUT cancelling, on purpose. Vanilla cannot place into an
+        // occupied cell either, so there is nothing to suppress — and cancelling would swallow the click on
+        // whatever was actually clicked. A chest, door, lever or another plugin's GUI block sitting where
+        // getRelative(face) happens to be solid would simply stop responding whenever the player is holding a
+        // wheel, including for corelib's own ignoreCancelled interact dispatcher.
         if (!targetBlock.getType().isAir() && !targetBlock.isReplaceable()) return;
 
         Player player = event.getPlayer();
@@ -2321,12 +2344,25 @@ public class DisplayShip implements Listener {
     /**
      * Event: Right-click ship wheel block to open menu
      */
-    @EventHandler
+    @EventHandler(priority = org.bukkit.event.EventPriority.LOW)
     public void onShipWheelRightClick(PlayerInteractEvent event) {
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
-        // Track W (W7): PlayerInteractEvent fires for BOTH hands; only the main hand should open the menu (else
-        // it opens twice). Mirrors the guard on onShulkerClick.
+        // PlayerInteractEvent fires for BOTH hands; only the main hand should open the menu (else it opens
+        // twice). Mirrors the guard on onShulkerClick. Unlike onPlaceShipWheel, this guard is correct here:
+        // the off-hand pass has nothing to do, rather than something to do that would be skipped.
         if (event.getHand() != EquipmentSlot.HAND) return;
+
+        // Honour an upstream cancellation. Its sibling onShipWheelBreak has always done this; this handler
+        // never did, so a protection plugin that cancels the interact (GriefPrevention and Towny cancel
+        // right-clicks in claims broadly) was overruled and the menu opened anyway. That matters because the
+        // menu is not a viewer: Disassemble, Force Disassemble — whose own lore reads "N ship block(s) will
+        // be LOST" — Lock and Fire Cannons all act on the world, and of the menu's actions only Assemble
+        // carried a permission check of its own. See onShipWheelMenuClick for the per-action gating.
+        //
+        // LOW priority is deliberate and paired with onPlaceShipWheel returning uncancelled for this block:
+        // both handlers live in this listener, and at equal priority their order is getDeclaredMethods()
+        // order — unspecified. Running first makes "menu opens" independent of that ordering.
+        if (event.isCancelled()) return;
 
         Block block = event.getClickedBlock();
         ShipWheelData wheelData = resolveWheelBlock(block);
@@ -2356,17 +2392,33 @@ public class DisplayShip implements Listener {
 
         if (action == ShipWheelMenu.MenuAction.NONE) return;
 
-        // Get wheel data from the custom inventory holder
+        ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
+
+        // Re-resolve the record from the id the holder carries, EVERY click. The holder used to keep a hard
+        // ShipWheelData reference, which is how a menu outlives the record behind it: seven paths deregister
+        // a wheel (a player breaks it; the ship is destroyed with destroyOnDeath while you have the menu open
+        // from the collider; an admin purges it; an explosion or /setblock removes the block; a landing that
+        // could not place its wheel; the protected-anchor arm of disassembleShip), and three of those reopen
+        // this menu a tick later on the now-detached object. Acting on it then writes through a cached cell
+        // that may now hold somebody else's block — assembleShip would flood-fill their build into a ship,
+        // toggleLock would overwrite a neighbour's glue, detectShip would spawn a marker in their base.
+        //
+        // A null answer here is a COMPLETE staleness test rather than a heuristic, because every one of those
+        // seven paths ends in the same placedWheels.remove that this lookup consults.
         ShipWheelMenu.ShipWheelMenuHolder holder = (ShipWheelMenu.ShipWheelMenuHolder) event.getInventory().getHolder();
-        ShipWheelData wheelData = holder.getWheelData();
+        ShipWheelData wheelData = manager.getWheelById(holder.getWheelId());
 
         if (wheelData == null) {
-            player.sendMessage("§cShip wheel data not found!");
+            player.sendMessage("§cThat ship wheel is no longer tracked — it was destroyed, purged, "
+                + "or returned to you as an item.");
             player.closeInventory();
             return;
         }
 
-        ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
+        if (!menuActionAllowed(player, wheelData, action)) {
+            player.sendMessage("§cYou can't do that to a ship wheel in this protected region.");
+            return;
+        }
 
         boolean stateChanged = false;
 
@@ -2377,8 +2429,7 @@ public class DisplayShip implements Listener {
             case DETECT:
                 manager.detectShip(player, wheelData);
                 // Refresh menu to update ship info lore
-                player.closeInventory();
-                Bukkit.getScheduler().runTaskLater(plugin, () -> ShipWheelMenu.openMenu(player, wheelData), 1L);
+                reopenWheelMenuLater(player, wheelData.getWheelId());
                 break;
             case ASSEMBLE:
                 stateChanged = manager.assembleShip(player, wheelData);
@@ -2388,11 +2439,12 @@ public class DisplayShip implements Listener {
                 break;
             case DISASSEMBLE:
                 stateChanged = manager.disassembleShip(player, wheelData);
-                // If disassembly failed but force is available, reopen menu to show force option
+                // If disassembly failed but force is available, reopen menu to show force option.
+                // setPendingMenuReopen must be set BEFORE the close — onShipWheelMenuClose reads it to decide
+                // whether to keep the conflict list that the force option is rendered from.
                 if (!stateChanged && wheelData.canForceDisassemble()) {
                     wheelData.setPendingMenuReopen(true);
-                    player.closeInventory();
-                    Bukkit.getScheduler().runTaskLater(plugin, () -> ShipWheelMenu.openMenu(player, wheelData), 1L);
+                    reopenWheelMenuLater(player, wheelData.getWheelId());
                     return;
                 }
                 break;
@@ -2438,15 +2490,64 @@ public class DisplayShip implements Listener {
 
         // Close and reopen menu if state changed (for assemble/disassemble)
         if (stateChanged) {
-            player.closeInventory();
-            // Reopen after a tick to show updated state
-            new BukkitRunnable() {
-                @Override
-                public void run() {
-                    ShipWheelMenu.openMenu(player, wheelData);
-                }
-            }.runTaskLater(plugin, 1L);
+            reopenWheelMenuLater(player, wheelData.getWheelId());
         }
+    }
+
+    /**
+     * Close the wheel menu and reopen it a tick later, by id.
+     *
+     * <p>The single reopen path. Every caller here has just run an action that can DEREGISTER the wheel it is
+     * about to reopen — {@code verifyWheelLanded} drops the record when a wheel does not land where it was
+     * expected, and the protected-anchor arm of {@code disassembleShip} drops it deliberately — and both of
+     * those still return {@code true}, so the reopen fires. Resolving the id inside the task rather than
+     * capturing the record is what stops the menu coming back attached to an object the manager has already
+     * forgotten.
+     *
+     * <p>No message on the stale path: the action itself has already reported what happened, and the menu
+     * simply not reappearing is the honest outcome. Clearing {@code pendingMenuReopen} matters because
+     * {@code onShipWheelMenuClose} already ran when we closed, so nothing else will.
+     */
+    private void reopenWheelMenuLater(Player player, java.util.UUID wheelId) {
+        player.closeInventory();
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (!player.isOnline()) return;
+            ShipWheelData live = ((BlockShipsPlugin) plugin).getShipWheelManager().getWheelById(wheelId);
+            if (live == null) return;
+            ShipWheelMenu.openMenu(player, live);
+        }, 1L);
+    }
+
+    /**
+     * Whether this menu action may act on this wheel here.
+     *
+     * <p>Gates the ACTIONS rather than the menu, on purpose. Refusing to open would tell the player nothing
+     * about which action was the problem, and would make a ship parked in a spawn or market region — a region
+     * its owner is deliberately not a member of — permanently uncontrollable. Reads stay open.
+     *
+     * <p>{@code ASSEMBLE} is absent because {@code assembleShip} already runs a per-cell WorldGuard check over
+     * the whole detected hull, which is strictly stronger than anything that could be checked here; adding a
+     * second anchor-cell-only test would refuse assemblies the real gate allows.
+     *
+     * <p>The {@code mightRestrict} pre-check is not an optimisation — {@code isBuildDenied} answers
+     * "not explicitly allowed", so calling it unguarded denies everywhere in a world with region support off.
+     */
+    private boolean menuActionAllowed(Player player, ShipWheelData wheelData, ShipWheelMenu.MenuAction action) {
+        switch (action) {
+            case ALIGN:
+            case DISASSEMBLE:
+            case FORCE_DISASSEMBLE:
+            case TOGGLE_LOCK:
+            case FIRE_CANNONS:
+                break;
+            default:
+                return true;   // HELP, INFO, DETECT, HIGHLIGHT_SEATS, CAMERA_*, ASSEMBLE (gated per-cell)
+        }
+        org.bukkit.Location cell = wheelData.getBlockLocation();
+        if (cell == null || cell.getWorld() == null) return true;   // nothing to check it against
+        anon.def9a2a4.blockships.integration.WorldGuardHook wg =
+            anon.def9a2a4.blockships.integration.WorldGuardHook.get();
+        return !wg.mightRestrict(cell.getWorld()) || !wg.isBuildDenied(cell, player);
     }
 
     /**
@@ -2459,7 +2560,10 @@ public class DisplayShip implements Listener {
         }
 
         ShipWheelMenu.ShipWheelMenuHolder holder = (ShipWheelMenu.ShipWheelMenuHolder) event.getInventory().getHolder();
-        ShipWheelData wheelData = holder.getWheelData();
+        // By id, like the click handler: a menu closing because its wheel was just destroyed has nothing left
+        // to clear, and reaching through a detached record to clear state on it is pointless at best.
+        ShipWheelData wheelData = ((BlockShipsPlugin) plugin).getShipWheelManager()
+            .getWheelById(holder.getWheelId());
         if (wheelData != null) {
             // Only clear conflicts if the menu isn't about to reopen (for force disassemble option)
             if (!wheelData.isPendingMenuReopen()) {
@@ -2585,6 +2689,17 @@ public class DisplayShip implements Listener {
         // Remove wheel (this also destroys the ship if assembled). removeWheel neither airs the block nor
         // drops the item, because this handler does both itself just below.
         manager.removeWheel(wheelData);
+
+        // Tell corelib the block is going, because our own cancel above guarantees it will never find out.
+        // corelib cleans up its location index from a MONITOR + ignoreCancelled BlockBreakEvent handler; we
+        // cancel at HIGHEST, which runs first, so that handler is skipped on EVERY tracked wheel break and
+        // the entry leaks. Must run BEFORE setType(AIR) — it reads the block's type PDC to identify what it
+        // is removing, and an air block carries nothing.
+        //
+        // Safe against re-entry: this dispatches the type's own onBlockRemoved callback, which calls back
+        // into onEngineRemovedWheelBlock — but removeWheel above has already dropped the record, so the
+        // re-entrant lookup finds nothing and returns.
+        anon.def9a2a4.blockships.customships.ShipWheelBlockType.notifyRemoved(block);
 
         // Manually remove the block since we cancelled the event
         block.setType(Material.AIR);

@@ -281,7 +281,32 @@ public class ShipWheelManager {
      * Avoids floating-point precision issues with Location as HashMap key.
      */
     private static String locationKey(Location loc) {
-        return loc.getWorld().getName() + ":" + loc.getBlockX() + ":" + loc.getBlockY() + ":" + loc.getBlockZ();
+        World w = liveWorld(loc);
+        if (w == null) return null;
+        return w.getName() + ":" + loc.getBlockX() + ":" + loc.getBlockY() + ":" + loc.getBlockZ();
+    }
+
+    /**
+     * This location's world, or null if it does not currently have one.
+     *
+     * <p>Bukkit's {@link Location} holds a <i>weak</i> reference to its world, and {@code getWorld()} throws
+     * {@code IllegalArgumentException("World unloaded")} once that reference is collected — it does not return
+     * null. Records outlive worlds (a runtime world unload, a multiverse-style setup), so every bare
+     * {@code getWorld()} in this class was a latent throw on a path with no reason to expect one.
+     *
+     * <p>Two of those mattered. {@code resolveWheelState} dereferenced it while answering whether a ship was
+     * recoverable, so a single record in an unloaded world made <i>every</i> right-click on <i>any</i> wheel
+     * throw. And {@code saveAll} serialises through {@code toMap}, which reads the world name — so one such
+     * record made every save throw, which propagated out of {@code onDisable} before it could shut the ship
+     * subsystem down or drain the IO executor.
+     */
+    private static @Nullable World liveWorld(@Nullable Location loc) {
+        if (loc == null) return null;
+        try {
+            return loc.isWorldLoaded() ? loc.getWorld() : null;
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     /**
@@ -297,11 +322,9 @@ public class ShipWheelManager {
      * this becomes a fallback for wheels that predate the stamp.
      */
     private @Nullable ShipWheelData byCachedCell(Location cell) {
-        if (cell == null || cell.getWorld() == null) return null;
-        String key = locationKey(cell);
+        if (cell == null) return null;
         for (ShipWheelData w : placedWheels.values()) {
-            Location bl = w.getBlockLocation();
-            if (bl != null && bl.getWorld() != null && key.equals(locationKey(bl))) return w;
+            if (cellsAgree(cell, w.getBlockLocation())) return w;
         }
         return null;
     }
@@ -343,10 +366,79 @@ public class ShipWheelManager {
         Material t = block.getType();
         if (t != Material.PLAYER_HEAD && t != Material.PLAYER_WALL_HEAD) return false;
         UUID stamped = ShipWheelBlockType.readWheelId(block);
+        // STAMP-FIRST, AND DELIBERATELY WITHOUT A CELL TEST. "Is this block this wheel's" must stay true for a
+        // wheel the engine has legitimately carried somewhere the record has not caught up with yet, which is
+        // the normal state mid-landing. The consequence is that this alone does NOT distinguish an original
+        // from a /clone of it — both carry the id. Anywhere the question is really "is this the right block at
+        // the right PLACE", compare cells explicitly; see agreement().
         if (stamped != null) return stamped.equals(wheel.getWheelId());
-        // Unstamped — a wheel that predates identity. The cache is all we have, so use it, but only when it
-        // is unambiguous (exactly this wheel is recorded at exactly this cell).
-        return byCachedCell(block.getLocation()) == wheel;
+
+        // Unstamped: a wheel predating the identity stamp, where the record's own cached cell is all there is.
+        //
+        // An ASSEMBLED wheel can never own a block. Its cell is empty by construction — assembly airs the head
+        // out of the world — so anything standing there belongs to somebody else. Without this clause the
+        // legacy arm becomes a cell-keyed write authority: a wheel sails, a player builds a wheel-textured
+        // head on the vacated dock (which happens whenever stamping is unavailable), the ship is destroyed,
+        // and teardown airs out THEIR block and drops nothing. That is the impersonation bug running in the
+        // destructive direction.
+        if (wheel.isAssembled()) return false;
+
+        // Compare the record's own cell directly rather than asking byCachedCell "who is recorded here". That
+        // lookup answers a different question and returns the FIRST HashMap match, so with two records sharing
+        // a cell it is a coin flip — and worse, teardownWheel removes the record before calling this, so the
+        // scan could never find `wheel` at all and every unstamped wheel silently read as un-owned: no item
+        // dropped, the block left standing, and a log line claiming the opposite.
+        Location cell = wheel.getBlockLocation();
+        if (cell == null || cell.getWorld() == null) return false;
+        if (!cellsAgree(cell, block.getLocation())) return false;
+
+        // Require the wheel's declared skin too. A plain head planted on a legacy wheel's dock would otherwise
+        // satisfy everything above. Shared with adoptLegacyWheel so the two cannot drift.
+        return ShipWheelBlockType.hasDeclaredSkin(block);
+    }
+
+    /**
+     * Do these two locations denote the same block cell?
+     *
+     * <p>The single cell-comparison primitive. It exists because this question was previously hand-written at
+     * five separate sites, one of which compared {@code World} objects while the rest compared world
+     * <i>names</i> — a distinction that only shows up after a world is unloaded and reloaded, at which point
+     * the two disagree permanently about the same wheel.
+     *
+     * <p>Never touches chunks and never throws: a location whose world reference has been collected answers
+     * "does not agree" rather than raising, because every caller is deciding whether to act on a block and
+     * "I cannot tell" must mean "no".
+     */
+    private static boolean cellsAgree(@Nullable Location a, @Nullable Location b) {
+        if (a == null || b == null) return false;
+        World wa = liveWorld(a);
+        World wb = liveWorld(b);
+        if (wa == null || wb == null) return false;
+        return wa.getName().equals(wb.getName())
+            && a.getBlockX() == b.getBlockX() && a.getBlockY() == b.getBlockY() && a.getBlockZ() == b.getBlockZ();
+    }
+
+    /**
+     * This wheel's block, or null if the cell does not currently hold it.
+     *
+     * <p><b>The only legal way to get a {@link Block} from a record.</b> Identity was re-keyed so that a block
+     * resolves to a wheel by its own stamp — but the reverse direction, "where is this wheel's block so I may
+     * write to it", was left as a bare {@code getBlockLocation().getBlock()} at every site that needed it. The
+     * record's location is a cache of the wheel's dock, and every failure mode this class defends against ends
+     * with that cache pointing at a cell somebody else now owns. Writing through it is how a stale menu
+     * flood-fills a stranger's build into a ship, overwrites their glue, or spawns markers in their base.
+     *
+     * <p>Fails closed on an unloaded chunk, and checks that BEFORE calling {@code getBlock()}, which would
+     * otherwise force a synchronous chunk load from whatever event asked.
+     */
+    @Nullable Block ownedBlock(ShipWheelData wheel) {
+        if (wheel == null) return null;
+        Location cell = wheel.getBlockLocation();
+        World world = liveWorld(cell);
+        if (world == null) return null;
+        if (!world.isChunkLoaded(cell.getBlockX() >> 4, cell.getBlockZ() >> 4)) return null;
+        Block b = cell.getBlock();
+        return ownsBlock(wheel, b) ? b : null;
     }
 
     /**
@@ -458,17 +550,53 @@ public class ShipWheelManager {
             // Stamped but unknown: a leaked /defcorelib give, a restored backup, a failed save. Not a wheel
             // we can act on — leave it to corelib's own break handling and /blockships wheels adopt.
             if (data == null) return null;
-            Location cached = data.getBlockLocation();
-            if (cached != null && cached.getWorld() != null
-                    && locationKey(cached).equals(locationKey(block.getLocation()))) {
-                return data;
-            }
-            refuseMismatch(data, block, cached);
+            if (agreement(data, block) == Agreement.AGREES) return data;
+            refuseMismatch(data, block, data.getBlockLocation(), true);
             return null;
         }
 
         // 3. No stamp — a wheel placed before identity existed. Adopt it in place.
         return adoptLegacyWheel(block);
+    }
+
+    /** How a stamped block's location relates to the cell its record caches. See {@link #agreement}. */
+    enum Agreement {
+        /** The block is at the record's cell. The ordinary case. */
+        AGREES,
+        /** The record's cell is observable and no longer holds a block with this id — the wheel was moved. */
+        MOVED,
+        /** The record's cell ALSO holds a block carrying this id — two blocks claim one wheel. */
+        DUPLICATE_CLAIM,
+        /** The record's cell cannot be looked at (no world, or an unloaded chunk). */
+        UNOBSERVABLE
+    }
+
+    /**
+     * Relate a block carrying a wheel's stamp to the cell that wheel's record caches.
+     *
+     * <p>One predicate, three callers, because the alternative is three hand-written copies that drift. The
+     * question is the same everywhere — "does the record's cell agree, and if not, can I tell whether the
+     * wheel moved or was copied?" — while the <i>answer</i> is used differently: resolution refuses anything
+     * but agreement, the engine-removal callback refuses to reap on anything but agreement, and the glue
+     * anchor provider follows a move but refuses a copy.
+     *
+     * <p><b>Never forces a chunk load.</b> The provider calls this for every block of every structure on every
+     * mover stroke, and the removal callback runs inside an explosion's block loop.
+     *
+     * <p><b>{@code UNOBSERVABLE} must be treated as refusal, not as agreement.</b> It is the whole defence
+     * against a copied block: {@code /clone} and structure blocks duplicate a block entity's PDC with no
+     * Bukkit event, and an attacker chooses whether the original's chunk is loaded. Failing open here would
+     * hand them the record by walking away from it.
+     */
+    private Agreement agreement(ShipWheelData wheel, Block block) {
+        Location cached = wheel.getBlockLocation();
+        if (cellsAgree(cached, block.getLocation())) return Agreement.AGREES;
+        World cw = liveWorld(cached);
+        if (cw == null || !cw.isChunkLoaded(cached.getBlockX() >> 4, cached.getBlockZ() >> 4)) {
+            return Agreement.UNOBSERVABLE;
+        }
+        UUID atCached = ShipWheelBlockType.readWheelId(cached.getBlock());
+        return wheel.getWheelId().equals(atCached) ? Agreement.DUPLICATE_CLAIM : Agreement.MOVED;
     }
 
     /**
@@ -479,16 +607,23 @@ public class ShipWheelManager {
      * path that follows the record (the AIR-out in the teardown, ShipGlue.writeCells, toggleLock) would
      * follow it to the thief's cell. Recovery is the explicit {@code /blockships wheels adopt}.
      *
-     * <p>This should be near-unreachable in normal play: {@link #verifyWheelLanded} catches the landing case
-     * before a player can ever observe it, and corelib cancels every survival route that could move a stamped
-     * head (pistons, endermen, falling blocks) while explosions/fluid/setblock remove rather than move it. If
-     * this fires often, the landing verification has a hole.
+     * <p>Rarer than an earlier version of this note claimed, but <b>not</b> near-unreachable: that note argued
+     * corelib cancels every survival route that could move a stamped head, which is true of <i>vanilla</i>
+     * pistons and false of corelib's own movers. A mechanical piston, hoist or rotator will carry a docked
+     * wheel to a new cell without telling us, and the record then disagrees with the block until something
+     * repairs it.
+     *
+     * @param probeCached whether it may read the block at the cached cell to distinguish "two blocks claim
+     *        this wheel" from "the wheel moved". That read is a {@code getState()}, which force-loads the
+     *        chunk — fine from a right-click, <b>not</b> fine from callers that run inside an explosion's
+     *        block loop or corelib's glue-expansion walk. Those pass false and get the weaker message.
      */
-    private void refuseMismatch(ShipWheelData data, Block block, @Nullable Location cached) {
+    private void refuseMismatch(ShipWheelData data, Block block, @Nullable Location cached, boolean probeCached) {
         String key = data.getWheelId() + "@" + locationKey(block.getLocation());
         if (mismatchLogged.size() > 512) mismatchLogged.clear();  // bounded; this is diagnostics, not state
         if (!mismatchLogged.add(key)) return;
-        boolean duplicate = cached != null && cached.getWorld() != null
+        boolean duplicate = probeCached && cached != null && liveWorld(cached) != null
+            && liveWorld(cached).isChunkLoaded(cached.getBlockX() >> 4, cached.getBlockZ() >> 4)
             && data.getWheelId().equals(ShipWheelBlockType.readWheelId(cached.getBlock()));
         plugin.getLogger().warning("Wheel " + data.getWheelId() + " is stamped on the block at "
             + locationKey(block.getLocation()) + " but its record points at "
@@ -629,19 +764,54 @@ public class ShipWheelManager {
      */
     public void onEngineRemovedWheelBlock(Block block) {
         if (block == null) return;
+        // Material gate: without it the unstamped arm below will happily reap a record because something
+        // that is not even a head was destroyed at its cell.
+        Material t = block.getType();
+        if (t != Material.PLAYER_HEAD && t != Material.PLAYER_WALL_HEAD) return;
+
         UUID id = ShipWheelBlockType.readWheelId(block);
         ShipWheelData wheel = (id != null) ? placedWheels.get(id) : byCachedCell(block.getLocation());
         if (wheel == null) return;
 
-        // Second guard, independent of corelib's capture-depth counter. Assembly airs the wheel out through
-        // the same removal plumbing, so if that counter ever failed to cover a path we would delete the
-        // record of a ship that is about to sail — which surfaces much later as "cannot be disassembled".
-        // An assembled ship's cell is empty by construction, so a LOADED wheel here is never a real removal.
-        if (resolveWheelState(wheel).state() == WheelState.LOADED) {
+        // The block must be at the record's cell, not merely carry its id. ownsBlock is stamp-first and does
+        // NOT establish this, so it cannot stand in here: /clone and structure blocks copy a block entity's
+        // PDC verbatim with no Bukkit event, so a copy carries the id too. Without this check, blowing up the
+        // COPY deletes the ORIGINAL's record and leaves the real wheel stamped-but-unknown — a state no
+        // command can repair.
+        if (agreement(wheel, block) != Agreement.AGREES) {
+            // probeCached=false: this runs inside handleExplosion's walk over the blast list, so it must not
+            // force-load the cached cell's chunk once per destroyed block.
+            refuseMismatch(wheel, block, wheel.getBlockLocation(), false);
+            return;
+        }
+
+        // A wheel whose ship is out is not this block, whatever this block is. Both states below have a cell
+        // that is legitimately EMPTY — assembly airs the head out — so anything standing there was planted.
+        WheelState st = resolveWheelState(wheel).state();
+        if (st == WheelState.LOADED) {
+            // Independent of corelib's capture-depth counter: assembly airs the wheel out through this same
+            // plumbing, so if that counter ever failed to cover a path we would delete the record of a ship
+            // that is about to sail, surfacing much later as "cannot be disassembled".
             plugin.getLogger().severe("Refusing to drop the record for wheel " + wheel.getWheelId()
                 + ": its ship is loaded, so this removal is an assembly capture that was not flagged as one. "
                 + "Please report this at " + BlockShipsPlugin.ISSUES_URL);
             return;
+        }
+        if (st == WheelState.UNLOADED_RECOVERABLE) {
+            // The ship is parked or mid-recovery — its blocks are still held by a mechanism or a sidecar, and
+            // it WILL come back wanting this record. Refusing costs nothing; reaping loses the ship. This is
+            // the state an attacker reaches by simply sailing out of render distance: leave the dock empty,
+            // let someone plant a head on it, and have them blow it up.
+            plugin.getLogger().warning("Refusing to drop the record for wheel " + wheel.getWheelId()
+                + ": its ship is parked or recovering, so the head removed here was not the wheel.");
+            return;
+        }
+        if (st == WheelState.ORPHAN) {
+            // Reap. ORPHAN means the link is dead and the wheel block really was in the world — this is the
+            // case the method exists for. Do NOT call reconcileOrphan from here: it scans nearby entities and
+            // tears down a mechanism, and this runs inside an explosion's per-block loop.
+            plugin.getLogger().warning("Reaping ORPHAN wheel " + wheel.getWheelId()
+                + " (dead ship link " + wheel.getAssembledShipUUID() + ") along with its destroyed block.");
         }
 
         placedWheels.remove(wheel.getWheelId());

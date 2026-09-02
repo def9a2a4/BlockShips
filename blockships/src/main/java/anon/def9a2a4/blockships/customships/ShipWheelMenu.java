@@ -101,15 +101,28 @@ public class ShipWheelMenu {
      * even when the ship is assembled and the wheel block is removed from world.
      */
     public static class ShipWheelMenuHolder implements InventoryHolder {
-        private final ShipWheelData wheelData;
+        /**
+         * The wheel's ID, NOT the record.
+         *
+         * <p>An open inventory outlives whatever opened it, and a wheel can be deregistered while its menu is
+         * still on screen — someone breaks it, the ship is destroyed under a player watching from the
+         * collider, an admin purges it, a landing fails to place its wheel. Holding the {@link ShipWheelData}
+         * kept those menus fully functional against an object the manager had already discarded, so acting on
+         * one wrote through a cached cell that may since have become somebody else's block.
+         *
+         * <p>Keeping the id instead makes that unrepresentable rather than merely detected: the click handler
+         * re-resolves through the manager every time, and a wheel that is gone resolves to null. Do not add a
+         * record field back "for convenience".
+         */
+        private final java.util.UUID wheelId;
         private Inventory inventory;
 
-        public ShipWheelMenuHolder(ShipWheelData wheelData) {
-            this.wheelData = wheelData;
+        public ShipWheelMenuHolder(java.util.UUID wheelId) {
+            this.wheelId = wheelId;
         }
 
-        public ShipWheelData getWheelData() {
-            return wheelData;
+        public java.util.UUID getWheelId() {
+            return wheelId;
         }
 
         @Override
@@ -151,8 +164,10 @@ public class ShipWheelMenu {
      * @param wheelData The ship wheel data
      */
     public static void openMenu(Player player, ShipWheelData wheelData) {
-        // Create custom holder to store wheelData reference
-        ShipWheelMenuHolder holder = new ShipWheelMenuHolder(wheelData);
+        // Holder carries the id only — see ShipWheelMenuHolder. The record is still passed to this method
+        // because building the menu genuinely needs its fields (lock state, conflicts, camera distance, the
+        // cached detection stats); it is reading them at open time that is safe, not keeping them.
+        ShipWheelMenuHolder holder = new ShipWheelMenuHolder(wheelData.getWheelId());
         Inventory menu = Bukkit.createInventory(holder, MENU_SIZE, MENU_TITLE);
         holder.setInventory(menu);
 
@@ -431,6 +446,12 @@ public class ShipWheelMenu {
     private static ShipThrust.Totals dockedThrust(BlockShipsPlugin plugin, ShipWheelData wheelData) {
         org.bukkit.Location wheelLoc = wheelData.getBlockLocation();
         if (wheelLoc == null || wheelLoc.getWorld() == null) return ShipThrust.Totals.NONE;
+
+        // The record's cell is a cache, so confirm this wheel's block is actually still standing there before
+        // flood-filling from it. Without this a record left pointing at a vacated cell would classify whatever
+        // a neighbour has since built and render their hull's figures as this ship's. ownedBlock also refuses
+        // an unloaded chunk, which keeps a menu-open from force-loading one.
+        if (plugin.getShipWheelManager().ownedBlock(wheelData) == null) return ShipThrust.Totals.NONE;
 
         String key = dockedThrustKey(wheelLoc);
         long now = System.currentTimeMillis();
@@ -876,6 +897,39 @@ public class ShipWheelMenu {
      * The lock button: freeze which blocks belong to this ship, so docking it next to a pile of
      * blocks no longer swallows them.
      */
+    /**
+     * How many blocks this wheel's lock has frozen, or null if that cannot be answered right now.
+     *
+     * <p>Reads the count off the wheel's own block, which is where corelib stores the glue offsets. Three
+     * things had to be guarded, and the first is a real bug rather than tidiness:
+     * <ul>
+     *   <li><b>An unloaded world throws.</b> {@code Location.getWorld()} raises "World unloaded" once its weak
+     *       reference clears, and this runs while BUILDING the menu — so the exception propagated out of
+     *       {@code openMenu} and the menu simply never appeared, for a locked wheel in a world that had been
+     *       unloaded at runtime. Rendering "?" is strictly better than not opening.</li>
+     *   <li><b>An unloaded chunk</b> would be force-loaded synchronously by {@code getBlock()}, from a menu
+     *       open, on the main thread.</li>
+     *   <li><b>The cell may not hold this wheel any more.</b> The record's location is a cache; if the wheel
+     *       was destroyed and a neighbour built there, the honest answer is "I don't know", not a count of
+     *       whatever glue their block happens to carry. Checking the block's own stamp is enough here and
+     *       needs no manager — an unstamped block is left to the benefit of the doubt because a legacy wheel
+     *       is exactly that, and this is a lore number either way.</li>
+     * </ul>
+     */
+    private static Integer frozenBlockCount(ShipWheelData wheelData) {
+        org.bukkit.Location cell = wheelData.getBlockLocation();
+        if (cell == null || cell.getWorld() == null) return null;
+        if (!cell.getWorld().isChunkLoaded(cell.getBlockX() >> 4, cell.getBlockZ() >> 4)) return null;
+        org.bukkit.block.Block block = cell.getBlock();
+        java.util.UUID stamped = ShipWheelBlockType.readWheelId(block);
+        if (stamped != null && !stamped.equals(wheelData.getWheelId())) return null;
+        try {
+            return ShipGlue.glueCount(block) + 1;   // +1 for the wheel itself
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     private static ItemStack createLockItem(ShipWheelData wheelData) {
         boolean locked = wheelData.isLocked();
         ItemStack item = new ItemStack(locked ? Material.IRON_TRAPDOOR : Material.TRIPWIRE_HOOK);
@@ -884,8 +938,9 @@ public class ShipWheelMenu {
             meta.setDisplayName((locked ? ChatColor.AQUA + "Structure Locked" : ChatColor.GRAY + "Structure Unlocked"));
             List<String> lore = new ArrayList<>();
             if (locked) {
+                Integer frozen = frozenBlockCount(wheelData);
                 lore.add(ChatColor.GRAY + "Frozen blocks: " + ChatColor.WHITE
-                    + (ShipGlue.glueCount(wheelData.getBlockLocation().getBlock()) + 1));
+                    + (frozen == null ? "?" : String.valueOf(frozen)));
                 lore.add(ChatColor.GRAY + "This ship assembles from exactly");
                 lore.add(ChatColor.GRAY + "these blocks. Nothing new is picked up,");
                 lore.add(ChatColor.GRAY + "but you can still glue/unglue any of them.");

@@ -70,9 +70,18 @@ public final class ShipWheelBlockType {
      * Builds and registers the type.
      *
      * <p>Failure is logged at SEVERE and swallowed rather than taking down {@code onEnable}, but it is not a
-     * cosmetic failure: without the type registered a carried wheel lands with neither identity nor skin
-     * (capture skips the block-entity snapshot for a type it believes is registered), so it comes back as a
-     * blank head. Anything that stamps or recognises a wheel must check {@link #isRegistered()} first.
+     * cosmetic failure. Two distinct outcomes, which an earlier version of this javadoc had backwards:
+     * <ul>
+     *   <li><b>Never registered, then carried.</b> Capture takes the block-entity snapshot precisely when the
+     *       type is <i>unknown</i> ({@code chb == null}), so the head keeps its <i>skin</i> and loses only
+     *       {@code wheel_id}. It comes back looking right and answering to nothing.</li>
+     *   <li><b>Captured while registered, landed after registration failed.</b> No snapshot was taken (the
+     *       type was known at capture) and {@code placeBlock} skips the whole restore arm, so it comes back as
+     *       a <b>blank, untextured head with no identity</b> — and because it has no skin, the texture gate in
+     *       {@code adoptLegacyWheel} correctly refuses to adopt it. Only {@code /blockships wheels adopt}
+     *       recovers it.</li>
+     * </ul>
+     * Anything that stamps or recognises a wheel must check {@link #isRegistered()} first.
      */
     public static void register(BlockShipsPlugin plugin) {
         if (plugin.getDisplayShip() == null || plugin.getDisplayShip().getTextureManager() == null) {
@@ -93,13 +102,52 @@ public final class ShipWheelBlockType {
                 anon.def9a2a4.corelib.CustomHeadBlock.builder("blockships", "ship_wheel")
                     .name(net.kyori.adventure.text.Component.text("Ship Wheel"))
                     .texture(tex)
-                    // A wheel must never be shoved away from its record. breakOnPiston is NOT the alternative
-                    // it looks like: corelib releases a break-on-piston drop only from inside its drop-rule
-                    // loop, and this type declares no drop rules, so it would delete the wheel and drop
-                    // nothing. Cancelling aborts the whole push, which is the safe direction here.
+                    // Drop the wheel item whenever corelib is the one removing the block.
+                    //
+                    // WHY THIS MATTERS FAR MORE THAN IT LOOKS. corelib's break handler is MONITOR +
+                    // ignoreCancelled and unconditionally calls setDropItems(false) before consulting
+                    // dropRules(). With no rules declared, every path where BlockShips REFUSES to resolve a
+                    // wheel — a /clone'd copy, a stamp that never landed, a record quarantined at load —
+                    // ended with the block deleted and NOTHING dropped. That turned every "safely refuse"
+                    // decision elsewhere in this plugin into silent item destruction, which is why several
+                    // other fixes could not be written until this line existed.
+                    //
+                    // No double-drop on any route, checked individually against corelib:
+                    //   - tracked player break: BlockShips cancels at HIGHEST before corelib's
+                    //     ignoreCancelled handler and drops its own item. Both early returns in
+                    //     onShipWheelBreak (already-cancelled, WorldGuard-denied) also leave the event
+                    //     cancelled, so the WG arm does not become a dupe-in-a-claim.
+                    //   - creative: corelib returns before the rule loop. Still drops nothing. Correct.
+                    //   - explosion and drill: already drop unconditionally without reading rules.
+                    //   - piston: unreachable, see cancelPistons below.
+                    //   - fluid: gated behind breakOnFluid(), which this type never sets.
+                    //   - teardownWheel / DisplayShip use raw setType(AIR), which fires no event at all.
+                    // NOT covered, by design: /setblock ... destroy (corelib calls setWillDrop(false)) and
+                    // fire (onBlockBurn never consults dropRules).
+                    //
+                    // Known cosmetic consequence: corelib's mint carries corelib's name/lore and ours carries
+                    // blockships:custom_item_id, so the two wheel items do not stack. Everything functional
+                    // accepts both (isShipWheel, ingredientMatches); corelib has no per-type createItem hook.
+                    .drops(anon.def9a2a4.corelib.CustomHeadBlock.DropRule.self())
+                    // A wheel must never be shoved away from its record, because the record's cached cell is
+                    // how a DOCKED wheel is recognised. breakOnPiston is NOT the alternative it looks like:
+                    // it would let a piston delete the wheel and hand back an item, silently unmooring the
+                    // ship from its record. Cancelling aborts the whole push, which is the safe direction.
                     // (These two are mutually exclusive and build() throws if both are set — and that throw
                     // would be swallowed below, silently disabling registration.)
                     .cancelPistons(true)
+                    // corelib's drill removes blocks with NO BlockBreakEvent — so no WorldGuard, no claim
+                    // check, nothing. Without this it is a protection-bypassing wheel remover: the item does
+                    // come back (the drill's registered-type arm drops enrichDrop unconditionally), but the
+                    // wheel's glue and lock set do not, and the removal happens inside someone else's claim.
+                    //
+                    // Scope honestly: this gate needs getTypeFromBlock to resolve, so it protects only a
+                    // fully-marked wheel in a session where registration succeeded. An unstamped legacy wheel
+                    // or a blank failed-restore head still falls to breakNaturally, which calls no
+                    // onBlockRemoved and so strands the record. Closing that needs a type-independent veto in
+                    // corelib, which is deliberately not done here — a drill still bores through the entire
+                    // hull with no event either way, so the wheel flag is a point fix, not a protection fix.
+                    .drillable(false)
                     // Told when the ENGINE removes a wheel block by a route that never fires
                     // BlockBreakEvent: explosion, fire, fluid, /setblock, /fill, piston break, drill. Those
                     // all left the record behind pointing at an empty cell — the orphan state a planted head
@@ -175,6 +223,51 @@ public final class ShipWheelBlockType {
         } catch (IllegalArgumentException e) {
             return null;   // corrupted value; treat as unidentified rather than throwing on a hot path
         }
+    }
+
+    /**
+     * Whether this block wears the wheel's declared skin.
+     *
+     * <p>The single block-side texture comparison. It exists because "is this head wearing our skin" is asked
+     * from two places that must never disagree — {@code adoptLegacyWheel}, which uses it to decide whether an
+     * unstamped head may be adopted, and {@code ownsBlock}, which uses it to decide whether an unstamped head
+     * may be aired out and dropped. Two hand-written copies of that comparison is one drifting apart.
+     *
+     * <p><b>Deliberately conservative: false when the skin cannot be read at all.</b> A profile that has not
+     * resolved, an odd tile state, or a blank head all answer false rather than "unknown". Both callers are
+     * deciding whether to take an irreversible action on a block they do not otherwise have identity for, so
+     * "I cannot tell" must mean "do not touch it". The cost is that a wheel whose skin genuinely changed
+     * (an {@code items.yml} texture edit between sessions, another plugin re-skinning the head) stops being
+     * recognised — but that wheel is already unadoptable today for exactly the same reason, so this does not
+     * widen the failure, it only makes the two sites agree about it.
+     *
+     * <p>Note this is the <i>block</i>-side check. The item-side equivalent in {@code DisplayShip.isShipWheel}
+     * reads a {@code PLAYER_HEAD} item's profile instead and is a genuinely different function; do not fold
+     * them together.
+     *
+     * @return false if the type never registered (no declared skin to compare against), if the block is not a
+     *         readable skull, or if the skin differs.
+     */
+    public static boolean hasDeclaredSkin(Block block) {
+        String declared = texture;
+        if (declared == null || block == null) return false;
+        return declared.equals(blockSkinBase64(block));
+    }
+
+    /** The raw base64 {@code textures} profile property on a placed head, or null if it cannot be read. */
+    private static String blockSkinBase64(Block block) {
+        try {
+            // getState(false): no snapshot copy — this runs on break and teardown paths.
+            if (!(block.getState(false) instanceof org.bukkit.block.Skull skull)) return null;
+            com.destroystokyo.paper.profile.PlayerProfile profile = skull.getPlayerProfile();
+            if (profile == null) return null;
+            for (com.destroystokyo.paper.profile.ProfileProperty p : profile.getProperties()) {
+                if ("textures".equals(p.getName())) return p.getValue();
+            }
+        } catch (Throwable ignored) {
+            // A skull whose profile has not resolved yet, or an odd tile state. Treat as unreadable.
+        }
+        return null;
     }
 
     /** Tell corelib the block is gone, so its location index and any displays are cleaned up. */
