@@ -52,6 +52,10 @@ public class ShipWheelData {
     private int lastDetectedPositiveWeight;  // Positive weight sum (for health calculation)
     private int lastDetectedWoolCount;   // Wool blocks (for ship stats)
     private int lastDetectedBannerCount; // Banner blocks (for ship stats)
+    // bbanners display-entity banners. Not findable by material, so they come from an entity query
+    // (BlockStructureScanner.countLargeHuge) rather than the block walk that fills the two above.
+    private int lastDetectedLargeBannerCount;
+    private int lastDetectedHugeBannerCount;
 
     // Categorized blocks for colored particle visualization
     private Set<Location> lastDetectedRegularBlocks;  // Non-seat blocks (white particles)
@@ -160,13 +164,16 @@ public class ShipWheelData {
     }
 
     public void setLastDetectedStats(int blockCount, int weightedBlockCount, int totalWeight,
-                                     int positiveWeight, int woolCount, int bannerCount) {
+                                     int positiveWeight, int woolCount, int bannerCount,
+                                     int largeBannerCount, int hugeBannerCount) {
         this.lastDetectedBlockCount = blockCount;
         this.lastDetectedWeightedBlockCount = weightedBlockCount;
         this.lastDetectedWeight = totalWeight;
         this.lastDetectedPositiveWeight = positiveWeight;
         this.lastDetectedWoolCount = woolCount;
         this.lastDetectedBannerCount = bannerCount;
+        this.lastDetectedLargeBannerCount = largeBannerCount;
+        this.lastDetectedHugeBannerCount = hugeBannerCount;
     }
 
     public int getLastDetectedWeightedBlockCount() {
@@ -179,6 +186,14 @@ public class ShipWheelData {
 
     public int getLastDetectedBannerCount() {
         return lastDetectedBannerCount;
+    }
+
+    public int getLastDetectedLargeBannerCount() {
+        return lastDetectedLargeBannerCount;
+    }
+
+    public int getLastDetectedHugeBannerCount() {
+        return lastDetectedHugeBannerCount;
     }
 
     public Set<Location> getLastDetectedRegularBlocks() {

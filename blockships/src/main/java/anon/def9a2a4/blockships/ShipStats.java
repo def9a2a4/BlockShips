@@ -119,34 +119,11 @@ public final class ShipStats {
         return v < 0 ? 0 : Math.min(v, 1.0f);
     }
 
-    /** From an assembled ship's model — the authoritative path; the model already knows every tier. */
-    public static ShipStats of(ShipConfig config, ShipModel model) {
-        return fromSailPower(config, model.sailPower, model.mass);
-    }
-
-    /**
-     * From raw counts, for the detect preview where there is no model yet.
-     *
-     * @param largeBannerCount large banners, or 0 when the caller has not counted them
-     * @param hugeBannerCount  huge banners, or 0 when the caller has not counted them
-     */
-    public static ShipStats of(ShipConfig config, int woolCount, int bannerCount,
-                               int largeBannerCount, int hugeBannerCount, int mass) {
-        int sailPower = woolCount * config.woolPower
-                      + bannerCount * config.bannerPower
-                      + largeBannerCount * config.largeBannerPower
-                      + hugeBannerCount * config.hugeBannerPower;
-        return fromSailPower(config, sailPower, mass);
-    }
-
-    private static ShipStats fromSailPower(ShipConfig config, int sailPower, int rawMass) {
-        int mass = Math.max(1, rawMass);
-        float sailRatio = (float) (config.basePower + sailPower) / mass;
-        float capped = Math.min(sailRatio, config.sailCapRatio);
-        float ratio = Math.min(capped, 1.0f);
-        // Sail-only form: forward is the legacy ratio, and there is no thrust to turn or lift with.
-        return new ShipStats(sailPower, mass, sailRatio, capped, ratio, ratio, 0f, 0f);
-    }
+    // NOTE: there were two sail-only of(...) overloads here, plus the fromSailPower they shared. They
+    // hardcoded turn = 0 and lift = 0 and never looked at thrust, so any caller that picked one up
+    // silently reported a propelled ship as having no propulsion — which is exactly the bug that made
+    // thrust invisible in the wheel menu. Every caller now uses a thrust-aware form; do not reintroduce
+    // a convenience overload that drops the thrust argument.
 
     /**
      * Top speed as a percentage, for player-facing display.

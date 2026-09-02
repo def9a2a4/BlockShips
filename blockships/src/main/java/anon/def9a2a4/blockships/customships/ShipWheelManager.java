@@ -1168,7 +1168,8 @@ public class ShipWheelManager {
 
         // Update detection stats so the ship wheel menu shows correct data immediately
         wheelData.setLastDetectedStats(model.parts.size(), model.blockCount, model.totalWeight,
-            model.mass, model.woolCount, model.bannerCount);
+            model.mass, model.woolCount, model.bannerCount,
+            model.largeBannerCount, model.hugeBannerCount);
         wheelData.setLastHealth(ship.vehicle.getHealth(), model.maxHealth);
         wheelData.lastCenterOfVolumeY = model.centerOfVolume.y();
         wheelData.lastMinY = model.minY;
@@ -1701,7 +1702,8 @@ public class ShipWheelManager {
                 org.bukkit.attribute.AttributeInstance maxHealthInstance = maxHealthAttr != null ? ship.vehicle.getAttribute(maxHealthAttr) : null;
                 double maxHealth = maxHealthInstance != null ? maxHealthInstance.getBaseValue() : 100.0;
                 wheelData.setLastDetectedStats(blockCount, ship.model.blockCount, ship.model.totalWeight,
-                    ship.model.mass, ship.model.woolCount, ship.model.bannerCount);
+                    ship.model.mass, ship.model.woolCount, ship.model.bannerCount,
+                    ship.model.largeBannerCount, ship.model.hugeBannerCount);
                 wheelData.setLastHealth(currentHealth, maxHealth);
                 // Store buoyancy data from ship model
                 wheelData.lastCenterOfVolumeY = ship.model.centerOfVolume.y();
@@ -1713,6 +1715,20 @@ public class ShipWheelManager {
                 player.sendMessage("§aShip detected (assembled)");
                 player.sendMessage("§7Blocks: §f" + blockCount);
                 player.sendMessage("§7Health: §f" + (int) Math.ceil(currentHealth) + " §7/ §f" + (int) maxHealth);
+                // Seats, matching the docked readout. Note model.seats INCLUDES the driver (it is
+                // seats.get(0)), unlike the detect preview's seatBlocks, which holds passengers only —
+                // so derive the passenger count rather than adding one.
+                int seatCount = ship.model.seats.size();
+                int passengerCount = 0;
+                for (ShipModel.SeatInfo seat : ship.model.seats) {
+                    if (!seat.isDriver) passengerCount++;
+                }
+                if (seatCount > 0) {
+                    player.sendMessage("§7Seats: §f" + seatCount
+                        + " §7(" + (seatCount - passengerCount) + " driver + " + passengerCount + " passengers)");
+                } else {
+                    player.sendMessage("§7Seats: §c0 §7(default seat at wheel is used)");
+                }
                 if (config.statsEnabled) {
                     // Thrust-aware, and only the blocks actually running count. The sail-only overload
                     // used here before hardcoded forwardRatio to the sail ratio, so a thruster-driven
@@ -1761,6 +1777,13 @@ public class ShipWheelManager {
                 if (!c.getBlock().getType().isAir()) shipBlocks.add(c);
             }
             shipBlocks.add(wheelLoc.clone());
+            // Same current-limit re-check scanFrozen performs. Without it an oversized frozen set
+            // previews cleanly here and then refuses to assemble, with nothing explaining why.
+            if (shipBlocks.size() > maxShipSize) {
+                player.sendMessage("§cShip too large: §f" + shipBlocks.size() + " §7/ §f" + maxShipSize
+                    + " §7(frozen while the limit was higher — unlock and re-freeze to shrink it)");
+                return false;
+            }
         } else {
             ShipDetector detector = new ShipDetector(maxShipSize, maxScanSize);
             ShipDetector.ShipDetectionResult result =
@@ -1811,6 +1834,12 @@ public class ShipWheelManager {
             }
         }
 
+        // Large/huge banners are bbanners display entities, so the block walk above cannot see them.
+        // Same helper the assembly scan uses, so docked and assembled report the same sail power.
+        int[] tierBanners = BlockStructureScanner.countLargeHuge(shipBlocks);
+        int largeBannerCount = tierBanners[0];
+        int hugeBannerCount = tierBanners[1];
+
         // Calculate total weight and counts
         int totalWeight = calculateTotalWeight(shipBlocks);
         int blockCount = shipBlocks.size();
@@ -1839,10 +1868,6 @@ public class ShipWheelManager {
         }
         // Ship stats
         if (config.statsEnabled) {
-            // Preview path: large/huge banners are display entities and are not counted here, so this
-            // can under-report a ship that carries them. The assembled readout above uses the model,
-            // which does count them.
-            //
             // One world scan feeds both the speed figure and the summary below — hoisted out of the
             // summary so the two cannot disagree, and so the docked Speed includes thrust the same way
             // the assembled one does.
@@ -1850,10 +1875,12 @@ public class ShipWheelManager {
                 anon.def9a2a4.blockships.ShipThrust.scanWorld((BlockShipsPlugin) plugin, shipBlocks,
                     BlockStructureScanner.blockFaceToYaw(wheelData.getFacing()));
             anon.def9a2a4.blockships.ShipStats stats = anon.def9a2a4.blockships.ShipStats.of(
-                config, woolCount, bannerCount, 0, 0, calculateMass(shipBlocks), totalWeight, thrust, 0f);
+                config, woolCount, bannerCount, largeBannerCount, hugeBannerCount,
+                calculateMass(shipBlocks), totalWeight, thrust, 0f);
             int speedPercent = stats.speedPercent();
-            player.sendMessage("§7Sails: §f" + woolCount + " wool, " + bannerCount + " banners §7("
-                + stats.sailPower + " pts)");
+            player.sendMessage("§7Sails: §f"
+                + describeSails(woolCount, bannerCount, largeBannerCount, hugeBannerCount)
+                + " §7(" + stats.sailPower + " pts)");
             player.sendMessage("§7Speed: " + anon.def9a2a4.blockships.ShipStats.speedColor(speedPercent)
                 + speedPercent + "%"
                 + (speedPercent < 50 ? " §8(add sails, or propellers along the hull)" : ""));
@@ -1865,11 +1892,12 @@ public class ShipWheelManager {
         // Store detected blocks and stats for Ship Info display
         int positiveWeight = calculateMass(shipBlocks);
         wheelData.setLastDetectedBlocks(shipBlocks);
-        wheelData.setLastDetectedStats(blockCount, weightedBlockCount, totalWeight, positiveWeight, woolCount, bannerCount);
+        wheelData.setLastDetectedStats(blockCount, weightedBlockCount, totalWeight, positiveWeight,
+            woolCount, bannerCount, largeBannerCount, hugeBannerCount);
         wheelData.setLastDetectedBlockCategories(regularBlocks, seatBlocks, driverSeat);
 
         // Calculate and store buoyancy data for Ship Info display
-        calculateAndStoreBuoyancyData(wheelData, shipBlocks, totalWeight, weightedBlockCount);
+        calculateAndStoreBuoyancyData(wheelData, shipBlocks, totalWeight);
 
         if (showParticles) {
             player.sendMessage("§7(Showing particles for 5 seconds...)");
@@ -1913,11 +1941,21 @@ public class ShipWheelManager {
 
     /** "3 wool, 2 banners, 1 large banner" — omits tiers the ship doesn't carry. */
     private static String describeSails(ShipModel model) {
+        return describeSails(model.woolCount, model.bannerCount,
+            model.largeBannerCount, model.hugeBannerCount);
+    }
+
+    /**
+     * Counts-based form, for the docked preview, which has no {@link ShipModel}. Both readouts go
+     * through this so the same ship cannot describe itself two ways depending on whether it happens
+     * to be assembled.
+     */
+    private static String describeSails(int wool, int banner, int large, int huge) {
         StringBuilder sb = new StringBuilder();
-        appendCount(sb, model.woolCount, "wool", "wool");
-        appendCount(sb, model.bannerCount, "banner", "banners");
-        appendCount(sb, model.largeBannerCount, "large banner", "large banners");
-        appendCount(sb, model.hugeBannerCount, "huge banner", "huge banners");
+        appendCount(sb, wool, "wool", "wool");
+        appendCount(sb, banner, "banner", "banners");
+        appendCount(sb, large, "large banner", "large banners");
+        appendCount(sb, huge, "huge banner", "huge banners");
         return sb.length() == 0 ? "none" : sb.toString();
     }
 
@@ -1989,8 +2027,12 @@ public class ShipWheelManager {
 
     /**
      * Calculate and store buoyancy data (centerOfVolumeY, minY, surfaceOffset) for Ship Info display.
+     *
+     * <p>Mirrors {@link BlockStructureScanner#captureCells}'s bounds and centre-of-volume maths exactly,
+     * including {@link BlockStructureScanner#bottomFaceY} and the {@code resolveWeight} membership test,
+     * so the preview waterline the player sees matches the one the assembled ship floats at.
      */
-    private void calculateAndStoreBuoyancyData(ShipWheelData wheelData, Set<Location> shipBlocks, int totalWeight, int weightedBlockCount) {
+    private void calculateAndStoreBuoyancyData(ShipWheelData wheelData, Set<Location> shipBlocks, int totalWeight) {
         Location wheelLoc = wheelData.getBlockLocation();
         BlockConfigManager configManager = BlockConfigManager.getInstance();
 
@@ -2000,12 +2042,15 @@ public class ShipWheelManager {
 
         for (Location loc : shipBlocks) {
             Block block = loc.getBlock();
-            BlockProperties props = configManager.getProperties(block.getType(), block.getBlockData());
 
             float blockY = (float) (loc.getY() - wheelLoc.getY());
-            if (blockY < minY) minY = blockY;
+            float bottom = BlockStructureScanner.bottomFaceY(block.getBlockData(), blockY);
+            if (!Float.isNaN(bottom) && bottom < minY) minY = bottom;
 
-            if (props.hasWeight()) {
+            // resolveWeight, matching the scanner and countWeightedBlocks. props.hasWeight() selects the
+            // same set today only because an unlisted material synthesises a non-null 0; using the same
+            // predicate everywhere keeps meanDensity's divisor and this one from drifting apart.
+            if (configManager.resolveWeight(block.getType(), block.getBlockData()) != null) {
                 weightedCount++;
                 sumY += blockY;
             }
@@ -2042,22 +2087,22 @@ public class ShipWheelManager {
     private void spawnWaterlineShulker(ShipWheelData wheelData, Set<Location> shipBlocks, int totalWeight) {
         Location wheelLoc = wheelData.getBlockLocation();
 
-        // Calculate ship bounds and weighted block count (same logic as BlockStructureScanner)
+        // Calculate ship bounds and weighted block count (same logic as BlockStructureScanner —
+        // bottomFaceY and resolveWeight, so the shulker marks the waterline the ship will actually
+        // float at rather than one derived from raw block Ys).
         BlockConfigManager configManager = BlockConfigManager.getInstance();
         float minY = Float.MAX_VALUE;
-        float maxY = Float.MIN_VALUE;
         float sumY = 0;
         int weightedBlockCount = 0;
 
         for (Location loc : shipBlocks) {
             Block block = loc.getBlock();
-            BlockProperties props = configManager.getProperties(block.getType(), block.getBlockData());
 
             float blockY = (float) (loc.getY() - wheelLoc.getY());
-            if (blockY < minY) minY = blockY;
-            if (blockY > maxY) maxY = blockY;
+            float bottom = BlockStructureScanner.bottomFaceY(block.getBlockData(), blockY);
+            if (!Float.isNaN(bottom) && bottom < minY) minY = bottom;
 
-            if (props.hasWeight()) {
+            if (configManager.resolveWeight(block.getType(), block.getBlockData()) != null) {
                 weightedBlockCount++;
                 sumY += blockY;
             }
@@ -2065,7 +2110,6 @@ public class ShipWheelManager {
 
         // Default bounds if no blocks
         if (minY == Float.MAX_VALUE) minY = 0;
-        if (maxY == Float.MIN_VALUE) maxY = 0;
 
         // Calculate center of volume Y
         float centerOfVolumeY = weightedBlockCount > 0 ? sumY / weightedBlockCount : 0;

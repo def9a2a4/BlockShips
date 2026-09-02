@@ -39,12 +39,15 @@ public class ShipWheelMenu {
         public final float density;
         public final int maxHealth;
         public final Integer currentHealth;  // null if not assembled
-        public final float surfaceOffset;
         public final float airDensity;
         public final float waterDensity;
         // Ship stats
         public final int woolCount;
         public final int bannerCount;
+        // bbanners display-entity sails. Without these the lore listed only wool and banners above a
+        // Sail Power total that DOES include the tiers, so the breakdown visibly failed to add up.
+        public final int largeBannerCount;
+        public final int hugeBannerCount;
         public final int sailPower;
         public final float sailCapRatio; // sail cap threshold (from config, e.g. 0.8)
         public final float sailRatio;  // uncapped sail ratio (before sail cap applied)
@@ -60,8 +63,9 @@ public class ShipWheelMenu {
         public final boolean thrustIsLive; // false = docked "potential", nothing is actually powered
 
         public ShipInfo(int blockCount, int totalWeight, int mass, float density, int maxHealth,
-                        Integer currentHealth, float surfaceOffset, float airDensity, float waterDensity,
-                        int woolCount, int bannerCount, int sailPower,
+                        Integer currentHealth, float airDensity, float waterDensity,
+                        int woolCount, int bannerCount, int largeBannerCount, int hugeBannerCount,
+                        int sailPower,
                         float sailCapRatio, float sailRatio, float ratio,
                         boolean statsEnabled,
                         float forwardRatio, float turnRatio, float liftRatio,
@@ -77,11 +81,12 @@ public class ShipWheelMenu {
             this.density = density;
             this.maxHealth = maxHealth;
             this.currentHealth = currentHealth;
-            this.surfaceOffset = surfaceOffset;
             this.airDensity = airDensity;
             this.waterDensity = waterDensity;
             this.woolCount = woolCount;
             this.bannerCount = bannerCount;
+            this.largeBannerCount = largeBannerCount;
+            this.hugeBannerCount = hugeBannerCount;
             this.sailPower = sailPower;
             this.sailCapRatio = sailCapRatio;
             this.sailRatio = sailRatio;
@@ -493,10 +498,10 @@ public class ShipWheelMenu {
         float airDensity = config.airDensity;
         float waterDensity = config.waterDensity;
 
-        // Use stored surface offset (calculated during detection)
-        float surfaceOffset = wheelData.lastSurfaceOffset;
-
-        // Health
+        // Health. The 1024 clamp mirrors BlockStructureScanner's, which is what the ship's actual
+        // max-health attribute gets. Without it the same hull reads its raw mass here and 1024 once
+        // assembled — and, because lastMaxHealth is not persisted, an assembled ship falls into this
+        // branch after every restart too.
         int maxHealth;
         Integer currentHealth = null;
         if (wheelData.isAssembled() && wheelData.getLastMaxHealth() > 0) {
@@ -504,37 +509,44 @@ public class ShipWheelMenu {
             maxHealth = (int) wheelData.getLastMaxHealth();
         } else {
             int shipMass = wheelData.getLastDetectedPositiveWeight();
-            maxHealth = Math.max(1, shipMass);
+            maxHealth = (int) Math.min(1024.0, Math.max(1, shipMass));
         }
 
         // Ship stats - use live ShipInstance data when assembled
-        int woolCount, bannerCount, mass;
+        int woolCount, bannerCount, largeBannerCount, hugeBannerCount, mass;
         if (wheelData.isAssembled()) {
             ShipInstance ship = ShipRegistry.byId(wheelData.getAssembledShipUUID());
             if (ship != null && ship.model != null) {
                 woolCount = ship.model.woolCount;
                 bannerCount = ship.model.bannerCount;
+                largeBannerCount = ship.model.largeBannerCount;
+                hugeBannerCount = ship.model.hugeBannerCount;
                 mass = Math.max(1, ship.model.mass);
             } else {
                 // Ship not found (destroyed?) - use detection data
                 woolCount = wheelData.getLastDetectedWoolCount();
                 bannerCount = wheelData.getLastDetectedBannerCount();
+                largeBannerCount = wheelData.getLastDetectedLargeBannerCount();
+                hugeBannerCount = wheelData.getLastDetectedHugeBannerCount();
                 mass = Math.max(1, wheelData.getLastDetectedPositiveWeight());
             }
         } else {
             // Unassembled - use detection data
             woolCount = wheelData.getLastDetectedWoolCount();
             bannerCount = wheelData.getLastDetectedBannerCount();
+            largeBannerCount = wheelData.getLastDetectedLargeBannerCount();
+            hugeBannerCount = wheelData.getLastDetectedHugeBannerCount();
             mass = Math.max(1, wheelData.getLastDetectedPositiveWeight());
         }
 
-        // An assembled ship's model already knows every sail tier (including large/huge banners, which
-        // are display entities the detect preview does not count); an unassembled one only has the
-        // preview's wool/banner tallies.
+        // This menu is a READER. Every sail tier above comes either from the assembled model or from
+        // the scalars detectShip stored — it never rescans the world for them. dockedThrust below does
+        // build its own cell set, on a short TTL cache; do not reach for it here, or the stats page and
+        // the detect chat will drift apart again the moment that cache goes stale.
         //
-        // Both branches go through a THRUST-AWARE ShipStats form. The sail-only overloads zero out turn
-        // and lift and never look at thrustBlocks, which is why propulsion used to fly a ship and show
-        // up nowhere in its own stats page.
+        // Both branches go through a THRUST-AWARE ShipStats form. The sail-only overloads zeroed out
+        // turn and lift and never looked at thrustBlocks, which is why propulsion used to fly a ship and
+        // show up nowhere in its own stats page; they are deleted now.
         ShipStats stats;
         ShipThrust.Totals thrust;
         boolean thrustIsLive;
@@ -554,12 +566,13 @@ public class ShipWheelMenu {
             // Docked (or the model is gone): classify from the world. Potential, not live.
             thrust = dockedThrust(plugin, wheelData);
             thrustIsLive = false;
-            stats = ShipStats.of(config, woolCount, bannerCount, 0, 0, mass, totalWeight, thrust, 0f);
+            stats = ShipStats.of(config, woolCount, bannerCount, largeBannerCount, hugeBannerCount,
+                mass, totalWeight, thrust, 0f);
         }
 
         return new ShipInfo(blockCount, totalWeight, mass, density, maxHealth, currentHealth,
-                            surfaceOffset, airDensity, waterDensity,
-                            woolCount, bannerCount, stats.sailPower,
+                            airDensity, waterDensity,
+                            woolCount, bannerCount, largeBannerCount, hugeBannerCount, stats.sailPower,
                             config.sailCapRatio, stats.sailRatio, stats.ratio,
                             config.statsEnabled,
                             stats.forwardRatio, stats.turnRatio, stats.liftRatio,
@@ -674,6 +687,14 @@ public class ShipWheelMenu {
                 if (info.bannerCount > 0) {
                     lore.add(ChatColor.GRAY + "Banners: " + ChatColor.WHITE + info.bannerCount
                         + ChatColor.GRAY + " (" + (info.bannerCount * config.bannerPower) + " pts)");
+                }
+                if (info.largeBannerCount > 0) {
+                    lore.add(ChatColor.GRAY + "Large Banners: " + ChatColor.WHITE + info.largeBannerCount
+                        + ChatColor.GRAY + " (" + (info.largeBannerCount * config.largeBannerPower) + " pts)");
+                }
+                if (info.hugeBannerCount > 0) {
+                    lore.add(ChatColor.GRAY + "Huge Banners: " + ChatColor.WHITE + info.hugeBannerCount
+                        + ChatColor.GRAY + " (" + (info.hugeBannerCount * config.hugeBannerPower) + " pts)");
                 }
 
                 // Sail power with cap indicator

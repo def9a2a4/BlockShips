@@ -135,8 +135,8 @@ public final class ShipModel {
     }
 
     // The power-to-mass ratio used to be computed here (and, separately, in four other places).
-    // It now lives in ShipStats, which is the only thing that knows how the sail cap and the tiers
-    // combine — see ShipStats.of(config, model).
+    // It now lives in ShipStats, which is the only thing that knows how the sail cap, the tiers and
+    // thrust combine — see ShipStats.of(config, model, thrust, speedFrac).
 
     /**
      * Calculates the surface offset based on density compared to water.

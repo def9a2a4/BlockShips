@@ -347,6 +347,68 @@ public class BlockStructureScanner {
     }
 
     /**
+     * The height of a block's bottom face, wheel-relative, or {@link Float#NaN} for a block that must
+     * not contribute to the hull's lower bound at all.
+     *
+     * <p>Two rules, both of which decide where a ship's waterline sits:
+     * <ul>
+     *   <li>A <b>trapdoor</b> is excluded (NaN). It is usually a hatch hanging below the deck, and
+     *       letting it set the bottom would float the hull a block too high.</li>
+     *   <li>A <b>top slab</b>'s solid half starts half a block up, so its bottom face is {@code y+0.5}.</li>
+     * </ul>
+     *
+     * <p>Shared with {@code ShipWheelManager}'s docked buoyancy helpers, which used a raw block Y and so
+     * predicted a different waterline from the one the ship actually floated at — the preview shulker
+     * sat in the wrong place for any hull bottomed out in slabs or trapdoors.
+     */
+    public static float bottomFaceY(BlockData blockData, float blockY) {
+        if (blockData instanceof TrapDoor) return Float.NaN;
+        if (blockData instanceof Slab slab && slab.getType() == Slab.Type.TOP) return blockY + 0.5f;
+        return blockY;
+    }
+
+    /**
+     * Count the LARGE and HUGE banners hosted on a structure's cells, as {@code {large, huge}}.
+     *
+     * <p>Shared by the assembly path ({@link #captureCells}) and the docked preview
+     * ({@code ShipWheelManager.detectShip}) so the two cannot drift — a ship that reports four huge
+     * banners in flight has to report four while docked, and that only stays true if one function
+     * answers for both.
+     *
+     * <p>Three things here are load-bearing and easy to "simplify" wrongly:
+     * <ul>
+     *   <li><b>Iterate the CELLS and look each one up — never walk the map's values.</b>
+     *       {@link #queryBannerTiers} pads its region, so the map also contains hosts OUTSIDE this
+     *       structure. Iterating cells is what filters them; a values() walk would credit a
+     *       neighbouring build's banners to this ship.</li>
+     *   <li><b>NORMAL tiers are skipped.</b> Not, as an earlier comment here claimed, to avoid
+     *       double-counting a vanilla banner block — a plain banner placed on a banner block creates no
+     *       display at all. The NORMAL displays that exist are fence flags and bed banners, whose hosts
+     *       are fences/walls/bars/panes/beds and so never match the {@code "BANNER"} material test the
+     *       caller uses. Counting them here would score them docked and assembled-but-not-by-material,
+     *       i.e. it would invent the very divergence this method exists to prevent.</li>
+     *   <li><b>{@link Block} is a safe map key.</b> defCoreLib builds its keys with
+     *       {@code world.getBlockAt(x, y, z)} and both callers look up with {@code loc.getBlock()};
+     *       CraftBlock equality is world + packed position, so these match. Do not "fix" this to a
+     *       location key.</li>
+     * </ul>
+     */
+    public static int[] countLargeHuge(Collection<Location> cells) {
+        Map<Block, List<anon.def9a2a4.corelib.BannerTier>> bannerTiers = queryBannerTiers(cells);
+        if (bannerTiers.isEmpty()) return new int[] {0, 0};
+        int large = 0, huge = 0;
+        for (Location cell : cells) {
+            List<anon.def9a2a4.corelib.BannerTier> hosted = bannerTiers.get(cell.getBlock());
+            if (hosted == null) continue;
+            for (anon.def9a2a4.corelib.BannerTier tier : hosted) {
+                if (tier == anon.def9a2a4.corelib.BannerTier.HUGE) huge++;
+                else if (tier == anon.def9a2a4.corelib.BannerTier.LARGE) large++;
+            }
+        }
+        return new int[] {large, huge};
+    }
+
+    /**
      * Assemble from a wheel's FROZEN cell set instead of a flood fill. The frozen set is the wheel's RAW glue
      * offsets ({@link ShipGlue#rawGlueCells} — NOT {@code resolveGlue}, so the derived sticky closure can't
      * sneak adjacent slime/honey into a locked ship) plus the wheel itself. Cells that are now air are dropped
@@ -359,7 +421,12 @@ public class BlockStructureScanner {
         if (wheelBlock.getType().isAir()) {
             return null;   // no wheel, no ship — the offsets are relative to it
         }
-        List<Location> cells = new ArrayList<>();
+        // A SET, not a list: the wheel is added unconditionally below on the assumption that (0,0,0) is
+        // never a stored glue offset, and rawGlueCells does not enforce that. If one ever did reach the
+        // PDC, a list would hand captureCells the wheel twice — double weight, double block count, double
+        // banner credit — while the docked preview (which already dedupes) counted it once. Ordered so
+        // the block-index parity captureCells promises stays deterministic.
+        Set<Location> cells = new LinkedHashSet<>();
         for (Location c : ShipGlue.rawGlueCells(wheelBlock)) {
             if (!c.getBlock().getType().isAir()) cells.add(c);   // a cell broken since the freeze is dropped
         }
@@ -416,13 +483,11 @@ public class BlockStructureScanner {
         int bannerCount = 0;
 
         // Large/huge banners are defCoreLib display entities attached to a host block, not block
-        // states, so no material test can find them. One region query for the whole structure —
-        // asking per block would mean hundreds of entity lookups on the main thread mid-assembly.
-        // The box is padded because a banner's display sits in the neighbour cell toward the face it
-        // hangs on, i.e. just OUTSIDE the hull it is mounted to.
-        Map<Block, List<anon.def9a2a4.corelib.BannerTier>> bannerTiers = queryBannerTiers(shipBlocks);
-        int largeBannerCount = 0;
-        int hugeBannerCount = 0;
+        // states, so no material test can find them — one region query answers for the whole
+        // structure. Shared with the docked preview so the two readouts cannot drift.
+        int[] tierBanners = countLargeHuge(shipBlocks);
+        int largeBannerCount = tierBanners[0];
+        int hugeBannerCount = tierBanners[1];
 
         // defCoreLib propulsion blocks, classified by which way they push relative to the hull.
         // Done here, during the scan, because the blocks are still in the world at this point — after
@@ -465,17 +530,13 @@ public class BlockStructureScanner {
 
             // Track ship bounds (all blocks contribute, except trapdoors)
             float blockY = (float) dy;
-            if (!(blockData instanceof TrapDoor)) {
-                float adjustedMinY = blockY;
+            float bottom = bottomFaceY(blockData, blockY);
+            if (!Float.isNaN(bottom)) {
                 float adjustedMaxY = blockY;
-                if (blockData instanceof Slab slab) {
-                    if (slab.getType() == Slab.Type.TOP) {
-                        adjustedMinY = blockY + 0.5f;
-                    } else if (slab.getType() == Slab.Type.BOTTOM) {
-                        adjustedMaxY = blockY - 0.5f;
-                    }
+                if (blockData instanceof Slab slab && slab.getType() == Slab.Type.BOTTOM) {
+                    adjustedMaxY = blockY - 0.5f;
                 }
-                if (adjustedMinY < minY) minY = adjustedMinY;
+                if (bottom < minY) minY = bottom;
                 if (adjustedMaxY > maxY) maxY = adjustedMaxY;
             }
 
@@ -505,16 +566,8 @@ public class BlockStructureScanner {
             } else if (blockMaterial.name().contains("BANNER")) {
                 bannerCount++;
             }
-            // Large/huge banners hosted on this block. NORMAL tiers are skipped: a vanilla banner
-            // block is already counted by material just above, and counting it here too would double
-            // its sail power.
-            List<anon.def9a2a4.corelib.BannerTier> hosted = bannerTiers.get(block);
-            if (hosted != null) {
-                for (anon.def9a2a4.corelib.BannerTier tier : hosted) {
-                    if (tier == anon.def9a2a4.corelib.BannerTier.HUGE) hugeBannerCount++;
-                    else if (tier == anon.def9a2a4.corelib.BannerTier.LARGE) largeBannerCount++;
-                }
-            }
+            // (Large/huge banners are counted once for the whole structure by countLargeHuge above —
+            // they are display entities on a host block, not a material this loop could see.)
 
             // Propulsion. Only player heads can be defCoreLib custom blocks, so the material check
             // keeps this off the hot path for the other 99% of a hull.
