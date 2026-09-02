@@ -21,6 +21,8 @@ const {
   steerShip,
   cleanup,
   clickWheelMenu,
+  clearChat,
+  waitForChat,
   disassembleViaWheelMenu,
   markServerLog,
   scanServerErrorsSince,
@@ -416,6 +418,40 @@ async function testWeirdBlocksShip() {
     return
   }
   await teleportToRunway()
+
+  // Detect readout, DOCKED. WEIRD_SHIP carries exactly 1 wool and exactly 1 banner, which is what
+  // makes this assertion worth anything: the docked path used to hand-roll the sail string as
+  // `N + " wool, " + M + " banners"`, so it printed the ungrammatical "1 banners" and could not
+  // describe a tier at all, while the assembled path used a tier-aware helper. Both now go through
+  // the same one. If that is reverted, this line reads "1 banners" and the test fails.
+  //
+  // Colour codes do not survive message.toString(), so the pattern must not contain them.
+  //
+  // This does NOT cover the large/huge banner counts, which are the headline of the same fix:
+  // those need the BetterBanners plugin, and CI installs only the defCoreLib core jar. See
+  // TODO.md — that gap is known and accepted, not an oversight here.
+  say('Checking docked detect readout...')
+  clearChat(bot)
+  try {
+    await bot.activateBlock(buildResult.wheelBlock)
+    if (!await clickWheelMenu(bot, log, 'detect')) {
+      fail(testName, 'Detect menu interaction failed')
+      return
+    }
+  } catch (e) {
+    fail(testName, `Detect failed: ${e.message}`)
+    return
+  }
+  const sailsLine = await waitForChat(bot, /^Sails: /, 5000)
+  if (!sailsLine) {
+    fail(testName, 'Detect printed no Sails line within 5s')
+    return
+  }
+  log(`  detect sails: ${sailsLine}`)
+  if (!/^Sails: 1 wool, 1 banner \(\d+ pts\)$/.test(sailsLine)) {
+    fail(testName, `Docked sail readout wrong: expected "Sails: 1 wool, 1 banner (N pts)", got "${sailsLine}"`)
+    return
+  }
 
   say('Assembling weird ship...')
   try {
