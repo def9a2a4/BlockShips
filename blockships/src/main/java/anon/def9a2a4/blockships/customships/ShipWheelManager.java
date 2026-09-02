@@ -17,6 +17,7 @@ import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Tag;
+import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.entity.Player;
@@ -141,6 +142,33 @@ public class ShipWheelManager {
         batchDirty = false;
     }
 
+    /** Set while a deferred flush is already queued, so a burst of changes still costs one write. */
+    private boolean saveScheduled = false;
+
+    /**
+     * Record that the wheel set changed, and flush on the next tick rather than now.
+     *
+     * <p>For callers on a hot engine path, where {@link #saveAll()} would be wrong for its cost rather than
+     * its effect: it re-serialises every wheel, writes a temp file, renames it and logs a line. The glue
+     * anchor provider is the motivating case — corelib consults it for every block of every glued structure
+     * on every mover stroke, so a rotator carrying a wheel would otherwise write the file continuously, in
+     * lockstep with a redstone clock, forever.
+     *
+     * <p>Coalescing is safe because the in-memory set is authoritative for everything except a crash, and the
+     * exposure is one tick. Callers that create a block-and-record pair (placement, adoption) must still use
+     * {@link #saveAll()} directly: for those, a crash in that window leaves a stamped block with no record,
+     * which is worse than the write.
+     */
+    private void markDirty() {
+        if (batching) { batchDirty = true; return; }
+        if (saveScheduled) return;
+        saveScheduled = true;
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            saveScheduled = false;
+            saveAll();
+        });
+    }
+
     /** Ends a {@link #beginBatch()} and flushes if anything changed. @return false if the write failed. */
     public boolean endBatch() {
         batching = false;
@@ -157,25 +185,36 @@ public class ShipWheelManager {
         File wheelsFile = new File(plugin.getDataFolder(), WHEELS_FILE);
         org.bukkit.configuration.file.YamlConfiguration config = new org.bukkit.configuration.file.YamlConfiguration();
 
+        // Serialise INSIDE the try. toMap reads the record's world name, and Location.getWorld() throws once
+        // its weak reference to an unloaded world is collected — so a single wheel in a world that was
+        // unloaded at runtime made every save throw. That is worse than losing the save: it propagated out of
+        // onDisable before the ship subsystem was shut down or the IO executor drained, so a /stop wrote
+        // nothing at all. A row that cannot be serialised is skipped and preserved verbatim instead.
         List<Map<String, Object>> wheelList = new ArrayList<>();
-        for (ShipWheelData data : placedWheels.values()) {
-            wheelList.add(data.toMap());
-        }
-        // Re-emit rows that could not be parsed at load — almost always because their world had not been
-        // loaded yet. Without this, saving is destructive: loadAll drops those rows and the very next save
-        // rewrites the file without them, permanently deleting every wheel in a world that a world manager
-        // enables after us.
-        wheelList.addAll(unresolvedRows);
-        config.set("wheels", wheelList);
-
-        // Atomic: write a temp sibling, then rename. config.save() truncates in place, so a crash, kill or
-        // ENOSPC mid-write left a truncated ship_wheels.yml — and loadConfiguration swallows the parse error
-        // and hands back an EMPTY config, so the next boot loaded zero wheels and the very next save wrote
-        // that empty set back. Every wheel on the server, gone, with no error a player would ever see.
-        //
-        // A fixed temp name is safe here (unlike the sidecars): saveAll is main-thread only.
         File tmp = new File(wheelsFile.getParentFile(), WHEELS_FILE + ".tmp");
         try {
+            for (ShipWheelData data : placedWheels.values()) {
+                try {
+                    wheelList.add(data.toMap());
+                } catch (Throwable t) {
+                    plugin.getLogger().warning("Could not serialise ship wheel " + data.getWheelId()
+                        + " (its world is probably unloaded); leaving the previous row in place.");
+                }
+            }
+            // Re-emit rows that could not be parsed at load — almost always because their world had not been
+            // loaded yet. Without this, saving is destructive: loadAll drops those rows and the very next save
+            // rewrites the file without them, permanently deleting every wheel in a world that a world manager
+            // enables after us.
+            wheelList.addAll(unresolvedRows);
+            config.set("wheels", wheelList);
+
+            // Atomic: write a temp sibling, then rename. config.save() truncates in place, so a crash, kill
+            // or ENOSPC mid-write left a truncated ship_wheels.yml — and loadConfiguration swallows the parse
+            // error and hands back an EMPTY config, so the next boot loaded zero wheels and the very next
+            // save wrote that empty set back. Every wheel on the server, gone, with no error a player would
+            // ever see.
+            //
+            // A fixed temp name is safe here (unlike the sidecars): saveAll is main-thread only.
             config.save(tmp);
             try {
                 Files.move(tmp.toPath(), wheelsFile.toPath(),
@@ -824,28 +863,113 @@ public class ShipWheelManager {
     }
 
     /**
-     * Wheel lookup for the defCoreLib glue-anchor provider. Id first, <b>ignoring the cached cell</b>, with a
-     * cached-cell fallback.
+     * Wheel lookup for the defCoreLib glue-anchor provider.
      *
-     * <p>Deliberately NOT {@link #getWheelAtBlock}. This is called from inside {@code disassemble()}'s landed-
-     * anchor rebind loop, at a moment when the cache is legitimately mid-move — so the mismatch refusal would
-     * fire, return null, and corelib would fall back to a BlockAnchor and prune the ship's glue. That is the
-     * exact bug {@link #verifyWheelLanded} and the hoisted relocate exist to fix; routing this through the
-     * refusing resolver would reintroduce it.
+     * <p>Deliberately NOT {@link #getWheelAtBlock}: that refuses on any disagreement, and this is called from
+     * inside {@code disassemble()}'s landed-anchor rebind loop where a disagreement is expected. Refusing
+     * there returns null, corelib falls back to a plain {@code BlockAnchor}, and because
+     * {@code prunesOnLanding()} defaults true it deletes every glued offset not chained to the origin — the
+     * ship's glue, silently and permanently.
      *
-     * <p>The cached-cell fallback is what keeps a wheel that predates the identity stamp anchorable — it has
-     * no id to match, so id-only resolution would return null and prune its glue on every landing. It can go
-     * once legacy wheels are gone.
+     * <p>But it cannot ignore the cell either, which is what it used to do. Glue lives in the <i>block's</i>
+     * own PDC and {@code WheelAnchor.originBlock()} hands corelib whichever block was queried, so resolving a
+     * {@code /clone}d copy by its id alone let the copy capture the wheel's anchor: the brush wrote offsets
+     * into the copy, at offsets relative to the copy, while assembly went on reading glue from the original.
+     * Success particles, silently missing blocks.
+     *
+     * <p>So: distinguish the two. A wheel the engine <b>moved</b> is followed — that is a rotator or hoist
+     * carrying a docked wheel, which corelib permits and never tells us about, and refusing it would prune
+     * that ship's glue on landing. A wheel that is <b>duplicated</b> is refused, both copies, as is one whose
+     * original cannot be observed.
+     *
+     * <p>Constraints on this method that are not obvious and must not be optimised away:
+     * <ul>
+     *   <li><b>Never force a chunk load.</b> corelib calls this for every block of every resolved structure on
+     *       every mover stroke, to fixpoint.</li>
+     *   <li><b>Never let anything escape.</b> There is no try/catch anywhere in the provider chain —
+     *       {@code Anchors.externalFor}, {@code GlueManager.expandNested} and the rebind call in
+     *       {@code BasicMechanism} are all bare — so a throw here aborts a mover stroke mid-move, or escapes
+     *       {@code disassemble()} and makes a successful landing report "some blocks may be missing".</li>
+     *   <li><b>Never save synchronously on a move.</b> A rotator carrying a glued wheel would otherwise
+     *       rewrite the whole wheel file, and log a line, once per stroke forever.</li>
+     * </ul>
      */
     public @Nullable ShipWheelData anchorWheelFor(@Nullable Block block) {
-        if (block == null) return null;
-        Material type = block.getType();
-        // The provider had no material guard at all: any block sitting at a recorded cell claimed the wheel's
-        // anchor, and WheelAnchor.originBlock() then wrote glue offsets into that block's PDC.
-        if (type != Material.PLAYER_HEAD && type != Material.PLAYER_WALL_HEAD) return null;
-        UUID id = ShipWheelBlockType.readWheelId(block);
-        if (id != null) return placedWheels.get(id);
-        return byCachedCell(block.getLocation());
+        try {
+            if (block == null) return null;
+            Material type = block.getType();
+            // The provider had no material guard at all: any block sitting at a recorded cell claimed the
+            // wheel's anchor, and WheelAnchor.originBlock() then wrote glue offsets into that block's PDC.
+            if (type != Material.PLAYER_HEAD && type != Material.PLAYER_WALL_HEAD) return null;
+
+            UUID id = ShipWheelBlockType.readWheelId(block);
+            // Unstamped legacy wheel: resolved BY cell, so agreement holds by construction.
+            if (id == null) return byCachedCell(block.getLocation());
+
+            ShipWheelData w = placedWheels.get(id);
+            if (w == null) return null;
+
+            switch (agreement(w, block)) {
+                case AGREES:
+                    return w;
+                case MOVED:
+                    // Something carried this wheel and the record had no way to learn about it. Follow the
+                    // block: it is the only party that still knows where the wheel is.
+                    //
+                    // Facing is re-derived from the landed block rather than carried over, because a rotator
+                    // genuinely rotates the wheel. A stale facing is not cosmetic — it is fed to the structure
+                    // scan as the ship's forward axis, so the ship would assemble in the wrong frame.
+                    BlockFace landedFacing = facingFromBlockData(block, w.getFacing());
+                    Location old = w.getBlockLocation();
+                    ShipWheelAnchors.forget(old.getBlock());
+                    ShipWheelMenu.forgetDockedThrust(old);
+                    relocate(w, block.getLocation(), landedFacing);
+                    plugin.getLogger().info("Ship wheel " + w.getWheelId() + " moved " + locationKey(old)
+                        + " → " + locationKey(block.getLocation())
+                        + " (carried by a mechanism); its record now follows the block.");
+                    markDirty();   // NOT saveAll() — see the class note above
+                    return w;
+                case DUPLICATE_CLAIM:
+                case UNOBSERVABLE:
+                default:
+                    refuseMismatch(w, block, w.getBlockLocation(), false);
+                    return null;
+            }
+        } catch (Throwable t) {
+            plugin.getLogger().log(java.util.logging.Level.WARNING,
+                "Ship-wheel anchor lookup failed; corelib will fall back to a pruning anchor for this block", t);
+            return null;
+        }
+    }
+
+    /**
+     * The ship-facing implied by a placed wheel head, falling back to {@code fallback} when it cannot be read.
+     *
+     * <p>The two head forms disagree, and getting either wrong is a silent 180°:
+     * <ul>
+     *   <li><b>Floor head</b> — {@code Rotatable.getRotation()} is SIXTEEN-way. Handing a non-cardinal
+     *       straight to the yaw conversion falls through its {@code default} and silently reads as SOUTH, so
+     *       it must be snapped through the same yaw path a placement uses.</li>
+     *   <li><b>Wall head</b> — {@code Directional.getFacing()} is always cardinal, so it needs no snap, but it
+     *       points <i>outward</i> from the wall while the ship faces <i>into</i> it. Placement records
+     *       {@code getOppositeFace()}; so must this.</li>
+     * </ul>
+     */
+    private static BlockFace facingFromBlockData(Block block, BlockFace fallback) {
+        try {
+            org.bukkit.block.data.BlockData data = block.getBlockData();
+            if (data instanceof org.bukkit.block.data.Directional dir) {
+                return dir.getFacing().getOppositeFace();
+            }
+            if (data instanceof org.bukkit.block.data.Rotatable rot) {
+                BlockFace r = rot.getRotation();
+                float yaw = (float) Math.toDegrees(Math.atan2(-r.getModX(), r.getModZ()));
+                return ShipWheelData.yawToBlockFace(yaw);
+            }
+        } catch (Throwable ignored) {
+            // Fall through to the recorded facing.
+        }
+        return fallback;
     }
 
     /** The {@code textures} profile property of a skull BLOCK, or null. The DisplayShip helper is item-only. */
