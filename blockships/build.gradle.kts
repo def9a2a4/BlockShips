@@ -66,6 +66,22 @@ dependencies {
     // defCoreLib Mechanism engine — see the source selection block above.
     compileOnly(files(defCoreLibJar))
     implementation("org.bstats:bstats-bukkit:3.1.0")
+
+    // Unit tests. Deliberately a narrow facility: there is no server here and no mocking framework, so the
+    // only things testable are pure functions over plain values. That is not a limitation worth fixing —
+    // the bugs these guard against are all decision-table bugs (which arm of a predicate fires, and in what
+    // order), and those are exactly what a pure test catches and what a manual server run does not.
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    // Paper is compileOnly for main, but tests need it on the runtime classpath to load the classes they
+    // exercise (BlockFace, Location's arithmetic, and so on).
+    testImplementation("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
+    testImplementation(files(defCoreLibJar))
+}
+
+tasks.test {
+    useJUnitPlatform()
+    testLogging { events("failed", "skipped") }
 }
 
 tasks {
