@@ -330,21 +330,24 @@ public class BlockStructureScanner {
      * cell toward the face it hangs on, and scaled up from there — a box fitted tightly to the hull
      * would miss precisely the banners mounted on its outside.
      *
-     * <p><b>"Unknown" is not "none", and the difference is the whole point of this signature.</b> Two
-     * conditions produce it, and both used to return an empty map that the caller could not tell apart
-     * from a ship with no tier banners:
-     * <ul>
-     *   <li><b>Entities not loaded yet.</b> Paper loads a chunk's entities ASYNCHRONOUSLY, after its
-     *       blocks are ready, so there is a window in which every host block is present and every banner
-     *       display is invisible to {@code getNearbyEntities}. Detecting in that window reported zero
-     *       tier sails and stored it; assembling in it wrote the zeros into the sidecar, where they
-     *       survived restarts. Note the check must cover the PADDED box's chunks, not the hull's — the
-     *       displays live outside the hull, which is why the box is padded in the first place.</li>
-     *   <li><b>A defCoreLib fault</b> — a {@code /reload} or PlugMan unload leaves {@code getInstance()}
-     *       null. Logged, because a silent zero here is indistinguishable from a plain ship.</li>
-     * </ul>
-     * Callers must treat null as "ask again later": keep whatever counts they already had, and never
-     * persist a count derived from it.
+     * <p><b>"Unknown" is not "none", and the difference is the whole point of this signature.</b> Null
+     * means <b>entities are not loaded yet</b>: Paper loads a chunk's entities ASYNCHRONOUSLY, after its
+     * blocks are ready, so there is a window in which every host block is present and every banner
+     * display is invisible to {@code getNearbyEntities}. Detecting in that window reported zero tier
+     * sails and stored it; assembling in it wrote the zeros into the sidecar, where they survived
+     * restarts. The check covers the PADDED box's chunks, not the hull's — the displays live outside the
+     * hull, which is why the box is padded in the first place.
+     *
+     * <p>Callers must treat null as "ask again later": keep whatever counts they already had, and never
+     * persist a count derived from it. It is <i>transient by construction</i> — the pending
+     * {@code EntitiesLoadEvent} is already on its way — which is what makes it safe for a caller to
+     * refuse an assembly over.
+     *
+     * <p><b>A defCoreLib fault is deliberately NOT null.</b> A {@code /reload} or PlugMan unload leaves
+     * {@code getInstance()} permanently null, and answering "ask again later" to a condition that will
+     * never change tells the player to wait forever. That path logs once and degrades to an empty map,
+     * preserving the original rule here — never let a CoreLib fault block an assembly — while no longer
+     * doing it silently, which was the actual complaint.
      */
     private static Map<Block, List<anon.def9a2a4.corelib.BannerTier>> queryBannerTiers(
             Collection<Location> cells) {
@@ -367,16 +370,28 @@ public class BlockStructureScanner {
             if (!entitiesLoadedOver(world, box)) return null;
             return anon.def9a2a4.corelib.CoreLibPlugin.getInstance().bannerTiersIn(world, box);
         } catch (Throwable t) {
-            BlockShipsPlugin plugin =
-                (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
-            if (plugin != null) {
-                plugin.getLogger().warning(
-                    "Could not read banner-tier displays from DefCoreLib; large/huge sails are unknown "
-                    + "for this scan (" + t + ")");
+            // Degrade, do not block — see the javadoc. No cast to BlockShipsPlugin here: only
+            // getLogger() is wanted, and a ClassCastException raised inside a catch block escapes the
+            // method entirely, defeating the very catch it lives in.
+            if (!bannerQueryFaultLogged) {
+                bannerQueryFaultLogged = true;
+                org.bukkit.plugin.Plugin plugin =
+                    org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
+                java.util.logging.Logger log =
+                    plugin != null ? plugin.getLogger() : org.bukkit.Bukkit.getLogger();
+                log.log(java.util.logging.Level.WARNING,
+                    "Could not read banner-tier displays from DefCoreLib; ships will report no large or "
+                    + "huge sails until this is fixed. Logged once per server start.", t);
             }
-            return null;
+            return Collections.emptyMap();
         }
     }
+
+    /**
+     * Latch so a broken DefCoreLib writes one warning rather than one per Ship Info click — the menu
+     * re-runs a full detect on every click, so an unlatched log would flood.
+     */
+    private static volatile boolean bannerQueryFaultLogged = false;
 
     /**
      * Whether every chunk the padded box touches has its ENTITIES loaded, not merely its blocks.
@@ -386,10 +401,17 @@ public class BlockStructureScanner {
      * player's next click read the real value — the same defer-don't-race idiom defCoreLib uses in
      * {@code MechanismRegistry.recoverMechanismsInChunk} and {@code CustomBlockRegistry.restoreLoadedChunks}.
      *
-     * <p>An UNLOADED chunk counts as ready. A flood fill only reaches cells it read through
-     * {@code Location.getBlock()}, which loads their chunks synchronously; a chunk that is somehow
-     * still unloaded holds no cell of this ship, and treating it as "not ready" would refuse ordinary
-     * detects forever.
+     * <p>An UNLOADED chunk counts as ready, and that leaves a known narrow hole. A flood fill only
+     * reaches cells it read through {@code Location.getBlock()}, which loads their chunks synchronously,
+     * so no unloaded chunk holds a ship <i>cell</i> — but a banner's <i>display</i> lives in the
+     * neighbour cell of its host and can therefore sit in an unloaded chunk across a border. A hull at
+     * the very edge of loaded terrain can still undercount its outermost banners.
+     *
+     * <p>That is accepted rather than fixed, both ways out being worse: treating unloaded as "not ready"
+     * would refuse those detects <b>permanently</b>, since nothing is going to load that chunk on its
+     * own; and force-loading chunks from here would fire on every Ship Info click, which re-runs a full
+     * detect. The condition needs a player standing at the edge of the loaded world, and one more step
+     * toward the ship dissolves it.
      */
     private static boolean entitiesLoadedOver(org.bukkit.World world, org.bukkit.util.BoundingBox box) {
         int minCX = (int) Math.floor(box.getMinX()) >> 4, maxCX = (int) Math.floor(box.getMaxX()) >> 4;
@@ -492,7 +514,16 @@ public class BlockStructureScanner {
         // the block-index parity captureCells promises stays deterministic.
         Set<Location> cells = new LinkedHashSet<>();
         for (Location c : ShipGlue.rawGlueCells(wheelBlock)) {
-            if (!c.getBlock().getType().isAir()) cells.add(c);   // a cell broken since the freeze is dropped
+            if (c.getBlock().getType().isAir()) continue;        // a cell broken since the freeze is dropped
+            // And so is another ship's wheel. The flood-fill path excludes those, but this path does not run
+            // the flood fill at all — it replays a frozen set — so it needs its own check rather than
+            // inheriting one. It matters for sets frozen BEFORE the exclusion covered glued cells: a
+            // neighbour's wheel that was glued in then is still sitting in the stored offsets today, and
+            // assembling would air it out of the world and leave their record pointing at nothing.
+            if (anon.def9a2a4.blockships.blockconfig.ShipDetector.isForeignWheel(c.getBlock(), wheelLocation)) {
+                continue;
+            }
+            cells.add(c);
         }
         cells.add(wheelLocation.clone());   // the wheel is always a member (not stored as a glue offset)
         // Re-check against the CURRENT limit: an admin may have lowered max-ship-size since the freeze.

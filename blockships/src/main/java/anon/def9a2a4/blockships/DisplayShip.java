@@ -2219,12 +2219,30 @@ public class DisplayShip implements Listener {
         Block clickedBlock = event.getClickedBlock();
         if (clickedBlock == null) return;
 
-        // Clicking an existing wheel: onShipWheelRightClick owns this, for BOTH hands. Returning uncancelled
-        // is correct and load-bearing — cancelling here would mark the event cancelled before
-        // onShipWheelRightClick's own cancelled-check runs, and since both handlers sit at the same priority
-        // in the same listener their relative order is unspecified. That would make "right-click your wheel
-        // while holding a spare wheel" stop opening the menu, nondeterministically across JVMs.
-        if (isShipWheelBlock(clickedBlock)) return;
+        // Clicking an existing wheel: onShipWheelRightClick owns the interaction, and this cancels so vanilla
+        // cannot also plant the held wheel against its face.
+        //
+        // This used to return UNCANCELLED, justified by "both handlers sit at the same priority so their
+        // relative order is unspecified". That was false when it was written: onShipWheelRightClick is at
+        // LOW and this handler is at bare NORMAL, so LOW runs first, always. The comment 150 lines down on
+        // onShipWheelRightClick itself already said so. The cost of the false premise was the second half of
+        // the off-hand bug: sword in main hand, wheel in off hand, right-click your own wheel — the LOW
+        // handler dropped the off-hand pass (it is main-hand only, correctly, so one click is one menu), this
+        // handler waved it through, and vanilla planted an untracked head on the wheel's face.
+        //
+        // Cancelling is safe in every case because this arm only fires on a block that RESOLVES TO A TRACKED
+        // WHEEL (isShipWheelBlock goes through getWheelAtBlock). On the main-hand pass the LOW handler has
+        // already opened the menu and cancelled, so this is a no-op; on the off-hand pass there is nothing to
+        // suppress but the unwanted placement. The wheel type registers no onInteract, so no corelib
+        // ignoreCancelled dispatcher is starved either.
+        //
+        // The trade, stated plainly: a wheel can no longer be placed against the face of an existing wheel at
+        // all. Previously that "worked", but only by producing an untracked head — so nothing that functioned
+        // has been taken away.
+        if (isShipWheelBlock(clickedBlock)) {
+            event.setCancelled(true);
+            return;
+        }
 
         BlockFace face = event.getBlockFace();
         Block targetBlock = clickedBlock.getRelative(face);
@@ -2537,21 +2555,58 @@ public class DisplayShip implements Listener {
      * "not explicitly allowed", so calling it unguarded denies everywhere in a world with region support off.
      */
     private boolean menuActionAllowed(Player player, ShipWheelData wheelData, ShipWheelMenu.MenuAction action) {
-        switch (action) {
-            case ALIGN:
-            case DISASSEMBLE:
-            case FORCE_DISASSEMBLE:
-            case TOGGLE_LOCK:
-            case FIRE_CANNONS:
-                break;
-            default:
-                return true;   // HELP, INFO, DETECT, HIGHLIGHT_SEATS, CAMERA_*, ASSEMBLE (gated per-cell)
-        }
+        if (!isRegionGated(action)) return true;
+
+        // WHICH CELL. This used to be wheelData.getBlockLocation() unconditionally — the DOCK, which is fixed
+        // for the entire voyage and is exactly the wrong cell for four of these five actions. A ship launched
+        // from a region its owner cannot build in became permanently uncontrollable EVERYWHERE, and a ship
+        // sailed INTO a protected region stayed fully controllable there. The check has to follow the ship.
+        //
+        // TOGGLE_LOCK is the exception and genuinely wants the dock: locking is docked-only and writes glue
+        // offsets into the wheel block standing there.
         org.bukkit.Location cell = wheelData.getBlockLocation();
-        if (cell == null || cell.getWorld() == null) return true;   // nothing to check it against
+        if (action != ShipWheelMenu.MenuAction.TOGGLE_LOCK) {
+            ShipWheelManager.WheelResolution res = manager.resolveWheelState(wheelData);
+            ShipInstance ship = res.ship();
+            // Fall back to the dock rather than failing open. ship() is null for UNLOADED_RECOVERABLE and
+            // ORPHAN, and vehicle can be invalid, so "no live ship" is a reachable state for a wheel whose
+            // menu is open — and an ungated action is worse than one gated on a stale-but-real cell.
+            if (ship != null && ship.vehicle != null && ship.vehicle.isValid()) {
+                cell = ship.vehicle.getLocation();
+            }
+        }
+
+        // liveWorld, not getWorld(): the latter throws once the world is unloaded, and this runs on a click.
+        org.bukkit.World world = anon.def9a2a4.blockships.util.LocationUtil.liveWorld(cell);
+        if (world == null) return true;   // nothing to check it against
         anon.def9a2a4.blockships.integration.WorldGuardHook wg =
             anon.def9a2a4.blockships.integration.WorldGuardHook.get();
-        return !wg.mightRestrict(cell.getWorld()) || !wg.isBuildDenied(cell, player);
+        return !wg.mightRestrict(world) || !wg.isBuildDenied(cell, player);
+    }
+
+    /**
+     * Which menu actions are subject to a region build check.
+     *
+     * <p>Split out from {@link #menuActionAllowed} so it is a pure function of the action and can be pinned
+     * by a unit test — the set is a decision table, and the failure mode of getting it wrong is silent in
+     * both directions (an over-gated action refuses an owner in their own region; an under-gated one hands a
+     * passer-by a tool).
+     *
+     * <p><b>DISASSEMBLE must stay in the set.</b> It looks like it could be dropped — surely the per-cell
+     * placement policy refuses protected cells anyway? It does not: under force the policy DEGRADES TO
+     * DROPPING THE BLOCKS AS ITEMS rather than refusing, so without this gate a passer-by could force-
+     * disassemble someone's ship inside a region they cannot build in and convert the whole hull to ground
+     * items.
+     *
+     * <p><b>ASSEMBLE must stay out.</b> Assembly is gated per-cell at the scan, which is strictly finer than
+     * a single check at the wheel.
+     */
+    static boolean isRegionGated(ShipWheelMenu.MenuAction action) {
+        return switch (action) {
+            case ALIGN, DISASSEMBLE, FORCE_DISASSEMBLE, TOGGLE_LOCK, FIRE_CANNONS -> true;
+            // HELP, INFO, DETECT, HIGHLIGHT_SEATS, CAMERA_*, ASSEMBLE
+            default -> false;
+        };
     }
 
     /**

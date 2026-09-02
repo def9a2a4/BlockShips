@@ -419,9 +419,16 @@ public class ShipWheelMenu {
      */
     private static final java.util.Map<String, CachedThrust> DOCKED_THRUST_CACHE = new java.util.HashMap<>();
 
-    private static String dockedThrustKey(org.bukkit.Location wheelLoc) {
-        return wheelLoc.getWorld().getName() + ":" + wheelLoc.getBlockX()
-             + ":" + wheelLoc.getBlockY() + ":" + wheelLoc.getBlockZ();
+    /**
+     * Null when the cell's world is not live — callers must treat that as "no entry", never as a key.
+     *
+     * <p>Shares {@code LocationUtil.cellKey} with every other cell-keyed cache so that a key built on write
+     * and a key built on prune cannot drift apart, which would leave entries unprunable. It is also why this
+     * is no longer a bare {@code getWorld()}: that throws once the world is unloaded, and this is reached
+     * from menu rendering and from five removal sites.
+     */
+    private static @org.jetbrains.annotations.Nullable String dockedThrustKey(org.bukkit.Location wheelLoc) {
+        return anon.def9a2a4.blockships.util.LocationUtil.cellKey(wheelLoc);
     }
 
     /**
@@ -430,8 +437,8 @@ public class ShipWheelMenu {
      * removal; four sites did not, which is why it was also given a size-gated sweep on write.)
      */
     public static void forgetDockedThrust(org.bukkit.Location wheelLoc) {
-        if (wheelLoc == null || wheelLoc.getWorld() == null) return;
-        DOCKED_THRUST_CACHE.remove(dockedThrustKey(wheelLoc));
+        String key = dockedThrustKey(wheelLoc);
+        if (key != null) DOCKED_THRUST_CACHE.remove(key);
     }
 
     /**
@@ -449,15 +456,18 @@ public class ShipWheelMenu {
      */
     private static ShipThrust.Totals dockedThrust(BlockShipsPlugin plugin, ShipWheelData wheelData) {
         org.bukkit.Location wheelLoc = wheelData.getBlockLocation();
-        if (wheelLoc == null || wheelLoc.getWorld() == null) return ShipThrust.Totals.NONE;
 
-        // The record's cell is a cache, so confirm this wheel's block is actually still standing there before
-        // flood-filling from it. Without this a record left pointing at a vacated cell would classify whatever
-        // a neighbour has since built and render their hull's figures as this ship's. ownedBlock also refuses
-        // an unloaded chunk, which keeps a menu-open from force-loading one.
+        // FIRST, before anything reads the location's world. The record's cell is a cache, so confirm this
+        // wheel's block is actually still standing there before flood-filling from it — without this a record
+        // left pointing at a vacated cell would classify whatever a neighbour has since built and render
+        // their hull's figures as this ship's. ownedBlock also refuses an unloaded chunk, which keeps a
+        // menu-open from force-loading one, and it is total for an unloaded world (it routes through
+        // LocationUtil), which is why it is hoisted above the world reads that follow rather than below them.
+        if (wheelLoc == null) return ShipThrust.Totals.NONE;
         if (plugin.getShipWheelManager().ownedBlock(wheelData) == null) return ShipThrust.Totals.NONE;
 
         String key = dockedThrustKey(wheelLoc);
+        if (key == null) return ShipThrust.Totals.NONE;
         long now = System.currentTimeMillis();
         CachedThrust cached = DOCKED_THRUST_CACHE.get(key);
         if (cached != null && now - cached.stamp() < DOCKED_THRUST_TTL_MS && cached.matches(wheelData)) {
@@ -928,8 +938,12 @@ public class ShipWheelMenu {
      */
     private static Integer frozenBlockCount(ShipWheelData wheelData) {
         org.bukkit.Location cell = wheelData.getBlockLocation();
-        if (cell == null || cell.getWorld() == null) return null;
-        if (!cell.getWorld().isChunkLoaded(cell.getBlockX() >> 4, cell.getBlockZ() >> 4)) return null;
+        // liveWorld, not a bare getWorld(): this is the FIRST statement of the method and sits outside the
+        // try below, so a throw here does not render "?" — it propagates out of the lore builder and the
+        // menu fails to open at all. Which is the opposite of what this method exists to do.
+        org.bukkit.World world = anon.def9a2a4.blockships.util.LocationUtil.liveWorld(cell);
+        if (world == null) return null;
+        if (!world.isChunkLoaded(cell.getBlockX() >> 4, cell.getBlockZ() >> 4)) return null;
         org.bukkit.block.Block block = cell.getBlock();
         java.util.UUID stamped = ShipWheelBlockType.readWheelId(block);
         if (stamped != null && !stamped.equals(wheelData.getWheelId())) return null;

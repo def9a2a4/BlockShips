@@ -1262,6 +1262,16 @@ public class ShipWheelManager {
             return null;
         }
         Set<Location> members = scan.getBlocks();
+        // Locking is where an omission becomes permanent — writeCells below IS the ship from now on — so it
+        // is the one place a foreign wheel in the hull must not pass silently. The cell is omitted from
+        // membership but traversed through, so nothing of this ship is lost; the player just gets a count one
+        // lower than they counted, which is exactly the kind of discrepancy that reads as a bug.
+        if (scan.getForeignWheelsSkipped() > 0 && player != null) {
+            player.sendMessage("§eNote: " + plural(scan.getForeignWheelsSkipped(), "ship wheel", "ship wheels")
+                + " belonging to another ship " + (scan.getForeignWheelsSkipped() == 1 ? "is" : "are")
+                + " inside this structure and " + (scan.getForeignWheelsSkipped() == 1 ? "was" : "were")
+                + " left out. Everything else is included.");
+        }
         int cap = ShipGlue.maxSize();
         if (members.size() > cap) {
             player.sendMessage("§cShip is too large to lock (" + members.size() + " blocks, glue cap " + cap
@@ -1524,11 +1534,13 @@ public class ShipWheelManager {
             return false;
         }
 
-        // Drop the docked preview's waterline marker before the ship leaves the dock. Its particle task
-        // runs for a fixed 5 seconds and nothing else on this path clears it, so without this a stray
-        // shulker hovers where the hull used to be — cosmetically wrong, and it confuses anything
-        // counting ship shulkers (the test bot's assembly assertion, notably). Deliberately NOT
-        // cancelParticleTask(), which also nulls lastDetectedBlocks and would blank the Ship Info menu.
+        // Drop the docked preview's waterline marker before the ship leaves the dock. The particle task
+        // does clear it on its own — but only when it finishes, up to 5 seconds after the detect — so
+        // assembling promptly leaves a stray shulker hovering where the hull used to be. Cosmetically
+        // wrong, and it confuses anything counting ship shulkers (the test bot's assembly assertion).
+        // Deliberately NOT cancelParticleTask(), which also nulls lastDetectedBlocks and would blank the
+        // Ship Info menu. Note this also clears the marker on the two failure exits below (WorldGuard
+        // denial, assembly failure), which is cosmetic and not worth restructuring for.
         wheelData.removeWaterlineShulker();
 
         ShipModel model = scan.model();
@@ -2355,6 +2367,15 @@ public class ShipWheelManager {
                 return false;
             }
             shipBlocks = result.getBlocks();
+            // Detect is the preview, so it is where a player would notice a block count that does not match
+            // what they built. Say why rather than leaving them to hunt for a missing block.
+            if (result.getForeignWheelsSkipped() > 0) {
+                player.sendMessage("§eNote: " + plural(result.getForeignWheelsSkipped(),
+                        "ship wheel", "ship wheels") + " belonging to another ship "
+                    + (result.getForeignWheelsSkipped() == 1 ? "is" : "are")
+                    + " touching this hull and " + (result.getForeignWheelsSkipped() == 1 ? "is" : "are")
+                    + " not counted.");
+            }
         }
 
         if (shipBlocks == null || shipBlocks.isEmpty()) {
@@ -2419,9 +2440,15 @@ public class ShipWheelManager {
         // blocks, so a detect within about a second of this area streaming in sees every host block and
         // no banner displays. Keep what the last detect stored instead of overwriting it with zeros,
         // which is how this used to disagree with the assembled readout.
+        //
+        // Stats-off takes the SAME null path, deliberately. Substituting {0,0} there would let a
+        // detect with stats disabled wipe out tier counts a previous stats-enabled detect had found —
+        // the exact "overwrite a good value with a zero" failure this whole guard exists to prevent.
+        // Stats-off and not-loaded-yet both mean "we did not look", and neither is grounds for erasing
+        // what the last look found.
         int[] tierBanners = config.statsEnabled
             ? BlockStructureScanner.countLargeHuge(shipBlocks)
-            : new int[] {0, 0};
+            : null;
         boolean tierBannersUnreadable = tierBanners == null;
         int largeBannerCount = tierBannersUnreadable
             ? wheelData.getLastDetectedLargeBannerCount() : tierBanners[0];
