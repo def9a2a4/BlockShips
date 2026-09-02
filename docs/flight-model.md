@@ -4,19 +4,24 @@ How a ship's speed, turning and lift are derived, and what a builder has to do t
 describes shipped behaviour — if you change the physics, change this file with it.
 
 The numbers below are the shipped defaults. Everything is configurable in `config.yml` under
-`custom-ships.stats`, and all the per-block thrust values under `custom-ships.thrust`.
+`custom-ships.stats`, and all the per-block thrust values under `custom-ships.stats.thrust`.
 
 ## The three ratios
 
-Every stat is a **ratio of power to weight**, clamped to 0..1, and each is fed through
-`ShipConfig.computeStat` to produce an actual speed or acceleration.
+Every stat is a **ratio of power to weight**. `forwardRatio` and `turnRatio` are clamped to 0..1 and
+fed through `ShipConfig.computeStat` to produce an actual speed or acceleration. **`liftRatio` is
+neither** — it is not clamped and never reaches `computeStat`; it goes straight to the vertical
+physics, where it *has* to exceed 1.0 before a ship climbs at all (see "Lift" below).
 
 ```
-forwardRatio = min(sailRatio, sailCap) + axialThrust / mass
-turnRatio    = (baseTurn + sailPower × sailTurnFactor × speedFrac + turningThrust) / mass
+sailRatio    = (basePower + sailPower) / mass
+forwardRatio = clamp01(min(sailRatio, sailCap) + axialThrust / mass)
+turnRatio    = clamp01((baseTurn + sailPower × sailTurnFactor × clamp01(speedFrac) + turningThrust) / mass)
 liftRatio    = verticalThrust / totalWeight        (see "Lift" below)
 ```
 
+- `speedFrac` is itself clamped before use: a ship overspeeding its own top speed (during a
+  configuration change, say) does not get bonus turning out of it.
 - `mass` is the sum of **positive** block weights.
 - `totalWeight` is the **signed** sum, so glowstone (−5) subtracts and oak (+2) adds. This is what
   makes buoyancy and thrust the same currency.
@@ -37,9 +42,11 @@ Large and huge banners come from the BetterBanners plugin. They are **display en
 host block**, not blocks in their own right, so they are found by an entity query rather than by
 walking the hull.
 
-Sail power is **capped** at `sail-cap-ratio` (0.8). A fully rigged ship therefore reads 80% and not
-100%: the last stretch is deliberately reserved for thrust, so that propulsion has something to do
-that canvas cannot. Sails are cheap, plateau early, and need no power.
+The sail **ratio** is capped at `sail-cap-ratio` (0.8) — the sail *power* is not. A fully rigged ship
+therefore reads 80% forward and not 100%: the last stretch is deliberately reserved for thrust, so that
+propulsion has something to do that canvas cannot. Turning and lift see the uncapped figure, so canvas
+past the cap is not wasted, it just stops buying speed. Sails are cheap, plateau early, and need no
+power.
 
 ## Propulsion
 
@@ -59,25 +66,36 @@ that canvas cannot. Sails are cheap, plateau early, and need no power.
 - up/down → **lift**
 - a reaction wheel is turn-only regardless of how it sits
 
-Propellers and fans act *away* from their mount, like a fan blows outward, so a floor-mounted one
-pushes the ship **up**.
+Propellers and fans act *away* from their mount, like a fan blows outward. That is why a floor
+propeller cannot steer: it blows straight down, lands in the lift bucket, and a reaction wheel is the
+only thing that turns a ship from a floor mount.
 
-Magnitudes are unsigned. Two propellers pointing at each other **add** rather than cancel, there is no
-reverse thrust, and moment arm is ignored — a bow thruster and a stern thruster turn the ship the same
-way. This is a deliberate simplification, not an oversight.
+Magnitudes are unsigned, and the vertical bucket does not distinguish up from down: **any** vertical
+mount adds lift, so a ceiling propeller blowing downward lifts exactly as much as a floor one. Two
+propellers pointing at each other **add** rather than cancel, there is no reverse thrust, and moment
+arm is ignored — a bow thruster and a stern thruster turn the ship the same way. This is a deliberate
+simplification, not an oversight.
 
 Rotation power is **all-or-nothing**: a network that cannot meet its total demand runs nothing at all.
-Split large banks across separate networks rather than building one that browns out. When power is
-lost, thrust spools down over about two seconds rather than cutting instantly.
+Split large banks across separate networks rather than building one that browns out.
+
+**Spool-up and spool-down are not symmetric.** `thrust-spool-ticks` (40) is the *ramp-up* budget: cold
+to full takes 40 ticks, 2 seconds. Losing power is far slower, because the per-tick step is a fraction
+of the *current* value, so it decays rather than ramping — a 250-thrust bank falling to zero takes
+about **259 ticks, near 13 seconds**. In practice a ship that browns out keeps most of its way on for
+several seconds, which is usually what you want and is worth knowing before you cut power near
+terrain.
 
 ## Lift
 
 `liftRatio` is measured against **signed** weight, so buoyancy and thrust are interchangeable.
 
 - **1.0 means the ship exactly holds its own weight.** Above 1.0 is what climbs.
-- A hull at or below zero weight already holds itself up, so it starts at 1.0 and every point of
-  vertical thrust is surplus on top of that. A lighter-than-air ship is airborne with no thrust at
-  all, and vertical thrusters still make it climb *faster*.
+- A hull of **negative** total weight is an airship, and the physics stops consulting `liftRatio` for
+  it entirely: lift is pinned to 1.0 and the climb rate is uncapped from the start. It is airborne
+  with no thrust at all, and vertical thrust still makes it climb *faster* — but through the vertical
+  ratio, not through any lift surplus. The `1.0 + surplus` arm of the formula is only ever reached by
+  the physics at `totalWeight` exactly zero.
 - A heavy hull needs `totalWeight` points of vertical thrust just to hover.
 
 ### Falling
@@ -90,7 +108,7 @@ Below 1.0 you **cannot climb at all**, and you sink — faster the more lift you
 | 0.90 | 2.0 b/s | 0.83 b/s |
 | 0.75 | 3.8 b/s | 1.9 b/s |
 | 0.50 | 6.2 b/s | 4.2 b/s |
-| 0.25 | 8.2 b/s | 6.9 b/s |
+| 0.25 | 8.2 b/s | 6.8 b/s |
 | 0.00 | 10.0 b/s | 10.0 b/s |
 
 Holding Space when you cannot climb still points what thrust you have downward and slows the fall, on
@@ -123,10 +141,12 @@ airship without them.
 2. **Oak plus wool or banner sails.** Faster, and turns better once moving.
 3. **A glowstone airship with sails.** The above, plus faster climb and descent, and it keeps manual
    Space/Sprint control.
-4. **Any of those with thrusters, fans, propellers or gyros.** A boost on whichever axis each block is
-   mounted to.
-5. **A "helicopter":** no buoyant blocks at all, flying on a floor-mounted propeller alone. Takes off,
-   and stops climbing the moment power drops.
+4. **Any of those with thrusters, fans or propellers.** A boost on whichever axis each block is
+   mounted to. A reaction wheel is the exception: it is turn-only before its facing is even read, so
+   the mount rule does not apply to it.
+5. **A "helicopter":** no buoyant blocks at all, flying on floor-mounted propellers. A propeller is a
+   *consumer*, so this needs a power source — a windmill or a redstone dynamo — on the same rotation
+   network. Takes off, and stops climbing the moment power drops.
 
 ## Where this lives in the code
 

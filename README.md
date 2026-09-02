@@ -43,7 +43,7 @@ Ships can include:
 1. Build a structure from allowed blocks (see or edit this in `blocks.yml`)
   - generally, wood/metal/functional blocks are allowed, while stone/dirt/other natural blocks are not
   - light-giving blocks, like glowstone, end rods, and beacons, serve as floatation aids. enough of these, and you get an airship!
-  - or skip the glowstone entirely: propellers and thrusters mounted to push downward will lift a heavy hull
+  - or skip the glowstone entirely: propellers and thrusters mounted vertically, on a floor or a ceiling, will lift a heavy hull
 3. Craft a "Ship Wheel"
 4. Place the wheel on your structure
 5. Right-click the wheel to assemble
@@ -63,7 +63,7 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 ## Physics System
 - **Walk on your ships** - Players can walk around on deck while sailing/flying. this is still buggy!
 - **Buoyancy** - Ships float based on block weight and density. this is buggy sometimes!
-- **Propulsion** - Fans, propellers, thrusters and reaction wheels add speed, turning or lift depending on which way they are mounted
+- **Propulsion** - Fans, propellers and thrusters add speed, turning or lift depending on which way they are mounted; a reaction wheel only ever turns, whichever way it sits
 - **Lift** - A ship with less lift than it needs cannot climb and sinks, faster the more it is short by
 - **Movement** - Acceleration, drag, and collision response
 - **Collision detection** - Ships interact with terrain and entities (interacting with other ships is buggy)
@@ -78,6 +78,8 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 | D      | Rotate right            |
 | Space  | Ascend (flying ships)   |
 | Sprint | Descend (flying ships)  |
+
+On servers older than 1.21.2 the client sends no sprint signal while seated, so descending there is **S + Space** instead. The in-game help text picks the right one for your server automatically.
 
 
 

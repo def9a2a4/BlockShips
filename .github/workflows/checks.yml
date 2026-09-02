@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, defcorelib-integration]
   pull_request:
     branches: [main]
 

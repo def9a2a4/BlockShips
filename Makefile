@@ -42,8 +42,9 @@ build: $(DEFCORELIB_BUILD_DEP)
 
 # Unit tests (blockships/src/test). Separate from `build` on purpose: `build` runs shadowJar, which does not
 # depend on `test`, and keeping it that way keeps the edit-compile loop fast. CI does NOT need this target —
-# .github/workflows/checks.yml runs `gradle build`, and Gradle's java plugin wires build -> check -> test, so
-# these run on every push already. This is the local one-liner.
+# .github/workflows/checks.yml runs `gradle build`, and Gradle's java plugin wires build -> check -> test.
+# Note that only pushes to the branches listed in that workflow's `on:` run it (plus any PR targeting main),
+# so on a branch not listed there this target is the only thing running these. This is the local one-liner.
 .PHONY: test
 test: $(DEFCORELIB_BUILD_DEP)
 	cd blockships && gradle test $(GRADLE_DEFCORELIB_ARGS)
