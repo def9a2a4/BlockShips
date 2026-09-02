@@ -23,7 +23,7 @@ Other plugins that work nicely with BlockShips:
 
 # Features
 
-Build a ship out of allowed blocks, place a Ship's wheel on it and right click, and click "assemble" in the menu. Your blocks are now a mobile ship! Depending on the density (fully configurable) of the blocks in your ship, your ship might float lower or higher in the water. Use enough "lighter than air" blocks like glowstone, and your ship will be a flying airship.
+Build a ship out of allowed blocks, place a Ship's wheel on it and right click, and click "assemble" in the menu. Your blocks are now a mobile ship! Depending on the density (fully configurable) of the blocks in your ship, your ship might float lower or higher in the water. Use enough "lighter than air" blocks like glowstone, and your ship will be a flying airship — or bolt on enough upward thrust and fly a heavy one. See [the flight model](docs/flight-model.md) for how lift, sail power and thrust combine.
 
 
 Ships can include:
@@ -42,7 +42,8 @@ Ships can include:
 
 1. Build a structure from allowed blocks (see or edit this in `blocks.yml`)
   - generally, wood/metal/functional blocks are allowed, while stone/dirt/other natural blocks are not
-  - light-giving blocks, like glowstone, end rods, and beacons, serve as floatation aids. enough of these, and you get an airship! 
+  - light-giving blocks, like glowstone, end rods, and beacons, serve as floatation aids. enough of these, and you get an airship!
+  - or skip the glowstone entirely: propellers and thrusters mounted to push downward will lift a heavy hull
 3. Craft a "Ship Wheel"
 4. Place the wheel on your structure
 5. Right-click the wheel to assemble
@@ -62,6 +63,8 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 ## Physics System
 - **Walk on your ships** - Players can walk around on deck while sailing/flying. this is still buggy!
 - **Buoyancy** - Ships float based on block weight and density. this is buggy sometimes!
+- **Propulsion** - Fans, propellers, thrusters and reaction wheels add speed, turning or lift depending on which way they are mounted
+- **Lift** - A ship with less lift than it needs cannot climb and sinks, faster the more it is short by
 - **Movement** - Acceleration, drag, and collision response
 - **Collision detection** - Ships interact with terrain and entities (interacting with other ships is buggy)
 
@@ -73,8 +76,8 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 | S      | Move backward / brake   |
 | A      | Rotate left             |
 | D      | Rotate right            |
-| Space  | Ascend (airships only)  |
-| Sprint | Descend (airships only) |
+| Space  | Ascend (flying ships)   |
+| Sprint | Descend (flying ships)  |
 
 
 
@@ -131,7 +134,7 @@ Main plugin settings including:
 
 Configure which blocks can be used in custom ships:
 
-- **Weight scale** - Affects buoyancy
+- **Weight scale** - Affects buoyancy, and how much thrust it takes to lift the ship
 - **Collider** - Custom collision shapes
 - **Seat/storage** - Special block behaviors
 

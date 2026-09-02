@@ -797,6 +797,63 @@ function setupBotEvents(bot, log, onMain) {
     if (text.trim()) {
       log(`[CHAT] ${text}`)
     }
+    recordChat(bot, text)
+  })
+}
+
+// =============================================================================
+// Chat Assertions
+// =============================================================================
+//
+// Chat used to be logged and discarded, which is why a whole class of bug was invisible to this
+// suite: the plugin printed one Speed figure in chat and a different one in the wheel menu for the
+// same ship, and nothing here could tell. Anything the plugin SAYS is now assertable.
+//
+// IMPORTANT: message.toString() strips the section-sign colour codes. The plugin sends
+// "§7Sails: §f1 wool ...", the bot sees "Sails: 1 wool ...". Assertion patterns must NOT contain §
+// or they will never match and the test will time out instead of failing usefully. (Existing proof:
+// the dismount handler below compares strictly against un-prefixed text and works.)
+
+const CHAT_BUFFER_LIMIT = 200
+
+function recordChat(bot, text) {
+  if (!bot._chatLog) bot._chatLog = []
+  bot._chatLog.push(text)
+  if (bot._chatLog.length > CHAT_BUFFER_LIMIT) bot._chatLog.shift()
+}
+
+/** Drop everything received so far, so a later wait can't match a stale line. */
+function clearChat(bot) {
+  bot._chatLog = []
+}
+
+/** Every line received since the last clearChat, oldest first. */
+function getChat(bot) {
+  return bot._chatLog || []
+}
+
+/**
+ * Resolve with the first buffered-or-subsequent chat line matching `pattern`, or null on timeout.
+ * Checks the existing buffer first, so it is safe to call after the message has already arrived.
+ */
+function waitForChat(bot, pattern, timeoutMs = 5000) {
+  const existing = getChat(bot).find((line) => pattern.test(line))
+  if (existing) return Promise.resolve(existing)
+
+  return new Promise((resolve) => {
+    let timeoutId = null
+    const handler = (message) => {
+      const text = message.toString()
+      if (!pattern.test(text)) return
+      clearTimeout(timeoutId)
+      bot.removeListener('message', handler)
+      resolve(text)
+    }
+    timeoutId = setTimeout(() => {
+      bot.removeListener('message', handler)
+      resolve(null)
+    }, timeoutMs)
+    bot.on('message', handler)
   })
 }
 
@@ -818,7 +875,7 @@ function getMenuTitle(window) {
 }
 
 async function clickWheelMenu(bot, log, action) {
-  const slots = { detect: 10, assemble: 14, disassemble: 16 }
+  const slots = { detect: 10, lock: 13, assemble: 14, disassemble: 16 }
   const slot = slots[action]
 
   if (slot === undefined) {
@@ -1016,6 +1073,10 @@ module.exports = {
   getMenuTitle,
   clickWheelMenu,
   disassembleViaWheelMenu,
+
+  clearChat,
+  getChat,
+  waitForChat,
 
   // Server log scanning
   serverLogPath,

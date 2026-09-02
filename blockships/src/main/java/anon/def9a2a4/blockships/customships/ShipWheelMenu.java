@@ -996,9 +996,12 @@ public class ShipWheelMenu {
         lore.add(ChatColor.GRAY + "WASD to move, Space is up, Sprint is down");
         lore.add(ChatColor.GRAY + "Place ship's wheel on ship and click 'Assemble' (boat)");
         lore.add(ChatColor.GRAY + "Right-click ship to board, Sneak to dismount");
+        // Keep this in step with help_book.yml's "Weight & Buoyancy" and "Propulsion" sections — this
+        // is what a player reads BEFORE opening the book, so a stale line here contradicts it.
         lore.add(ChatColor.GRAY + "Sails make you go faster,");
         lore.add(ChatColor.GRAY + "glowstone and other glowing blocks make you float.");
-        lore.add(ChatColor.GRAY + "Enough floating blocks -> airship");
+        lore.add(ChatColor.GRAY + "Enough floating blocks -> airship,");
+        lore.add(ChatColor.GRAY + "or enough upward thrust to fly a heavy one");
         lore.add("");
         lore.add(ChatColor.DARK_GRAY + "Click for more info -- Captain's Manual");
         return lore;
