@@ -433,8 +433,12 @@ async function testWeirdBlocksShip() {
   say('Checking docked detect readout...')
   clearChat(bot)
   try {
+    // clickWheelMenu registers its own windowOpen listener as the last thing it does, so start it
+    // BEFORE the right-click that opens the window — otherwise the event can land first and be missed.
+    const menuPromise = clickWheelMenu(bot, log, 'detect')
+    await sleep(100)
     await bot.activateBlock(buildResult.wheelBlock)
-    if (!await clickWheelMenu(bot, log, 'detect')) {
+    if (!await menuPromise) {
       fail(testName, 'Detect menu interaction failed')
       return
     }
@@ -455,8 +459,10 @@ async function testWeirdBlocksShip() {
 
   say('Assembling weird ship...')
   try {
+    const menuPromise = clickWheelMenu(bot, log, 'assemble')
+    await sleep(100)
     await bot.activateBlock(buildResult.wheelBlock)
-    if (!await clickWheelMenu(bot, log, 'assemble')) {
+    if (!await menuPromise) {
       fail(testName, 'Assembly menu interaction failed')
       return
     }
@@ -466,7 +472,9 @@ async function testWeirdBlocksShip() {
   }
 
   // Full-spawn assertion: the hopper crash makes assembly throw -> destroy() -> ~0 shulkers.
-  const spawned = await waitForShulkers(bot, 50)
+  // Wait for the FULL expected count, not merely one: colliders spawn over several ticks, so a
+  // first-non-empty poll can catch the ship mid-spawn and report a false crash.
+  const spawned = await waitForShulkers(bot, 50, 20, 500, WEIRD_MIN_SHULKERS)
   say(`Ship spawned ${spawned.length} shulkers (need >= ${WEIRD_MIN_SHULKERS})`)
   if (spawned.length < WEIRD_MIN_SHULKERS) {
     fail(testName, `Assembly incomplete: only ${spawned.length} shulkers (need >= ${WEIRD_MIN_SHULKERS}) — likely container-inventory crash`)

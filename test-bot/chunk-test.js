@@ -8,7 +8,6 @@ const {
   sleep,
   clearInventory,
   waitForWater,
-  waitForShulkers,
   CUSTOM_AIRSHIP,
   buildCustomShipWithWheel,
   findShulkers,

@@ -156,15 +156,22 @@ async function waitForWater(bot, pos, maxRetries = 20, delayMs = 500) {
   return null
 }
 
-async function waitForShulkers(bot, maxDist = 50, maxRetries = 20, delayMs = 500) {
+// Poll until at least `minCount` shulkers are in range, then return them.
+//
+// minCount matters: assembly spawns colliders over several ticks, so "first non-empty result" can
+// return a partial ship — or a leftover preview marker — and make a caller conclude the assembly
+// failed. Pass the number you actually expect. On timeout this returns whatever it last saw (possibly
+// fewer than minCount, possibly none), so callers still report the real count in their failure text.
+async function waitForShulkers(bot, maxDist = 50, maxRetries = 20, delayMs = 500, minCount = 1) {
+  let shulkers = []
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    const shulkers = findShulkers(bot, maxDist)
-    if (shulkers.length > 0) return shulkers
+    shulkers = findShulkers(bot, maxDist)
+    if (shulkers.length >= minCount) return shulkers
     if (attempt < maxRetries) {
       await sleep(delayMs)
     }
   }
-  return []
+  return shulkers
 }
 
 function findNearestPosition(positions, targets, tolerance = 1) {
