@@ -52,9 +52,21 @@ public class ShipWheelManager {
      * or steer the ship (P1), and placing a real wheel there evicted the sailing ship's record entirely, so it
      * could never be disassembled again (P2). A {@code put} under a fresh id evicts nothing.
      *
-     * <p>{@code ShipWheelData.blockLocation} is now a <i>cache</i> of where the block currently is; the
-     * block's own {@code blockships:wheel_id} PDC is the truth. A stale cache is expected; it is never
-     * treated as corruption. (Phase 2A adds the PDC-first resolver that acts on that.)
+     * <p>{@code ShipWheelData.blockLocation} is now a <i>cache</i> of the wheel's DOCK — where its block sits
+     * when the ship is not out — and the block's own {@code blockships:wheel_id} PDC is the truth about which
+     * wheel a block is.
+     *
+     * <p><b>A stale cache is not corruption, but it is not harmless either</b>, and an earlier version of
+     * this note stopped at the first half. Two rules follow, and every bug in this area came from breaking
+     * one of them:
+     * <ul>
+     *   <li>The cache may say <i>where</i> a wheel is. It may never decide <i>what</i> a wheel is — that is
+     *       {@link #getWheelAtBlock} and {@link #agreement}, which compare the block's own stamp.</li>
+     *   <li>The cache may never <i>authorise a write</i>. Going the other way — record to block, so that
+     *       something can be aired out, glued, scanned or cleared — must go through {@link #ownedBlock},
+     *       which confirms the cell still holds this wheel. A stale cache otherwise points at whatever a
+     *       neighbour has since built there.</li>
+     * </ul>
      */
     private final Map<UUID, ShipWheelData> placedWheels;
 
@@ -873,9 +885,9 @@ public class ShipWheelManager {
         if (frozen != null && !frozen.isEmpty()) {
             try {
                 ShipGlue.writeCells(target, frozen);
-            } catch (Throwable t) {
+            } catch (Throwable ex) {
                 plugin.getLogger().warning("Adopted wheel " + record.getWheelId() + " but could not carry its "
-                    + "locked structure across; unlock and re-lock it. (" + t.getMessage() + ")");
+                    + "locked structure across; unlock and re-lock it. (" + ex.getMessage() + ")");
             }
         }
         mismatchLogged.clear();  // the state that was being warned about is gone
@@ -1137,7 +1149,12 @@ public class ShipWheelManager {
      * Gets all placed wheels.
      */
     public Collection<ShipWheelData> getWheels() {
-        return placedWheels.values();
+        // A copy, not the live values() view. Several callers iterate this while doing things that remove
+        // wheels — forcedisassembleall already defended itself with its own copy and a comment explaining
+        // why, while three other call sites iterated the live view and would have thrown a
+        // ConcurrentModificationException the first time one of them removed anything. Copying here makes
+        // that impossible instead of relying on each caller to remember.
+        return List.copyOf(placedWheels.values());
     }
 
     /**
@@ -1841,10 +1858,12 @@ public class ShipWheelManager {
             float preRotationDelta = currentYaw - model.assemblyYaw;
             BlockFace preFacing = BlockStructureScanner.rotateBlockFace(wheelData.getFacing(), preRotationDelta);
             relocate(wheelData, newWheelLocation, preFacing);
-            // The connector cache is location-keyed and nothing else drops the old entry.
-            if (oldWheelCell != null && oldWheelCell.getWorld() != null) {
+            // Both caches are location-keyed and nothing else drops the old entries, so a wheel that lands
+            // somewhere new strands one of each per voyage.
+            if (oldWheelCell != null && liveWorld(oldWheelCell) != null) {
                 ShipWheelAnchors.forget(oldWheelCell.getBlock());
             }
+            if (oldWheelCell != null) ShipWheelMenu.forgetDockedThrust(oldWheelCell);
         }
 
         if (ship.mechanism != null) {

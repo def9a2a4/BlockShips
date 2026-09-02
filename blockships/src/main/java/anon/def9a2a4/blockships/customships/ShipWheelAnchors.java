@@ -75,6 +75,13 @@ public final class ShipWheelAnchors {
         Set<Location> cells = result.isSuccess() && result.getBlocks() != null
             ? new HashSet<>(result.getBlocks())
             : Collections.emptySet();
+        // Sweep before inserting. The TTL was only ever consulted on read, so an entry for a wheel that has
+        // since moved or been destroyed was never removed by anything except an explicit forget() — and the
+        // key is a cell, so every voyage that lands a wheel somewhere new stranded one. Size-gated so the
+        // cost is amortised, and only expired entries go (exactly the set a read would already reject).
+        if (CONNECTOR_CACHE.size() > 256) {
+            CONNECTOR_CACHE.values().removeIf(c -> now - c.stamp() >= CONNECTOR_TTL_MS);
+        }
         CONNECTOR_CACHE.put(k, new CachedConnectors(cells, now));
         return cells;
     }

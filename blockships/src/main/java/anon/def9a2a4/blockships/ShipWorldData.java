@@ -188,10 +188,27 @@ public class ShipWorldData {
         // so a main-thread reap consumer never observes a false-absent id while the write is still queued.
         persistedShipIds.add(shipId);
 
+        // Take the ship's deletion generation as it stands NOW, and refuse to write if it has moved by the
+        // time this job runs. Without it, a queued write outlives the ship it describes: the periodic saver
+        // submits for every registered ship every 60s (and chunk-unload submits more), so a disassembly that
+        // deletes the sidecar in that window is simply undone when the job lands — the file reappears and
+        // metadataExistsCache is set back to true.
+        //
+        // That does NOT self-heal on restart, which is what makes it worth a guard rather than a comment.
+        // The boot scan re-seeds persistedShipIds from the directory, so the id comes back even though the
+        // ship cannot: it can never be recovered (its mechanism is gone), but isPersistedShip keeps answering
+        // yes, so the wheel that still links to it resolves as UNLOADED_RECOVERABLE forever and every player
+        // path answers "Ship is still loading — try again in a moment". Only an admin command clears it.
+        final long generationAtSubmit = deletionGeneration(shipId);
+
         // Write: file I/O on async thread
         pendingIOOperations.incrementAndGet();
         ioExecutor.submit(() -> {
             try {
+                if (deletionGeneration(shipId) != generationAtSubmit) {
+                    // The ship was deleted after this write was queued. Dropping the write is the whole point.
+                    return;
+                }
                 File shipFile = getShipFile(worldName, shipId);
                 shipFile.getParentFile().mkdirs();
                 if (writeConfigAtomic(shipFile, config)) {
@@ -203,6 +220,19 @@ public class ShipWorldData {
                 pendingIOOperations.decrementAndGet();
             }
         });
+    }
+
+    /**
+     * Bumped every time a ship's sidecar is deleted, so an in-flight async write can tell that the ship it
+     * describes has since gone away. Not a lock: the write and the delete may still interleave, but the write
+     * will notice and decline rather than resurrecting the file.
+     */
+    private final java.util.concurrent.ConcurrentHashMap<UUID, Long> deletionGenerations =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    private long deletionGeneration(UUID shipId) {
+        Long g = deletionGenerations.get(shipId);
+        return g == null ? 0L : g;
     }
 
     /**
@@ -497,6 +527,11 @@ public class ShipWorldData {
      *         still exists after the delete attempt. The persisted-id set is always updated.
      */
     public boolean removeShip(World world, UUID shipId) {
+        // Invalidate any async write already queued for this ship. Those are submitted with the generation
+        // they saw, and decline to run if it has moved — otherwise a periodic save queued moments ago lands
+        // after this delete and recreates the sidecar, pinning the wheel that links to it as permanently
+        // "still loading". Bump FIRST, so a job that starts between here and the delete still loses.
+        deletionGenerations.merge(shipId, 1L, Long::sum);
         // Update cache to indicate file no longer exists
         metadataExistsCache.put(world.getName() + ":" + shipId, false);
         // Maintain the persisted-id set (main thread). The sidecar is about to be deleted; drop it from the set so

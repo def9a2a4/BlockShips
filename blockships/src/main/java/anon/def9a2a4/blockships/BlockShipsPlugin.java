@@ -1269,7 +1269,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                 // Broken first. The cap is what makes this matter: the wheel an operator is hunting is
                 // exactly the one that must not fall off the end of an arbitrarily-ordered list.
                 java.util.List<ShipWheelData> ordered = new java.util.ArrayList<>(wheels);
-                ordered.sort(java.util.Comparator.comparingInt(w -> switch (mgr.recordHealth(w)) {
+                ordered.sort(java.util.Comparator.comparingInt((ShipWheelData w) -> switch (mgr.recordHealth(w)) {
                     case BROKEN -> 0;
                     case UNKNOWN -> 1;
                     case SAILING -> 2;

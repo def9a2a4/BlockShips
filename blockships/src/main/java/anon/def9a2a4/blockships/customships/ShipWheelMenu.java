@@ -424,7 +424,11 @@ public class ShipWheelMenu {
              + ":" + wheelLoc.getBlockY() + ":" + wheelLoc.getBlockZ();
     }
 
-    /** Drop a wheel's cached scan — call when the wheel is removed, mirroring ShipWheelAnchors.forget. */
+    /**
+     * Drop a wheel's cached scan — call when the wheel is removed OR relocated, mirroring
+     * {@code ShipWheelAnchors.forget}. (An earlier note here claimed the cache was pruned on every wheel
+     * removal; four sites did not, which is why it was also given a size-gated sweep on write.)
+     */
     public static void forgetDockedThrust(org.bukkit.Location wheelLoc) {
         if (wheelLoc == null || wheelLoc.getWorld() == null) return;
         DOCKED_THRUST_CACHE.remove(dockedThrustKey(wheelLoc));
@@ -490,6 +494,12 @@ public class ShipWheelMenu {
             // A ship over the size limit, or a detect fault. Showing no thrust is the right failure —
             // never let a stats readout stop a menu from opening.
             totals = ShipThrust.Totals.NONE;
+        }
+        // Sweep before inserting — the cache is cell-keyed and remove-only, so a wheel that lands somewhere
+        // new leaves its old entry behind on every voyage. Harmless for correctness (CachedThrust.matches
+        // rejects a stale hit anyway) but it grows without bound.
+        if (DOCKED_THRUST_CACHE.size() > 256) {
+            DOCKED_THRUST_CACHE.values().removeIf(c -> now - c.stamp() >= DOCKED_THRUST_TTL_MS);
         }
         DOCKED_THRUST_CACHE.put(key, new CachedThrust(totals, now,
             wheelData.getLastDetectedBlockCount(), wheelData.getFacing(), wheelData.isLocked()));
