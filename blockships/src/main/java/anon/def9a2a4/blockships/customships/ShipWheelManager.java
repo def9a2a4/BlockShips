@@ -1117,14 +1117,28 @@ public class ShipWheelManager {
                 return dir.getFacing().getOppositeFace();
             }
             if (data instanceof org.bukkit.block.data.Rotatable rot) {
-                BlockFace r = rot.getRotation();
-                float yaw = (float) Math.toDegrees(Math.atan2(-r.getModX(), r.getModZ()));
-                return ShipWheelData.yawToBlockFace(yaw);
+                return floorHeadFacing(rot.getRotation());
             }
         } catch (Throwable ignored) {
             // Fall through to the recorded facing.
         }
         return fallback;
+    }
+
+    /**
+     * A floor head's 16-way {@code Rotatable} rotation, snapped to the nearest cardinal.
+     *
+     * <p>Split out of {@link #facingFromBlockData} so the unit test can call the SHIPPING code rather
+     * than a copy of it. It used to re-implement this expression, which meant the sixteen-way
+     * regression the test exists to catch could not have failed it.
+     *
+     * <p>The mod-vector/atan2 form is load-bearing: feeding a 16-way rotation straight to
+     * {@code blockFaceToYaw} hits its {@code default} for all twelve non-cardinals and silently yields
+     * SOUTH — a 157.5° error on a value used as the ship's forward axis.
+     */
+    static BlockFace floorHeadFacing(BlockFace rotation) {
+        float yaw = (float) Math.toDegrees(Math.atan2(-rotation.getModX(), rotation.getModZ()));
+        return ShipWheelData.yawToBlockFace(yaw);
     }
 
 
@@ -1522,6 +1536,22 @@ public class ShipWheelManager {
                 : "§cNo valid ship structure found!");
             return false;
         }
+        // The scan could not see the large/huge banner displays — Paper loads a chunk's entities after
+        // its blocks, so this fires for a second or so after the area streams in. Refuse rather than
+        // assemble: the model's tier counts go into the sidecar, where a zero would outlive the race and
+        // leave the ship permanently short of sail power until it was disassembled and rebuilt.
+        if (scan.bannerTiersUnreadable()) {
+            player.sendMessage("§eStill loading this area's banners — try again in a moment.");
+            return false;
+        }
+
+        // Drop the docked preview's waterline marker before the ship leaves the dock. Its particle task
+        // runs for a fixed 5 seconds and nothing else on this path clears it, so without this a stray
+        // shulker hovers where the hull used to be — cosmetically wrong, and it confuses anything
+        // counting ship shulkers (the test bot's assembly assertion, notably). Deliberately NOT
+        // cancelParticleTask(), which also nulls lastDetectedBlocks and would blank the Ship Info menu.
+        wheelData.removeWaterlineShulker();
+
         ShipModel model = scan.model();
 
         // Set spawn location yaw to match wheel facing direction
@@ -1651,9 +1681,6 @@ public class ShipWheelManager {
             model.mass, model.woolCount, model.bannerCount,
             model.largeBannerCount, model.hugeBannerCount);
         wheelData.setLastHealth(ship.vehicle.getHealth(), model.maxHealth);
-        wheelData.lastCenterOfVolumeY = model.centerOfVolume.y();
-        wheelData.lastMinY = model.minY;
-        wheelData.lastSurfaceOffset = model.waterFloatOffset;
 
         // Tag the ship wheel collider (block at dx=0, dy=0, dz=0 relative to wheel origin)
         // This allows opening the menu by right-clicking the wheel collider
@@ -2238,10 +2265,6 @@ public class ShipWheelManager {
                     ship.model.mass, ship.model.woolCount, ship.model.bannerCount,
                     ship.model.largeBannerCount, ship.model.hugeBannerCount);
                 wheelData.setLastHealth(currentHealth, maxHealth);
-                // Store buoyancy data from ship model
-                wheelData.lastCenterOfVolumeY = ship.model.centerOfVolume.y();
-                wheelData.lastMinY = ship.model.minY;
-                wheelData.lastSurfaceOffset = ship.model.waterFloatOffset;
 
                 // Send detection chat for assembled ship
                 ShipConfig config = ShipConfig.load(plugin, "custom");
@@ -2256,9 +2279,13 @@ public class ShipWheelManager {
                 for (ShipModel.SeatInfo seat : ship.model.seats) {
                     if (!seat.isDriver) passengerCount++;
                 }
+                // The "0 seats" arm stays: ShipModel.fromMap deserialises this list with no count and
+                // no driver check, so a hand-edited sidecar really can hand us an empty list — or two
+                // drivers, which is why the driver count is derived rather than hardcoded to 1.
                 if (seatCount > 0) {
-                    player.sendMessage("§7Seats: §f" + seatCount
-                        + " §7(" + (seatCount - passengerCount) + " driver + " + passengerCount + " passengers)");
+                    player.sendMessage("§7Seats: §f" + seatCount + " §7("
+                        + plural(seatCount - passengerCount, "driver", "drivers")
+                        + " + " + plural(passengerCount, "passenger", "passengers") + ")");
                 } else {
                     player.sendMessage("§7Seats: §c0 §7(default seat at wheel is used)");
                 }
@@ -2380,22 +2407,37 @@ public class ShipWheelManager {
             }
         }
 
-        // Large/huge banners are bbanners display entities, so the block walk above cannot see them.
-        // Same helper the assembly scan uses, so docked and assembled report the same sail power.
-        int[] tierBanners = BlockStructureScanner.countLargeHuge(shipBlocks);
-        int largeBannerCount = tierBanners[0];
-        int hugeBannerCount = tierBanners[1];
-
         // Calculate total weight and counts
         int totalWeight = calculateTotalWeight(shipBlocks);
         int blockCount = shipBlocks.size();
-        int seatCount = seatBlocks.size() + (driverSeat != null ? 1 : 0);
+        int seatCount = seatBlocks.size() + 1;  // driverSeat is built unconditionally above
 
         // Calculate density to determine if this is an airship
         int weightedBlockCount = countWeightedBlocks(shipBlocks);
         float meanDensity = weightedBlockCount > 0 ? (float) totalWeight / weightedBlockCount : 0;
         ShipConfig config = ShipConfig.load(plugin, "custom");
         boolean isAirship = meanDensity < config.airDensity;
+
+        // Large/huge banners are bbanners display entities, so the block walk above cannot see them.
+        // Same helper the assembly scan uses, so docked and assembled report the same sail power.
+        //
+        // Skipped when stats are off: it is an entity sweep over a padded region, and every consumer
+        // (the Sails line, Speed, and the counts the menu reads back) lives inside a stats gate. The
+        // consequence is that enabling stats.enabled without re-detecting shows wool and banner counts
+        // with zero tiers until the next detect.
+        //
+        // Null is "couldn't read them", NOT "there are none" — Paper loads a chunk's entities after its
+        // blocks, so a detect within about a second of this area streaming in sees every host block and
+        // no banner displays. Keep what the last detect stored instead of overwriting it with zeros,
+        // which is how this used to disagree with the assembled readout.
+        int[] tierBanners = config.statsEnabled
+            ? BlockStructureScanner.countLargeHuge(shipBlocks)
+            : new int[] {0, 0};
+        boolean tierBannersUnreadable = tierBanners == null;
+        int largeBannerCount = tierBannersUnreadable
+            ? wheelData.getLastDetectedLargeBannerCount() : tierBanners[0];
+        int hugeBannerCount = tierBannersUnreadable
+            ? wheelData.getLastDetectedHugeBannerCount() : tierBanners[1];
 
         // Send success messages
         player.sendMessage("§aShip detected successfully!");
@@ -2406,12 +2448,10 @@ public class ShipWheelManager {
             player.sendMessage("§b✦ This ship is lighter than air - it will fly as an AIRSHIP!");
             player.sendMessage("§7  Controls: Space to ascend, Sprint to descend");
         }
-        if (seatCount > 0) {
-            int passengerCount = seatBlocks.size();
-            player.sendMessage("§7Seats: §f" + seatCount + " §7(1 driver + " + passengerCount + " passengers)");
-        } else {
-            player.sendMessage("§7Seats: §c0 §7(default seat at wheel will be used)");
-        }
+        // No "0 seats" arm here, unlike the assembled branch: driverSeat above is built unconditionally,
+        // so seatCount is always at least 1 on this path.
+        player.sendMessage("§7Seats: §f" + seatCount + " §7(" + plural(1, "driver", "drivers")
+            + " + " + plural(seatBlocks.size(), "passenger", "passengers") + ")");
         // Ship stats
         if (config.statsEnabled) {
             // One world scan feeds both the speed figure and the summary below — hoisted out of the
@@ -2427,6 +2467,9 @@ public class ShipWheelManager {
             player.sendMessage("§7Sails: §f"
                 + describeSails(woolCount, bannerCount, largeBannerCount, hugeBannerCount)
                 + " §7(" + stats.sailPower + " pts)");
+            if (tierBannersUnreadable) {
+                player.sendMessage("§8  (large/huge banners still loading — tier counts may be stale)");
+            }
             player.sendMessage("§7Speed: " + anon.def9a2a4.blockships.ShipStats.speedColor(speedPercent)
                 + speedPercent + "%"
                 + (speedPercent < 50 ? " §8(add sails, or propellers along the hull)" : ""));
@@ -2441,9 +2484,6 @@ public class ShipWheelManager {
         wheelData.setLastDetectedStats(blockCount, weightedBlockCount, totalWeight, positiveWeight,
             woolCount, bannerCount, largeBannerCount, hugeBannerCount);
         wheelData.setLastDetectedBlockCategories(regularBlocks, seatBlocks, driverSeat);
-
-        // Calculate and store buoyancy data for Ship Info display
-        calculateAndStoreBuoyancyData(wheelData, shipBlocks, totalWeight);
 
         if (showParticles) {
             player.sendMessage("§7(Showing particles for 5 seconds...)");
@@ -2508,7 +2548,18 @@ public class ShipWheelManager {
     private static void appendCount(StringBuilder sb, int n, String singular, String plural) {
         if (n <= 0) return;
         if (sb.length() > 0) sb.append(", ");
-        sb.append(n).append(' ').append(n == 1 ? singular : plural);
+        sb.append(plural(n, singular, plural));
+    }
+
+    /**
+     * {@code "1 driver"} / {@code "2 drivers"} — one inflection point for every count the player reads.
+     *
+     * <p>Separate from {@link #appendCount}, which cannot serve these callers: it drops a zero count
+     * (the seat lines have to be able to say "0 passengers") and hardcodes {@code ", "} where the seat
+     * lines join with {@code " + "}. appendCount delegates here so the two can never disagree.
+     */
+    static String plural(int n, String singular, String plural) {
+        return n + " " + (n == 1 ? singular : plural);
     }
 
     /**
@@ -2572,61 +2623,6 @@ public class ShipWheelManager {
     }
 
     /**
-     * Calculate and store buoyancy data (centerOfVolumeY, minY, surfaceOffset) for Ship Info display.
-     *
-     * <p>Mirrors {@link BlockStructureScanner#captureCells}'s bounds and centre-of-volume maths exactly,
-     * including {@link BlockStructureScanner#bottomFaceY} and the {@code resolveWeight} membership test,
-     * so the preview waterline the player sees matches the one the assembled ship floats at.
-     */
-    private void calculateAndStoreBuoyancyData(ShipWheelData wheelData, Set<Location> shipBlocks, int totalWeight) {
-        Location wheelLoc = wheelData.getBlockLocation();
-        BlockConfigManager configManager = BlockConfigManager.getInstance();
-
-        float minY = Float.MAX_VALUE;
-        float sumY = 0;
-        int weightedCount = 0;
-
-        for (Location loc : shipBlocks) {
-            Block block = loc.getBlock();
-
-            float blockY = (float) (loc.getY() - wheelLoc.getY());
-            float bottom = BlockStructureScanner.bottomFaceY(block.getBlockData(), blockY);
-            if (!Float.isNaN(bottom) && bottom < minY) minY = bottom;
-
-            // resolveWeight, matching the scanner and countWeightedBlocks. props.hasWeight() selects the
-            // same set today only because an unlisted material synthesises a non-null 0; using the same
-            // predicate everywhere keeps meanDensity's divisor and this one from drifting apart.
-            if (configManager.resolveWeight(block.getType(), block.getBlockData()) != null) {
-                weightedCount++;
-                sumY += blockY;
-            }
-        }
-
-        if (minY == Float.MAX_VALUE) minY = 0;
-        float centerOfVolumeY = weightedCount > 0 ? sumY / weightedCount : 0;
-
-        // Calculate surface offset using same formula as ShipPhysics
-        float surfaceOffset;
-        if (weightedCount > 0) {
-            float meanDensity = (float) totalWeight / weightedCount;
-            ShipConfig config = ShipConfig.load(plugin, "custom");
-            float airDensity = config.airDensity;
-            float waterDensity = config.waterDensity;
-
-            float t = (meanDensity - airDensity) / (waterDensity - airDensity);
-            float referenceY = minY;
-            float waterlineY = referenceY + t * (centerOfVolumeY - referenceY);
-            surfaceOffset = -waterlineY;
-        } else {
-            surfaceOffset = 0;
-        }
-
-        wheelData.lastCenterOfVolumeY = centerOfVolumeY;
-        wheelData.lastMinY = minY;
-        wheelData.lastSurfaceOffset = surfaceOffset;
-    }
-
-    /**
      * Spawns a glowing shulker at the predicted waterline position.
      * The shulker is invisible, invincible, has no AI/gravity, and glows.
      */
@@ -2678,10 +2674,11 @@ public class ShipWheelManager {
             return;
         }
 
-        // Calculate waterline Y using interpolation (same formula as ShipInstance)
-        // Using minY - 1 so very light ships (density near 0) float above water
+        // Calculate waterline Y using interpolation (same formula as ShipInstance).
+        // The reference is the hull bottom itself; an earlier version used minY - 1 and the comment
+        // outlived it.
         float t = (meanDensity - airDensity) / (waterDensity - airDensity);
-        float referenceY = minY;  // One block below ship bottom
+        float referenceY = minY;
         float waterlineY = referenceY + t * (centerOfVolumeY - referenceY);
 
         // Spawn location: wheel position + waterline offset

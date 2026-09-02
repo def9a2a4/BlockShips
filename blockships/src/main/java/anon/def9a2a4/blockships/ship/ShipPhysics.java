@@ -114,8 +114,9 @@ public class ShipPhysics {
      *
      * <p>Rotation power is all-or-nothing per network, so one engine running dry cuts every propeller
      * on it in the same tick. Ramping over {@code thrust-spool-ticks} turns that from a ship falling
-     * out of the sky instantly into a couple of seconds of decaying lift — physically justified
-     * (propellers do not stop dead) and enough time to react.
+     * out of the sky instantly into a long, decaying glide — physically justified (propellers do not
+     * stop dead) and ample time to react. The decay is exponential, not a fixed ramp: see
+     * {@link #approach}. At the default spool a 250-thrust bank takes about 13 seconds to reach zero.
      */
     private anon.def9a2a4.blockships.ShipThrust.Totals liveThrust() {
         if (thrustDirty) {
@@ -143,10 +144,19 @@ public class ShipPhysics {
      * per-call step collapses to {@code 1 * step} — at the default 40 spool ticks that is 0.025/tick,
      * and 30 points of vertical thrust take ~1200 ticks (a minute) to decay. Losing every propeller
      * on a network then had almost no effect on how fast the ship came down, which is the opposite of
-     * what the spool exists to model. With this, a ramp takes {@code thrustSpoolTicks} in EITHER
-     * direction, which is what the config key claims.
+     * what the spool exists to model.
+     *
+     * <p><b>The two directions are still not symmetric, and the config key's name oversells it.</b>
+     * Ramping UP is exactly {@code thrustSpoolTicks}, because {@code target} is the larger term the
+     * whole way. Ramping DOWN measures itself against {@code current}, which is shrinking, so the step
+     * shrinks with it and the decay is exponential rather than linear — it only goes linear below 1,
+     * where the {@code max(1f, …)} floor takes over. Measured at the default 40: 0 → 250 takes 40
+     * ticks; 250 → 0 takes <b>259</b>. That is the intended shape (a propeller does not stop dead),
+     * but do not describe it as "the same in either direction".
      */
-    private static float approach(float current, float target, float step) {
+    // Package-private, not private, so ShipPhysicsSpoolTest can measure the ramp instead of a comment
+    // asserting it. The asymmetry documented above is exactly the kind of claim that rots silently.
+    static float approach(float current, float target, float step) {
         float delta = target - current;
         float maxStep = Math.max(1f, Math.max(Math.abs(current), Math.abs(target))) * step;
         if (Math.abs(delta) <= maxStep) return target;

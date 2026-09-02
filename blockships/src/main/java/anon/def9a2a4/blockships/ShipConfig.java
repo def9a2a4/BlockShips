@@ -54,7 +54,8 @@ public class ShipConfig {
     public final int hugeBannerPower;        // Power points per huge banner (default: 50)
     public final int baseTurn;               // Free turning points every ship gets
     public final float sailTurnFactor;       // How much sail power aids turning, scaled by speed
-    public final int thrustSpoolTicks;       // Ticks for thrust to ramp up/down (propeller inertia)
+    public final int thrustSpoolTicks;       // Ticks for thrust to ramp UP; spool-down decays and takes
+                                             // far longer (propeller inertia) — see ShipPhysics.approach
     public final float maxSinkSpeed;         // Terminal fall speed at zero lift (blocks/tick)
     public final float sinkSpeedExponent;    // Shape of sink rate vs (1 - lift); below 1 = harsher near the top
     public final float liftHoldSinkFactor;   // Fraction of the free sink rate when holding Space under-powered

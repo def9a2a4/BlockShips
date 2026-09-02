@@ -1016,7 +1016,8 @@ public class ShipWheelMenu {
             if (seatCount > 0) {
                 int passengers = seatCount - 1;
                 lore.add(ChatColor.GRAY + "Seats: " + ChatColor.WHITE + seatCount +
-                    ChatColor.GRAY + " (1 driver + " + passengers + " passengers)");
+                    ChatColor.GRAY + " (" + ShipWheelManager.plural(1, "driver", "drivers")
+                    + " + " + ShipWheelManager.plural(passengers, "passenger", "passengers") + ")");
                 if (wheelData.isAssembled()) {
                     lore.add(ChatColor.GRAY + "Occupied: " + ChatColor.WHITE + occupiedCount + " / " + seatCount);
                 }

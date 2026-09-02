@@ -4,8 +4,11 @@
 # Set content to null for dynamic content (filled at runtime).
 #
 # KEEP EACH content UNDER ~200 CHARACTERS. HelpBookContent budgets 12 lines per page at 20 chars per
-# line; a section costing more than 12 lines by itself is written to a fresh page and then overflows
-# it, because there is no intra-section split. The tail is silently clipped by the client.
+# line, and a section costing more than 12 lines by itself is written to a fresh page and then runs
+# past that budget, because there is no intra-section split. The 12 is HelpBookContent's OWN number,
+# not the client's — a vanilla page holds about 14 lines — so the rule is deliberately conservative
+# and nothing truncates. Overflow means a section spilling past where the paginator thought it ended,
+# not text disappearing.
 #
 # Do NOT put & colour codes here. The renderer applies its own styling and never translates them, so
 # they render as literal text.
@@ -39,10 +42,10 @@ sections:
     content: "Wood/wool = light, metals = heavy. Glowstone/end rods = lighter than air, so enough of them makes an airship. Click the book to detect your ship and see its stats."
 
   - title: "Sails"
-    content: "Wool 3 pts, banner 7, large banner 20, huge banner 50. Sails raise top speed and, once you are moving, turning. They plateau, so thrust is what closes the last gap."
+    content: "Wool 3 pts, banner 7, large banner 20, huge banner 50. Large and huge need the BetterBanners plugin. Sails raise top speed and, once moving, turning. They plateau early."
 
   - title: "Propulsion"
-    content: "Fans, propellers, thrusters and reaction wheels push a ship. They need rotation power (or fuel, for a thruster). Power is all-or-nothing, so split big banks across networks."
+    content: "Fans, propellers and thrusters push a ship; a reaction wheel only turns it. All need rotation power, or fuel for a thruster. Power is all-or-nothing, so split big banks."
 
   - title: "Mounting Matters"
     content: "Where a block points decides what it does. Facing fore/aft = speed. Sideways = turning. Up or down = lift. A reaction wheel always turns, whichever way it sits."
@@ -51,7 +54,7 @@ sections:
     content: "You do not need glowstone to fly. Enough upward thrust lifts any hull. Below 100% lift you cannot climb and you sink, faster the more lift you lack. Watch your fuel."
 
   - title: "Gluing"
-    content: "A Glue Brush (brush + slimeball) adds blocks a ship normally cannot carry, like dirt or stone. While a session is open and you hold the brush, you cannot break blocks."
+    content: "A Glue Brush (brush + slimeball, needs the Mechanism plugin) adds blocks a ship cannot normally carry, like dirt. Holding it with a session open stops you breaking blocks."
 
   - title: "Locking"
     content: "The lock freezes which cells are yours, so blocks piled against a docked hull are not swallowed on the next assemble. Broken cells are dropped; re-freeze to take them back."

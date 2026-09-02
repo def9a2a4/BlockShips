@@ -77,9 +77,6 @@ public class ShipWheelData {
     private double lastMaxHealth;      // Max health when assembled
 
     // Buoyancy calculation data (for Ship Info display)
-    public float lastCenterOfVolumeY;  // Y component of center of volume
-    public float lastMinY;             // Bottom of ship relative to wheel
-    public float lastSurfaceOffset;    // Calculated surface offset
 
     // Camera distance setting (persisted per-ship)
     // -1 means "not set, use calculated default based on block count"

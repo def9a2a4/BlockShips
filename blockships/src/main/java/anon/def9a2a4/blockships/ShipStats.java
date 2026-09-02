@@ -56,8 +56,10 @@ public final class ShipStats {
      *
      * <p>Sails feed turning too, but scaled by current speed — a rudder needs water moving past it.
      * ALL thrust-based turning is speed-independent, so a side-mounted propeller steers a stopped ship
-     * just as a reaction wheel does, and harder. The wheel's case is cost, not uniqueness: one power and
-     * one floor block, against a propeller that wants hull width and several times the network.
+     * just as a reaction wheel does, and harder. The wheel's case is cost and mounting, not efficiency:
+     * one power against a propeller's five, and it is the only turning a FLOOR mount can produce — a
+     * floor propeller blows straight down and classifies as VERTICAL. Per unit of power it does not
+     * win: 10 turning per power ties a large propeller and loses to a huge one's 12.5.
      *
      * @param speedFrac current speed as a fraction of top speed, 0..1
      */

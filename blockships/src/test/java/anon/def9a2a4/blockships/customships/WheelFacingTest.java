@@ -50,7 +50,7 @@ class WheelFacingTest {
             if (face.getModY() != 0) continue;                       // skip UP/DOWN and the vertical compounds
             if (face.getModX() == 0 && face.getModZ() == 0) continue; // and SELF
 
-            BlockFace snapped = yawFromModVector(face);
+            BlockFace snapped = ShipWheelManager.floorHeadFacing(face);
             assertTrue(isCardinal(snapped), face + " snapped to a non-cardinal: " + snapped);
 
             // The property that actually matters: snapping must not move a direction by more than 45°, i.e.
@@ -80,22 +80,27 @@ class WheelFacingTest {
     @Test
     void everyCardinalIsItsOwnNearestCardinal() {
         for (BlockFace face : CARDINALS) {
-            assertEquals(face, yawFromModVector(face), face + " should snap to itself");
+            assertEquals(face, ShipWheelManager.floorHeadFacing(face), face + " should snap to itself");
         }
     }
 
     /**
-     * A wall head faces OUT of the wall while the ship faces INTO it, so placement records the opposite of the
-     * block's facing. Anything that re-derives a facing from a wall head must apply the same inversion; not
-     * doing so is a silent 180.
+     * A floor head at a cardinal rotation must yield that cardinal, NOT its opposite.
+     *
+     * <p>This is the half of the wall/floor asymmetry a unit test can reach. The wall arm of
+     * {@code facingFromBlockData} inverts ({@code getFacing().getOppositeFace()}, because a wall head
+     * points out of the wall while the ship faces into it); the floor arm must not. An earlier version
+     * of this file asserted only that {@code getOppositeFace().getOppositeFace()} is the identity —
+     * true of every {@code BlockFace} in Bukkit, and therefore incapable of failing for any change
+     * made here.
      */
     @Test
-    void wallHeadFacingIsTheOppositeOfTheShipFacing() {
-        for (BlockFace clicked : CARDINALS) {
-            BlockFace shipFacing = clicked.getOppositeFace();
-            assertEquals(clicked, shipFacing.getOppositeFace(),
-                "opposite-of-opposite should be the original for " + clicked);
-            assertTrue(isCardinal(shipFacing), "a cardinal's opposite should be cardinal: " + clicked);
+    void floorHeadFacingDoesNotInvert() {
+        for (BlockFace face : CARDINALS) {
+            BlockFace derived = ShipWheelManager.floorHeadFacing(face);
+            assertEquals(face, derived, "a floor head at " + face + " should read as " + face);
+            assertTrue(derived != face.getOppositeFace(),
+                "floor heads must not take the wall arm's inversion, at " + face);
         }
     }
 
@@ -125,12 +130,6 @@ class WheelFacingTest {
             assertTrue(isCardinal(ShipWheelData.yawToBlockFace(once)),
                 "snapped yaw " + once + " did not resolve to a cardinal");
         }
-    }
-
-    /** The derivation {@code facingFromBlockData} uses for a floor head. Mirrored here so the maths is pinned. */
-    private static BlockFace yawFromModVector(BlockFace face) {
-        float yaw = (float) Math.toDegrees(Math.atan2(-face.getModX(), face.getModZ()));
-        return ShipWheelData.yawToBlockFace(yaw);
     }
 
     private static boolean isCardinal(BlockFace f) {

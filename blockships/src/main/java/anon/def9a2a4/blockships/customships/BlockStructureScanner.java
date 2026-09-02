@@ -279,7 +279,14 @@ public class BlockStructureScanner {
      * {@code model.parts.get(i)}). The blocks are still in the world (air-out is deferred) so a delegated
      * assembler can consume them with block-index parity.
      */
-    public record ScanResult(ShipModel model, List<Block> orderedBlocks) {}
+    /**
+     * @param bannerTiersUnreadable the scan could not see the ship's large/huge banner displays, so
+     *        {@code model}'s tier counts are zero by default rather than by measurement.
+     *        <b>Refuse the assembly when this is set</b> — {@code ShipModel.toMap} persists those
+     *        counts, so proceeding writes a permanently under-powered ship to the sidecar. It is
+     *        transient (Paper's entity load is still in flight); the next click reads the real value.
+     */
+    public record ScanResult(ShipModel model, List<Block> orderedBlocks, boolean bannerTiersUnreadable) {}
 
     public static ScanResult scanStructure(Location wheelLocation, BlockFace facing) {
         // Get max ship size from config
@@ -312,7 +319,8 @@ public class BlockStructureScanner {
     }
 
     /**
-     * Large/huge banners hosted on the structure's blocks, keyed by host block.
+     * Large/huge banners hosted on the structure's blocks, keyed by host block — or {@code null} when
+     * the answer is <b>unknown</b> rather than empty.
      *
      * <p>One region query for the whole ship. defCoreLib's banner displays are entities, so this is a
      * nearby-entity sweep; doing it per candidate block would mean hundreds of sweeps during an
@@ -321,29 +329,78 @@ public class BlockStructureScanner {
      * <p>The box is padded by 4 because a large banner's display entity is spawned in the neighbour
      * cell toward the face it hangs on, and scaled up from there — a box fitted tightly to the hull
      * would miss precisely the banners mounted on its outside.
+     *
+     * <p><b>"Unknown" is not "none", and the difference is the whole point of this signature.</b> Two
+     * conditions produce it, and both used to return an empty map that the caller could not tell apart
+     * from a ship with no tier banners:
+     * <ul>
+     *   <li><b>Entities not loaded yet.</b> Paper loads a chunk's entities ASYNCHRONOUSLY, after its
+     *       blocks are ready, so there is a window in which every host block is present and every banner
+     *       display is invisible to {@code getNearbyEntities}. Detecting in that window reported zero
+     *       tier sails and stored it; assembling in it wrote the zeros into the sidecar, where they
+     *       survived restarts. Note the check must cover the PADDED box's chunks, not the hull's — the
+     *       displays live outside the hull, which is why the box is padded in the first place.</li>
+     *   <li><b>A defCoreLib fault</b> — a {@code /reload} or PlugMan unload leaves {@code getInstance()}
+     *       null. Logged, because a silent zero here is indistinguishable from a plain ship.</li>
+     * </ul>
+     * Callers must treat null as "ask again later": keep whatever counts they already had, and never
+     * persist a count derived from it.
      */
     private static Map<Block, List<anon.def9a2a4.corelib.BannerTier>> queryBannerTiers(
             Collection<Location> cells) {
         if (cells.isEmpty()) return Collections.emptyMap();
-        org.bukkit.World world = null;
-        double minX = Double.MAX_VALUE, minY = Double.MAX_VALUE, minZ = Double.MAX_VALUE;
-        double maxX = -Double.MAX_VALUE, maxY = -Double.MAX_VALUE, maxZ = -Double.MAX_VALUE;
-        for (Location l : cells) {
-            if (world == null) world = l.getWorld();
-            minX = Math.min(minX, l.getBlockX()); maxX = Math.max(maxX, l.getBlockX() + 1);
-            minY = Math.min(minY, l.getBlockY()); maxY = Math.max(maxY, l.getBlockY() + 1);
-            minZ = Math.min(minZ, l.getBlockZ()); maxZ = Math.max(maxZ, l.getBlockZ() + 1);
-        }
-        if (world == null) return Collections.emptyMap();
-        org.bukkit.util.BoundingBox box =
-            new org.bukkit.util.BoundingBox(minX, minY, minZ, maxX, maxY, maxZ).expand(4.0);
         try {
+            // getWorld() belongs inside the try: it throws IllegalArgumentException once a Location's
+            // weak world reference has been collected (and returns null for a null-world Location).
+            org.bukkit.World world = null;
+            double minX = Double.MAX_VALUE, minY = Double.MAX_VALUE, minZ = Double.MAX_VALUE;
+            double maxX = -Double.MAX_VALUE, maxY = -Double.MAX_VALUE, maxZ = -Double.MAX_VALUE;
+            for (Location l : cells) {
+                if (world == null) world = l.getWorld();
+                minX = Math.min(minX, l.getBlockX()); maxX = Math.max(maxX, l.getBlockX() + 1);
+                minY = Math.min(minY, l.getBlockY()); maxY = Math.max(maxY, l.getBlockY() + 1);
+                minZ = Math.min(minZ, l.getBlockZ()); maxZ = Math.max(maxZ, l.getBlockZ() + 1);
+            }
+            if (world == null) return Collections.emptyMap();
+            org.bukkit.util.BoundingBox box =
+                new org.bukkit.util.BoundingBox(minX, minY, minZ, maxX, maxY, maxZ).expand(4.0);
+            if (!entitiesLoadedOver(world, box)) return null;
             return anon.def9a2a4.corelib.CoreLibPlugin.getInstance().bannerTiersIn(world, box);
         } catch (Throwable t) {
-            // Never let a CoreLib fault block an assembly — worst case the ship loses its large-banner
-            // sail power for this scan.
-            return Collections.emptyMap();
+            BlockShipsPlugin plugin =
+                (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
+            if (plugin != null) {
+                plugin.getLogger().warning(
+                    "Could not read banner-tier displays from DefCoreLib; large/huge sails are unknown "
+                    + "for this scan (" + t + ")");
+            }
+            return null;
         }
+    }
+
+    /**
+     * Whether every chunk the padded box touches has its ENTITIES loaded, not merely its blocks.
+     *
+     * <p>Deliberately does not load anything. A chunk whose entities are still pending will fire its
+     * own {@code EntitiesLoadEvent} shortly, so the right response is to answer "unknown" and let the
+     * player's next click read the real value — the same defer-don't-race idiom defCoreLib uses in
+     * {@code MechanismRegistry.recoverMechanismsInChunk} and {@code CustomBlockRegistry.restoreLoadedChunks}.
+     *
+     * <p>An UNLOADED chunk counts as ready. A flood fill only reaches cells it read through
+     * {@code Location.getBlock()}, which loads their chunks synchronously; a chunk that is somehow
+     * still unloaded holds no cell of this ship, and treating it as "not ready" would refuse ordinary
+     * detects forever.
+     */
+    private static boolean entitiesLoadedOver(org.bukkit.World world, org.bukkit.util.BoundingBox box) {
+        int minCX = (int) Math.floor(box.getMinX()) >> 4, maxCX = (int) Math.floor(box.getMaxX()) >> 4;
+        int minCZ = (int) Math.floor(box.getMinZ()) >> 4, maxCZ = (int) Math.floor(box.getMaxZ()) >> 4;
+        for (int cx = minCX; cx <= maxCX; cx++) {
+            for (int cz = minCZ; cz <= maxCZ; cz++) {
+                if (!world.isChunkLoaded(cx, cz)) continue;
+                if (!world.getChunkAt(cx, cz).isEntitiesLoaded()) return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -368,7 +425,13 @@ public class BlockStructureScanner {
     }
 
     /**
-     * Count the LARGE and HUGE banners hosted on a structure's cells, as {@code {large, huge}}.
+     * Count the LARGE and HUGE banners hosted on a structure's cells, as {@code {large, huge}} — or
+     * {@code null} when they could not be read at all (see {@link #queryBannerTiers}).
+     *
+     * <p><b>Null is not {@code {0,0}}.</b> A caller that collapses the two re-opens the bug this
+     * signature exists to close: a scan racing Paper's async entity load would report a banner-rigged
+     * ship as having no tier sails, and — on the assembly path — persist that. Keep the previous
+     * counts and try again instead.
      *
      * <p>Shared by the assembly path ({@link #captureCells}) and the docked preview
      * ({@code ShipWheelManager.detectShip}) so the two cannot drift — a ship that reports four huge
@@ -395,6 +458,7 @@ public class BlockStructureScanner {
      */
     public static int[] countLargeHuge(Collection<Location> cells) {
         Map<Block, List<anon.def9a2a4.corelib.BannerTier>> bannerTiers = queryBannerTiers(cells);
+        if (bannerTiers == null) return null;
         if (bannerTiers.isEmpty()) return new int[] {0, 0};
         int large = 0, huge = 0;
         for (Location cell : cells) {
@@ -485,9 +549,12 @@ public class BlockStructureScanner {
         // Large/huge banners are defCoreLib display entities attached to a host block, not block
         // states, so no material test can find them — one region query answers for the whole
         // structure. Shared with the docked preview so the two readouts cannot drift.
+        // Null means "couldn't read them", not "there are none" — carried out on the ScanResult so the
+        // caller can refuse rather than bake zeros into a saved ship. See countLargeHuge.
         int[] tierBanners = countLargeHuge(shipBlocks);
-        int largeBannerCount = tierBanners[0];
-        int hugeBannerCount = tierBanners[1];
+        boolean bannerTiersUnreadable = tierBanners == null;
+        int largeBannerCount = bannerTiersUnreadable ? 0 : tierBanners[0];
+        int hugeBannerCount = bannerTiersUnreadable ? 0 : tierBanners[1];
 
         // defCoreLib propulsion blocks, classified by which way they push relative to the hull.
         // Done here, during the scan, because the blocks are still in the world at this point — after
@@ -880,7 +947,7 @@ public class BlockStructureScanner {
             hugeBannerPower,
             thrustBlocks
         );
-        return new ScanResult(model, orderedBlocks);
+        return new ScanResult(model, orderedBlocks, bannerTiersUnreadable);
     }
 
     /**
