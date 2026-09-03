@@ -5,8 +5,33 @@ config-version: 2
 
 # BlockShips Plugin Configuration
 
-# Set to false to disable outdated resource file warnings on startup
+# Set to false to stop the startup warning about a config/ override drifting behind the bundled
+# defaults. It does NOT silence warnings about files the plugin cannot read or is not reading at all
+# - those mean your edits are being ignored, which you always want to hear about.
 warn-config-mismatch: true
+
+# ---------------------------------------------------------------------------
+# Customizing blocks.yml, items.yml and the prefab ship models
+#
+# These are NOT written to this folder. They are read from inside the plugin
+# jar, so that every update ships current defaults (a copy extracted years ago
+# would hide newly-supported blocks). To customize one, copy it out of the jar
+# into a "config" subfolder next to this file:
+#
+#     plugins/BlockShips/config/blocks.yml
+#
+#     unzip -o BlockShips-*.jar blocks.yml -d plugins/BlockShips/config/
+#
+# A file at the plugin folder ROOT (plugins/BlockShips/blocks.yml) is IGNORED.
+#
+# An override REPLACES the bundled file - the two are not merged. Copy the
+# whole file rather than writing a fragment, and re-check it after plugin
+# updates; the startup log warns when yours is missing entries the bundled
+# default has.
+#
+# This file (config.yml) works the other way round: it IS read from disk, from
+# the plugin folder root, right here. A copy under config/ is read by nothing.
+# ---------------------------------------------------------------------------
 
 
 # Integrations with other plugins

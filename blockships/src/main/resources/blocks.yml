@@ -1,27 +1,32 @@
 # Block configuration for custom ship construction
 # Blocks not listed here are FORBIDDEN by default
 #
+# THIS FILE IS READ FROM THE PLUGIN JAR. To customize it, save your edited copy as
+#   plugins/BlockShips/config/blocks.yml
+# A copy at the plugin folder root (plugins/BlockShips/blocks.yml) is NOT read.
+# Your copy REPLACES this one - the two are not merged, so start from the whole file.
+#
 # Collider format:
 #   collider: true                          # Default size (1.0), no offset
 #   collider: false                         # No collider
 #   collider: {size: 0.5, offset: [0,-0.5,0]}  # Custom size and/or offset
 #
-# Weight scale: -2 to 10 (used for density/buoyancy calculations)
-#   -2 = strong floatation (glowstone)
+# Weight scale: -20 to 10 (used for density/buoyancy calculations)
+#   -20 = strongest floatation (end rod), -15 beacon, -5 glowstone
 #   0 = neutral
 #   1 = light (wool, glass)
 #   2 = medium (wood, redstone)
 #   3 = heavy (iron, copper, storage)
-#   4+ = very heavy (gold, diamond, netherite)
+#   4+ = very heavy (gold, diamond, netherite); 10 = obsidian
 #   null = excluded from density calculation (block exists but doesn't affect buoyancy)
 #
 # Buoyancy: Ships float based on mean density (totalWeight / blockCount)
 #   - density < air-density (0.0): becomes airship
-#   - density = water-density (2.5): floats at center of volume
+#   - density = water-density (config.yml, default 3): floats at center of volume
 #   - density between air and water: interpolates waterline between bottom and center
 
 
-# === FLOATATION BLOCKS (weight: -10, lighter than air) ===
+# === FLOATATION BLOCKS (negative weight, lighter than air) ===
 glowstone:
   allowed: true
   weight: -5
