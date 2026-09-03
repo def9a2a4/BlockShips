@@ -2177,8 +2177,18 @@ public class DisplayShip implements Listener {
      * doing it twice per event is real work, and the two answers could differ.
      */
     private @org.jetbrains.annotations.Nullable ShipWheelData resolveWheelBlock(Block block) {
+        return resolveWheelBlock(block, null);
+    }
+
+    /**
+     * As {@link #resolveWheelBlock(Block)}, with the clicking player so a mismatch refusal can tell them
+     * why nothing happened. Pass the player only from the right-click path; the break path and predicates
+     * use the plain overload.
+     */
+    private @org.jetbrains.annotations.Nullable ShipWheelData resolveWheelBlock(
+            Block block, @org.jetbrains.annotations.Nullable Player player) {
         if (block == null) return null;
-        return ((BlockShipsPlugin) plugin).getShipWheelManager().getWheelAtBlock(block);
+        return ((BlockShipsPlugin) plugin).getShipWheelManager().getWheelAtBlock(block, player);
     }
 
     /**
@@ -2348,14 +2358,19 @@ public class DisplayShip implements Listener {
             }
             event.setCancelled(true);
         } else {
-            // Both failures share this cleanup. Cancel as well as reverting — without the cancel vanilla
+            // All failures share this cleanup. Cancel as well as reverting — without the cancel vanilla
             // places a plain head here AND consumes the item, which is exactly the untracked look-alike the
-            // guard above exists to prevent. The item is not consumed on either path.
+            // guard above exists to prevent. The item is not consumed on any path. The air-out doubles as
+            // SAVE_FAILED's rollback: the stamp lives in the tile entity, so clearing the block erases it —
+            // which is why that arm must stay inside this shared cleanup.
             targetBlock.setType(Material.AIR);
             event.setCancelled(true);
             if (result == ShipWheelManager.PlaceResult.CELL_RESERVED) {
                 player.sendMessage("§cThat spot is another ship's dock — it's out sailing right now and will "
                     + "need to land there. Put your wheel somewhere else.");
+            } else if (result == ShipWheelManager.PlaceResult.SAVE_FAILED) {
+                player.sendMessage("§cCouldn't place that ship wheel — the record could not be saved to disk. "
+                    + "Nothing was kept; tell an admin to check the server log and free disk space.");
             } else {
                 player.sendMessage("§cCouldn't place that ship wheel — its identity could not be written. "
                     + "Tell an admin to check the server log for a DefCoreLib registration error.");
@@ -2387,7 +2402,7 @@ public class DisplayShip implements Listener {
         if (event.isCancelled()) return;
 
         Block block = event.getClickedBlock();
-        ShipWheelData wheelData = resolveWheelBlock(block);
+        ShipWheelData wheelData = resolveWheelBlock(block, event.getPlayer());
         if (wheelData == null) return;
 
         ShipWheelMenu.openMenu(event.getPlayer(), wheelData);

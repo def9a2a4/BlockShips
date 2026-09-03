@@ -1281,9 +1281,10 @@ public class BlockShipsPlugin extends JavaPlugin {
                 ordered.sort(java.util.Comparator.comparingInt(
                     (ShipWheelData w) -> switch (healths.get(w.getWheelId())) {
                         case BROKEN -> 0;
-                        case UNKNOWN -> 1;
-                        case SAILING -> 2;
-                        case OK -> 3;
+                        case ORPHANED -> 1;
+                        case UNKNOWN -> 2;
+                        case SAILING -> 3;
+                        case OK -> 4;
                     }));
                 int shown = 0;
                 for (ShipWheelData w : ordered) {
@@ -1299,6 +1300,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                     String glyph = switch (health) {
                         case OK -> "§a✔ ";
                         case SAILING -> "§b⛵ ";
+                        case ORPHANED -> "§6⚠ ";
                         case UNKNOWN -> "§7? ";
                         case BROKEN -> "§c✘ ";
                     };
@@ -1306,7 +1308,10 @@ public class BlockShipsPlugin extends JavaPlugin {
                         + " §7at " + fmt(w.getBlockLocation())
                         + " §7[" + mgr.resolveWheelState(w).state() + "]"
                         + (health == ShipWheelManager.Health.BROKEN
-                            ? " §c— no wheel block there; §e/blockships wheels adopt " + w.getWheelId() : ""));
+                            ? " §c— no wheel block there; §e/blockships wheels adopt " + w.getWheelId() : "")
+                        + (health == ShipWheelManager.Health.ORPHANED
+                            ? " §6— dead ship link; using the wheel repairs it, or §e/blockships "
+                              + "forceclearwheel " + w.getWheelId() : ""));
                 }
                 return true;
             }
@@ -1358,31 +1363,70 @@ public class BlockShipsPlugin extends JavaPlugin {
                             + before + " → " + fmt(target.getLocation()));
                         sender.sendMessage("§aAdopted. The block now carries this wheel's identity.");
                         if (wasLocked) {
-                            sender.sendMessage("§7Its locked structure was carried across. If assembly reports "
-                                + "missing blocks, unlock and re-lock the wheel.");
+                            // No flat "was carried across": the carry only happens when the OLD block was
+                            // still this wheel's, and this side cannot see whether it was.
+                            sender.sendMessage("§7It was locked. The locked structure carries across only if "
+                                + "the old block was still this wheel's; if assembly reports missing blocks, "
+                                + "unlock and re-lock the wheel.");
                         }
                     }
-                    case NOT_IDLE -> sender.sendMessage("§cThat wheel's ship is assembled or recoverable — "
-                        + "refusing. Disassemble it first.");
+                    case NOT_IDLE -> {
+                        // ORPHAN also lands here, and the generic message is wrong on every clause for it:
+                        // its ship is neither assembled nor recoverable, and Disassemble is not the remedy.
+                        if (mgr.resolveWheelState(rec).state() == ShipWheelManager.WheelState.ORPHAN) {
+                            sender.sendMessage("§cThat record's ship link is stale — its ship is gone. Clear "
+                                + "the link first: §e/blockships forceclearwheel " + id + "§c, then retry.");
+                        } else {
+                            sender.sendMessage("§cThat wheel's ship is assembled or recoverable — refusing. "
+                                + "Disassemble it first.");
+                        }
+                    }
                     case NOT_A_HEAD -> sender.sendMessage("§cThat block is not a player head.");
                     case OTHER_WHEEL_BLOCK -> sender.sendMessage("§cThat block already belongs to a different "
                         + "wheel. Refusing to steal it.");
                     case OTHER_TYPE_BLOCK -> sender.sendMessage("§cThat block is a different DefCoreLib block "
                         + "(a rotator, hoist, or similar). Adopting it would destroy its identity.");
                     case CELL_TAKEN -> {
-                        // Name the other record. Without it the operator has to eyeball a capped, arbitrarily
-                        // ordered wheels list to find what they are colliding with.
-                        ShipWheelData other = null;
+                        // Collect ALL residents, matching adoptWheel's own check — a single first-match pick
+                        // could name a different record than the one that caused the refusal. Then say which
+                        // KIND of refusal this was, because the remedies are opposites: a sailing ship's dock
+                        // and a live wheel must be left alone, while only a provably stale record should ever
+                        // be purged. The old advice here suggested purge unconditionally — which, aimed at a
+                        // live legacy wheel (stamp-only OTHER_WHEEL_BLOCK can't protect it), was instructions
+                        // for destroying a healthy wheel.
                         org.bukkit.Location targetCell = target.getLocation();
+                        java.util.List<ShipWheelData> residents = new java.util.ArrayList<>();
                         for (ShipWheelData w : mgr.getWheels()) {
                             if (w != rec && anon.def9a2a4.blockships.util.LocationUtil
-                                    .cellsAgree(w.getBlockLocation(), targetCell)) { other = w; break; }
+                                    .cellsAgree(w.getBlockLocation(), targetCell)) { residents.add(w); }
                         }
-                        sender.sendMessage("§cAnother record already claims that cell"
-                            + (other == null ? "." : ": §f" + other.getWheelId()));
-                        if (other != null) {
-                            sender.sendMessage("§7Move or drop that one first — §e/blockships wheels purge "
-                                + other.getWheelId());
+                        boolean explained = false;
+                        for (ShipWheelData other : residents) {
+                            ShipWheelManager.WheelState st = mgr.resolveWheelState(other).state();
+                            if (st == ShipWheelManager.WheelState.LOADED
+                                    || st == ShipWheelManager.WheelState.UNLOADED_RECOVERABLE) {
+                                sender.sendMessage("§cThat cell is the dock of §f" + other.getWheelId()
+                                    + "§c, whose ship is out and needs it back. This is not a repair — "
+                                    + "pick a different block.");
+                                explained = true;
+                            } else if (mgr.recordHealth(other) == ShipWheelManager.Health.OK) {
+                                sender.sendMessage("§cThat block is §f" + other.getWheelId()
+                                    + "§c's own live wheel (likely a legacy wheel with no stamp). This is "
+                                    + "not a repair — adopting would destroy it. If it really is stale, "
+                                    + "§e/blockships wheels purge " + other.getWheelId() + "§c and retry.");
+                                explained = true;
+                            }
+                        }
+                        if (!explained) {
+                            for (ShipWheelData other : residents) {
+                                sender.sendMessage("§cAnother record claims that cell: §f" + other.getWheelId()
+                                    + "§c. If its wheel is truly gone, §e/blockships wheels purge "
+                                    + other.getWheelId() + "§c and retry — but check §e/blockships wheels "
+                                    + "inspect§c first; purge deletes the record for good.");
+                            }
+                            if (residents.isEmpty()) {
+                                sender.sendMessage("§cAnother record already claims that cell.");
+                            }
                         }
                     }
                     case STAMP_FAILED -> sender.sendMessage("§cCould not stamp the block (is it a skull, and is "
@@ -1411,8 +1455,16 @@ public class BlockShipsPlugin extends JavaPlugin {
                 if (args.length < 4 || !args[3].equalsIgnoreCase(token)) {
                     sender.sendMessage("§c§l⚠ §cPurge DELETES this record. Its ship, if any, becomes unreachable "
                         + "through this wheel.");
+                    // The health mark is the information a purge decision actually turns on — a second
+                    // confirm token would break the tab-completer, but a preview that shows OK in red stops
+                    // the "purge a healthy wheel because a message told you to" mistake cold.
+                    ShipWheelManager.Health h = mgr.recordHealth(rec);
                     sender.sendMessage("§7" + id + " at " + fmt(rec.getBlockLocation())
-                        + " [" + mgr.resolveWheelState(rec).state() + "], assembled=" + rec.isAssembled());
+                        + " [" + mgr.resolveWheelState(rec).state() + "], health=" + h);
+                    if (h == ShipWheelManager.Health.OK) {
+                        sender.sendMessage("§c§l⚠ §cThis record's wheel block is PRESENT and HEALTHY. Purging "
+                            + "it orphans a live wheel — are you sure this is the right id?");
+                    }
                     sender.sendMessage("§7Confirm: §e/blockships wheels purge " + id + " " + token);
                     return true;
                 }

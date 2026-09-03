@@ -87,6 +87,14 @@ public class ShipWheelData {
     // dirt no longer swallows the dirt. The frozen cells live in the glue store, not here. False = unlocked.
     private boolean naturalFrozen;
 
+    // Set when the wheel was UNLOCKED while its ship was out. The unlock's glue prune needs the wheel skull,
+    // which mid-voyage does not exist, so the whole materialized hull stays glued until something runs the
+    // prune later — and until then every hull-adjacent slime block joins via the sticky closure, and a cell a
+    // stranger has since built on becomes a forced member. This flag is that "something": assembleShip and
+    // disassembleShip's landing check it and prune. Persisted (written only when true) so a restart between
+    // the unlock and the landing doesn't lose it.
+    private boolean prunePending;
+
     /**
      * The name of {@link #blockLocation}'s world, captured whenever that location is set.
      *
@@ -355,6 +363,16 @@ public class ShipWheelData {
         this.naturalFrozen = frozen;
     }
 
+    /** True when an unlock happened while the ship was out and the glue prune still owes a run. */
+    public boolean isPrunePending() {
+        return prunePending;
+    }
+
+    /** Set/clear the deferred-prune marker. Callers must {@code saveAll()}. */
+    public void setPrunePending(boolean pending) {
+        this.prunePending = pending;
+    }
+
     /**
      * Calculates a default camera distance based on the number of blocks in the ship.
      * Scales from 4 (small ships) to ~16 (large ships), capped at 20.
@@ -447,6 +465,9 @@ public class ShipWheelData {
         if (naturalFrozen) {
             map.put("locked", true);
         }
+        if (prunePending) {
+            map.put("prune_pending", true);
+        }
         return map;
     }
 
@@ -502,6 +523,10 @@ public class ShipWheelData {
         } else if (lockedRaw instanceof Map || lockedRaw instanceof org.bukkit.configuration.ConfigurationSection) {
             Bukkit.getLogger().info("[BlockShips] Wheel at " + loc + " carried a legacy locked-structure; "
                 + "loading it unlocked (re-lock from the wheel menu to freeze it again).");
+        }
+
+        if (map.get("prune_pending") instanceof Boolean p) {
+            data.setPrunePending(p);
         }
 
         return data;

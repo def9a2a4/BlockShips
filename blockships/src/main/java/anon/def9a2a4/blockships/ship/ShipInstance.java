@@ -1353,6 +1353,12 @@ public class ShipInstance {
                     // are all dropped from Mechanism.destroy() via destroyWithCleanup() below (leads fall back
                     // to Paper's tickLeash when the holder shulker is removed). Do NOT re-add a native drop loop
                     // that reads the mechanism's inventories/colliders here, or items duplicate.
+                    //
+                    // Captured BEFORE destroyWithCleanup: destroy() nulls the wheel's ship link, and with the
+                    // link nulled ownsBlock's legacy arm would resolve any wheel-skinned head planted on the
+                    // vacated launch cell as this wheel's own — which is exactly what destroyWheelBlock's
+                    // record-only path exists to prevent. It cannot re-derive this flag after the fact.
+                    boolean wasAssembled = wheelData.isAssembled();
                     // Destroy entities and clean up persistence
                     if (bsp.getDisplayShip() != null) {
                         destroyWithCleanup(bsp.getDisplayShip().getShipWorldData());
@@ -1360,11 +1366,9 @@ public class ShipInstance {
                         destroy();
                     }
                     wheelData.setAssembledShipUUID(null);
-                    // Remove wheel block from world and tracking (without dropping wheel item). Pass the
-                    // RECORD, not a captured Location: the cell was read while the ship was still assembled,
-                    // so it is the launch cell — empty for the whole voyage and free for anyone to build on.
-                    // destroyWheelBlock now refuses to air out a cell that is not this wheel's own block.
-                    manager.destroyWheelBlock(wheelData);
+                    // Remove the wheel from tracking. On the assembled path this is record-only: the wheel
+                    // block was aired out at assembly, so there is nothing of ours at the launch cell.
+                    manager.destroyWheelBlock(wheelData, wasAssembled);
                     // Spawn explosions
                     spawnDestructionExplosions(world, explosionLocations);
                     return;

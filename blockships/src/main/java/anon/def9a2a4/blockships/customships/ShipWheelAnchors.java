@@ -91,6 +91,18 @@ public final class ShipWheelAnchors {
         CONNECTOR_CACHE.remove(key(wheelBlock));
     }
 
+    /**
+     * As {@link #forget(Block)}, from a bare cell. For callers that must not resolve a {@code Block} — a
+     * {@code getBlock()} on an unloaded chunk force-loads it, and the eviction needs only the key. A dead
+     * world (null key) evicts nothing; such an entry can only be reached again through the same dead world,
+     * and the sweep in {@code connectors} ages it out regardless.
+     */
+    public static void forget(Location cell) {
+        String k = anon.def9a2a4.blockships.util.LocationUtil.cellKey(cell);
+        if (k != null) CONNECTOR_CACHE.remove(k);
+    }
+
+    // Byte-identical to LocationUtil.cellKey for a live block — forget(Location) relies on that.
     private static String key(Block b) {
         return b.getWorld().getName() + ":" + b.getX() + ":" + b.getY() + ":" + b.getZ();
     }
