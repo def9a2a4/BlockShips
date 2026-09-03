@@ -39,6 +39,45 @@
 
 ## Fixes
 
+### A broken config.yml could be silently overwritten with an empty one
+
+The config upgrade added this release would, on a `config.yml` containing a YAML error, replace the
+file with a two-key stub — wiping every setting on the server, permanently, in a way a reinstall
+could not undo. Bukkit answers a parse error with an *empty* configuration backed by the jar's
+defaults, and `getInt("config-version", 0)` reads the section's own map without consulting those
+defaults, so an unreadable file was indistinguishable from a pre-versioned one. The upgrade
+"succeeded" against the empty stub and saved it.
+
+`config.yml` is now parsed strictly before anything touches it. If it does not parse, the plugin says
+so at SEVERE — naming the error, and stating plainly that every setting in the file is being ignored —
+and leaves the file alone. This shipped in no release; it is fixed before it could reach one.
+
+### Config edits that the plugin never reads are no longer silent ([#43](https://github.com/def9a2a4/BlockShips/issues/43))
+
+Since v0.0.16, `blocks.yml` is read from the jar with an on-disk override only at
+`plugins/BlockShips/config/blocks.yml`. A copy at the plugin folder root is not read — which looks
+exactly like a plugin that ignores its config, and a reinstall cannot fix it because nothing is
+broken. The path change was documented but nothing on a running server pointed at it.
+
+- Startup and `/blockships reload` now state which copy of each content file is in force, and name
+  the `config/` folder when everything came from the jar. The reload command reports it **in chat**,
+  where the admin doing the editing actually is.
+- A `config/blocks.yml` that does not parse produces a SEVERE naming the parse error and the real
+  consequence — blocks you disallowed are permitted again while the bundled file stands in — instead
+  of an empty configuration that silently forbade every block.
+- On reload, a broken or empty override no longer discards the working block configuration.
+- An override that parses but defines no blocks (the usual result of mis-indented edits) is now
+  called out; previously it just logged "0 materials".
+- `config/config.yml` is warned about: main settings are read from the plugin folder root, never
+  from `config/`.
+- Warnings about files the plugin is not reading are no longer gated behind `warn-config-mismatch`.
+  That flag suppresses staleness nagging; it should never hide a file whose edits are being ignored.
+- README and the `config.yml` / `blocks.yml` headers now document the override path, including how to
+  extract a copy from the jar, and that an override replaces rather than merges.
+
+Also corrected two figures in the `blocks.yml` header that the fix points users at: the weight scale
+is -20 to 10 (not -2 to 10), and the shipped water density is 3 (not 2.5).
+
 ### A docked ship under-reported its own sails
 
 Large and huge banners are display entities attached to a host block, not blocks in their
@@ -77,7 +116,9 @@ Data loss, fixed:
   had been unloaded at runtime made the whole save throw, silently, every time.
 - **A disassembled ship could come back from the dead** — a queued write landing after the
   deletion resurrected the record, and the wheel then sat on "still loading" forever.
-- **A wheel the server refused to place vanished** instead of dropping.
+- **A wheel the server could not identify vanished** instead of dropping — a `/clone`d copy, a
+  wheel whose registration never landed, or a record quarantined at load. Breaking any of those
+  deleted the block and dropped nothing.
 - **Landing on an occupied anchor cell dropped a generic wheel item**, losing the ship's id,
   glue and lock along with it. It now falls back to the protected-anchor path.
 - **A `/clone`d wheel could adopt the original's glue anchor**, so an assembly reported

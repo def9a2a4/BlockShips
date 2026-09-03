@@ -40,7 +40,7 @@ Ships can include:
 
 ## Custom Ships
 
-1. Build a structure from allowed blocks (see or edit this in `blocks.yml`)
+1. Build a structure from allowed blocks (see [the blocks.yml section](#blocksyml) to change the list)
   - generally, wood/metal/functional blocks are allowed, while stone/dirt/other natural blocks are not
   - light-giving blocks, like glowstone, end rods, and beacons, serve as floatation aids. enough of these, and you get an airship!
   - or skip the glowstone entirely: propellers and thrusters mounted vertically, on a floor or a ceiling, will lift a heavy hull
@@ -125,20 +125,39 @@ On servers older than 1.21.2 the client sends no sprint signal while seated, so 
 
 ## config.yml
 
-Main plugin settings including:
+Lives at `plugins/BlockShips/config.yml` and is read from disk normally — edit it in place. Main plugin settings including:
 
 - Ship physics (speed, acceleration, drag)
 - Buoyancy values (density, strength)
 - Collision settings (mass, response)
+- Cannons (cooldown, whether TNT can be fired)
 - Crafting recipes
 
 ## blocks.yml
 
-Configure which blocks can be used in custom ships:
+Configures which blocks can be used in custom ships:
 
 - **Weight scale** - Affects buoyancy, and how much thrust it takes to lift the ship
 - **Collider** - Custom collision shapes
 - **Seat/storage** - Special block behaviors
+
+**`blocks.yml` is read from inside the jar, not from the plugin folder.** Same for `items.yml` and the prefab ship models. That way a plugin update ships current block definitions instead of being hidden by a copy you generated two releases ago. To customize it, put your edited copy in the `config/` subfolder:
+
+```
+plugins/BlockShips/config/blocks.yml
+```
+
+A file at the plugin folder root (`plugins/BlockShips/blocks.yml`) is **not read at all**. To get a copy to edit:
+
+```sh
+unzip -o BlockShips-0.0.18.jar blocks.yml -d plugins/BlockShips/config/
+```
+
+or download [`blocks.yml`](https://github.com/def9a2a4/BlockShips/blob/main/blockships/src/main/resources/blocks.yml) and save it to that path.
+
+Your copy **replaces** the bundled one rather than merging with it, so start from the whole file and re-check it after each update — blocks added in later releases won't appear until you add them. The startup log tells you which copy is in force and warns when yours is missing entries the bundled default has.
+
+Note that natural blocks (stone, dirt, ores) are excluded on purpose: assembly flood-fills through connected allowed blocks, so allowing them lets a docked ship swallow the terrain it is sitting on.
 
 
 

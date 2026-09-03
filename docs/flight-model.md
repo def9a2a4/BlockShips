@@ -67,13 +67,14 @@ entirely** (see below); canvas holds nothing up. Sails are cheap, plateau early,
 - a reaction wheel is turn-only regardless of how it sits
 
 Propellers and fans act *away* from their mount, like a fan blows outward. That is why a floor
-propeller cannot steer: it blows straight down, lands in the lift bucket, and a reaction wheel is the
+propeller cannot steer: it blows straight up, lands in the lift bucket, and a reaction wheel is the
 only thing that turns a ship from a floor mount.
 
 Magnitudes are unsigned, and the vertical bucket does not distinguish up from down: **any** vertical
-mount adds lift, so a ceiling propeller blowing downward lifts exactly as much as a floor one. Two
-propellers pointing at each other **add** rather than cancel, there is no reverse thrust, and moment
-arm is ignored — a bow thruster and a stern thruster turn the ship the same way. This is a deliberate
+mount adds lift. A ceiling propeller lifts exactly as much as a floor one, and deliberately so — the
+facing model cannot tell a ceiling mount from a floor mount, and is not meant to. Two propellers
+pointing at each other **add** rather than cancel, there is no reverse thrust, and moment arm is
+ignored — a bow thruster and a stern thruster turn the ship the same way. This is a deliberate
 simplification, not an oversight.
 
 Rotation power is **all-or-nothing**: a network that cannot meet its total demand runs nothing at all.
