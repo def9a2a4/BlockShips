@@ -243,6 +243,26 @@ public final class ShipWheelBlockType {
     }
 
     /**
+     * Removes the {@code wheel_id} stamp, returning the block to unstamped. The rollback for a stamp whose
+     * record could not be persisted ({@code adoptLegacyWheel}): the block must read as unstamped again so
+     * the adoption can retry on the next click, and the block itself must be left standing — it is a
+     * player's live wheel, unlike {@code placeWheel}'s rollback where the caller airs out a block it just
+     * placed. Deliberately leaves corelib's {@code block_type} mark in place: {@code markBlock} is not
+     * cleanly reversible, and a leftover mark on a wheel-skinned head is harmless.
+     */
+    public static void unstamp(Block block) {
+        if (block == null) return;
+        try {
+            if (!(block.getState() instanceof TileState tile)) return;
+            tile.getPersistentDataContainer().remove(WHEEL_ID_KEY);
+            tile.update(false, false);   // physics-suppressed, matching stamp's own write
+        } catch (Throwable ignored) {
+            // Best-effort. A failed unstamp leaves the stamped-but-unpersisted pair the caller is trying to
+            // undo; there is nothing further this method can do about it.
+        }
+    }
+
+    /**
      * The wheel id carried by this block, or null if it is not a head, is not one of ours, or predates the
      * identity stamp. Cheap material gate first — this runs on every right-click and every block break.
      */

@@ -800,6 +800,20 @@ public class ShipWheelManager {
         if (resolveWheelState(candidate).state() != WheelState.NOT_ASSEMBLED) return null;
 
         if (!ShipWheelBlockType.stamp(block, candidate.getWheelId())) return null;
+
+        // Persist immediately, like placeWheel — this is a block-and-record pairing, and markDirty's batch
+        // path is not enough (see its javadoc). Without this, the pairing exists only in memory: a legacy
+        // row has no wheel_id key on disk, so an unclean shutdown re-mints the record's id on the next boot
+        // while the block keeps the old one — a permanently dead wheel. On failure, unstamp and refuse
+        // rather than leave the pair split; the record pre-exists on disk and the block is the player's
+        // standing wheel, so the rollback touches neither — the next click simply retries the adoption.
+        if (!saveAll()) {
+            ShipWheelBlockType.unstamp(block);
+            plugin.getLogger().severe("Could not persist the adoption of the legacy ship wheel at "
+                + locationKey(block.getLocation()) + " — unstamped and refused; the next use retries.");
+            return null;
+        }
+
         plugin.getLogger().info("Adopted legacy ship wheel at " + locationKey(block.getLocation())
             + " as " + candidate.getWheelId() + ".");
         return candidate;
