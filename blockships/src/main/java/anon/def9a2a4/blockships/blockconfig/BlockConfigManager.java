@@ -13,8 +13,13 @@ import org.bukkit.block.data.type.Slab;
 import org.bukkit.block.data.type.Stairs;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.joml.Vector3f;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.logging.Logger;
 
@@ -60,39 +65,40 @@ public class BlockConfigManager {
         // We deliberately do NOT extract a copy to disk: that copy would go stale and hide
         // newly-added blocks (e.g. *_shelf) on plugin updates.
         ConfigResources.Loaded loaded = ConfigResources.loadDetailed(plugin, "blocks.yml");
-        FileConfiguration blocksConfig = loaded.config();
 
-        Map<Material, BlockProperties> parsed = new EnumMap<>(Material.class);
+        // A reload whose override does not parse gets the bundled file back. At startup that is the
+        // right answer; here it is not - swapping a working allow-list for the defaults, live, would
+        // re-permit everything the admin had disallowed. Keep what is already running instead.
+        if (loaded.error() != null && !blockPropertiesCache.isEmpty()) {
+            logger.severe("Keeping the block configuration already in force (" + blockPropertiesCache.size()
+                + " materials) rather than reverting to the bundled defaults. Fix config/blocks.yml and"
+                + " reload again.");
+            return loaded;
+        }
+
+        FileConfiguration blocksConfig = loaded.config();
         Set<String> keys = blocksConfig.getKeys(false);
 
-        // Parse all block entries from root level
-        for (String key : keys) {
-            ConfigurationSection blockConfig = blocksConfig.getConfigurationSection(key);
-            if (blockConfig == null) {
-                continue;
+        Map<Material, BlockProperties> parsed = new EnumMap<>(Material.class);
+        parseInto(blocksConfig, parsed);
+
+        // Parses cleanly but defines no block at all: an empty file, or every entry mis-indented to a
+        // scalar (what a botched hand-edit looks like). Applying that would clear the allow-list and
+        // disallow every block, live. An empty result must not take effect — fall back to the bundled
+        // default, which always has entries, so ships keep picking blocks up. Only an OVERRIDE has a
+        // better source to fall back to; a JAR/MISSING source is already the last resort.
+        if (parsed.isEmpty()) {
+            if (!keys.isEmpty()) {
+                logger.warning("blocks.yml parsed " + keys.size() + " top-level entries but none of them"
+                    + " defined a block. Each entry needs indented properties under it, e.g."
+                    + " \"andesite:\" then \"  allowed: true\" on the next line.");
             }
-
-            try {
-                parseBlockEntry(parsed, key, blockConfig);
-            } catch (Exception e) {
-                logger.warning("Failed to parse block config for '" + key + "': " + e.getMessage());
+            if (loaded.source() == ConfigResources.Source.OVERRIDE) {
+                logger.severe("config/blocks.yml defined no blocks; using the bundled default instead so"
+                    + " ships can still pick blocks up. Fix the override and reload.");
+                YamlConfiguration jarDefault = loadJarDefault();
+                if (jarDefault != null) parseInto(jarDefault, parsed);
             }
-        }
-
-        // Valid YAML, entries present, and yet nothing resolved: every key was a scalar rather than a
-        // section, which is what mis-indented edits look like. Nothing else in the pipeline notices —
-        // the ships just quietly stop picking blocks up.
-        if (parsed.isEmpty() && !keys.isEmpty()) {
-            logger.warning("blocks.yml parsed " + keys.size() + " top-level entries but none of them"
-                + " defined a block. Each entry needs indented properties under it, e.g."
-                + " \"andesite:\" then \"  allowed: true\" on the next line.");
-        }
-
-        if (parsed.isEmpty() && !blockPropertiesCache.isEmpty()) {
-            logger.severe("Refusing to replace the working block configuration ("
-                + blockPropertiesCache.size() + " materials) with an empty one. Keeping the previous"
-                + " configuration; fix blocks.yml and reload again.");
-            return loaded;
         }
 
         blockPropertiesCache.clear();
@@ -107,6 +113,35 @@ public class BlockConfigManager {
      */
     public ConfigResources.Loaded reloadConfig() {
         return loadConfig();
+    }
+
+    /** Runs every top-level entry of {@code src} through the block parser into {@code target}. */
+    private void parseInto(FileConfiguration src, Map<Material, BlockProperties> target) {
+        for (String key : src.getKeys(false)) {
+            ConfigurationSection blockConfig = src.getConfigurationSection(key);
+            if (blockConfig == null) {
+                continue;
+            }
+            try {
+                parseBlockEntry(target, key, blockConfig);
+            } catch (Exception e) {
+                logger.warning("Failed to parse block config for '" + key + "': " + e.getMessage());
+            }
+        }
+    }
+
+    /** The blocks.yml bundled in the jar, or null if it cannot be read (already logged at SEVERE). */
+    private YamlConfiguration loadJarDefault() {
+        try (InputStream in = plugin.getResource("blocks.yml")) {
+            if (in == null) {
+                logger.severe("Bundled blocks.yml is missing from the jar; block configuration is empty.");
+                return null;
+            }
+            return YamlConfiguration.loadConfiguration(new InputStreamReader(in, StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            logger.severe("Could not read the bundled blocks.yml: " + e.getMessage());
+            return null;
+        }
     }
 
     private void parseBlockEntry(Map<Material, BlockProperties> target, String key, ConfigurationSection config) {
