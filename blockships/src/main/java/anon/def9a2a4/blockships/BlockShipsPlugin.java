@@ -45,6 +45,7 @@ public class BlockShipsPlugin extends JavaPlugin {
         new Metrics(this, pluginId);
 
         saveDefaultConfig();
+        ConfigResources.resetReporting();
 
         // Did config.yml actually parse? Bukkit answers a YAML error with an empty config backed by jar
         // defaults, so nothing downstream - including the migration below - can tell on its own.
