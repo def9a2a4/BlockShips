@@ -1,7 +1,11 @@
 package anon.def9a2a4.blockships;
 
+import anon.def9a2a4.blockships.customships.ShipWheelManager;
+import anon.def9a2a4.blockships.customships.ShipWheelManager.LockDecision;
+import anon.def9a2a4.blockships.customships.ShipWheelManager.WheelState;
 import anon.def9a2a4.blockships.customships.ShipWheelMenu;
 import anon.def9a2a4.blockships.customships.ShipWheelData;
+import anon.def9a2a4.blockships.util.LocationUtil;
 import org.bukkit.block.BlockFace;
 import org.junit.jupiter.api.Test;
 
@@ -117,5 +121,136 @@ class DecisionTableTest {
         java.util.Map<String, Object> row = new java.util.HashMap<>();
         row.put("x", 1); row.put("y", 2); row.put("z", 3); row.put("facing", "NORTH");
         assertNull(ShipWheelData.fromMap(row), "a row naming no world must quarantine, not crash the load");
+    }
+
+    /**
+     * {@code prunePending} is written only when true, like {@code locked}, so the common case adds no row
+     * weight — and it MUST be written when true, or an unlock-while-sailing forgets its debt across a
+     * restart and the stale materialized hull assembles glued. (The fromMap read-back needs a resolvable
+     * world, which a serverless test cannot provide; the write side is the half that silently rots.)
+     */
+    @Test
+    void prunePendingIsWrittenOnlyWhenTrue() {
+        ShipWheelData off = new ShipWheelData(new org.bukkit.Location(null, 1, 2, 3), BlockFace.NORTH);
+        assertFalse(off.toMap().containsKey("prune_pending"), "false must not be written at all");
+
+        ShipWheelData on = new ShipWheelData(new org.bukkit.Location(null, 1, 2, 3), BlockFace.NORTH);
+        on.setPrunePending(true);
+        assertEquals(Boolean.TRUE, on.toMap().get("prune_pending"));
+    }
+
+    // ── ShipWheelManager.decideLock ─────────────────────────────────────────────────────────────────────
+    //
+    // The pure head of toggleLock. Its inputs are sampled AFTER the ORPHAN reconcile, so ORPHAN rows below
+    // exercise totality (the function must answer), not a reachable production state.
+
+    /** The core unlock row: docked wheel, block present — clear the freeze AND prune the glue. */
+    @Test
+    void unlockOfADockedWheelPrunes() {
+        assertEquals(LockDecision.UNLOCK_AND_PRUNE,
+            ShipWheelManager.decideLock(true, false, WheelState.NOT_ASSEMBLED, true));
+    }
+
+    /**
+     * Unlocking while the ship is OUT must defer the prune, not drop it: mid-voyage there is no wheel skull
+     * to rewrite, and without the flag the whole materialized hull stays glued — every hull-adjacent slime
+     * joins via the sticky closure on the next assembly. {@code ownedBlockPresent} is irrelevant here; a
+     * planted look-alike at the empty dock must not change the answer.
+     */
+    @Test
+    void unlockWhileTheShipIsOutDefersThePrune() {
+        for (WheelState out : new WheelState[]{WheelState.LOADED, WheelState.UNLOADED_RECOVERABLE}) {
+            assertEquals(LockDecision.UNLOCK_DEFER_PRUNE,
+                ShipWheelManager.decideLock(true, false, out, false), out + ", no block");
+            assertEquals(LockDecision.UNLOCK_DEFER_PRUNE,
+                ShipWheelManager.decideLock(true, false, out, true), out + ", block present");
+        }
+    }
+
+    /**
+     * A wheel whose block is genuinely gone (not sailing — gone) unlocks record-only and must NOT get the
+     * pending flag: nothing would ever run its prune, so the flag would ride the record forever.
+     */
+    @Test
+    void unlockWithNoBlockAndNoShipOutIsRecordOnly() {
+        assertEquals(LockDecision.UNLOCK_RECORD_ONLY,
+            ShipWheelManager.decideLock(true, false, WheelState.NOT_ASSEMBLED, false));
+    }
+
+    /**
+     * The lock arm's refusal ORDER is what keeps each message accurate: still-loading before sailing before
+     * no-block, so the three states do not collapse into "it isn't where its record says".
+     */
+    @Test
+    void lockRefusalsKeepTheirOwnMessages() {
+        assertEquals(LockDecision.REFUSE_STILL_LOADING,
+            ShipWheelManager.decideLock(false, false, WheelState.UNLOADED_RECOVERABLE, true));
+        assertEquals(LockDecision.REFUSE_STILL_LOADING,
+            ShipWheelManager.decideLock(false, false, WheelState.UNLOADED_RECOVERABLE, false));
+        assertEquals(LockDecision.REFUSE_SAILING,
+            ShipWheelManager.decideLock(false, false, WheelState.LOADED, true));
+        assertEquals(LockDecision.REFUSE_NO_BLOCK,
+            ShipWheelManager.decideLock(false, false, WheelState.NOT_ASSEMBLED, false));
+        assertEquals(LockDecision.LOCK,
+            ShipWheelManager.decideLock(false, false, WheelState.NOT_ASSEMBLED, true));
+    }
+
+    /** Refreeze of a locked wheel takes the LOCK arm (a re-snapshot), never the unlock arm. */
+    @Test
+    void refreezeOfALockedWheelIsALock() {
+        assertEquals(LockDecision.LOCK,
+            ShipWheelManager.decideLock(true, true, WheelState.NOT_ASSEMBLED, true));
+        assertEquals(LockDecision.REFUSE_SAILING,
+            ShipWheelManager.decideLock(true, true, WheelState.LOADED, true));
+    }
+
+    /** Total: every input combination answers, including the post-reconcile-impossible ORPHAN rows. */
+    @Test
+    void decideLockIsTotal() {
+        for (boolean locked : new boolean[]{false, true}) {
+            for (boolean refreeze : new boolean[]{false, true}) {
+                for (WheelState s : WheelState.values()) {
+                    for (boolean present : new boolean[]{false, true}) {
+                        assertNotNull(ShipWheelManager.decideLock(locked, refreeze, s, present));
+                    }
+                }
+            }
+        }
+    }
+
+    // ── LocationUtil under a COLLECTED world reference ──────────────────────────────────────────────────
+
+    /**
+     * A Location whose weak world reference has been collected: {@code isWorldLoaded()} still answers true,
+     * and {@code getWorld()} throws {@code IllegalArgumentException("World unloaded")}.
+     *
+     * <p>Overriding only {@code getWorld()} would make these tests a tautology: {@code liveWorld} consults
+     * {@code isWorldLoaded()} FIRST, and for a null-world Location that reads the private Reference field
+     * and answers false without ever calling {@code getWorld()} — so a getWorld-only override is dead code
+     * and proves nothing beyond what {@code new Location(null, …)} already covers. Both overrides together
+     * are what force {@code liveWorld}'s {@code catch (Throwable)} to actually run.
+     */
+    private static org.bukkit.Location collectedWorldLocation(int x, int y, int z) {
+        return new org.bukkit.Location(null, x, y, z) {
+            @Override public boolean isWorldLoaded() { return true; }
+            @Override public org.bukkit.World getWorld() {
+                throw new IllegalArgumentException("World unloaded");
+            }
+        };
+    }
+
+    /** The throw path, not the null path: "I cannot tell" must resolve to "do not touch the block". */
+    @Test
+    void liveWorldAnswersNullNotAThrowForACollectedWorld() {
+        assertNull(LocationUtil.liveWorld(collectedWorldLocation(1, 2, 3)));
+    }
+
+    /** Everything layered on liveWorld inherits its totality through the same throw path. */
+    @Test
+    void derivedHelpersAreTotalForACollectedWorld() {
+        assertNull(LocationUtil.worldName(collectedWorldLocation(1, 2, 3)));
+        assertNull(LocationUtil.cellKey(collectedWorldLocation(1, 2, 3)));
+        assertFalse(LocationUtil.cellsAgree(collectedWorldLocation(1, 2, 3), collectedWorldLocation(1, 2, 3)),
+            "a cell in a collected world must answer 'does not agree', even against itself");
     }
 }
