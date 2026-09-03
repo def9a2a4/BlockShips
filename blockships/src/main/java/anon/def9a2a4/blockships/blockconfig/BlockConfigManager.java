@@ -47,68 +47,69 @@ public class BlockConfigManager {
     }
 
     /**
-     * Load block configuration from blocks.yml
+     * Load block configuration from blocks.yml.
+     *
+     * <p>Parses into a fresh map and swaps only once that succeeds. A reload must never leave the
+     * server holding a half-parsed allow-list: an admin who saves a typo and runs {@code /blockships
+     * reload} would otherwise trade a working config for jar defaults, live, with ships in the air.
+     *
+     * @return where the configuration came from, for the startup/reload summary
      */
-    public void loadConfig() {
-        blockPropertiesCache.clear();
-
+    public ConfigResources.Loaded loadConfig() {
         // Load blocks.yml from config/ override if present, else straight from the jar.
         // We deliberately do NOT extract a copy to disk: that copy would go stale and hide
         // newly-added blocks (e.g. *_shelf) on plugin updates.
-        FileConfiguration blocksConfig = ConfigResources.load(plugin, "blocks.yml");
+        ConfigResources.Loaded loaded = ConfigResources.loadDetailed(plugin, "blocks.yml");
+        FileConfiguration blocksConfig = loaded.config();
+
+        Map<Material, BlockProperties> parsed = new EnumMap<>(Material.class);
+        Set<String> keys = blocksConfig.getKeys(false);
 
         // Parse all block entries from root level
-        for (String key : blocksConfig.getKeys(false)) {
+        for (String key : keys) {
             ConfigurationSection blockConfig = blocksConfig.getConfigurationSection(key);
             if (blockConfig == null) {
                 continue;
             }
 
             try {
-                parseBlockEntry(key, blockConfig);
+                parseBlockEntry(parsed, key, blockConfig);
             } catch (Exception e) {
                 logger.warning("Failed to parse block config for '" + key + "': " + e.getMessage());
             }
         }
 
-        logger.info("Loaded block configuration for " + blockPropertiesCache.size() + " materials from blocks.yml");
+        // Valid YAML, entries present, and yet nothing resolved: every key was a scalar rather than a
+        // section, which is what mis-indented edits look like. Nothing else in the pipeline notices —
+        // the ships just quietly stop picking blocks up.
+        if (parsed.isEmpty() && !keys.isEmpty()) {
+            logger.warning("blocks.yml parsed " + keys.size() + " top-level entries but none of them"
+                + " defined a block. Each entry needs indented properties under it, e.g."
+                + " \"andesite:\" then \"  allowed: true\" on the next line.");
+        }
+
+        if (parsed.isEmpty() && !blockPropertiesCache.isEmpty()) {
+            logger.severe("Refusing to replace the working block configuration ("
+                + blockPropertiesCache.size() + " materials) with an empty one. Keeping the previous"
+                + " configuration; fix blocks.yml and reload again.");
+            return loaded;
+        }
+
+        blockPropertiesCache.clear();
+        blockPropertiesCache.putAll(parsed);
+        logger.info("Loaded block configuration for " + blockPropertiesCache.size()
+            + " materials from " + loaded.describeSource());
+        return loaded;
     }
 
     /**
      * Reload block configuration from blocks.yml
      */
-    public void reloadConfig() {
-        loadConfig();
+    public ConfigResources.Loaded reloadConfig() {
+        return loadConfig();
     }
 
-    private void parseOldFormat() {
-        // Legacy support: check if blocks are in config.yml instead
-        ConfigurationSection blocksSection = plugin.getConfig().getConfigurationSection("blocks");
-        if (blocksSection == null) {
-            return;
-        }
-
-        logger.info("Found legacy blocks configuration in config.yml, loading from there instead");
-        blockPropertiesCache.clear();
-
-        // Parse all block entries
-        for (String key : blocksSection.getKeys(false)) {
-            ConfigurationSection blockConfig = blocksSection.getConfigurationSection(key);
-            if (blockConfig == null) {
-                continue;
-            }
-
-            try {
-                parseBlockEntry(key, blockConfig);
-            } catch (Exception e) {
-                logger.warning("Failed to parse block config for '" + key + "': " + e.getMessage());
-            }
-        }
-
-        logger.info("Loaded block configuration for " + blockPropertiesCache.size() + " materials");
-    }
-
-    private void parseBlockEntry(String key, ConfigurationSection config) {
+    private void parseBlockEntry(Map<Material, BlockProperties> target, String key, ConfigurationSection config) {
         // Parse base properties
         boolean allowed = config.getBoolean("allowed", false);
 
@@ -138,13 +139,13 @@ public class BlockConfigManager {
             List<BlockProperties.ConditionalRule> conditionalRules = parseConditionalRules(rulesList);
             BlockProperties baseProps = new BlockProperties(allowed, weight, CollisionConfig.DEFAULT, leadable, seat, displayRotation, interaction, storage, conditionalRules);
 
-            applyToMaterials(key, baseProps);
+            applyToMaterials(target, key, baseProps);
         } else {
             // Simple non-conditional properties
             CollisionConfig collider = parseCollider(config.get("collider"));
             BlockProperties props = new BlockProperties(allowed, weight, collider, leadable, seat, displayRotation, interaction, storage, null);
 
-            applyToMaterials(key, props);
+            applyToMaterials(target, key, props);
         }
     }
 
@@ -172,42 +173,6 @@ public class BlockConfigManager {
         }
 
         return rules;
-    }
-
-    private BlockProperties.BlockDataMatcher createMatcher(ConfigurationSection conditionSection) {
-        Map<String, String> conditions = new HashMap<>();
-        for (String key : conditionSection.getKeys(false)) {
-            conditions.put(key, conditionSection.getString(key));
-        }
-
-        return blockData -> {
-            for (Map.Entry<String, String> condition : conditions.entrySet()) {
-                String property = condition.getKey();
-                String expectedValue = condition.getValue().toUpperCase();
-
-                // Check different block data types
-                if (blockData instanceof Slab slab) {
-                    if (property.equals("type") && !slab.getType().name().equals(expectedValue)) {
-                        return false;
-                    }
-                } else if (blockData instanceof Stairs stairs) {
-                    if (property.equals("half") && !stairs.getHalf().name().equals(expectedValue)) {
-                        return false;
-                    }
-                    if (property.equals("shape") && !stairs.getShape().name().equals(expectedValue)) {
-                        return false;
-                    }
-                    if (property.equals("facing") && !stairs.getFacing().name().equals(expectedValue)) {
-                        return false;
-                    }
-                } else if (blockData instanceof Orientable orientable) {
-                    if (property.equals("axis") && !orientable.getAxis().name().equals(expectedValue)) {
-                        return false;
-                    }
-                }
-            }
-            return true;
-        };
     }
 
     private BlockProperties.BlockDataMatcher createMatcherFromMap(Map<?, ?> conditionMap) {
@@ -298,24 +263,24 @@ public class BlockConfigManager {
         return new ShipModel.StorageConfig(storageType, name);
     }
 
-    private void applyToMaterials(String key, BlockProperties properties) {
+    private void applyToMaterials(Map<Material, BlockProperties> target, String key, BlockProperties properties) {
         if (WildcardMatcher.isTag(key)) {
             // Minecraft tag reference
             Set<Material> materials = resolveTag(key.substring(1));
             for (Material material : materials) {
-                blockPropertiesCache.putIfAbsent(material, properties);
+                target.putIfAbsent(material, properties);
             }
         } else if (WildcardMatcher.isWildcard(key)) {
             // Wildcard pattern
             Set<Material> materials = WildcardMatcher.getMatchingMaterials(key);
             for (Material material : materials) {
-                blockPropertiesCache.putIfAbsent(material, properties);
+                target.putIfAbsent(material, properties);
             }
         } else {
             // Specific material
             try {
                 Material material = Material.valueOf(key.toUpperCase());
-                blockPropertiesCache.putIfAbsent(material, properties);
+                target.putIfAbsent(material, properties);
             } catch (IllegalArgumentException e) {
                 logger.warning("Unknown material: " + key);
             }

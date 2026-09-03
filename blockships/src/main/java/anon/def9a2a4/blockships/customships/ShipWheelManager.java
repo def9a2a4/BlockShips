@@ -107,8 +107,23 @@ public class ShipWheelManager {
      * mechanism block index i) to reach {@code colliderEntity(i)}.
      */
     private void registerLeadsInSeam() {
-        anon.def9a2a4.corelib.MechanismRegistry mechRegistry =
-            anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry();
+        // Catch-Throwable-and-degrade, matching ShipWheelAnchors.register: this runs from the constructor,
+        // inside onEnable, so a corelib that loaded but failed to enable would otherwise take BlockShips
+        // down with it. Two caveats: nothing re-runs this, so a caught failure means leads-in transfer is
+        // off for the whole session (leashed entities are left behind at assembly); and catching here does
+        // NOT make a corelib-less server work — assembleShip calls getInstance() unguarded too. SEVERE, not
+        // warning: a half-enabled corelib needs an admin's eyes.
+        try {
+            registerLeadsInListener(
+                anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry());
+        } catch (Throwable t) {
+            plugin.getLogger().severe("Could not reach DefCoreLib's mechanism registry — leads-in transfer "
+                + "is disabled for this session (leashed entities will be left behind when a ship assembles). "
+                + "DefCoreLib likely failed to enable: " + t);
+        }
+    }
+
+    private void registerLeadsInListener(anon.def9a2a4.corelib.MechanismRegistry mechRegistry) {
         mechRegistry.addPreAirOutListener((mech, sourceBlocks) -> {
             // MechanismRegistry has no listener-removal, so on a BlockShips-only reload (CoreLib left running)
             // this lambda from the previous, now-disabled instance stays registered. Bail if that plugin is

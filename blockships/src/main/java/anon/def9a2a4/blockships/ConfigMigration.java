@@ -12,6 +12,14 @@ import org.bukkit.configuration.file.FileConfiguration;
  *
  * <p>Deliberately conservative: a value is only rewritten when it still matches what the old default
  * shipped as. A server that made a choice keeps it.
+ *
+ * <p><b>Never runs against a config.yml that failed to parse.</b> Bukkit turns a YAML error into an
+ * empty configuration with the jar's copy hung underneath as defaults, and {@code getInt(key, 0)} reads
+ * the section's own map without consulting those defaults - so an unreadable file looks exactly like a
+ * pre-versioned one, migration "upgrades" the empty stub, and {@link org.bukkit.plugin.Plugin#saveConfig()}
+ * writes it back over the admin's real settings. That is unrecoverable and survives a reinstall, since
+ * {@code saveDefaultConfig()} then sees a file present. The parse result is passed in rather than
+ * re-derived, because by this point {@code getConfig()} can no longer tell the two cases apart.
  */
 public final class ConfigMigration {
 
@@ -22,7 +30,10 @@ public final class ConfigMigration {
 
     private static final String VERSION_KEY = "config-version";
 
-    public static void run(BlockShipsPlugin plugin) {
+    public static void run(BlockShipsPlugin plugin, ConfigValidator.MainConfigStatus configStatus) {
+        // checkMainConfig already logged the failure; all we owe the admin here is to not touch the file.
+        if (configStatus.failedToParse()) return;
+
         FileConfiguration cfg = plugin.getConfig();
         int version = cfg.getInt(VERSION_KEY, 0);
         if (version >= CURRENT_VERSION) return;
@@ -72,8 +83,7 @@ public final class ConfigMigration {
 
         cfg.set(VERSION_KEY, CURRENT_VERSION);
         plugin.saveConfig();
-        if (changed) {
-            plugin.getLogger().info("Config upgraded to version " + CURRENT_VERSION + ".");
-        }
+        plugin.getLogger().info("Config upgraded to version " + CURRENT_VERSION
+            + (changed ? "." : " (no settings needed changing)."));
     }
 }

@@ -58,8 +58,9 @@ public final class ShipStats {
      * ALL thrust-based turning is speed-independent, so a side-mounted propeller steers a stopped ship
      * just as a reaction wheel does, and harder. The wheel's case is cost and mounting, not efficiency:
      * one power against a propeller's five, and it is the only turning a FLOOR mount can produce — a
-     * floor propeller blows straight down and classifies as VERTICAL. Per unit of power it does not
-     * win: 10 turning per power ties a large propeller and loses to a huge one's 12.5.
+     * propeller acts away from its mount, so a floor one blows straight UP and classifies as VERTICAL.
+     * Per unit of power it does not win: 10 turning per power ties a large propeller and loses to a
+     * huge one's 12.5.
      *
      * @param speedFrac current speed as a fraction of top speed, 0..1
      */

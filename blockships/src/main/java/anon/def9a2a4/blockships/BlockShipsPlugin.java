@@ -46,11 +46,15 @@ public class BlockShipsPlugin extends JavaPlugin {
 
         saveDefaultConfig();
 
+        // Did config.yml actually parse? Bukkit answers a YAML error with an empty config backed by jar
+        // defaults, so nothing downstream - including the migration below - can tell on its own.
+        ConfigValidator.MainConfigStatus configStatus = ConfigValidator.checkMainConfig(this);
+
         // Upgrade an existing config.yml. saveDefaultConfig() writes the file once and never again, so
         // a changed default only reaches a running server through here.
-        ConfigMigration.run(this);
+        ConfigMigration.run(this, configStatus);
 
-        // Warn if bundled resource files (blocks, items, prefab ships) are outdated
+        // Warn about files on disk that the plugin does not read, and overrides that are going stale
         ConfigValidator.checkForOutdatedResources(this);
 
         // Install the WorldGuard integration hook (or a no-op) before anything can assemble/disassemble
@@ -136,6 +140,9 @@ public class BlockShipsPlugin extends JavaPlugin {
             Bukkit.getPluginManager().registerEvents(specialDrownedListener, this);
             getLogger().info("Special drowned spawning enabled.");
         }
+
+        // Last, so every content file (blocks, items, prefab models) has been resolved by now.
+        getLogger().info(ConfigResources.describeSources());
 
         getLogger().info("BlockShips enabled.");
     }
@@ -548,6 +555,9 @@ public class BlockShipsPlugin extends JavaPlugin {
                     return true;
                 }
                 reloadConfig();
+                // An unparseable config.yml leaves getConfig() serving jar defaults, so every reload
+                // below would silently apply the wrong values. Check before, and tell the sender.
+                ConfigValidator.MainConfigStatus reloadedStatus = ConfigValidator.checkMainConfig(this);
                 // Reload global physics config
                 ShipInstance.loadGlobalPhysicsConfig(this);
                 // Re-initialize ship-to-ship collision coordinator with new config
@@ -558,7 +568,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                     displayShip.reload();
                 }
                 // Reload block configuration
-                BlockConfigManager.getInstance().reloadConfig();
+                ConfigResources.Loaded reloadedBlocks = BlockConfigManager.getInstance().reloadConfig();
                 // Re-apply the WorldGuard integration (installs impl or no-op per the possibly-toggled config)
                 setupWorldGuardHook();
                 // Reload help book content
@@ -573,7 +583,22 @@ public class BlockShipsPlugin extends JavaPlugin {
                         Bukkit.getPluginManager().registerEvents(specialDrownedListener, this);
                     }
                 }
+                // Re-check for files on disk that nothing reads. onEnable does this too, but an admin
+                // who drops a file in and reloads is exactly the person who needs to hear about it.
+                ConfigValidator.checkForOutdatedResources(this);
+
                 sender.sendMessage("§aBlockShips config reloaded!");
+                // The admin editing these files is in-game, not watching the console. Say which copy of
+                // each file is actually in force, or #43 happens again.
+                if (reloadedStatus.failedToParse()) {
+                    sender.sendMessage("§cconfig.yml did not parse: " + reloadedStatus.parseError());
+                    sender.sendMessage("§cEvery setting in it is being ignored - running on defaults."
+                        + " The file has not been modified.");
+                }
+                if (reloadedBlocks.error() != null) {
+                    sender.sendMessage("§cconfig/blocks.yml did not parse: " + reloadedBlocks.error());
+                }
+                sender.sendMessage("§7" + ConfigResources.describeSources());
                 return true;
             }
 

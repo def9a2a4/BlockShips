@@ -13,7 +13,6 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -201,25 +200,39 @@ public class ShipWorldData {
         // path answers "Ship is still loading — try again in a moment". Only an admin command clears it.
         final long generationAtSubmit = deletionGeneration(shipId);
 
-        // Write: file I/O on async thread
+        // Write: file I/O on async thread.
+        //
+        // Catch-and-rollback around the SUBMIT, mirroring markDirty — deliberately NOT an outer try/finally.
+        // The decrement lives in the task's own finally, so an outer finally would run in ADDITION to it
+        // whenever the submit succeeds: double-decrement, negative counter, and the shutdown drain
+        // (`while pending > 0`) exits immediately with writes still in flight. Only a submit that THROWS
+        // (executor rejected/shut down) leaves the increment un-paired — and a leaked increment is the
+        // mirror-image failure: the drain waits its full timeout on every stop, and the size-gated
+        // deletionGenerations eviction (gated on pending == 0) never runs again, so that map grows for the
+        // life of the server.
         pendingIOOperations.incrementAndGet();
-        ioExecutor.submit(() -> {
-            try {
-                if (deletionGeneration(shipId) != generationAtSubmit) {
-                    // The ship was deleted after this write was queued. Dropping the write is the whole point.
-                    return;
+        try {
+            ioExecutor.submit(() -> {
+                try {
+                    if (deletionGeneration(shipId) != generationAtSubmit) {
+                        // The ship was deleted after this write was queued. Dropping the write is the whole point.
+                        return;
+                    }
+                    File shipFile = getShipFile(worldName, shipId);
+                    shipFile.getParentFile().mkdirs();
+                    if (writeConfigAtomic(shipFile, config)) {
+                        metadataExistsCache.put(worldName + ":" + shipId, true);
+                    }
+                } catch (Exception e) {
+                    plugin.getLogger().severe("Failed to async save ship metadata for " + shipId + ": " + e.getMessage());
+                } finally {
+                    pendingIOOperations.decrementAndGet();
                 }
-                File shipFile = getShipFile(worldName, shipId);
-                shipFile.getParentFile().mkdirs();
-                if (writeConfigAtomic(shipFile, config)) {
-                    metadataExistsCache.put(worldName + ":" + shipId, true);
-                }
-            } catch (Exception e) {
-                plugin.getLogger().severe("Failed to async save ship metadata for " + shipId + ": " + e.getMessage());
-            } finally {
-                pendingIOOperations.decrementAndGet();
-            }
-        });
+            });
+        } catch (Throwable t) {
+            pendingIOOperations.decrementAndGet();   // the task never ran; unwind its increment
+            plugin.getLogger().severe("Could not queue the metadata save for ship " + shipId + ": " + t);
+        }
     }
 
     /**
@@ -281,22 +294,6 @@ public class ShipWorldData {
         config.set("current_yaw", ship.physics.currentYaw);
 
         return config;
-    }
-
-    /**
-     * Loads ship metadata asynchronously from per-world storage.
-     * Returns a CompletableFuture that completes with the ShipState.
-     */
-    public CompletableFuture<ShipPersistence.ShipState> loadShipMetadataAsync(World world, UUID shipId) {
-        String worldName = world.getName();
-        pendingIOOperations.incrementAndGet();
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                return loadShipMetadataSync(worldName, shipId).state();
-            } finally {
-                pendingIOOperations.decrementAndGet();
-            }
-        }, ioExecutor);
     }
 
     /** Outcome of reading one sidecar. See {@link #loadShipMetadataChecked}. */

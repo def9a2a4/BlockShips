@@ -2396,9 +2396,10 @@ public class DisplayShip implements Listener {
         // be LOST" — Lock and Fire Cannons all act on the world, and of the menu's actions only Assemble
         // carried a permission check of its own. See onShipWheelMenuClick for the per-action gating.
         //
-        // LOW priority is deliberate and paired with onPlaceShipWheel returning uncancelled for this block:
-        // both handlers live in this listener, and at equal priority their order is getDeclaredMethods()
-        // order — unspecified. Running first makes "menu opens" independent of that ordering.
+        // LOW priority is deliberate: onPlaceShipWheel sits at NORMAL and now CANCELS for a block that
+        // resolves to a tracked wheel (see its comment), so this handler must run FIRST — at equal priority
+        // their order would be getDeclaredMethods() order, unspecified. LOW-before-NORMAL makes "menu opens,
+        // then the placement pass suppresses the off-hand plant" a guaranteed sequence, not a lucky one.
         if (event.isCancelled()) return;
 
         Block block = event.getClickedBlock();

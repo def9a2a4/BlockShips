@@ -854,7 +854,7 @@ public class BlockStructureScanner {
             }
 
             // Persist a block's custom name (anvil-renamed containers, banners, ...) - Nameable tile-entity
-            // NBT that blockdata can't carry. Restored generically in placeBlocks; used as the storage GUI title.
+            // NBT that blockdata can't carry. Restored generically at landing; used as the storage GUI title.
             if (block.getState() instanceof org.bukkit.Nameable nameable) {
                 net.kyori.adventure.text.Component cn = nameable.customName();
                 if (cn != null) {
@@ -1036,7 +1036,7 @@ public class BlockStructureScanner {
 
         // O(1) gate: only pay per-cell WorldGuard queries in worlds that actually have regions.
         // Admin toggle: unattended/system paths (player == null) opting into place-anyway see no regions,
-        // so no cell is counted as protected (matches placeBlocks, which places them normally). Under
+        // so no cell is counted as protected (matching the landing seams, which place them normally). Under
         // failClosedOnWgError the gate itself fails closed so a WG fault doesn't skip the whole scan.
         anon.def9a2a4.blockships.integration.WorldGuardHook wg = anon.def9a2a4.blockships.integration.WorldGuardHook.get();
         boolean wgOn = (failClosedOnWgError ? wg.mightRestrictFailClosed(wheelLocation.getWorld())
