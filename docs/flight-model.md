@@ -145,8 +145,9 @@ airship without them.
    mounted to. A reaction wheel is the exception: it is turn-only before its facing is even read, so
    the mount rule does not apply to it.
 5. **A "helicopter":** no buoyant blocks at all, flying on floor-mounted propellers. A propeller is a
-   *consumer*, so this needs a power source — a windmill, water wheel or engine — on the same rotation
-   network. Takes off, and stops climbing the moment power drops.
+   *consumer*, so this needs a power source — a windmill or an engine — on the same rotation network.
+   (Not a water wheel: it supplies power in the static world but only *transmits* aboard a moving
+   mechanism, so a ship built on one never spins up.) Takes off, and stops climbing the moment power drops.
 
 ## Where this lives in the code
 
