@@ -33,10 +33,11 @@ const {
 // Configuration
 const INTERACTIVE = process.argv.includes('--interactive')
 
-// Tests to skip on specific MC versions (key = version, value = array of test key substrings)
-const VERSION_SKIPS = {
-  '1.21.4': ['smallship']
-}
+// Tests to skip on specific MC versions (key = version, value = array of test key substrings).
+// The old '1.21.4': ['smallship'] entry was dead — nothing runs this suite on 1.21.4 (getVersion()'s
+// fallback is 1.21.1 and the Makefile/CI run 1.21.1/1.21.11/26.x) — unlike chunk-test's 1.21.1 entry,
+// which IS live for local runs.
+const VERSION_SKIPS = {}
 
 // Runway coordinates
 const RUNWAY_X = 0
@@ -268,13 +269,21 @@ async function testShipControls(shipType) {
     passed = false
   }
 
+  // Heading fence: north must DOMINATE sideways, not merely clear the -2.0 bar — the dZ gate alone would
+  // pass a ship that mostly slid west with a little northward drift, which is what a wrong heading looks
+  // like. Ten real CI data points pass this with >=4.5x margin, so it will not flake on turn-radius drift.
+  if (Math.abs(dx) >= Math.abs(dz)) {
+    fail(shipType, `Sideways movement dominates (|dX|=${Math.abs(dx).toFixed(2)} >= |dZ|=${Math.abs(dz).toFixed(2)}) — the heading is wrong`)
+    passed = false
+  }
+
   if (isAirship && dy < 2.0) {
     fail(shipType, `Expected >=2 blocks upward (positive Y), got dY=${dy.toFixed(2)} (moved ${dy < 0 ? 'down' : dy > 0 ? 'up but <2' : 'nowhere'})`)
     passed = false
   }
 
   if (passed) {
-    pass(`${shipType} (movement=${totalMovement.toFixed(1)}, west=${Math.abs(dx).toFixed(1)}${isAirship ? ', up=' + dy.toFixed(1) : ''})`)
+    pass(`${shipType} (movement=${totalMovement.toFixed(1)}, north=${Math.abs(dz).toFixed(1)}${isAirship ? ', up=' + dy.toFixed(1) : ''})`)
   }
 }
 
@@ -347,13 +356,19 @@ async function testCustomShipBase(testName, buildConfig, isAirship = false) {
     passed = false
   }
 
+  // Heading fence — see the note in testShipControls above.
+  if (Math.abs(dx) >= Math.abs(dz)) {
+    fail(testName, `Sideways movement dominates (|dX|=${Math.abs(dx).toFixed(2)} >= |dZ|=${Math.abs(dz).toFixed(2)}) — the heading is wrong`)
+    passed = false
+  }
+
   if (isAirship && dy < 2.0) {
     fail(testName, `Expected >=2 blocks upward (positive Y), got dY=${dy.toFixed(2)} (moved ${dy < 0 ? 'down' : dy > 0 ? 'up but <2' : 'nowhere'})`)
     passed = false
   }
 
   if (passed) {
-    pass(`${testName} (movement=${totalMovement.toFixed(1)}, west=${Math.abs(dx).toFixed(1)}${isAirship ? ', up=' + dy.toFixed(1) : ''})`)
+    pass(`${testName} (movement=${totalMovement.toFixed(1)}, north=${Math.abs(dz).toFixed(1)}${isAirship ? ', up=' + dy.toFixed(1) : ''})`)
   }
 }
 
@@ -512,6 +527,13 @@ async function testWeirdBlocksShip() {
     fail(testName, `Dismount failed: ${dismountError}`)
     return
   }
+  // NOTE: total movement alone is a weak assertion here. Dismount adds a ~1-block seat offset and the
+  // settle wait lets the player fall, so a ship that never moved can clear 2.0 on its own. The other
+  // two ship tests gate on dZ (these hulls are driven NORTH; steering is ship-relative, and this ship
+  // is built by the same helper with the wheel in the same cell). The same gate belongs here, but this
+  // hull carries 1 wool + 1 banner against custom_ship's 1 wool + 3 banners and no run has ever logged
+  // its per-axis figures — so report dZ now, read it from a real run, and set the threshold from that
+  // rather than assuming custom_ship's -2.0 transfers.
   if (totalMovement < 2.0) {
     fail(testName, `Insufficient movement (total=${totalMovement.toFixed(2)}, need >=2)`)
     return
@@ -580,7 +602,7 @@ async function testWeirdBlocksShip() {
     return
   }
 
-  pass(`${testName} (shulkers=${spawned.length}, movement=${totalMovement.toFixed(1)}, coal=${coalInHopper})`)
+  pass(`${testName} (shulkers=${spawned.length}, movement=${totalMovement.toFixed(1)}, north=${Math.abs(dz).toFixed(1)}, coal=${coalInHopper})`)
 }
 
 // Scan a small cube around `center` for the first block whose name matches `blockName`.

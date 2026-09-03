@@ -423,11 +423,14 @@ async function testPostRecoverySteeringBase(testName, spawnFn, isAirship = false
   // Wait for ship to settle before dismounting
   await sleep(3000)
 
-  // Dismount FIRST, then measure position (same approach as test-bot.js)
+  // Dismount FIRST, then measure position (same approach as test-bot.js). 500ms settle to match the main
+  // suite: mineflayer freezes self-position while mounted (shouldUsePhysics=false until a position packet
+  // arrives), so an early read here returns the mount-time value — the stale read the main suite already
+  // fixed. Cloned so a later physics tick can't mutate the snapshot under the assertions below.
   await customDismount(bot, log)
-  await sleep(300)
+  await sleep(500)
 
-  const endPos = bot.entity.position
+  const endPos = bot.entity.position.clone()
   // Assert DIRECTIONAL propulsion after recovery: the recovered ship faces north and drives north
   // (negative Z), so require >=10 blocks northward. This replaces a total-distance > 1.0 check that
   // was a false negative — the vertical/seat dismount offset alone cleared it even for a dead ship.

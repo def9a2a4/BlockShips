@@ -134,6 +134,13 @@ async function clearInventory(bot) {
   await sleep(300)
 }
 
+// HEADING INVARIANT, written down once because every directional assertion in both suites leans on it:
+// the bots are teleported with INTEGER coordinate literals, and vanilla /tp CENTRE-CORRECTS those
+// (`/tp @s 1000 100 0` lands at x=1000.5, z=0.5). A floor wheel's facing comes from the placing player's
+// position via a 16-way rotation snapped to cardinal — and thanks to the centring, the bot stands exactly
+// one block south of the wheel cell, dead centre, so the delta is exactly (0,·,-1): yaw 180, NORTH, no
+// 45-degree tie. Change the teleport to non-integer literals (or move the bot's stand-cell) and every
+// dz/heading assertion silently starts testing a different bearing.
 function findWaterNearby(bot, pos, maxZOffset = -5) {
   for (let zOffset = -1; zOffset >= maxZOffset; zOffset--) {
     const checkPos = pos.offset(0, -1, zOffset)
@@ -222,6 +229,11 @@ const CUSTOM_SHIP = {
   }
 }
 
+// NOTE the 'W' here is in LAYER 0 (deck level), unlike CUSTOM_SHIP's layer-1 wheel. That routes wheel
+// placement through a different branch entirely: the north neighbour wins the face pick, the wheel goes on
+// as a WALL head, and the wall-head path derives facing from the clicked face — player yaw is never
+// consulted, so the /tp centring note above doesn't protect this ship. Moving 'W' between layers changes
+// the assembled heading silently; if you touch it, re-read the dz assertions first.
 const CUSTOM_AIRSHIP = {
   layers: [
     ["G P G",
