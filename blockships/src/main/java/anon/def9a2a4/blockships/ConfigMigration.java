@@ -1,6 +1,7 @@
 package anon.def9a2a4.blockships;
 
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.plugin.Plugin;
 
 /**
  * One-shot config upgrades for servers that already have a {@code config.yml} on disk.
@@ -30,7 +31,7 @@ public final class ConfigMigration {
 
     private static final String VERSION_KEY = "config-version";
 
-    public static void run(BlockShipsPlugin plugin, ConfigValidator.MainConfigStatus configStatus) {
+    public static void run(Plugin plugin, ConfigValidator.MainConfigStatus configStatus) {
         // checkMainConfig already logged the failure; all we owe the admin here is to not touch the file.
         if (configStatus.failedToParse()) return;
 

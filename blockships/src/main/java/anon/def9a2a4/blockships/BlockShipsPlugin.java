@@ -555,6 +555,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                     return true;
                 }
                 reloadConfig();
+                ConfigResources.resetReporting();
                 // An unparseable config.yml leaves getConfig() serving jar defaults, so every reload
                 // below would silently apply the wrong values. Check before, and tell the sender.
                 ConfigValidator.MainConfigStatus reloadedStatus = ConfigValidator.checkMainConfig(this);

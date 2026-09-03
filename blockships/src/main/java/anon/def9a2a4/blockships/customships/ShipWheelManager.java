@@ -228,9 +228,8 @@ public class ShipWheelManager {
             return true;
         }
         File wheelsFile = new File(plugin.getDataFolder(), WHEELS_FILE);
-        org.bukkit.configuration.file.YamlConfiguration config = new org.bukkit.configuration.file.YamlConfiguration();
 
-        // Serialise INSIDE the try, so one bad record cannot cost the whole write. That mattered because
+        // Serialise with a PER-ROW catch, so one bad record cannot cost the whole write. That mattered because
         // toMap used to read Location.getWorld(), which THROWS once its weak reference to an unloaded world
         // is collected — a single wheel in a world unloaded at runtime made every save throw, which then
         // propagated out of onDisable before the ship subsystem was shut down or the IO executor drained, so
@@ -245,42 +244,56 @@ public class ShipWheelManager {
         // below publishes by atomic rename. So a skipped row is DELETED FROM DISK, permanently. The message
         // says so; the one it replaced claimed the opposite, which is how this went unnoticed.
         List<Map<String, Object>> wheelList = new ArrayList<>();
-        File tmp = new File(wheelsFile.getParentFile(), WHEELS_FILE + ".tmp");
-        try {
-            for (ShipWheelData data : placedWheels.values()) {
-                try {
-                    wheelList.add(data.toMap());
-                } catch (Throwable t) {
-                    plugin.getLogger().severe("Could not serialise ship wheel " + data.getWheelId()
-                        + " — IT WILL BE DROPPED FROM " + WHEELS_FILE + " BY THIS SAVE. Back up that file "
-                        + "now if the wheel matters: " + t);
-                }
+        for (ShipWheelData data : placedWheels.values()) {
+            try {
+                wheelList.add(data.toMap());
+            } catch (Throwable t) {
+                plugin.getLogger().severe("Could not serialise ship wheel " + data.getWheelId()
+                    + " — IT WILL BE DROPPED FROM " + WHEELS_FILE + " BY THIS SAVE. Back up that file "
+                    + "now if the wheel matters: " + t);
             }
-            // Re-emit rows that could not be parsed at load — almost always because their world had not been
-            // loaded yet. Without this, saving is destructive: loadAll drops those rows and the very next save
-            // rewrites the file without them, permanently deleting every wheel in a world that a world manager
-            // enables after us.
-            wheelList.addAll(unresolvedRows);
-            config.set("wheels", wheelList);
+        }
+        // Re-emit rows that could not be parsed at load — almost always because their world had not been
+        // loaded yet. Without this, saving is destructive: loadAll drops those rows and the very next save
+        // rewrites the file without them, permanently deleting every wheel in a world that a world manager
+        // enables after us.
+        wheelList.addAll(unresolvedRows);
 
-            // Atomic: write a temp sibling, then rename. config.save() truncates in place, so a crash, kill
-            // or ENOSPC mid-write left a truncated ship_wheels.yml — and loadConfiguration swallows the parse
-            // error and hands back an EMPTY config, so the next boot loaded zero wheels and the very next
-            // save wrote that empty set back. Every wheel on the server, gone, with no error a player would
-            // ever see.
-            //
-            // A fixed temp name is safe here (unlike the sidecars): saveAll is main-thread only.
+        if (!writeWheelRows(wheelsFile, wheelList, plugin.getLogger())) return false;
+        plugin.getLogger().info("Saved " + wheelList.size() + " ship wheels to " + WHEELS_FILE);
+        return true;
+    }
+
+    /**
+     * Writes {@code rows} to {@code target} as its {@code wheels} list, publishing by atomic rename through
+     * a {@code .tmp} sibling. Static and server-free (YamlConfiguration touches Bukkit only in its load
+     * error paths), so the write contract is unit-testable: the rows handed in are the rows on disk, the
+     * live file survives a failed write, and no {@code .tmp} is left behind. The per-row {@code toMap}
+     * catch and the {@code unresolvedRows} re-emission stay in {@link #saveAll} and are NOT covered by that
+     * test.
+     *
+     * <p>Atomic, because {@code config.save()} truncates in place: a crash, kill or ENOSPC mid-write left a
+     * truncated ship_wheels.yml — and {@code loadConfiguration} swallows the parse error and hands back an
+     * EMPTY config, so the next boot loaded zero wheels and the very next save wrote that empty set back.
+     * Every wheel on the server, gone, with no error a player would ever see.
+     *
+     * <p>A fixed temp name is safe here (unlike the sidecars): saveAll is main-thread only.
+     */
+    static boolean writeWheelRows(File target, List<Map<String, Object>> rows, java.util.logging.Logger log) {
+        org.bukkit.configuration.file.YamlConfiguration config = new org.bukkit.configuration.file.YamlConfiguration();
+        File tmp = new File(target.getParentFile(), target.getName() + ".tmp");
+        try {
+            config.set("wheels", rows);
             config.save(tmp);
             try {
-                Files.move(tmp.toPath(), wheelsFile.toPath(),
+                Files.move(tmp.toPath(), target.toPath(),
                     StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             } catch (AtomicMoveNotSupportedException notAtomic) {
-                Files.move(tmp.toPath(), wheelsFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                Files.move(tmp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
             }
-            plugin.getLogger().info("Saved " + wheelList.size() + " ship wheels to " + WHEELS_FILE);
             return true;
         } catch (Exception e) {
-            plugin.getLogger().severe("Failed to save ship wheels: " + e.getMessage());
+            log.severe("Failed to save ship wheels: " + e.getMessage());
             // The live file is untouched — the previous good content survives.
             if (tmp.exists() && !tmp.delete()) tmp.deleteOnExit();
             return false;
@@ -1389,6 +1402,47 @@ public class ShipWheelManager {
     /** Result of {@link #resolveWheelState}: the derived state plus the live ship when {@code LOADED}. */
     public record WheelResolution(WheelState state, @Nullable ShipInstance ship) {}
 
+    /** What {@link #toggleLock} should do, decided purely by {@link #decideLock}. */
+    public enum LockDecision {
+        /** Unlock a docked wheel: clear {@code naturalFrozen} AND prune the glue to manual-only. */
+        UNLOCK_AND_PRUNE,
+        /** Unlock while the ship is out: record-only, set {@code prunePending} — the landing pays the prune. */
+        UNLOCK_DEFER_PRUNE,
+        /** Unlock with no resolvable block and no ship out: record-only, and no pending flag. */
+        UNLOCK_RECORD_ONLY,
+        /** Lock/refreeze refused: the ship is mid-recovery, a detect would read air. */
+        REFUSE_STILL_LOADING,
+        /** Lock/refreeze refused: the ship is out, there is no skull to write glue on. */
+        REFUSE_SAILING,
+        /** Lock/refreeze refused: the record's cell does not observably hold this wheel's block. */
+        REFUSE_NO_BLOCK,
+        /** Proceed to scan and freeze. The impure tail (scan failure, size caps) is downstream of this. */
+        LOCK
+    }
+
+    /**
+     * The pure head of {@link #toggleLock}: every input is a value and there is no world access, so the full
+     * decision table is unit-testable (see {@code DecisionTableTest}). Total over all inputs.
+     *
+     * <p>{@code state} and {@code ownedBlockPresent} must BOTH be sampled <b>after</b> the ORPHAN reconcile:
+     * reconciling nulls the link, which revives {@code ownsBlock}'s legacy arm for an unstamped wheel whose
+     * head is back at its dock — so a pre-reconcile sample of either input mis-answers for exactly the
+     * wheels the unlock prune exists for. (A post-reconcile {@code state} is never ORPHAN; the table still
+     * answers for it — as its reconciled equivalent — so the function is total.)
+     */
+    public static LockDecision decideLock(boolean locked, boolean refreeze, WheelState state,
+                                          boolean ownedBlockPresent) {
+        boolean shipIsOut = state == WheelState.LOADED || state == WheelState.UNLOADED_RECOVERABLE;
+        if (locked && !refreeze) {
+            if (shipIsOut) return LockDecision.UNLOCK_DEFER_PRUNE;
+            return ownedBlockPresent ? LockDecision.UNLOCK_AND_PRUNE : LockDecision.UNLOCK_RECORD_ONLY;
+        }
+        if (state == WheelState.UNLOADED_RECOVERABLE) return LockDecision.REFUSE_STILL_LOADING;
+        if (state == WheelState.LOADED) return LockDecision.REFUSE_SAILING;
+        if (!ownedBlockPresent) return LockDecision.REFUSE_NO_BLOCK;
+        return LockDecision.LOCK;
+    }
+
     /**
      * Toggle the wheel's lock, or re-freeze one that is already locked. Locking is DOCKED-ONLY: it materializes
      * the ship's current membership (a fresh detect, including glued cells) into the wheel's glue offsets and
@@ -1403,87 +1457,81 @@ public class ShipWheelManager {
     public @Nullable String toggleLock(Player player, ShipWheelData wheelData, boolean refreeze) {
         Location wheelLoc = wheelData.getBlockLocation();
 
-        // ── Unlock ──────────────────────────────────────────────────────────────────────────────────────
-        if (wheelData.isLocked() && !refreeze) {
-            // Unlocking is a RECORD-ONLY write: naturalFrozen lives on ShipWheelData, so it is legal from
-            // anywhere, including mid-voyage. It must not be gated on the wheel's block. ownedBlock is null
-            // for every sailing wheel by construction — the dock stands empty for the whole voyage — so an
-            // ownership gate at the top of this method refuses unlock on exactly the ships whose owners are
-            // most likely to want it, and tells them to fetch an admin. The gate belongs on the prune below,
-            // which is the only part that touches the world.
-            wheelData.setNaturalFrozen(false);
-
-            // Reconcile a confused link first, exactly as the lock arm below does: an ORPHAN whose own head
-            // is back at the dock must still self-prune, and reconciling converts it to NOT_ASSEMBLED so the
-            // state gate below keeps it. Gated on ORPHAN — running reconcileOrphan unconditionally would
-            // null a LOADED ship's link.
-            WheelResolution unlockRes = resolveWheelState(wheelData);
-            if (unlockRes.state() == WheelState.ORPHAN) {
-                reconcileOrphan(wheelData);
-                unlockRes = resolveWheelState(wheelData);
-            }
-
-            // Prune the materialized hull back to manual-only: cells the natural flood fill will re-derive on
-            // its own need not stay glued. Docked only — mid-flight there is no wheel skull to rewrite.
-            //
-            // ownedBlock, not "not air": writeCells REPLACES the block's offset array, so on a foreign block
-            // it deletes that block's own glue and substitutes this ship's hull. A menu opened before this
-            // wheel was destroyed, plus a corelib rotator or hoist since placed on the vacated cell (both
-            // store their offsets in the same skull PDC), is enough to silently rebind a neighbour's
-            // structure. This is also what distinguishes an ORPHAN whose dock now holds a stranger's rotator
-            // from one whose own head is back: the former prunes nothing, the latter prunes itself.
-            //
-            // Sampled AFTER the reconcile, deliberately: nulling an orphan's link revives ownsBlock's legacy
-            // arm for an unstamped wheel whose head is back at its dock (detectShip documents the same case),
-            // so a sample taken before the reconcile misses exactly the wheels this prune exists for.
-            Block wheelBlock = ownedBlock(wheelData);
-            if (wheelBlock != null && unlockRes.state() == WheelState.NOT_ASSEMBLED) {
-                pruneGlueToManual(wheelData, wheelBlock);
-                wheelData.setPrunePending(false);   // any older deferred prune is subsumed by this one
-            } else if (unlockRes.state() == WheelState.LOADED
-                    || unlockRes.state() == WheelState.UNLOADED_RECOVERABLE) {
-                // The ship is OUT — there is no wheel skull to prune, so the whole materialized hull stays
-                // glued: every hull-adjacent slime joins via the sticky closure, and a cell a stranger has
-                // since built on becomes a forced member and a fill seed. Record the debt; assembleShip and
-                // disassembleShip's landing pay it. ONLY on ship-is-out — a wheel whose block is genuinely
-                // gone (NOT_ASSEMBLED, no owned block) must not carry the flag forever.
-                wheelData.setPrunePending(true);
-            }
-            saveAll();
-            return "Unlocked — this ship will pick up connected blocks again when it assembles.";
-        }
-
-        // ── Lock / refreeze (docked only) ───────────────────────────────────────────────────────────────
+        // Reconcile a confused link before ANY decision — both arms need it. An ORPHAN whose own head is
+        // back at the dock must still self-prune on unlock, and a lock snapshot of an orphan is meaningless
+        // until its stale mechanism is torn down. Gated on ORPHAN: running reconcileOrphan unconditionally
+        // would null a LOADED ship's link. (Reconcile cannot produce UNLOADED_RECOVERABLE, so hoisting it
+        // above the lock arm's still-loading refusal changes nothing there.)
         WheelResolution res = resolveWheelState(wheelData);
-        // A detect on an unloaded chunk reads air and would freeze a one-block ship. ORPHAN is a confused link
-        // rather than a live ship; reconcile it first so the snapshot is meaningful.
-        if (res.state() == WheelState.UNLOADED_RECOVERABLE) {
-            player.sendMessage("§cShip is still loading — try again in a moment.");
-            return null;
-        }
         if (res.state() == WheelState.ORPHAN) {
             reconcileOrphan(wheelData);
             res = resolveWheelState(wheelData);
         }
-        if (res.ship() != null) {
-            // Docked-only: a flying ship's hull is aired out, so there is no wheel skull to store glue on.
-            player.sendMessage("§cDock the ship before locking it.");
-            return null;
-        }
 
-        // Locking DOES need the block — it scans from it and writes the result into its PDC. Taken here,
-        // after the state arms, so each refusal gets its accurate message: a sailing ship is told to dock and
-        // a loading one to wait, rather than all three collapsing into "it isn't where its record says".
-        // Note the reconcileOrphan above is now reachable with an empty dock, which is intended: an orphan's
-        // stale mechanism is worth tearing down whether or not its head came back.
+        // Sampled AFTER the reconcile, deliberately: nulling an orphan's link revives ownsBlock's legacy
+        // arm for an unstamped wheel whose head is back at its dock (detectShip documents the same case),
+        // so a sample taken before the reconcile misses exactly the wheels the unlock prune exists for.
+        //
+        // ownedBlock, not "not air": writeCells REPLACES the block's offset array, so on a foreign block
+        // it deletes that block's own glue and substitutes this ship's hull. A menu opened before this
+        // wheel was destroyed, plus a corelib rotator or hoist since placed on the vacated cell (both
+        // store their offsets in the same skull PDC), is enough to silently rebind a neighbour's
+        // structure. This is also what distinguishes an ORPHAN whose dock now holds a stranger's rotator
+        // from one whose own head is back: the former prunes nothing, the latter prunes itself.
         Block wheelBlock = ownedBlock(wheelData);
-        if (wheelBlock == null) {
-            if (player != null) {
-                player.sendMessage("§cThat ship wheel isn't where its record says it is — nothing was changed. "
-                    + "If it was moved, right-click the wheel itself; if it's gone, ask an admin for "
-                    + "/blockships wheels adopt.");
+
+        switch (decideLock(wheelData.isLocked(), refreeze, res.state(), wheelBlock != null)) {
+            case UNLOCK_AND_PRUNE -> {
+                wheelData.setNaturalFrozen(false);
+                // Prune the materialized hull back to manual-only: cells the natural flood fill will
+                // re-derive on its own need not stay glued.
+                pruneGlueToManual(wheelData, wheelBlock);
+                wheelData.setPrunePending(false);   // any older deferred prune is subsumed by this one
+                saveAll();
+                return "Unlocked — this ship will pick up connected blocks again when it assembles.";
             }
-            return null;
+            case UNLOCK_DEFER_PRUNE -> {
+                // Unlocking is a RECORD-ONLY write, legal from anywhere including mid-voyage — but the ship
+                // is OUT, so there is no wheel skull to prune and the whole materialized hull stays glued:
+                // every hull-adjacent slime joins via the sticky closure, and a cell a stranger has since
+                // built on becomes a forced member and a fill seed. Record the debt; assembleShip and
+                // disassembleShip's landing pay it.
+                wheelData.setNaturalFrozen(false);
+                wheelData.setPrunePending(true);
+                saveAll();
+                return "Unlocked — the ship is out, so its glue will be trimmed when it next lands or "
+                    + "assembles.";
+            }
+            case UNLOCK_RECORD_ONLY -> {
+                // No resolvable block and no ship out: unlock the record and leave the world alone. NO
+                // pending flag — a wheel whose block is genuinely gone must not carry it forever.
+                wheelData.setNaturalFrozen(false);
+                saveAll();
+                return "Unlocked — this ship will pick up connected blocks again when it assembles.";
+            }
+            case REFUSE_STILL_LOADING -> {
+                // A detect on an unloaded chunk reads air and would freeze a one-block ship.
+                if (player != null) player.sendMessage("§cShip is still loading — try again in a moment.");
+                return null;
+            }
+            case REFUSE_SAILING -> {
+                // Docked-only: a flying ship's hull is aired out, so there is no wheel skull to store glue on.
+                if (player != null) player.sendMessage("§cDock the ship before locking it.");
+                return null;
+            }
+            case REFUSE_NO_BLOCK -> {
+                // Ordered after the state refusals so each gets its accurate message: a sailing ship is told
+                // to dock and a loading one to wait, rather than all three collapsing into "it isn't where
+                // its record says". Note the reconcile above runs even with an empty dock, which is
+                // intended: an orphan's stale mechanism is worth tearing down whether or not its head is back.
+                if (player != null) {
+                    player.sendMessage("§cThat ship wheel isn't where its record says it is — nothing was "
+                        + "changed. If it was moved, right-click the wheel itself; if it's gone, ask an "
+                        + "admin for /blockships wheels adopt.");
+                }
+                return null;
+            }
+            case LOCK -> { /* fall through to the scan-and-freeze tail below */ }
         }
 
         int maxShipSize = ((BlockShipsPlugin) plugin).getConfig().getInt("custom-ships.max-ship-size", 1000);
@@ -2734,9 +2782,7 @@ public class ShipWheelManager {
         // Same helper the assembly scan uses, so docked and assembled report the same sail power.
         //
         // Skipped when stats are off: it is an entity sweep over a padded region, and every consumer
-        // (the Sails line, Speed, and the counts the menu reads back) lives inside a stats gate. The
-        // consequence is that enabling stats.enabled without re-detecting shows wool and banner counts
-        // with zero tiers until the next detect.
+        // (the Sails line, Speed, and the counts the menu reads back) lives inside a stats gate.
         //
         // Null is "couldn't read them", NOT "there are none" — Paper loads a chunk's entities after its
         // blocks, so a detect within about a second of this area streaming in sees every host block and

@@ -345,9 +345,20 @@ public class BlockStructureScanner {
      *
      * <p><b>A defCoreLib fault is deliberately NOT null.</b> A {@code /reload} or PlugMan unload leaves
      * {@code getInstance()} permanently null, and answering "ask again later" to a condition that will
-     * never change tells the player to wait forever. That path logs once and degrades to an empty map,
-     * preserving the original rule here — never let a CoreLib fault block an assembly — while no longer
-     * doing it silently, which was the actual complaint.
+     * never change would tell the player to wait forever. That path logs once and degrades to an empty
+     * map instead — no longer silently, which was the actual complaint.
+     *
+     * <p>Be clear about what that buys, because it is not what the old comment claimed. It does NOT
+     * rescue assembly: {@code ShipWheelManager.assembleShip} dereferences
+     * {@code CoreLibPlugin.getInstance().getMechanismRegistry()} outside any try a few dozen lines
+     * after the scan, so with a null instance the assembly dies there regardless — the degrade merely
+     * happens first. What it does rescue is the READ-ONLY side: the docked detect and the Ship Info
+     * menu, where every CoreLib dereference is already guarded, keep working against a broken CoreLib
+     * instead of erroring out.
+     *
+     * <p>The cost is real and worth stating: on a non-null fault — a {@code bannerTiersIn} version
+     * mismatch, say, rather than a missing plugin — an assembly proceeds and writes {@code {0,0}} tier
+     * counts into the sidecar permanently. See {@link ScanResult#bannerTiersUnreadable()}.
      */
     private static Map<Block, List<anon.def9a2a4.corelib.BannerTier>> queryBannerTiers(
             Collection<Location> cells) {

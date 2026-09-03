@@ -74,6 +74,18 @@ public final class ConfigResources {
     private static final Map<String, Source> LAST_SOURCE = new ConcurrentHashMap<>();
 
     /**
+     * Forget what has been loaded and reported.
+     *
+     * <p>Called at enable and on {@code /blockships reload}. Without it, an admin who reloads a second
+     * time without fixing a broken override would get silence — the dedupe above cannot tell "still
+     * broken, already told you" from "still broken, and you just asked again".
+     */
+    public static void resetReporting() {
+        LAST_PROBLEM.clear();
+        LAST_SOURCE.clear();
+    }
+
+    /**
      * One line naming which content files came from an override and which from the jar.
      *
      * <p>This is the only place an <i>upgraded</i> server is told the {@code config/} folder exists:
