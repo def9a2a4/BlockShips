@@ -7,6 +7,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Job-level because this is a workflow_call callee: workflow-level settings here don't compose with
+    # the caller. checks.yml's concurrency group already covers called runs.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -86,8 +89,11 @@ jobs:
             exit 1
           fi
 
-      - name: Upload logs on failure
-        if: failure()
+      # always(), not failure(): a green run's reports are what the flake-hunt diffs against, and the
+      # timeout-minutes above cancels the job rather than failing it — failure() skips uploads on exactly
+      # the runs that most need their logs.
+      - name: Upload logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: logs-${{ matrix.server }}-${{ matrix.minecraft }}
@@ -95,3 +101,5 @@ jobs:
             test-server/server.log
             test-server/errors.log
             test-bot/test-results.txt
+            test-bot/chunk-test-results.txt
+          if-no-files-found: ignore
