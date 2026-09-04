@@ -29,6 +29,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 
 import static anon.def9a2a4.blockships.util.LocationUtil.cellsAgree;
+import static anon.def9a2a4.blockships.util.LocationUtil.isCellObservable;
 import static anon.def9a2a4.blockships.util.LocationUtil.liveWorld;
 
 import java.io.File;
@@ -622,9 +623,7 @@ public class ShipWheelManager {
     @Nullable Block ownedBlock(ShipWheelData wheel) {
         if (wheel == null) return null;
         Location cell = wheel.getBlockLocation();
-        World world = liveWorld(cell);
-        if (world == null) return null;
-        if (!world.isChunkLoaded(cell.getBlockX() >> 4, cell.getBlockZ() >> 4)) return null;
+        if (!isCellObservable(cell)) return null;
         Block b = cell.getBlock();
         return ownsBlock(wheel, b) ? b : null;
     }
@@ -830,10 +829,7 @@ public class ShipWheelManager {
     private Agreement agreement(ShipWheelData wheel, Block block) {
         Location cached = wheel.getBlockLocation();
         if (cellsAgree(cached, block.getLocation())) return Agreement.AGREES;
-        World cw = liveWorld(cached);
-        if (cw == null || !cw.isChunkLoaded(cached.getBlockX() >> 4, cached.getBlockZ() >> 4)) {
-            return Agreement.UNOBSERVABLE;
-        }
+        if (!isCellObservable(cached)) return Agreement.UNOBSERVABLE;
         UUID atCached = ShipWheelBlockType.readWheelId(cached.getBlock());
         return wheel.getWheelId().equals(atCached) ? Agreement.DUPLICATE_CLAIM : Agreement.MOVED;
     }
@@ -877,8 +873,7 @@ public class ShipWheelManager {
         // MOVED arm's new state-gate refusal, where agreement() said MOVED but the refusal reason is the
         // wheel's assembled state — a threaded verdict would need a third "refused by gate" kind for one
         // log line's phrasing. The re-derivation is once-per-(wheel,cell) thanks to the dedup above.
-        boolean duplicate = probeCached && cached != null && liveWorld(cached) != null
-            && liveWorld(cached).isChunkLoaded(cached.getBlockX() >> 4, cached.getBlockZ() >> 4)
+        boolean duplicate = probeCached && isCellObservable(cached)
             && data.getWheelId().equals(ShipWheelBlockType.readWheelId(cached.getBlock()));
         plugin.getLogger().warning("Wheel " + data.getWheelId() + " is stamped on the block at "
             + locationKey(block.getLocation()) + " but its record points at "
@@ -1136,9 +1131,13 @@ public class ShipWheelManager {
         // liveWorld: a bare getWorld() throws here, AFTER the record has been dropped from memory and BEFORE
         // saveAll runs — so purging a wheel in an unloaded world removed it from memory and left it on disk,
         // and it came back on the next boot.
+        // NESTED, not a pair — do not collapse to a single isCellObservable gate: forgetDockedThrust is a
+        // key-only map remove that must run whenever the world is live, chunk loaded or NOT, or a purge in
+        // a live world with an unloaded chunk leaks a thrust-cache entry forever (the unprunable-entry
+        // failure cellKey's javadoc warns about). Only the block-resolving forget is chunk-gated.
         World cellWorld = liveWorld(cell);
         if (cellWorld != null) {
-            if (cellWorld.isChunkLoaded(cell.getBlockX() >> 4, cell.getBlockZ() >> 4)) {
+            if (isCellObservable(cell)) {
                 ShipWheelAnchors.forget(cell.getBlock());
             }
             ShipWheelMenu.forgetDockedThrust(cell);
@@ -1182,9 +1181,7 @@ public class ShipWheelManager {
         if (state == WheelState.ORPHAN) return Health.ORPHANED;
         if (state != WheelState.NOT_ASSEMBLED) return Health.SAILING;
         Location cell = wheel.getBlockLocation();
-        World w = liveWorld(cell);
-        if (w == null) return Health.UNKNOWN;
-        if (!w.isChunkLoaded(cell.getBlockX() >> 4, cell.getBlockZ() >> 4)) return Health.UNKNOWN;
+        if (!isCellObservable(cell)) return Health.UNKNOWN;
         return ownsBlock(wheel, cell.getBlock()) ? Health.OK : Health.BROKEN;
     }
 
@@ -1841,9 +1838,7 @@ public class ShipWheelManager {
         // it is called from a comparator in `wheels list`, and it runs on every right-click. A throw here for
         // one record in an unloaded world took out every one of those paths at once.
         Location wl = wheel.getBlockLocation();
-        World wlWorld = liveWorld(wl);
-        boolean chunkLoaded = wlWorld != null
-            && wlWorld.isChunkLoaded(wl.getBlockX() >> 4, wl.getBlockZ() >> 4);
+        boolean chunkLoaded = isCellObservable(wl);
         // F1: also treat a ship in BlockShips' persisted set as recoverable. M5 delegated persistence/recovery
         // means a persisted-but-not-yet-recovered ship is absent from activeMechanisms (so hasLiveMechanism is
         // false) yet WILL rebind via MechanismAssembleEvent — reaping it here would destroy a live-recoverable

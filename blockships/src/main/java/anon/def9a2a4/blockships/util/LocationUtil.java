@@ -70,6 +70,20 @@ public final class LocationUtil {
     }
 
     /**
+     * Whether this cell can be READ right now: its world is live and its chunk is loaded. Never loads a
+     * chunk and never throws — total for null, for a null world, and for a collected world reference.
+     *
+     * <p>The single spelling for the {@code liveWorld(x) != null && world.isChunkLoaded(x >> 4, z >> 4)}
+     * pair that had grown seven hand-written copies (plus one Location-side variant). Answers a question
+     * about OBSERVABILITY only; callers decide what an unobservable cell means — {@code ownedBlock} fails
+     * closed on it, {@code recordHealth} fails open. Do not fold those policies in here.
+     */
+    public static boolean isCellObservable(@Nullable Location loc) {
+        World w = liveWorld(loc);
+        return w != null && w.isChunkLoaded(loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
+    }
+
+    /**
      * This location's world name, or null if it does not currently have a live world.
      *
      * <p>The single derivation for every cache key and serialised row that names a world, so that a key built

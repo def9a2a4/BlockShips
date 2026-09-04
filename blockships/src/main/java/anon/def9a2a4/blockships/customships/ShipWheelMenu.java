@@ -938,12 +938,10 @@ public class ShipWheelMenu {
      */
     private static Integer frozenBlockCount(ShipWheelData wheelData) {
         org.bukkit.Location cell = wheelData.getBlockLocation();
-        // liveWorld, not a bare getWorld(): this is the FIRST statement of the method and sits outside the
-        // try below, so a throw here does not render "?" — it propagates out of the lore builder and the
-        // menu fails to open at all. Which is the opposite of what this method exists to do.
-        org.bukkit.World world = anon.def9a2a4.blockships.util.LocationUtil.liveWorld(cell);
-        if (world == null) return null;
-        if (!world.isChunkLoaded(cell.getBlockX() >> 4, cell.getBlockZ() >> 4)) return null;
+        // isCellObservable, not a bare getWorld(): this is the FIRST statement of the method and sits
+        // outside the try below, so a throw here does not render "?" — it propagates out of the lore
+        // builder and the menu fails to open at all. Which is the opposite of what this method exists to do.
+        if (!anon.def9a2a4.blockships.util.LocationUtil.isCellObservable(cell)) return null;
         org.bukkit.block.Block block = cell.getBlock();
         java.util.UUID stamped = ShipWheelBlockType.readWheelId(block);
         if (stamped != null && !stamped.equals(wheelData.getWheelId())) return null;

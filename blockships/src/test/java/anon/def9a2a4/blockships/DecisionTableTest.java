@@ -249,5 +249,10 @@ class DecisionTableTest {
         assertNull(LocationUtil.cellKey(collectedWorldLocation(1, 2, 3)));
         assertFalse(LocationUtil.cellsAgree(collectedWorldLocation(1, 2, 3), collectedWorldLocation(1, 2, 3)),
             "a cell in a collected world must answer 'does not agree', even against itself");
+        assertFalse(LocationUtil.isCellObservable(collectedWorldLocation(1, 2, 3)),
+            "a cell in a collected world is not observable — and must say so rather than throw");
+        assertFalse(LocationUtil.isCellObservable(new org.bukkit.Location(null, 1, 2, 3)),
+            "a cell with no world at all is not observable");
+        assertFalse(LocationUtil.isCellObservable(null), "null is not observable");
     }
 }

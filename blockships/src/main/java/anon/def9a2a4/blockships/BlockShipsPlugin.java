@@ -274,12 +274,12 @@ public class BlockShipsPlugin extends JavaPlugin {
                     s.orphan.add(u);
                 }
             } else {
-                // Guard against a wheel whose world was unloaded at runtime - isChunkLoaded()
-                // dereferences the world and would otherwise NPE / throw "World unloaded".
+                // Guard against a wheel whose world was unloaded at runtime — isChunkLoaded() dereferences
+                // the world and would otherwise throw "World unloaded". Via LocationUtil rather than the
+                // Location-side spelling this used to hand-roll: the two were functionally identical, which
+                // is exactly the drift-of-spelling LocationUtil exists to end.
                 Location wl = wheel.getBlockLocation();
-                // isWorldLoaded FIRST. The order was inverted: getWorld() is the call that throws, and it
-                // sat ahead of the very predicate meant to guard it, so the guard never ran.
-                boolean loaded = wl != null && wl.isWorldLoaded() && wl.isChunkLoaded();
+                boolean loaded = anon.def9a2a4.blockships.util.LocationUtil.isCellObservable(wl);
                 if (loaded) s.unassembledLoaded++; else s.unassembledUnloaded++;
             }
         }
