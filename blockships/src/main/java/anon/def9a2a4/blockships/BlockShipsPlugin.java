@@ -868,7 +868,9 @@ public class BlockShipsPlugin extends JavaPlugin {
                     // restoring blocks, so "recovered" would be a lie. They stay in the skipped count.
                     if (ShipRegistry.byId(wheelData.getAssembledShipUUID()) == null) {
                         UUID orphanId = wheelData.getAssembledShipUUID();
-                        ShipOrphans.Outcome oc = ShipOrphans.disassembleOrphan(this, orphanId);
+                        // Via the manager's expected-landing window, so the landed wheel's onRestore may
+                        // relocate the record even though its state still reads assembled mid-landing.
+                        ShipOrphans.Outcome oc = shipWheelManager.landOrphanExpected(wheelData, orphanId);
                         if (oc == ShipOrphans.Outcome.LANDED) {
                             orphansLanded++;
                             wheelData.setAssembledShipUUID(null);

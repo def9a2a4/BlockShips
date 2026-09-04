@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.logging.Logger;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -66,8 +67,15 @@ class WheelPersistenceTest {
 
     /**
      * A failed write must leave the previous live file byte-identical — the whole point of the temp-sibling
-     * publish is that {@code config.save()}'s in-place truncation can never touch the good copy. Failure is
-     * induced by making the target's parent directory unwritable for the rename.
+     * publish is that {@code config.save()}'s in-place truncation can never touch the good copy.
+     *
+     * <p>Failure is induced by planting a DIRECTORY at the {@code .tmp} sibling's path:
+     * {@code FileConfiguration.save} opens a {@code FileOutputStream}, which throws on a directory on
+     * every platform and for every user (including root) — unlike the previous
+     * {@code dir.setWritable(false)} induction, which POSIX ignores for writes to an existing file and
+     * root ignores entirely, leaving the assertion inside an unreachable branch. Order matters: the
+     * successful write comes first (a pre-planted directory would fail it too), and the directory is not
+     * asserted on afterwards ({@code writeWheelRows}' cleanup deletes an empty directory happily).
      */
     @Test
     void aFailedWriteLeavesThePreviousFileUntouched(@TempDir File dir) throws IOException {
@@ -75,17 +83,14 @@ class WheelPersistenceTest {
         assertTrue(ShipWheelManager.writeWheelRows(target, List.of(row("dddddddd-1111-2222-3333-444444444444", 5)), LOG));
         byte[] before = Files.readAllBytes(target.toPath());
 
-        // POSIX-only failure induction; on a filesystem where this is a no-op the write just succeeds and
-        // the assertion below still holds vacuously (before == after).
-        boolean locked = dir.setWritable(false);
-        try {
-            boolean ok = ShipWheelManager.writeWheelRows(target, List.of(row("eeeeeeee-1111-2222-3333-444444444444", 9)), LOG);
-            byte[] after = Files.readAllBytes(target.toPath());
-            if (locked && !ok) {
-                assertEquals(new String(before), new String(after), "a failed write must not touch the live file");
-            }
-        } finally {
-            dir.setWritable(true);
-        }
+        File tmpAsDir = new File(dir, "ship_wheels.yml.tmp");
+        assertTrue(tmpAsDir.mkdir(), "could not plant the tmp-path directory");
+
+        boolean ok = ShipWheelManager.writeWheelRows(target,
+            List.of(row("eeeeeeee-1111-2222-3333-444444444444", 9)), LOG);
+
+        assertFalse(ok, "the write must report failure when its temp sibling cannot be created");
+        assertArrayEquals(before, Files.readAllBytes(target.toPath()),
+            "a failed write must not touch the live file");
     }
 }

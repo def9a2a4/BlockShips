@@ -47,6 +47,16 @@ public final class ShipWheelAnchors {
         ShipWheelManager manager = plugin.getShipWheelManager();
         if (manager == null) return;
         try {
+            // This lambda deliberately has NO plugin.isEnabled() guard, unlike the leads-in listener in
+            // ShipWheelManager's constructor — the asymmetry mirrors corelib's asymmetric registration
+            // APIs, not an oversight. registerAnchorProvider REPLACES a same-pluginId provider, so a
+            // BlockShips-only reload swaps this lambda for the new instance's on its own; the leads-in
+            // listener has no removal or replacement API, so its stale copy lives forever and must
+            // self-disarm. And in the brief disabled-not-yet-reenabled window, a null-returning guard
+            // here would be actively harmful: corelib answers a null provider result with a plain
+            // BlockAnchor whose prunesOnLanding() is true — every landing in that window would DELETE the
+            // ship's glue — whereas the dead manager's anchorWheelFor just returns slightly-stale, usable
+            // data (world/PDC reads only; its markDirty saves synchronously once disabled).
             anon.def9a2a4.corelib.CoreLibPlugin.getInstance().registerAnchorProvider(PLUGIN_ID, block -> {
                 ShipWheelData data = manager.anchorWheelFor(block);
                 return data == null ? null : new WheelAnchor(plugin, block, data);

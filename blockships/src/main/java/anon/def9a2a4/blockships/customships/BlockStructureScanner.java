@@ -289,6 +289,17 @@ public class BlockStructureScanner {
     public record ScanResult(ShipModel model, List<Block> orderedBlocks, boolean bannerTiersUnreadable) {}
 
     public static ScanResult scanStructure(Location wheelLocation, BlockFace facing) {
+        return scanStructure(wheelLocation, facing, null);
+    }
+
+    /**
+     * @param preCapture runs between the flood fill and the world snapshot, handed the MUTABLE fill set.
+     *        The assembly path's foreign-wheel pop-out removes cells here — the one point where a cell can
+     *        be dropped without either leaving its head inside the captured model (sweeping after capture)
+     *        or breaking the i↔i block parity every downstream consumer assumes (airing a captured cell).
+     */
+    public static ScanResult scanStructure(Location wheelLocation, BlockFace facing,
+                                           java.util.function.Consumer<Set<Location>> preCapture) {
         // Get max ship size from config
         BlockShipsPlugin plugin = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
         int maxShipSize = 1000; // Default
@@ -313,6 +324,13 @@ public class BlockStructureScanner {
         Set<Location> shipBlocks = result.getBlocks();
         if (shipBlocks == null || shipBlocks.isEmpty()) {
             return null;
+        }
+
+        if (preCapture != null) {
+            preCapture.accept(shipBlocks);
+            if (shipBlocks.isEmpty()) {
+                return null;
+            }
         }
 
         return captureCells(wheelLocation, facing, shipBlocks);

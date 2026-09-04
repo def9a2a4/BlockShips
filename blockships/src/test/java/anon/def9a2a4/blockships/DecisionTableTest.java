@@ -78,13 +78,10 @@ class DecisionTableTest {
         }
     }
 
-    /** No action may be missing from the table: the switch has a default, so a new constant silently opts out. */
-    @Test
-    void everyActionHasAnAnswer() {
-        for (ShipWheelMenu.MenuAction a : ShipWheelMenu.MenuAction.values()) {
-            DisplayShip.isRegionGated(a);   // must not throw
-        }
-    }
+    // NOTE: there is deliberately no "every action has an answer" test. isRegionGated is a switch
+    // EXPRESSION with no default arm, so exhaustiveness is enforced by the compiler — a new MenuAction is
+    // a compile error until it is placed in a list. The test this note replaces asserted only "does not
+    // throw", which a default arm made vacuously true for every input.
 
     // ── ShipWheelData.toMap totality ────────────────────────────────────────────────────────────────────
 

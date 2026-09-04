@@ -2363,6 +2363,15 @@ public class DisplayShip implements Listener {
             // guard above exists to prevent. The item is not consumed on any path. The air-out doubles as
             // SAVE_FAILED's rollback: the stamp lives in the tile entity, so clearing the block erases it —
             // which is why that arm must stay inside this shared cleanup.
+            //
+            // notifyRemoved BEFORE setType(AIR), like the break path: it reads the block's type PDC to know
+            // what it is removing, and stamp()'s markBlock left a location-index entry in corelib that the
+            // bare air-out would strand. Unconditional is safe: on CELL_RESERVED no stamp ever ran, so
+            // getTypeFromBlock is null and this no-ops; on SAVE_FAILED the record was already rolled back,
+            // so the re-entrant removal callback no-ops at its wheel==null check. (Double-rare accepted
+            // corner: STAMP_FAILED where markBlock succeeded but the wheel_id write threw, WITH a stale
+            // docked record claiming this cell — the re-entry can reap that stale record.)
+            anon.def9a2a4.blockships.customships.ShipWheelBlockType.notifyRemoved(targetBlock);
             targetBlock.setType(Material.AIR);
             event.setCancelled(true);
             if (result == ShipWheelManager.PlaceResult.CELL_RESERVED) {
@@ -2393,8 +2402,13 @@ public class DisplayShip implements Listener {
         // never did, so a protection plugin that cancels the interact (GriefPrevention and Towny cancel
         // right-clicks in claims broadly) was overruled and the menu opened anyway. That matters because the
         // menu is not a viewer: Disassemble, Force Disassemble — whose own lore reads "N ship block(s) will
-        // be LOST" — Lock and Fire Cannons all act on the world, and of the menu's actions only Assemble
-        // carried a permission check of its own. See onShipWheelMenuClick for the per-action gating.
+        // be LOST" — Lock and Fire Cannons all act on the world.
+        //
+        // KNOWN, ACCEPTED GAP: the menu itself has NO ownership or permission model. There is no owner
+        // field on ShipWheelData and no hasPermission call anywhere in the menu path — any player who can
+        // right-click a docked wheel can open its menu and, WorldGuard permitting, assemble that ship.
+        // Deliberate for now (trusted-player servers); protection plugins and the per-action WorldGuard
+        // gating in onShipWheelMenuClick are the only fences. Revisit as its own feature if that changes.
         //
         // LOW priority is deliberate: onPlaceShipWheel sits at NORMAL and now CANCELS for a block that
         // resolves to a tracked wheel (see its comment), so this handler must run FIRST — at equal priority
@@ -2433,16 +2447,18 @@ public class DisplayShip implements Listener {
         ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
 
         // Re-resolve the record from the id the holder carries, EVERY click. The holder used to keep a hard
-        // ShipWheelData reference, which is how a menu outlives the record behind it: seven paths deregister
-        // a wheel (a player breaks it; the ship is destroyed with destroyOnDeath while you have the menu open
-        // from the collider; an admin purges it; an explosion removes the block; a landing that
-        // could not place its wheel; the protected-anchor arm of disassembleShip), and three of those reopen
-        // this menu a tick later on the now-detached object. Acting on it then writes through a cached cell
-        // that may now hold somebody else's block — assembleShip would flood-fill their build into a ship,
-        // toggleLock would overwrite a neighbour's glue, detectShip would spawn a marker in their base.
+        // ShipWheelData reference, which is how a menu outlives the record behind it: many paths deregister
+        // a wheel — a player breaks it; the ship is destroyed with destroyOnDeath while you have the menu
+        // open from the collider; an admin purges it; an explosion removes the block; a landing that could
+        // not place its wheel; the protected-anchor arm of disassembleShip; the foreign-wheel pop-out at a
+        // neighbour's assembly — and several reopen this menu a tick later on the now-detached object.
+        // (Deliberately no count on that list; two edits in a row let a stale "seven" survive a six-entry
+        // list.) Acting on the detached object writes through a cached cell that may now hold somebody
+        // else's block — assembleShip would flood-fill their build into a ship, toggleLock would overwrite
+        // a neighbour's glue, detectShip would spawn a marker in their base.
         //
-        // A null answer here is a COMPLETE staleness test rather than a heuristic, because every one of those
-        // seven paths ends in the same placedWheels.remove that this lookup consults.
+        // A null answer here is a COMPLETE staleness test rather than a heuristic, because every one of
+        // those paths ends in the same placedWheels.remove that this lookup consults.
         ShipWheelMenu.ShipWheelMenuHolder holder = (ShipWheelMenu.ShipWheelMenuHolder) event.getInventory().getHolder();
         ShipWheelData wheelData = manager.getWheelById(holder.getWheelId());
 
@@ -2543,8 +2559,9 @@ public class DisplayShip implements Listener {
      * forgotten.
      *
      * <p>No message on the stale path: the action itself has already reported what happened, and the menu
-     * simply not reappearing is the honest outcome. Clearing {@code pendingMenuReopen} matters because
-     * {@code onShipWheelMenuClose} already ran when we closed, so nothing else will.
+     * simply not reappearing is the honest outcome. This method does NOT touch {@code pendingMenuReopen} —
+     * {@code onShipWheelMenuClose} clears it, unconditionally, when the closeInventory below fires its
+     * close event; an earlier javadoc here claimed the clearing as this method's job, which it never was.
      */
     private void reopenWheelMenuLater(Player player, java.util.UUID wheelId) {
         player.closeInventory();
@@ -2618,10 +2635,14 @@ public class DisplayShip implements Listener {
      * a single check at the wheel.
      */
     static boolean isRegionGated(ShipWheelMenu.MenuAction action) {
+        // Exhaustive on purpose — NO default arm. This is a switch expression over an enum, so the
+        // compiler refuses to build until a newly added MenuAction is placed in one of these lists;
+        // a default would let it silently opt out of region gating instead. (A test used to claim to
+        // catch that; with a default present it provably could not.)
         return switch (action) {
             case ALIGN, DISASSEMBLE, FORCE_DISASSEMBLE, TOGGLE_LOCK, FIRE_CANNONS -> true;
-            // HELP, INFO, DETECT, HIGHLIGHT_SEATS, CAMERA_*, ASSEMBLE
-            default -> false;
+            case HELP, INFO, DETECT, HIGHLIGHT_SEATS,
+                 CAMERA_DISTANCE_DECREASE, CAMERA_DISTANCE_INCREASE, ASSEMBLE, NONE -> false;
         };
     }
 

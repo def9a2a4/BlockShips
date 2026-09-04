@@ -59,16 +59,18 @@ public class ShipDetector {
     private InternalScanResult detectShipInternal(Location startLocation, Set<Location> forcedMembers) {
         // ANOTHER SHIP'S WHEEL IS AN ORDINARY BLOCK to this fill — a deliberate decision, not an oversight.
         // player_head is on the allow-list (a wheel has to be scannable), so a neighbour's wheel parked
-        // flush against this hull gets absorbed on assembly like any other allowed block: two unlocked
-        // ships merging because their owners parked them touching is the owners' problem. An exclusion was
-        // tried and reverted; every variant had a worse failure mode than absorption — a barrier silently
-        // amputates your own hull past a chokepoint, transparency absorbs a neighbour's whole hull through
-        // their wheel, and refusal is a park-a-wheel-and-brick-their-ship griefing primitive. The costs of
-        // absorption, for the record: the victim wheel's self-heal (anchorWheelFor's MOVED arm) needs its
-        // old dock chunk loaded at landing and otherwise corelib builds a pruning anchor that deletes its
-        // glue; a legacy unstamped wheel has no self-heal at all (corelib never restores its PDC); and the
-        // victim's glue is truncated to whatever the absorber landed. The owner's recovery for all three is
-        // `wheels adopt`, and refuseMismatch tells the clicking player so.
+        // flush against this hull is reached by the fill like any other allowed block. An exclusion was
+        // tried and reverted; every variant had a worse failure mode — a barrier silently amputates your
+        // own hull past a chokepoint, transparency absorbs a neighbour's whole hull through their wheel,
+        // and refusal is a park-a-wheel-and-brick-their-ship griefing primitive.
+        //
+        // What happens to a reached foreign wheel is decided LATER, not here: assembleShip's pop-out sweep
+        // (ShipWheelManager.popAbsorbedForeignWheels, run between this fill and the capture) returns a
+        // genuinely-parked foreign wheel to its owner as an item and deregisters its record, so no foreign
+        // identity rides inside the assembled ship. Heads that fail the sweep's guard — /clone copies,
+        // stamped-but-unknown heads, unstamped legacy wheels, cells in WG-denied regions — are absorbed as
+        // ordinary blocks, and for an absorbed legacy wheel that loss is real: it has no stamp, no record
+        // follows it, and there is no player-reachable recovery (the wheels commands are admin-only).
         Set<Location> shipBlocks = new HashSet<>();
         Queue<Location> frontier = new LinkedList<>();
         boolean exceededLimit = false;

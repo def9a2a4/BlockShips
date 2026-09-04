@@ -1378,9 +1378,20 @@ public class ShipInstance {
                 boolean disassembled = manager.disassembleShip(null, wheelData, true);
 
                 if (disassembled) {
-                    // 4. Break the ship wheel block (disassembleShip has already relocated the record to
-                    //    wherever the wheel actually landed, and verified that it did).
-                    manager.breakWheelBlock(wheelData);
+                    // 4. Break the ship wheel block — but ONLY if the record still exists. disassembleShip
+                    //    returns true from its anchorProtected/occupied arm too, and that arm has already
+                    //    dropped the wheel as an item, REMOVED the record, and skipped the relocate — so
+                    //    the record object still points at the vacated LAUNCH dock with a nulled link,
+                    //    which re-arms ownsBlock's legacy arm: an unguarded break would air out any
+                    //    wheel-skinned head someone planted there and drop a SECOND item. Same species as
+                    //    the wasAssembled guard on the destroyOnDeath arm above: never act on a record the
+                    //    teardown already resolved. (verifyWheelLanded can also have removed the record —
+                    //    nothing landed, so there is nothing of ours to break; skipping is right there too.)
+                    //    Only the break is skipped: the explosions and the return below must still run, or
+                    //    the prefab fallback would drop a third item.
+                    if (manager.getWheelById(wheelData.getWheelId()) != null) {
+                        manager.breakWheelBlock(wheelData);
+                    }
 
                     // 5. Spawn explosions at saved locations
                     spawnDestructionExplosions(world, explosionLocations);
