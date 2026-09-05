@@ -2451,10 +2451,10 @@ public class DisplayShip implements Listener {
         // a wheel — a player breaks it; the ship is destroyed with destroyOnDeath while you have the menu
         // open from the collider; an admin purges it; an explosion removes the block; a landing that could
         // not place its wheel; the protected-anchor arm of disassembleShip — and several reopen this menu
-        // a tick later on the now-detached object. (The foreign-wheel sweep at a neighbour's assembly is
-        // NOT on this list: it excludes the cell from their ship and deregisters nothing.)
-        // (Deliberately no count on that list; two edits in a row let a stale "seven" survive a six-entry
-        // list.) Acting on the detached object writes through a cached cell that may now hold somebody
+        // a tick later on the now-detached object. (Deliberately no count on that list; two edits in a row
+        // let a stale "seven" survive a six-entry list. The foreign-wheel sweep at a neighbour's assembly
+        // is deliberately NOT on it: it excludes the cell from their ship and deregisters nothing.)
+        // Acting on the detached object writes through a cached cell that may now hold somebody
         // else's block — assembleShip would flood-fill their build into a ship, toggleLock would overwrite
         // a neighbour's glue, detectShip would spawn a marker in their base.
         //
