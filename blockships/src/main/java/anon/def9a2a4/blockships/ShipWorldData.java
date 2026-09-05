@@ -441,54 +441,6 @@ public class ShipWorldData {
         return loadShipMetadataSync(world.getName(), shipId);
     }
 
-    /**
-     * One-shot enable-time sweep: rename every unreadable sidecar to {@code <uuid>.yml.corrupt} (bytes
-     * preserved) and drop its id from {@link #persistedShipIds}.
-     *
-     * <p>Must run AFTER the wheel manager's {@code loadAll} and BEFORE {@code forceRecoverDelegatedShips}
-     * / {@code migrateLoadedChunks}, which both consume sidecars. Quarantine deliberately does NOT live in
-     * the shared loader: the migrator runs before the reaper on the same chunk, so a loader-side rename
-     * would flip CORRUPT to ABSENT between them and the reaper would delete a live ship's entities.
-     * TRANSIENT failures are left strictly alone — renaming a good file on a disk blip would create the
-     * data-loss path this is meant to close.
-     *
-     * @return the number of sidecars quarantined.
-     */
-    public int quarantineCorruptSidecars() {
-        if (!worldsFolder.exists()) return 0;
-        File[] worldDirs = worldsFolder.listFiles(File::isDirectory);
-        if (worldDirs == null) return 0;
-        int quarantined = 0;
-        for (File worldDir : worldDirs) {
-            File[] shipFiles = new File(worldDir, "ships").listFiles((d, name) -> name.endsWith(".yml"));
-            if (shipFiles == null) continue;
-            for (File f : shipFiles) {
-                String name = f.getName();
-                UUID id;
-                try {
-                    id = UUID.fromString(name.substring(0, name.length() - 4));
-                } catch (IllegalArgumentException ignored) {
-                    continue;  // stray non-UUID filename — not ours to judge
-                }
-                if (loadShipMetadataSync(worldDir.getName(), id).status() != LoadStatus.CORRUPT) continue;
-                File dest = new File(f.getParentFile(), name + ".corrupt");
-                if (f.renameTo(dest)) {
-                    // Otherwise resolveWheelState keeps reading UNLOADED_RECOVERABLE forever and the wheel
-                    // can never be assembled or reaped.
-                    persistedShipIds.remove(id);
-                    metadataExistsCache.put(worldDir.getName() + ":" + id, false);
-                    quarantined++;
-                    plugin.getLogger().severe("Quarantined corrupt ship sidecar " + id + " (world="
-                        + worldDir.getName() + ") to " + dest.getName() + "; its blocks are NOT recoverable "
-                        + "from it, but nothing was deleted.");
-                } else {
-                    plugin.getLogger().severe("Could not quarantine corrupt ship sidecar " + id
-                        + " (world=" + worldDir.getName() + "); leaving it in place.");
-                }
-            }
-        }
-        return quarantined;
-    }
 
     /**
      * Checks if metadata exists for a ship, using cache.
