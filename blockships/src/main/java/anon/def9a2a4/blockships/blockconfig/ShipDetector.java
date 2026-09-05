@@ -65,15 +65,15 @@ public class ShipDetector {
         // and refusal is a park-a-wheel-and-brick-their-ship griefing primitive.
         //
         // What happens to a reached foreign wheel is decided LATER, not here: assembleShip's exclusion
-        // sweep (ShipWheelManager.excludeForeignWheels, run between this fill and the capture) drops a
-        // genuinely-parked foreign wheel from the membership set and leaves it standing, so no foreign
-        // identity rides inside the assembled ship. Note this is the "refusal" variant above applied to
-        // ONE cell rather than the whole scan, which is why it is not the griefing primitive that is:
-        // it costs the neighbour nothing and costs the assembler one block they did not own anyway.
-        // Heads that fail the sweep's guard — /clone copies, stamped-but-unknown heads, unstamped legacy
-        // wheels — are absorbed as ordinary blocks, and for an absorbed legacy wheel that loss is real: it
-        // has no stamp, no record follows it, and there is no player-reachable recovery (the wheels
-        // commands are admin-only).
+        // sweep (ShipWheelManager.excludeForeignWheels, run between this fill and the capture) drops any
+        // foreign-stamped wheel with a live record from the membership set and leaves it standing — /clone
+        // copies included — so no foreign identity rides inside the assembled ship. Note this is the
+        // "refusal" variant above applied to ONE cell rather than the whole scan, which is why it is not
+        // the griefing primitive that is: it costs the neighbour nothing and costs the assembler one block
+        // they did not own anyway. Heads that fail the sweep's guard — stamped heads with NO record,
+        // unstamped legacy wheels — are absorbed as ordinary blocks, and for an absorbed legacy wheel that
+        // loss is real: it has no stamp, no record follows it, and there is no player-reachable recovery
+        // (the wheels commands are admin-only).
         Set<Location> shipBlocks = new HashSet<>();
         Queue<Location> frontier = new LinkedList<>();
         boolean exceededLimit = false;

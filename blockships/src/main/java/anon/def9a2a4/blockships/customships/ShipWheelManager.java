@@ -1269,8 +1269,8 @@ public class ShipWheelManager {
     }
 
     /**
-     * The foreign-wheel exclusion: another player's PARKED wheel caught in a flood fill is dropped from the
-     * membership set and LEFT WHERE IT STANDS. Runs at BOTH sites where fill membership is committed — as
+     * The foreign-wheel exclusion: another ship's wheel caught in a flood fill — parked, orphaned, or a
+     * stamped copy — is dropped from the membership set and LEFT WHERE IT STANDS. Runs at BOTH sites where fill membership is committed — as
      * {@code scanStructure}'s preCapture hook on the unlocked assembly path, and in {@code toggleLock}'s
      * freeze tail before the glue write (the locked assembly path rebuilds from glue via
      * {@code scanFrozen}, so whatever the freeze admitted would be absorbed forever after).
@@ -1295,12 +1295,21 @@ public class ShipWheelManager {
      * never happened, and it put the item at the assembling player's feet rather than the owner's.
      * Exclusion has no such tail: a refused assembly simply never ran, and nobody else's wheel was touched.
      *
-     * <p><b>The guard is still load-bearing, for a different reason.</b> Exclude ONLY a record that is
-     * {@code NOT_ASSEMBLED} <i>and</i> whose {@code agreement} with this block is {@code AGREES} — i.e. the
-     * real parked wheel standing at its own recorded cell. Anything else (a {@code /clone} copy of a
-     * sailing or parked wheel, a stamped-but-unknown head, an unstamped legacy head indistinguishable from
-     * decor) is absorbed as an ordinary block, exactly as before. Excluding on a weaker test would hand
-     * anyone holding a stamped look-alike the power to carve chosen cells out of somebody else's ship.
+     * <p><b>The guard is only what exclusion still needs: a live record.</b> Any foreign-stamped head
+     * whose id resolves to a record is excluded — no state or agreement test. The old
+     * {@code NOT_ASSEMBLED && AGREES} narrowing was inherited from the destructive pop, where it kept a
+     * {@code /clone} copy from getting the ORIGINAL's record deleted; once exclusion destroyed nothing it
+     * had inverted into a hole: an ORPHAN neighbour wheel, or one a mover had nudged off its recorded
+     * cell (MOVED/UNOBSERVABLE), failed the narrow test and was absorbed WITH its record — and the MOVED
+     * follow refuses only LOADED/UNLOADED_RECOVERABLE, so on the absorber's landing that record relocated
+     * into their hull: the exact chain above, rebuilt. The worry that a weaker test hands anyone holding
+     * a stamped look-alike the power to carve chosen cells out of somebody else's ship does not survive
+     * scrutiny: only the look-alike head's OWN cell can ever be excluded (only stamped-head cells
+     * qualify — the victim's blocks are untouchable), and that "power" already existed with a real wheel
+     * parked flush against the structure, priced at one block the assembler did not own anyway. A stamp
+     * with NO record is still absorbed as an ordinary block: no record means nothing relocates at landing
+     * and nothing can be stolen. Unstamped legacy heads are likewise absorbed, indistinguishable from
+     * decor.
      *
      * <p><b>There is deliberately NO WorldGuard check.</b> The old one existed solely so that a refused
      * assembly could not have already destroyed a record in a region the player may not build in; with
@@ -1316,10 +1325,7 @@ public class ShipWheelManager {
             Block b = cell.getBlock();
             UUID id = ShipWheelBlockType.readWheelId(b);
             if (id == null || id.equals(assembling.getWheelId())) continue;
-            ShipWheelData record = placedWheels.get(id);
-            if (record == null) continue;
-            if (resolveWheelState(record).state() != WheelState.NOT_ASSEMBLED) continue;
-            if (agreement(record, b) != Agreement.AGREES) continue;
+            if (!placedWheels.containsKey(id)) continue;
             excluded.add(cell);
             excludedIds.add(id);
         }
@@ -1329,8 +1335,8 @@ public class ShipWheelManager {
         for (int i = 0; i < excluded.size(); i++) {
             Location cell = excluded.get(i);
             cells.remove(cell);
-            plugin.getLogger().info("Wheel " + excludedIds.get(i) + " is parked inside another player's "
-                + "structure at " + locationKey(cell) + "; left in place and excluded from it.");
+            plugin.getLogger().info("Wheel " + excludedIds.get(i) + " (another ship's record) stood in the"
+                + " fill at " + locationKey(cell) + "; left in place and excluded from it.");
         }
         if (player != null) {
             int n = excluded.size();
