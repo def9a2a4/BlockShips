@@ -856,9 +856,9 @@ public class BlockShipsPlugin extends JavaPlugin {
                 // ship and each save rewrites the whole file, so this loop was O(N²) on the main thread.
                 shipWheelManager.beginBatch();
                 try {
-                // Get all wheels and force-disassemble assembled ones.
-                // Copy to avoid ConcurrentModificationException (disassembly updates wheel locations).
-                for (ShipWheelData wheelData : new ArrayList<>(shipWheelManager.getWheels())) {
+                // Get all wheels and force-disassemble assembled ones. getWheels() already returns an
+                // immutable copy, which is what makes iterating while disassembly mutates the map safe.
+                for (ShipWheelData wheelData : shipWheelManager.getWheels()) {
                     if (!wheelData.isAssembled()) continue;
 
                     // Not registered as a ShipInstance. Two very different cases hide behind that:
