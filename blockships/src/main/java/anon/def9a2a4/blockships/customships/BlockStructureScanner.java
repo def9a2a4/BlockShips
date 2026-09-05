@@ -285,9 +285,11 @@ public class BlockStructureScanner {
 
     /**
      * @param preCapture runs between the flood fill and the world snapshot, handed the MUTABLE fill set.
-     *        The assembly path's foreign-wheel pop-out removes cells here — the one point where a cell can
-     *        be dropped without either leaving its head inside the captured model (sweeping after capture)
-     *        or breaking the i↔i block parity every downstream consumer assumes (airing a captured cell).
+     *        The assembly path's foreign-wheel exclusion removes cells here — the one point where a cell
+     *        can be dropped without either leaving its head inside the captured model (sweeping after
+     *        capture) or breaking the i↔i block parity every downstream consumer assumes (airing a
+     *        captured cell). Membership-only: a hook that mutates the world here would be committing to an
+     *        assembly that the checks after this call can still refuse.
      */
     public static ScanResult scanStructure(Location wheelLocation, BlockFace facing,
                                            java.util.function.Consumer<Set<Location>> preCapture) {

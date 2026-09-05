@@ -1269,8 +1269,8 @@ public class ShipWheelManager {
     }
 
     /**
-     * The foreign-wheel pop-out: another player's PARKED wheel caught in a flood fill is returned as an
-     * item instead of being absorbed. Runs at BOTH sites where fill membership is committed — as
+     * The foreign-wheel exclusion: another player's PARKED wheel caught in a flood fill is dropped from the
+     * membership set and LEFT WHERE IT STANDS. Runs at BOTH sites where fill membership is committed — as
      * {@code scanStructure}'s preCapture hook on the unlocked assembly path, and in {@code toggleLock}'s
      * freeze tail before the glue write (the locked assembly path rebuilds from glue via
      * {@code scanFrozen}, so whatever the freeze admitted would be absorbed forever after).
@@ -1280,27 +1280,38 @@ public class ShipWheelManager {
      * their hull, {@code onRestore}'s MOVED follow relocates the foreign record onto it, and anyone who
      * clicks it there can assemble away the entire docked hull (the menu has no ownership check —
      * accepted gap). If the absorber sinks instead, the head is destroyed with no drop and the record is
-     * stranded. Popping the wheel out keeps the fill semantics (nothing about what assembles changes) and
-     * deletes every leg of that chain.
+     * stranded.
      *
-     * <p><b>The guard is load-bearing.</b> Pop ONLY a record that is {@code NOT_ASSEMBLED} <i>and</i>
-     * whose {@code agreement} with this block is {@code AGREES} — i.e. the real parked wheel standing at
-     * its own recorded cell. Anything else (a {@code /clone} copy of a sailing or parked wheel, a
-     * stamped-but-unknown head) is absorbed as an ordinary block, exactly as before: popping a COPY would
-     * delete the ORIGINAL's record — the same rule {@code onEngineRemovedWheelBlock} documents — turning
-     * this sweep into a griefing primitive. Unstamped legacy heads are indistinguishable from decor and
-     * are never popped. Cells in WorldGuard-denied regions are skipped too: this sweep runs BEFORE the
-     * per-cell WG gate (the gate needs the captured model), and a refused assembly must not have already
-     * destroyed a third party's record. The WG probe here fails CLOSED (don't pop) to match: under the
-     * same transient WG fault the downstream gate refuses the assembly, so the head must still be intact.
-     * Refusals AFTER this hook (the banner re-read, mechanism rollback) can still land after a pop — an
-     * accepted cost: the popped wheel survives as an item on the ground at its own cell.
+     * <p><b>Dropping the cell breaks that chain at its first link.</b> The head never enters the
+     * mechanism, so there is no landing to relocate a record onto and nothing to sink with. That is the
+     * whole fix — and it is all this method does. It does not touch the world, {@code placedWheels}, the
+     * anchors index or the docked-thrust cache, and needs no save. The neighbour's wheel is simply not
+     * part of the ship; it keeps its block, its record, its glue and its lock, and ends up standing where
+     * the hull used to be. Heads need no support, so nothing breaks.
+     *
+     * <p>An earlier version popped the wheel out as a (generic, id-less) item and deleted its record. That
+     * is what let every refusal AFTER this hook — the WorldGuard gate, the banner re-read, the glue cap on
+     * the lock path, mechanism rollback — leave a third party's wheel destroyed for an operation that
+     * never happened, and it put the item at the assembling player's feet rather than the owner's.
+     * Exclusion has no such tail: a refused assembly simply never ran, and nobody else's wheel was touched.
+     *
+     * <p><b>The guard is still load-bearing, for a different reason.</b> Exclude ONLY a record that is
+     * {@code NOT_ASSEMBLED} <i>and</i> whose {@code agreement} with this block is {@code AGREES} — i.e. the
+     * real parked wheel standing at its own recorded cell. Anything else (a {@code /clone} copy of a
+     * sailing or parked wheel, a stamped-but-unknown head, an unstamped legacy head indistinguishable from
+     * decor) is absorbed as an ordinary block, exactly as before. Excluding on a weaker test would hand
+     * anyone holding a stamped look-alike the power to carve chosen cells out of somebody else's ship.
+     *
+     * <p><b>There is deliberately NO WorldGuard check.</b> The old one existed solely so that a refused
+     * assembly could not have already destroyed a record in a region the player may not build in; with
+     * nothing destroyed the question is moot, and declining to absorb someone else's wheel is not a build
+     * action. Keeping it would have been actively wrong — a WG-denied cell would have stayed in the fill
+     * and been absorbed, which is the exact outcome this exists to prevent.
      */
-    private void popAbsorbedForeignWheels(ShipWheelData assembling, @Nullable Player player,
-                                          Set<Location> cells) {
-        List<Location> popCells = new ArrayList<>();
-        List<ShipWheelData> popRecords = new ArrayList<>();
-        var wg = anon.def9a2a4.blockships.integration.WorldGuardHook.get();
+    private void excludeForeignWheels(ShipWheelData assembling, @Nullable Player player,
+                                      Set<Location> cells) {
+        List<Location> excluded = new ArrayList<>();
+        List<UUID> excludedIds = new ArrayList<>();
         for (Location cell : cells) {
             Block b = cell.getBlock();
             UUID id = ShipWheelBlockType.readWheelId(b);
@@ -1309,39 +1320,22 @@ public class ShipWheelManager {
             if (record == null) continue;
             if (resolveWheelState(record).state() != WheelState.NOT_ASSEMBLED) continue;
             if (agreement(record, b) != Agreement.AGREES) continue;
-            if (wg.mightRestrictFailClosed(b.getWorld()) && wg.isBuildDenied(cell, player, true)) continue;
-            popCells.add(cell);
-            popRecords.add(record);
+            excluded.add(cell);
+            excludedIds.add(id);
         }
-        if (popCells.isEmpty()) return;
+        if (excluded.isEmpty()) return;
 
-        for (int i = 0; i < popCells.size(); i++) {
-            Location cell = popCells.get(i);
-            ShipWheelData record = popRecords.get(i);
-            Block b = cell.getBlock();
-            // Record FIRST: notifyRemoved re-enters onEngineRemovedWheelBlock via corelib's onBlockRemoved,
-            // and with the record still present that callback would reap it itself, with a "destroyed by
-            // the world" log that misdescribes what happened. With the record gone it no-ops.
-            placedWheels.remove(record.getWheelId());
-            ShipWheelBlockType.notifyRemoved(b);
-            if (plugin instanceof BlockShipsPlugin bsp && bsp.getDisplayShip() != null) {
-                b.getWorld().dropItemNaturally(cell.clone().add(0.5, 0.5, 0.5),
-                    bsp.getDisplayShip().createShipWheelItem());
-            }
-            b.setType(Material.AIR);
-            ShipWheelAnchors.forget(cell);
-            ShipWheelMenu.forgetDockedThrust(cell);
+        // Collected first, then removed: this iterates the very set it mutates.
+        for (int i = 0; i < excluded.size(); i++) {
+            Location cell = excluded.get(i);
             cells.remove(cell);
-            plugin.getLogger().info("Wheel " + record.getWheelId() + " was parked inside an assembling "
-                + "structure at " + locationKey(cell) + "; returned as an item and deregistered.");
+            plugin.getLogger().info("Wheel " + excludedIds.get(i) + " is parked inside another player's "
+                + "structure at " + locationKey(cell) + "; left in place and excluded from it.");
         }
-        // One save for the whole sweep — deliberately not purgeWheel, which saves per record.
-        saveAll();
         if (player != null) {
-            int n = popCells.size();
+            int n = excluded.size();
             player.sendMessage("§e" + plural(n, "ship wheel", "ship wheels") + " belonging to another ship "
-                + (n == 1 ? "was" : "were") + " returned as " + (n == 1 ? "an item" : "items")
-                + " instead of being absorbed into this ship.");
+                + (n == 1 ? "was" : "were") + " left in place instead of being absorbed into this ship.");
         }
     }
 
@@ -1770,13 +1764,14 @@ public class ShipWheelManager {
             return null;
         }
         Set<Location> members = scan.getBlocks();
-        // The freeze is where membership is DECIDED, so the foreign-wheel pop-out must run here too:
+        // The freeze is where membership is DECIDED, so the foreign-wheel exclusion must run here too:
         // without it, a foreign parked wheel caught in this fill is frozen into glue, and the locked
         // assembly path (scanFrozen, no preCapture hook) would absorb it on every assembly — the exact
         // chain the assembly-time sweep exists to break, reopened by clicking Lock first. Same guards,
-        // same live set (removed heads never enter the glue). Runs before the cap check so the cap
-        // counts real membership; the sweep saves internally, the saveAll below is the lock's own.
-        popAbsorbedForeignWheels(wheelData, player, members);
+        // same live set (excluded heads never enter the glue). Runs before the cap check so the cap counts
+        // real membership — and because the sweep is non-destructive, a lock refused by that cap leaves
+        // the neighbour's wheel exactly as it found it.
+        excludeForeignWheels(wheelData, player, members);
         int cap = ShipGlue.maxSize();
         if (members.size() > cap) {
             player.sendMessage("§cShip is too large to lock (" + members.size() + " blocks, glue cap " + cap
@@ -2104,13 +2099,15 @@ public class ShipWheelManager {
         // same one-shot legacy exposure as the assembly-path data note.) Both
         // paths funnel into the same captureCells(), so the two ScanResults are structurally identical.
         //
-        // The unlocked path's preCapture hook is the foreign-wheel pop-out: it runs between the flood
+        // The unlocked path's preCapture hook is the foreign-wheel exclusion: it runs between the flood
         // fill and the world snapshot, the only point where a cell can be dropped without leaving its
-        // head inside the captured model or breaking block-index parity.
+        // head inside the captured model or breaking block-index parity. It is non-destructive, so the
+        // refusals below it — the banner re-read, the per-cell WorldGuard gate, mechanism rollback — can
+        // all abort this assembly without having changed anything about the neighbour's wheel.
         BlockStructureScanner.ScanResult scan = wheelData.isLocked()
             ? BlockStructureScanner.scanFrozen(wheelLoc, wheelData.getFacing())
             : BlockStructureScanner.scanStructure(wheelLoc, wheelData.getFacing(),
-                cells -> popAbsorbedForeignWheels(wheelData, player, cells));
+                cells -> excludeForeignWheels(wheelData, player, cells));
         if (scan == null || scan.model().parts.isEmpty()) {
             player.sendMessage(wheelData.isLocked()
                 ? "§cNothing left of the locked structure — unlock the wheel and re-detect."

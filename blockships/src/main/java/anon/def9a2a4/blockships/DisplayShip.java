@@ -2450,8 +2450,9 @@ public class DisplayShip implements Listener {
         // ShipWheelData reference, which is how a menu outlives the record behind it: many paths deregister
         // a wheel — a player breaks it; the ship is destroyed with destroyOnDeath while you have the menu
         // open from the collider; an admin purges it; an explosion removes the block; a landing that could
-        // not place its wheel; the protected-anchor arm of disassembleShip; the foreign-wheel pop-out at a
-        // neighbour's assembly — and several reopen this menu a tick later on the now-detached object.
+        // not place its wheel; the protected-anchor arm of disassembleShip — and several reopen this menu
+        // a tick later on the now-detached object. (The foreign-wheel sweep at a neighbour's assembly is
+        // NOT on this list: it excludes the cell from their ship and deregisters nothing.)
         // (Deliberately no count on that list; two edits in a row let a stale "seven" survive a six-entry
         // list.) Acting on the detached object writes through a cached cell that may now hold somebody
         // else's block — assembleShip would flood-fill their build into a ship, toggleLock would overwrite
