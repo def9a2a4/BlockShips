@@ -86,6 +86,8 @@ public class BlockShipsPlugin extends JavaPlugin {
             getLogger().warning("==================================================");
         }
 
+        warnAboutMissingCompanions();
+
         // Initialize ship-to-ship collision coordinator
         boolean shipCollisionEnabled = getConfig().getBoolean("collision.ship-to-ship-enabled", true);
         int shipCollisionMaxCollisions = getConfig().getInt("collision.ship-to-ship-max-collisions", 20);
@@ -177,6 +179,31 @@ public class BlockShipsPlugin extends JavaPlugin {
             return true;
         } catch (ClassNotFoundException e) {
             return false;
+        }
+    }
+
+    /**
+     * Name the defCoreLib companion plugins that are missing, and say what that costs.
+     *
+     * <p>Their content lives in defCoreLib and is registered unconditionally, so the blocks work
+     * either way — what these jars switch on is defCoreLib's <i>recipes</i> for them. Without one,
+     * the recipes are simply never registered: nothing appears in the recipe book, and defCoreLib's
+     * gate returns without logging, so an admin has no way to connect an empty recipe book to a
+     * missing jar. This is the only place that connection gets made at runtime.
+     *
+     * <p>Matches on the plugin names, {@code mech} and {@code bbanners}, NOT on the display names
+     * Mechanism and BetterBanners — a lookup for "Mechanism" silently never matches.
+     */
+    private void warnAboutMissingCompanions() {
+        if (Bukkit.getPluginManager().getPlugin("mech") == null) {
+            getLogger().warning("Mechanism (plugin 'mech') is not installed. Propellers, thrusters,"
+                + " fans, reaction wheels and the Glue Brush cannot be CRAFTED - the blocks still work"
+                + " if you already have them. Get it at https://modrinth.com/plugin/mechanism");
+        }
+        if (Bukkit.getPluginManager().getPlugin("bbanners") == null) {
+            getLogger().warning("BetterBanners (plugin 'bbanners') is not installed. Large and huge"
+                + " banners are unavailable, so ships cannot use the two best sail tiers (20 and 50"
+                + " sail points). Get it at https://modrinth.com/plugin/betterbanners");
         }
     }
 

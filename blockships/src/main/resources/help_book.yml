@@ -45,7 +45,7 @@ sections:
     content: "Wool 3 pts, banner 7, large banner 20, huge banner 50. Large and huge need the BetterBanners plugin. Sails raise top speed and, once moving, turning. They plateau early."
 
   - title: "Propulsion"
-    content: "Fans, propellers and thrusters push a ship; a reaction wheel only turns it. All need rotation power, or fuel for a thruster. Power is all-or-nothing, so split big banks."
+    content: "Fans, propellers and thrusters push a ship; a reaction wheel only turns it. All need rotation power, or fuel for a thruster. They need the Mechanism plugin. Power is all-or-nothing, so split big banks."
 
   - title: "Mounting Matters"
     content: "Where a block points decides what it does. Facing fore/aft = speed. Sideways = turning. Up or down = lift. A reaction wheel always turns, whichever way it sits."
