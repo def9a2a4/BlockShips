@@ -40,6 +40,11 @@ public class ShipWorldData {
     // Cache of metadata existence checks (true = exists, false = doesn't exist)
     // Using ConcurrentHashMap for thread-safe access from chunk load events
     private final Map<String, Boolean> metadataExistsCache = new ConcurrentHashMap<>();
+
+    // Once-per-sidecar guard for the corrupt-read SEVERE: loadShipMetadataSync re-runs on every chunk load
+    // (reaper + delegated rebuild), and a corrupt file is deliberately left in place, so an unguarded log
+    // floods the console. Concurrent like persistedShipIds — off-main readers exist.
+    private final Set<String> corruptLogged = ConcurrentHashMap.newKeySet();
     private final java.util.concurrent.atomic.AtomicLong lastCacheClear = new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis());
     private static final long CACHE_CLEAR_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -79,7 +84,9 @@ public class ShipWorldData {
             if (all == null) continue;
             // Sweep temp files left by a crash between writeConfigAtomic's write and its rename. They are
             // never newer than the target in any usable sense — the rename is what publishes a write — so
-            // deleting is correct. Note this does NOT match *.yml.corrupt, which is evidence and must stay.
+            // deleting is correct. Note this does NOT match *.yml.corrupt: the retired enable-time
+            // quarantine produced such files (nothing does anymore); any still on disk are evidence, left
+            // alone.
             for (File f : all) {
                 if (f.getName().endsWith(".tmp") && !f.delete()) {
                     plugin.getLogger().warning("Could not delete stale temp file " + f.getAbsolutePath());
@@ -340,38 +347,45 @@ public class ShipWorldData {
                 + "): " + e.getMessage() + " — treating as a transient error, will retry");
             return MetadataLoad.TRANSIENT;
         } catch (org.bukkit.configuration.InvalidConfigurationException e) {
-            plugin.getLogger().severe("Ship sidecar " + shipId + " (world=" + worldName
-                + ") is not valid YAML: " + e.getMessage());
-            return MetadataLoad.CORRUPT;
+            return corrupt(worldName, shipId, "not valid YAML: " + e.getMessage());
         }
 
         String id = config.getString("id");
         if (id == null || id.isBlank()) {
-            plugin.getLogger().severe("Ship sidecar " + shipId + " (world=" + worldName + ") has no id");
-            return MetadataLoad.CORRUPT;
+            return corrupt(worldName, shipId, "it has no id");
         }
         UUID parsedId;
         try {
             parsedId = UUID.fromString(id.trim());
         } catch (IllegalArgumentException e) {
-            plugin.getLogger().severe("Ship sidecar " + shipId + " (world=" + worldName
-                + ") has an unreadable id '" + id + "'");
-            return MetadataLoad.CORRUPT;
+            return corrupt(worldName, shipId, "unreadable id '" + id + "'");
         }
         if (!parsedId.equals(shipId)) {
             // Silently accepted before, building a ShipState under the wrong UUID.
-            plugin.getLogger().severe("Ship sidecar " + shipId + " (world=" + worldName
-                + ") declares a different id " + parsedId + "; refusing to use it");
-            return MetadataLoad.CORRUPT;
+            return corrupt(worldName, shipId, "it declares a different id " + parsedId);
         }
 
         try {
             return new MetadataLoad(LoadStatus.OK, readState(config, worldName, parsedId));
         } catch (Exception e) {
-            plugin.getLogger().severe("Ship sidecar " + shipId + " (world=" + worldName
-                + ") could not be read: " + e.getMessage());
-            return MetadataLoad.CORRUPT;
+            return corrupt(worldName, shipId, "could not be read: " + e.getMessage());
         }
+    }
+
+    /**
+     * SEVERE for an unusable sidecar, once per world:id. Carries the operator playbook the retired
+     * enable-time quarantine used to embody: the file is never renamed or deleted (every destructive
+     * consumer fails closed on CORRUPT), so it is on the operator to restore or remove it; the ship's
+     * wheel reads "still loading" until they do.
+     */
+    private MetadataLoad corrupt(String worldName, UUID shipId, String detail) {
+        if (corruptLogged.add(worldName + ":" + shipId)) {
+            plugin.getLogger().severe("Ship sidecar " + shipId + " (world=" + worldName + ") is unusable: "
+                + detail + ". Nothing will be deleted while the file exists — restore or repair "
+                + getShipFile(worldName, shipId).getAbsolutePath() + " by hand, or move it aside to give"
+                + " the ship up; its wheel reads \"still loading\" until then. (Logged once per sidecar.)");
+        }
+        return MetadataLoad.CORRUPT;
     }
 
     /** Builds the {@link ShipPersistence.ShipState} from an already-validated config. */

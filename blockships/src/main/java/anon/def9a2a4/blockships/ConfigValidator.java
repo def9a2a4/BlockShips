@@ -178,6 +178,12 @@ public class ConfigValidator {
         for (File entry : entries) {
             String relative = prefix + entry.getName();
             if (entry.isDirectory()) {
+                // Never descend a symlinked directory: isDirectory() follows links, so a cycle under
+                // config/ recurses to StackOverflowError out of onEnable. Skipping is safe for legitimate
+                // symlinked setups too — the loader reads overrides through their own path regardless;
+                // this diagnostic just won't enumerate that subtree. Symlinked .yml FILES stay listed,
+                // matching what the loader reads.
+                if (java.nio.file.Files.isSymbolicLink(entry.toPath())) continue;
                 collectYamlFiles(entry, relative + "/", out);
             } else if (relative.endsWith(".yml")) {
                 out.add(relative);

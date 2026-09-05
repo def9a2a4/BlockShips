@@ -70,8 +70,11 @@ public final class ConfigResources {
      */
     private static final Map<String, String> LAST_PROBLEM = new ConcurrentHashMap<>();
 
-    /** Where each resource was last read from, for the startup/reload summary. */
-    private static final Map<String, Source> LAST_SOURCE = new ConcurrentHashMap<>();
+    /** Each resource's last load result, for the startup/reload summary. The whole {@link Loaded} is
+     *  kept, not just its {@link Source}: a broken override falls back to the jar with {@code error}
+     *  set, and the summary must say so rather than telling the admin to create the override they
+     *  already have. */
+    private static final Map<String, Loaded> LAST_SOURCE = new ConcurrentHashMap<>();
 
     /**
      * Forget what has been loaded and reported.
@@ -98,20 +101,32 @@ public final class ConfigResources {
         }
         List<String> overridden = new ArrayList<>();
         List<String> bundled = new ArrayList<>();
-        for (Map.Entry<String, Source> entry : new TreeMap<>(LAST_SOURCE).entrySet()) {
-            (entry.getValue() == Source.OVERRIDE ? overridden : bundled).add(entry.getKey());
+        List<String> missing = new ArrayList<>();
+        for (Map.Entry<String, Loaded> entry : new TreeMap<>(LAST_SOURCE).entrySet()) {
+            Loaded l = entry.getValue();
+            switch (l.source()) {
+                case OVERRIDE -> overridden.add(entry.getKey());
+                case JAR -> bundled.add(entry.getKey()
+                    + (l.error() != null ? " (your override failed to parse)" : ""));
+                case MISSING -> missing.add(entry.getKey());
+            }
         }
+        String missingSuffix = missing.isEmpty()
+            ? "" : " Could not be read anywhere: " + String.join(", ", missing) + ".";
 
+        if (overridden.isEmpty() && bundled.isEmpty()) {
+            return "Content files:" + missingSuffix;
+        }
         if (overridden.isEmpty()) {
             return "Content files: all from the jar (" + String.join(", ", bundled) + "). To customize"
                 + " one, put an edited copy in the plugin's config/ folder, e.g. config/blocks.yml"
-                + " - see the README. A copy at the plugin folder root is not read.";
+                + " - see the README. A copy at the plugin folder root is not read." + missingSuffix;
         }
         String summary = "Content files: from your config/ overrides: " + String.join(", ", overridden) + ".";
         if (!bundled.isEmpty()) {
             summary += " From the jar: " + String.join(", ", bundled) + ".";
         }
-        return summary;
+        return summary + missingSuffix;
     }
 
     /**
@@ -125,7 +140,21 @@ public final class ConfigResources {
     /** As {@link #load}, but also reports where the content came from. */
     public static Loaded loadDetailed(Plugin plugin, String path) {
         Loaded loaded = resolve(plugin, path);
-        LAST_SOURCE.put(path, loaded.source());
+        LAST_SOURCE.put(path, loaded);
+        return loaded;
+    }
+
+    /**
+     * Load ONLY the bundled jar copy of {@code path}, recording it as the resource's provenance.
+     *
+     * <p>For a caller that decided an existing override must not take effect (e.g. it parsed but
+     * defined nothing usable) and substitutes the jar content: loading through here keeps
+     * {@link #describeSources} honest about what is actually in force, where a silent substitution
+     * left it attributing jar content to the override.
+     */
+    public static Loaded loadJarOnly(Plugin plugin, String path) {
+        Loaded loaded = fromJar(plugin, path, null);
+        LAST_SOURCE.put(path, loaded);
         return loaded;
     }
 

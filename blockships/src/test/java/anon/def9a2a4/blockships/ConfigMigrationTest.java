@@ -78,7 +78,7 @@ class ConfigMigrationTest {
     }
 
     @Test
-    void aPreVersionedConfigKeepsEveryUserSetting() throws IOException {
+    void aPreVersionedConfigKeepsEverySettingTheMigrationDoesNotDeliberatelyChange() throws IOException {
         Path file = dataFolder.resolve("config.yml");
         Files.writeString(file, """
             cannons:
@@ -103,6 +103,11 @@ class ConfigMigrationTest {
         assertTrue(after.getBoolean("cannons.tnt-enabled"), "user settings must survive the upgrade");
         assertEquals(500, after.getInt("cannons.cooldown-ms"));
         assertEquals(2, after.getInt("config-version"));
+        // v0->v1 flips this deliberately, even though the fixture wrote an explicit false: the old
+        // shipped config extracted `enabled: false` into every server's file, so an explicit false is
+        // indistinguishable from the untouched default — the migration's value-match probe is policy,
+        // not a bug (a contains() probe would neuter the flip for the entire legacy population).
+        assertTrue(after.getBoolean("custom-ships.stats.enabled"));
         // v1->v2 drops this deliberately: the replacement exponent runs the opposite way.
         assertFalse(after.contains("custom-ships.stats.lift-falloff-exponent"));
     }

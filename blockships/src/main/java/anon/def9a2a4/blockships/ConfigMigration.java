@@ -11,8 +11,13 @@ import org.bukkit.plugin.Plugin;
  * — {@code saveDefaultConfig()} only ever writes the file once, so an existing server keeps the old
  * value forever and never sees the new behaviour.
  *
- * <p>Deliberately conservative: a value is only rewritten when it still matches what the old default
- * shipped as. A server that made a choice keeps it.
+ * <p>Mostly conservative, with two honest exceptions. The v0→v1 stats flip rewrites any
+ * {@code stats.enabled: false} — the old shipped config extracted that literal into every server's
+ * file, so an admin's explicit false is indistinguishable from the untouched default; both are
+ * deliberately flipped (an explicit {@code true} is the one choice that provably was one, and it is
+ * kept). And the v1→v2 step deletes {@code lift-falloff-exponent} regardless of its value, tuned or
+ * not, because the two systems run in opposite directions. Everything else follows the conservative
+ * rule: rewrite only what still matches the old shipped default.
  *
  * <p><b>Never runs against a config.yml that failed to parse.</b> Bukkit turns a YAML error into an
  * empty configuration with the jar's copy hung underneath as defaults, and {@code getInt(key, 0)} reads

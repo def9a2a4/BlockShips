@@ -1523,24 +1523,6 @@ public class ShipInstance {
         }
     }
 
-    /**
-     * Counts the total number of entities that make up this ship.
-     * Calculated from model structure to ensure consistent counts regardless of recovery state.
-     * Used for persistence to validate recovery completeness.
-     *
-     * Note: leadableShulker is NOT counted separately - it's one of the collision shulkers
-     * that also has a leadable tag. The shulker is already counted in the colliders.
-     */
-    public int countEntities() {
-        int count = 2;  // vehicle + parent (always present)
-        count += model.parts.size();  // block displays
-        count += model.items.size();  // item displays
-        // Each part with collision gets carrier + shulker (leadable shulkers are included here)
-        count += (int) model.parts.stream().filter(p -> p.collision != null).count() * 2;
-        count += model.seats.size();  // seat shulkers
-        return count;
-    }
-
     // ===== Custom Ship Methods =====
 
     /**

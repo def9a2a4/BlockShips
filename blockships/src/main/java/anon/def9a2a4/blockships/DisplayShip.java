@@ -159,24 +159,42 @@ public class DisplayShip implements Listener {
     }
 
     private void loadShipModels() {
-        shipModels.clear();
-
-        // Iterate through all ship types in config
+        // Parse into a fresh map and swap at the end: one broken prefab must not take down enable or
+        // /blockships reload. ShipModel.fromFile throws on a missing/empty file, a bad matrix, an unknown
+        // material or blockstate — any one typo'd override — and a throw here used to propagate out of
+        // onEnable BEFORE shipWheelManager was assigned (so even onDisable's wheel save was lost) and out
+        // of the reload command mid-way with the model map already cleared. Same per-entry-skip +
+        // keep-running-on-total-failure shape as BlockConfigManager.loadConfig; loadModelForState already
+        // guards its own fromFile call this way.
         var shipsSection = plugin.getConfig().getConfigurationSection("ships");
         if (shipsSection == null) {
             plugin.getLogger().warning("No ships defined in config!");
+            shipModels.clear();
             return;
         }
 
+        Map<String, ShipModel> fresh = new LinkedHashMap<>();
         List<String> loadedShips = new ArrayList<>();
         for (String shipType : shipsSection.getKeys(false)) {
             String modelPath = plugin.getConfig().getString("ships." + shipType + ".model-path");
-            if (modelPath != null) {
+            if (modelPath == null) continue;
+            try {
                 ShipModel model = ShipModel.fromFile(plugin, modelPath, shipType);
-                shipModels.put(shipType, model);
+                fresh.put(shipType, model);
                 loadedShips.add(shipType + " (" + model.parts.size() + " blocks)");
+            } catch (Exception e) {
+                plugin.getLogger().severe("Prefab ship '" + shipType + "' failed to load from '" + modelPath
+                    + "': " + e.getMessage() + " — skipped. Fix the file and /blockships reload.");
             }
         }
+
+        if (fresh.isEmpty() && !shipModels.isEmpty()) {
+            plugin.getLogger().severe("Every prefab ship failed to load; keeping the " + shipModels.size()
+                + " model(s) already in force.");
+            return;
+        }
+        shipModels.clear();
+        shipModels.putAll(fresh);
 
         if (!loadedShips.isEmpty()) {
             plugin.getLogger().info("Loaded prefab ships: " + String.join(", ", loadedShips));
@@ -280,7 +298,8 @@ public class DisplayShip implements Listener {
             if (reap == null) {
                 // FAIL CLOSED. Only a genuinely ABSENT sidecar means "orphan"; a sidecar we could not READ
                 // (torn write, bad YAML, I/O blip) used to arrive here as a plain null and reap a live ship's
-                // entities. CORRUPT ones are quarantined once at enable, not here.
+                // entities. CORRUPT ones stay CORRUPT — never renamed, never reaped; the loader SEVEREs once
+                // per sidecar with the operator playbook.
                 ShipWorldData.MetadataLoad load = shipWorldData.loadShipMetadataChecked(world, shipId);
                 reap = switch (load.status()) {
                     case ABSENT -> true;                        // no sidecar — orphan
