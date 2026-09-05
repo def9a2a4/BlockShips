@@ -218,8 +218,10 @@ class DecisionTableTest {
     // ── LocationUtil under a COLLECTED world reference ──────────────────────────────────────────────────
 
     /**
-     * A Location whose weak world reference has been collected: {@code isWorldLoaded()} still answers true,
-     * and {@code getWorld()} throws {@code IllegalArgumentException("World unloaded")}.
+     * A Location where {@code isWorldLoaded()} answers true but {@code getWorld()} throws
+     * {@code IllegalArgumentException("World unloaded")}. (A genuinely COLLECTED weak ref answers false
+     * from {@code isWorldLoaded()} too — it dereferences the same ref — and takes the ternary's null
+     * branch; the combination modeled here is the cross-thread unload race between the two calls.)
      *
      * <p>Overriding only {@code getWorld()} would make these tests a tautology: {@code liveWorld} consults
      * {@code isWorldLoaded()} FIRST, and for a null-world Location that reads the private Reference field

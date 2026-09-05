@@ -1269,8 +1269,11 @@ public class ShipWheelManager {
     }
 
     /**
-     * The foreign-wheel pop-out (runs as {@code scanStructure}'s preCapture hook): another player's
-     * PARKED wheel caught in this assembly's flood fill is returned as an item instead of being absorbed.
+     * The foreign-wheel pop-out: another player's PARKED wheel caught in a flood fill is returned as an
+     * item instead of being absorbed. Runs at BOTH sites where fill membership is committed — as
+     * {@code scanStructure}'s preCapture hook on the unlocked assembly path, and in {@code toggleLock}'s
+     * freeze tail before the glue write (the locked assembly path rebuilds from glue via
+     * {@code scanFrozen}, so whatever the freeze admitted would be absorbed forever after).
      *
      * <p>Absorption used to carry the head into the mechanism as an ordinary block — decided policy — but
      * the LEFTOVER IDENTITY made that untenable: on the absorber's next landing the head lands inside
@@ -1288,7 +1291,10 @@ public class ShipWheelManager {
      * this sweep into a griefing primitive. Unstamped legacy heads are indistinguishable from decor and
      * are never popped. Cells in WorldGuard-denied regions are skipped too: this sweep runs BEFORE the
      * per-cell WG gate (the gate needs the captured model), and a refused assembly must not have already
-     * destroyed a third party's record.
+     * destroyed a third party's record. The WG probe here fails CLOSED (don't pop) to match: under the
+     * same transient WG fault the downstream gate refuses the assembly, so the head must still be intact.
+     * Refusals AFTER this hook (the banner re-read, mechanism rollback) can still land after a pop — an
+     * accepted cost: the popped wheel survives as an item on the ground at its own cell.
      */
     private void popAbsorbedForeignWheels(ShipWheelData assembling, @Nullable Player player,
                                           Set<Location> cells) {
@@ -1303,7 +1309,7 @@ public class ShipWheelManager {
             if (record == null) continue;
             if (resolveWheelState(record).state() != WheelState.NOT_ASSEMBLED) continue;
             if (agreement(record, b) != Agreement.AGREES) continue;
-            if (wg.mightRestrict(b.getWorld()) && wg.isBuildDenied(cell, player)) continue;
+            if (wg.mightRestrictFailClosed(b.getWorld()) && wg.isBuildDenied(cell, player, true)) continue;
             popCells.add(cell);
             popRecords.add(record);
         }
@@ -1764,6 +1770,13 @@ public class ShipWheelManager {
             return null;
         }
         Set<Location> members = scan.getBlocks();
+        // The freeze is where membership is DECIDED, so the foreign-wheel pop-out must run here too:
+        // without it, a foreign parked wheel caught in this fill is frozen into glue, and the locked
+        // assembly path (scanFrozen, no preCapture hook) would absorb it on every assembly — the exact
+        // chain the assembly-time sweep exists to break, reopened by clicking Lock first. Same guards,
+        // same live set (removed heads never enter the glue). Runs before the cap check so the cap
+        // counts real membership; the sweep saves internally, the saveAll below is the lock's own.
+        popAbsorbedForeignWheels(wheelData, player, members);
         int cap = ShipGlue.maxSize();
         if (members.size() > cap) {
             player.sendMessage("§cShip is too large to lock (" + members.size() + " blocks, glue cap " + cap
@@ -2085,7 +2098,10 @@ public class ShipWheelManager {
         // (still in the world — air-out is deferred), so the delegated assembler gets block-index parity.
         //
         // A LOCKED wheel skips the flood fill entirely and rebuilds from its frozen cell set, so blocks
-        // stacked against the docked hull are never absorbed — and therefore never swept either. Both
+        // stacked against the docked hull are never absorbed — and no sweep is needed here: the frozen
+        // set was already swept when toggleLock froze it, so no foreign wheel can be in it. (Glue frozen
+        // BEFORE the sweep existed may still carry one — absorbed until the owner unlocks and re-locks;
+        // same one-shot legacy exposure as the assembly-path data note.) Both
         // paths funnel into the same captureCells(), so the two ScanResults are structurally identical.
         //
         // The unlocked path's preCapture hook is the foreign-wheel pop-out: it runs between the flood

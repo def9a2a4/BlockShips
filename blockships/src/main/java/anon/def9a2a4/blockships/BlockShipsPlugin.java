@@ -827,10 +827,14 @@ public class BlockShipsPlugin extends JavaPlugin {
                         + "§c currently active ship(s).");
                     if (orphaned > 0) {
                         // Orphans used to be skipped, which stranded their blocks permanently. They are now
-                        // actionable: any that still have a live mechanism get their blocks landed.
-                        sender.sendMessage("§e" + orphaned + " orphaned wheel(s) will also be cleared. Any"
-                            + " whose ship is still holding blocks will have those returned to the world"
-                            + " §7(except prefab ships, which hold none).");
+                        // actionable: any that still have a live mechanism get their blocks landed. Dead
+                        // orphans (no live mechanism) are NOT cleared here — they keep their stale link and
+                        // self-heal via reconcileOrphan on the next interaction — so the message promises
+                        // "where possible", not "all".
+                        sender.sendMessage("§e" + orphaned + " orphaned wheel(s) will be cleared where"
+                            + " possible: any whose ship is still holding blocks will have those returned"
+                            + " to the world §7(except prefab ships, which hold none). §eThe rest recover"
+                            + " on their next use.");
                     }
                     if (untouched > 0) {
                         sender.sendMessage("§7" + untouched + " assembled wheel(s) are in unloaded chunks"

@@ -266,20 +266,11 @@ public class BlockStructureScanner {
     // ========== Main Methods ==========
 
     /**
-     * Scans blocks using flood fill from the ship wheel location.
-     * Uses BlockConfigManager and ShipDetector to find all allowed connected blocks.
-     *
-     * @param wheelLocation The location of the ship wheel block
-     * @param facing The direction the ship wheel is facing
-     * @return A ShipModel representing the scanned blocks, or null if scan fails
-     */
-    /**
      * Result of {@link #scanStructure}: the derived {@link ShipModel} plus the live world blocks that
      * produced it, in {@code parts}-index order ({@code orderedBlocks.get(i)} corresponds to
      * {@code model.parts.get(i)}). The blocks are still in the world (air-out is deferred) so a delegated
      * assembler can consume them with block-index parity.
-     */
-    /**
+     *
      * @param bannerTiersUnreadable the scan could not see the ship's large/huge banner displays, so
      *        {@code model}'s tier counts are zero by default rather than by measurement.
      *        <b>Refuse the assembly when this is set</b> — {@code ShipModel.toMap} persists those

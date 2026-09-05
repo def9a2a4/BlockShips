@@ -35,7 +35,9 @@ public final class LocationUtil {
      * This location's world, or null if it does not currently have a live one.
      *
      * <p>Total: never throws, for any input, including a location whose world has been collected. Callers are
-     * deciding whether to touch a block, and "I cannot tell" must resolve to "do not".
+     * deciding whether to touch a block, and "I cannot tell" must resolve to "do not". The catch is
+     * {@code Throwable} — including {@code Error}s — deliberately: on these paths a VM-level failure should
+     * degrade to "no live world" rather than escape through a save or a click handler.
      *
      * <p>Does not load chunks. A non-null return says the world is live, not that the cell is loaded — ask
      * {@code isChunkLoaded} on the returned world for that.
@@ -72,6 +74,8 @@ public final class LocationUtil {
     /**
      * Whether this cell can be READ right now: its world is live and its chunk is loaded. Never loads a
      * chunk and never throws — total for null, for a null world, and for a collected world reference.
+     * The totality claim assumes the main thread (as all callers are): the {@code isChunkLoaded} call is
+     * outside any guard, and only main-thread execution stops the world from dying between the two calls.
      *
      * <p>The single spelling for the {@code liveWorld(x) != null && world.isChunkLoaded(x >> 4, z >> 4)}
      * pair that had grown seven hand-written copies (plus one Location-side variant). Answers a question
