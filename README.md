@@ -58,7 +58,7 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 - **Large Ship** - Larger water vessel with more health. Two double chests, many seats.
 - **Small Airship** - Floats in the air with vertical controls. Also two seats and a double chest.
 
-**Command:** `/blockships give <item>` (items: `ship_wheel`, `small_ship`, `large_ship`, `small_airship`)
+**Command:** `/blockships give <item>` — items are `ship_wheel`, `captains_manual`, `balloon`, `smallship`, `bigship`, `smallairship`. Run `/blockships give` with no argument to print the list your server actually has.
 
 ## Physics System
 - **Walk on your ships** - Players can walk around on deck while sailing/flying. this is still buggy!
@@ -78,8 +78,6 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 | D      | Rotate right            |
 | Space  | Ascend (flying ships)   |
 | Sprint | Descend (flying ships)  |
-
-On servers older than 1.21.2 the client sends no sprint signal while seated, so descending there is **S + Space** instead. The in-game help text picks the right one for your server automatically.
 
 
 
@@ -116,10 +114,37 @@ On servers older than 1.21.2 the client sends no sprint signal while seated, so 
 
 # Installation
 
-1. Download the BlockShips jar file from modrinth: [modrinth.com/plugin/blockships](https://modrinth.com/plugin/blockships)
-2. **IMPORTANT: Download [ProtocolLib](https://www.spigotmc.org/resources/protocollib.1997/)** if using 1.21.2 or below! ProtocolLib is no longer required as of BlockShips 0.0.16
-3. Place both jars in your server's `plugins` folder
-4. Restart the server
+## Requirements
+
+- **Paper 1.21.9 or newer**, or a Paper fork. Development and CI run on **1.21.11**, and CI also covers **26.1.2** and **26.2**, on both Paper and Purpur — those are the versions actually tested. 1.21.9 and 1.21.10 should work but are not covered by automated tests.
+- **Java 21 or newer.** Note that Minecraft 26.x servers themselves require Java 25 — that is a requirement of the server jar, not of BlockShips.
+- **Spigot and Folia are not supported.**
+
+## Required
+
+**[DefCoreLib](https://modrinth.com/plugin/defcorelib) 0.5.0 or newer.** BlockShips declares a hard dependency on it and will not load without it. DefCoreLib is also what sets the 1.21.9 floor. There is no version check between the two, so install the DefCoreLib release published alongside this version of BlockShips.
+
+Install only `defCoreLib-<version>.jar`. If you also drop in the `-plain` jar, Paper reports "Ambiguous plugin name" and neither loads.
+
+## Recommended
+
+These are DefCoreLib companion plugins. Everything they unlock already lives inside DefCoreLib — these jars switch on its **crafting recipes**. Without them the blocks still exist and still work if you already have some (from an older world, creative, or `/defcorelib give`); they just can't be crafted in survival, and **nothing is printed in your server log to tell you so**.
+
+- **[Mechanism](https://modrinth.com/plugin/mechanism)** — the recipes for propellers, thrusters, fans and reaction wheels, and for the **Glue Brush** (brush + slimeball) that attaches blocks a ship couldn't otherwise carry. Jar is `Mechanism-<version>.jar`; it appears in `/plugins` as **`mech`**.
+- **[BetterBanners](https://modrinth.com/plugin/betterbanners)** — large and huge banners, the two best sails (20 and 50 sail points, against 7 for a plain banner). Jar is `BetterBanners-<version>.jar`; it appears in `/plugins` as **`bbanners`**.
+
+## Optional
+
+- **[WorldGuard](https://enginehub.org/worldguard)** — ships respect region build permissions; disassembly inside a region you can't build in drops blocks as items instead of placing them.
+- **[DynLight](https://github.com/def9a2a4/DynLight)** — light-emitting blocks on an assembled ship emit dynamic light.
+
+## Install
+
+1. Download `BlockShips-<version>.jar` and `defCoreLib-<version>.jar`, plus `Mechanism` and `BetterBanners` if you want them.
+2. Drop them all in your server's `plugins` folder.
+3. Restart the server.
+
+No resource pack or client mod is needed.
 
 # Configuration
 
