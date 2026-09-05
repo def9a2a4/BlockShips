@@ -53,6 +53,17 @@ test: $(DEFCORELIB_BUILD_DEP)
 dump-issues:
 	bash docs/dump-issues.sh
 
+# Print README.md with absolute links, for pasting into the Modrinth description.
+# README_REF is required — see the note in the script about why there is no default.
+.PHONY: readme-modrinth
+readme-modrinth:
+	@python3 docs/readme-modrinth.py "$(README_REF)"
+
+# Same rewrite, but assert nothing relative survived instead of printing.
+.PHONY: readme-modrinth-check
+readme-modrinth-check:
+	@python3 docs/readme-modrinth.py "$(README_REF)" --check
+
 .PHONY: clean
 clean:
 	cd blockships && gradle clean

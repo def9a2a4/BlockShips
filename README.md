@@ -30,8 +30,8 @@ Ships can include:
 
 - **Functional blocks** - Crafting tables, anvils, enchanting tables work as normal. (furnaces/brewing stands don't fully yet work)
 - **Storage** - Chests, barrels, dispensers, etc remain accessible
-- **Seats** - any stair becomes a passenger seat you can sit on.
-- **Lead points** - Anything leashed to a fence will stay tied to the ship. You can lead things to the ship while its moving. Prefab ships have a single lead point.
+- **Seats** - bottom-half stairs become passenger seats you can sit on (wooden, copper and purpur; copper ones have to be straight). Wool carpets work too.
+- **Lead points** - Anything leashed to a fence will stay tied to the ship. You can lead things to the ship while its moving. The Small Ship and Large Ship each have one lead point; the Small Airship has none.
 - **Cannons** - a dispenser with a block of obsidian behind it will shoot its contents. fire all through the ship menu, or right click on the obsidian to fire.
 - **Health & damage** - Ships have health, take damage from collisions/attacks, and regenerate over time. When they run out of health, ships will attempt to place themselves back in the world.
 - **Sounds & effects** - Movement and damage come with visual effects and audio.
@@ -46,9 +46,9 @@ Ships can include:
   - or skip the glowstone entirely: propellers and thrusters mounted vertically, on a floor or a ceiling, will lift a heavy hull
 3. Craft a "Ship Wheel"
 4. Place the wheel on your structure
-5. Right-click the wheel to assemble
-6. Right-click again to board and steer
-7. Right-click the wheel, or sneak right-click, to open menu and disassemble
+5. Right-click the wheel to open its menu, and click "assemble"
+6. Right-click the ship itself, or a seat, to board and steer
+7. Right-click where the wheel was to open the menu again and disassemble
 
 ## Prefab Ships
 
@@ -90,6 +90,7 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 | **Large Ship**<br>*Wood type, banner customizable*                | ![Large Ship](docs/assets/crafting/large_ship.png)       |
 | **Ship Balloon**<br>*Wool color customizable*                   | ![Ship Balloon](docs/assets/crafting/ship_balloon.png)   |
 | **Small Airship**<br>*Wood type, balloon type customizable* | ![Small Airship](docs/assets/crafting/small_airship.png) |
+| **Captain's Manual**<br>*Shapeless: ship wheel + book*    | —                                                        |
 
 
 ## Cannons
@@ -101,16 +102,23 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 
 ## Commands
 
-| Command                           | Description                                  | Permission             |
-| --------------------------------- | -------------------------------------------- | ---------------------- |
-| `/blockships help`                | Show help and list all commands              | -                      |
-| `/blockships info`                | Show ship and wheel statistics               | -                      |
-| `/blockships dismount`            | Force-dismount from a ship                   | `blockships.dismount`  |
-| `/blockships reload`              | Reload configuration                         | `blockships.reload`    |
-| `/blockships give <item>`         | Give yourself a ship wheel or ship kit       | `blockships.give`      |
-| `/blockships recipes [player]`    | Unlock crafting recipes                      | `blockships.recipes`   |
-| `/blockships forcedisassembleall` | **(DANGEROUS) Disassemble all custom ships** | `blockships.admin`     |
-| `/blockships killentities`        | **(DANGEROUS) Remove all ship entities**     | `blockships.admin`     |
+Commands marked † must be run by a player, not from the console.
+
+| Command                                          | Description                                                              | Permission             |
+| ------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------- |
+| `/blockships help`                               | Show help and list all commands                                          | -                      |
+| `/blockships info`                               | Show ship and wheel statistics                                           | `blockships.info` (default: everyone) |
+| `/blockships dismount` †                         | Force-dismount from a ship                                               | `blockships.dismount`  |
+| `/blockships reload`                             | Reload configuration                                                     | `blockships.reload`    |
+| `/blockships give <item>` †                      | Give yourself a ship wheel, kit or item                                  | `blockships.give`      |
+| `/blockships spawndrowned` †                     | Spawn a wheel-carrying drowned captain                                   | `blockships.give`      |
+| `/blockships recipes [player]`                   | Unlock crafting recipes                                                  | `blockships.recipes`   |
+| `/blockships highlightseats` †                   | Highlight a ship's seats (debug)                                         | `blockships.highlight` |
+| `/blockships highlightcolliders` †               | Highlight a ship's colliders (debug)                                     | `blockships.highlight` |
+| `/blockships wheels <inspect\|list\|adopt\|purge>` | Inspect or repair ship wheel records                                     | `blockships.admin`     |
+| `/blockships forceclearwheel <wheelId> <first8>` | **(DANGEROUS) Delete one wheel record** — takes the id's first 8 chars   | `blockships.admin`     |
+| `/blockships forcedisassembleall confirm`        | **(DANGEROUS) Disassemble all ships**                                    | `blockships.admin`     |
+| `/blockships killentities confirm`               | **(DANGEROUS) Remove ship entities in loaded chunks**                    | `blockships.admin`     |
 
 # Installation
 
@@ -178,7 +186,7 @@ A file at the plugin folder root (`plugins/BlockShips/blocks.yml`) is **not read
 unzip -o BlockShips-0.0.18.jar blocks.yml -d plugins/BlockShips/config/
 ```
 
-or download [`blocks.yml`](https://github.com/def9a2a4/BlockShips/blob/main/blockships/src/main/resources/blocks.yml) and save it to that path.
+or download [`blocks.yml`](https://raw.githubusercontent.com/def9a2a4/BlockShips/main/blockships/src/main/resources/blocks.yml) and save it to that path.
 
 Your copy **replaces** the bundled one rather than merging with it, so start from the whole file and re-check it after each update — blocks added in later releases won't appear until you add them. The startup log tells you which copy is in force and warns when yours is missing entries the bundled default has.
 
@@ -204,4 +212,4 @@ You are free to use this plugin only for non-commercial projects and servers. Fo
 
 # Developing
 
-You will need java and gradle installed. Running `make build` will compile the plugin and create a jar file in `bin/`.
+You will need **Java 21** and gradle installed, plus a [defCoreLib](https://github.com/def9a2a4/defCoreLib) checkout as a sibling directory — `make build` builds that first and compiles against it, and the build fails outright without it. Point elsewhere with `DEFCORELIB_DIR=` or `DEFCORELIB_JAR=` if your checkout lives somewhere else. `make build` puts the jar in `bin/`; `make test` runs the unit tests, which `build` deliberately does not.

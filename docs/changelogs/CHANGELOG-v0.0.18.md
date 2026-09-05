@@ -16,7 +16,8 @@
 
 - **Sails come in four tiers:** wool 3 points, banner 7, large banner 20, huge banner 50.
   Sails raise top speed and — once you are moving — turning rate. They plateau at 80% by
-  design, so propulsion is what closes the last stretch.
+  design, so propulsion is what closes the last stretch. The top two tiers need the
+  [BetterBanners](https://modrinth.com/plugin/betterbanners) plugin installed.
 
 - **Ships carry blocks they used to refuse.** Glue dirt, stone or grass to a ship with the
   Glue Brush (craftable: brush + slimeball, and it needs the Mechanism plugin installed)

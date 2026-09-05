@@ -50,6 +50,9 @@ entirely** (see below); canvas holds nothing up. Sails are cheap, plateau early,
 
 ## Propulsion
 
+These blocks come from defCoreLib, and the Mechanism plugin is what makes them craftable — without
+it the recipes are never registered, though blocks you already have keep working.
+
 | block | thrust | cost |
 |---|---|---|
 | fan | 10 | 2 rotation power |
