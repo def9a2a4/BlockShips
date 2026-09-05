@@ -898,7 +898,7 @@ const TESTS = {
 function listTests() {
   say('Available tests:')
   for (const [key, test] of Object.entries(TESTS)) {
-    say(`  .testbot ${key} - ${test.name}`)
+    say(`  .testbot ${key} - ${test.name}${test.manual ? ' (manual: not part of "all")' : ''}`)
   }
   say('  .testbot all - Run all tests')
   say('  .testbot help - Show this help')
@@ -943,6 +943,12 @@ async function runAllTests() {
 
   for (const [key, test] of Object.entries(TESTS)) {
     if (filter && !filter.some(f => key.includes(f))) continue
+    // Manual tests never run implicitly (that includes CI's test:all) — only when named via --only=
+    // or .testbot <key>. "User-run only" is a property of the registry, not of anyone's restraint.
+    if (test.manual && !filter) {
+      log(`Skipping ${test.name} (manual — run with --only=${key} or .testbot ${key})`)
+      continue
+    }
     if (skips.some(s => key.includes(s))) {
       log(`Skipping ${test.name} on ${bot.version}`)
       continue
