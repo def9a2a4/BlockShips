@@ -13,13 +13,8 @@ import org.bukkit.block.data.type.Slab;
 import org.bukkit.block.data.type.Stairs;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
-import org.bukkit.configuration.file.YamlConfiguration;
 import org.joml.Vector3f;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.logging.Logger;
 
@@ -96,8 +91,10 @@ public class BlockConfigManager {
             if (loaded.source() == ConfigResources.Source.OVERRIDE) {
                 logger.severe("config/blocks.yml defined no blocks; using the bundled default instead so"
                     + " ships can still pick blocks up. Fix the override and reload.");
-                YamlConfiguration jarDefault = loadJarDefault();
-                if (jarDefault != null) parseInto(jarDefault, parsed);
+                // loadJarOnly records the jar as blocks.yml's provenance, so describeSources() and the
+                // summary line below stop attributing the substituted jar content to the override.
+                loaded = ConfigResources.loadJarOnly(plugin, "blocks.yml");
+                parseInto(loaded.config(), parsed);
             }
         }
 
@@ -127,20 +124,6 @@ public class BlockConfigManager {
             } catch (Exception e) {
                 logger.warning("Failed to parse block config for '" + key + "': " + e.getMessage());
             }
-        }
-    }
-
-    /** The blocks.yml bundled in the jar, or null if it cannot be read (already logged at SEVERE). */
-    private YamlConfiguration loadJarDefault() {
-        try (InputStream in = plugin.getResource("blocks.yml")) {
-            if (in == null) {
-                logger.severe("Bundled blocks.yml is missing from the jar; block configuration is empty.");
-                return null;
-            }
-            return YamlConfiguration.loadConfiguration(new InputStreamReader(in, StandardCharsets.UTF_8));
-        } catch (IOException e) {
-            logger.severe("Could not read the bundled blocks.yml: " + e.getMessage());
-            return null;
         }
     }
 

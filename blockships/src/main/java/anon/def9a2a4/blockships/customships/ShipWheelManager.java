@@ -485,8 +485,7 @@ public class ShipWheelManager {
             if (cellsAgree(location, w.getBlockLocation())) residents.add(w);
         }
         for (ShipWheelData r : residents) {
-            WheelState st = resolveWheelState(r).state();
-            if (st == WheelState.LOADED || st == WheelState.UNLOADED_RECOVERABLE) return PlaceResult.CELL_RESERVED;
+            if (reservesCell(resolveWheelState(r).state())) return PlaceResult.CELL_RESERVED;
         }
         // Everything left is docked or orphaned, i.e. a record that believes its wheel is HERE — and it
         // plainly is not, because the player just placed a fresh head in this cell.
@@ -928,11 +927,10 @@ public class ShipWheelManager {
         if (candidate == null) return null;
 
         // THE security condition. A sailing ship's cell is necessarily empty, so any head there was planted;
-        // adopting it would hand the planter the ship. NOT_ASSEMBLED is required — not merely "not LOADED",
-        // which would also admit UNLOADED_RECOVERABLE and let someone hijack a ship parked in an unloaded
-        // chunk. It also makes hasLiveMechanism's fail-open behaviour (it returns true on a corelib fault)
-        // narrow adoption rather than widen it.
-        if (resolveWheelState(candidate).state() != WheelState.NOT_ASSEMBLED) return null;
+        // adopting it would hand the planter the ship. Requiring NOT_ASSEMBLED (see adoptableState for the
+        // full argument) also makes hasLiveMechanism's fail-open behaviour (it returns true on a corelib
+        // fault) narrow adoption rather than widen it.
+        if (!adoptableState(resolveWheelState(candidate).state())) return null;
 
         if (!ShipWheelBlockType.stamp(block, candidate.getWheelId())) return null;
 
@@ -1448,9 +1446,7 @@ public class ShipWheelManager {
                     // disassembles a ship outside any window, so its landing's follow is refused and the
                     // record sticks at the old cell. Reachable only when persistence.save throws; the
                     // repair is /blockships forceclearwheel, whose own landing IS windowed.
-                    WheelState st = resolveWheelState(w).state();
-                    if ((st == WheelState.LOADED || st == WheelState.UNLOADED_RECOVERABLE)
-                            && !expectedLandings.contains(id)) {
+                    if (!followMoved(resolveWheelState(w).state(), expectedLandings.contains(id))) {
                         refuseMismatch(w, block, w.getBlockLocation(), false, null);
                         return null;
                     }
@@ -1667,6 +1663,70 @@ public class ShipWheelManager {
         if (state == WheelState.LOADED) return LockDecision.REFUSE_SAILING;
         if (!ownedBlockPresent) return LockDecision.REFUSE_NO_BLOCK;
         return LockDecision.LOCK;
+    }
+
+    /**
+     * The pure head of {@code adoptLegacyWheel}'s state gate: may an unstamped wheel-skinned head standing
+     * at this record's cached cell be adopted as the record's block?
+     *
+     * <p>{@code NOT_ASSEMBLED} is required — not merely "not {@code LOADED}", which would also admit
+     * {@code UNLOADED_RECOVERABLE} and let someone hijack a ship parked in an unloaded chunk by planting a
+     * head on its vacated dock. {@code ORPHAN} is refused too, and that row is reachable: a dead-linked
+     * record must not become adoptable through a planted head — the reconcile paths own that repair.
+     * (Tested in {@code DecisionTableTest}; the in-game bot cannot reach this gate — a planted plain head
+     * dies earlier at the texture check — so the table is the only guard on the comparison's direction.)
+     */
+    public static boolean adoptableState(WheelState state) {
+        return state == WheelState.NOT_ASSEMBLED;
+    }
+
+    /**
+     * The pure head of {@code placeWheel}'s reservation check: does a resident record in this state
+     * reserve its cell against a fresh wheel being placed there?
+     *
+     * <p>True exactly while the resident's ship is out — {@code LOADED}, or {@code UNLOADED_RECOVERABLE}
+     * (a ship parked in an unloaded chunk still needs its dock back to land on). A docked or orphaned
+     * resident does NOT reserve: that is a stale record which merely believes the cell is its own, and the
+     * warn-don't-reap path downstream depends on it not making the cell permanently unbuildable.
+     */
+    public static boolean reservesCell(WheelState state) {
+        return state == WheelState.LOADED || state == WheelState.UNLOADED_RECOVERABLE;
+    }
+
+    /**
+     * The pure head of {@code verifyWheelLanded}: is the block at the wheel's landing cell an acceptable
+     * landing for this wheel (record kept), or must the record be dropped so it cannot strand?
+     *
+     * <p>Kept for a head carrying the wheel's own stamp (unambiguous), or for an UNSTAMPED head in a cell
+     * that was EMPTY before the landing — the legacy-wheel tolerance. The {@code cellWasOccupied} arm is
+     * the squatter defense: an unstamped head in a previously occupied cell is somebody's pre-existing
+     * player head, and keeping the record would point every wheel→block write at their block. Takes the
+     * two ids rather than pre-derived match/absent booleans so no table row is impossible and the
+     * null-safe comparison direction is itself under test.
+     */
+    public static boolean landedHeadKept(boolean isHead, boolean cellWasOccupied,
+                                         UUID wheelId, @Nullable UUID landedId) {
+        if (!isHead) return false;
+        if (wheelId.equals(landedId)) return true;
+        return landedId == null && !cellWasOccupied;
+    }
+
+    /**
+     * The pure head of {@code anchorWheelFor}'s MOVED-arm gate: may a stamped head found somewhere other
+     * than its record's cached cell pull the record onto itself?
+     *
+     * <p>Refused exactly when the record's ship is out ({@code LOADED}/{@code UNLOADED_RECOVERABLE}) and
+     * this is not an expected landing: while the real wheel rides inside its assembled ship, any stamped
+     * block in the world is a copy, and following it would relocate the ship's record onto the copy.
+     * Inside an expected-landing window the same states MUST follow — the window is exactly
+     * forcedisassembleall / forceclearwheel landing a stuck ship's own head. {@code NOT_ASSEMBLED} and
+     * {@code ORPHAN} always follow (an ordinary mover carry, or an orphan's landed head). Do not fold
+     * this disjunction together with {@link #reservesCell}'s — same shape, different arguments; sharing
+     * it would let a future loosening of one silently loosen the other.
+     */
+    public static boolean followMoved(WheelState state, boolean expectedLanding) {
+        return expectedLanding
+            || (state != WheelState.LOADED && state != WheelState.UNLOADED_RECOVERABLE);
     }
 
     /**
@@ -2024,16 +2084,11 @@ public class ShipWheelManager {
         boolean isHead = type == Material.PLAYER_HEAD || type == Material.PLAYER_WALL_HEAD;
         UUID landedId = ShipWheelBlockType.readWheelId(landed);
 
-        // Our own stamped wheel: unambiguous, always accepted.
-        if (isHead && wheelData.getWheelId().equals(landedId)) return;
-
-        // An UNSTAMPED head is accepted only if this cell was empty before the landing. The tolerance exists
-        // for a legacy wheel, which lands carrying no id and gets adopted on the next right-click — but it is
-        // indistinguishable from a plain player head that was already standing here, and accepting one of
-        // those hands the record to a squatter: the wheel itself was dropped as an item (corelib's landing
-        // takes "solid wins" on an occupied cell), so the record would go on pointing at somebody else's
-        // block, and every wheel→block write would follow it there.
-        if (isHead && landedId == null && !cellWasOccupied) return;
+        // The decision itself is landedHeadKept (see its javadoc for the two accept arms and the squatter
+        // defense; the legacy tolerance exists because a pre-identity wheel lands carrying no id and gets
+        // adopted on the next right-click, while corelib's landing takes "solid wins" on an occupied cell
+        // and drops the real wheel as an item).
+        if (landedHeadKept(isHead, cellWasOccupied, wheelData.getWheelId(), landedId)) return;
         placedWheels.remove(wheelData.getWheelId());
         ShipWheelAnchors.forget(landed);
         // Both cell-keyed caches, not just the anchor one. This site dropped only the anchors, so a wheel

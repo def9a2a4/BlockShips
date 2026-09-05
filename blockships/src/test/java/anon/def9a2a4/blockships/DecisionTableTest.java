@@ -257,4 +257,114 @@ class DecisionTableTest {
             "a cell with no world at all is not observable");
         assertFalse(LocationUtil.isCellObservable(null), "null is not observable");
     }
+
+    // ── The wheel-gate predicates ───────────────────────────────────────────────────────────────────────
+    //
+    // Pure heads of the four security/consistency gates in ShipWheelManager. These tables pin WHICH ARM
+    // FIRES for which state — they do not (cannot) exercise the impersonation defense itself, which lives
+    // in agreement()/the PDC reads and needs a world; that half belongs to the in-game bot scenarios.
+    // No totality loops here: each predicate is a boolean ==/|| expression, total by construction — a
+    // "does not throw" loop would be the vacuous kind the isRegionGated NOTE above condemns.
+
+    /**
+     * THE legacy-adoption security row: NOT merely "not LOADED". A ship parked in an unloaded chunk reads
+     * UNLOADED_RECOVERABLE with its dock cell empty; a planted wheel-skinned head there must not adopt the
+     * record, or the planter owns the ship the moment it lands. The bot cannot reach this gate (a planted
+     * plain head dies earlier at the texture check), so this table is the only guard on the comparison.
+     */
+    @Test
+    void onlyAParkedWheelIsAdoptable() {
+        assertTrue(ShipWheelManager.adoptableState(WheelState.NOT_ASSEMBLED));
+        assertFalse(ShipWheelManager.adoptableState(WheelState.LOADED));
+        assertFalse(ShipWheelManager.adoptableState(WheelState.UNLOADED_RECOVERABLE),
+            "not merely 'not LOADED' — a ship parked in an unloaded chunk must keep its wheel");
+        assertFalse(ShipWheelManager.adoptableState(WheelState.ORPHAN),
+            "a dead-linked record is repaired by reconcile, not by whoever plants a head first");
+    }
+
+    /**
+     * A dock is reserved exactly while its ship is out. The false rows matter as much as the true ones: a
+     * docked or orphaned resident is a stale record that merely believes the cell is its own, and if those
+     * reserved, one stale record would make a cell permanently unbuildable — the downstream warn-don't-reap
+     * path is only safe because staleness does not also block placement.
+     */
+    @Test
+    void aDockIsReservedExactlyWhileItsShipIsOut() {
+        for (WheelState out : new WheelState[]{WheelState.LOADED, WheelState.UNLOADED_RECOVERABLE}) {
+            assertTrue(ShipWheelManager.reservesCell(out), out + " must reserve its dock");
+        }
+        assertFalse(ShipWheelManager.reservesCell(WheelState.NOT_ASSEMBLED),
+            "a docked resident here is stale — a fresh head is already in the cell");
+        assertFalse(ShipWheelManager.reservesCell(WheelState.ORPHAN),
+            "one orphaned record must not make a cell permanently unbuildable");
+    }
+
+    /** Our own stamped head is unambiguous: the landing is accepted whatever stood in the cell before. */
+    @Test
+    void ownStampedHeadAlwaysLands() {
+        java.util.UUID mine = new java.util.UUID(0, 1);
+        assertTrue(ShipWheelManager.landedHeadKept(true, false, mine, mine));
+        assertTrue(ShipWheelManager.landedHeadKept(true, true, mine, mine));
+    }
+
+    /**
+     * The squatter defense: an UNSTAMPED head in a cell that was OCCUPIED before the landing is somebody's
+     * pre-existing player head — corelib took "solid wins" and dropped the real wheel as an item — and
+     * keeping the record would point every wheel→block write at their block. The previously-empty arm is
+     * the legacy tolerance: a pre-identity wheel lands carrying no id and gets adopted on next use.
+     */
+    @Test
+    void unstampedHeadLandsOnlyInAPreviouslyEmptyCell() {
+        java.util.UUID mine = new java.util.UUID(0, 1);
+        assertTrue(ShipWheelManager.landedHeadKept(true, false, mine, null),
+            "the legacy tolerance: a pre-identity wheel lands with no id");
+        assertFalse(ShipWheelManager.landedHeadKept(true, true, mine, null),
+            "a head that was already standing here belongs to a squatter");
+    }
+
+    /** A foreign stamp, or no head at all, is never a landing — whatever the cell held before. */
+    @Test
+    void foreignStampOrNoHeadNeverLands() {
+        java.util.UUID mine = new java.util.UUID(0, 1);
+        java.util.UUID other = new java.util.UUID(0, 2);
+        for (boolean occupied : new boolean[]{false, true}) {
+            assertFalse(ShipWheelManager.landedHeadKept(true, occupied, mine, other),
+                "another wheel's stamp");
+            assertFalse(ShipWheelManager.landedHeadKept(false, occupied, mine, null), "no head at all");
+            assertFalse(ShipWheelManager.landedHeadKept(false, occupied, mine, mine),
+                "a non-head block does not become a wheel by carrying the id");
+        }
+    }
+
+    /**
+     * The /clone-hijack row: while the real wheel rides inside its assembled ship, any stamped block in the
+     * world is a copy — pulse it with a mover and, without this gate, the ship's record relocates onto the
+     * copy and the attacker owns its menu. Both assembled states refuse: UNLOADED_RECOVERABLE is the ship
+     * parked in an unloaded chunk, no less hijackable.
+     */
+    @Test
+    void aSailingShipsRecordNeverFollowsACopy() {
+        assertFalse(ShipWheelManager.followMoved(WheelState.LOADED, false));
+        assertFalse(ShipWheelManager.followMoved(WheelState.UNLOADED_RECOVERABLE, false));
+    }
+
+    /**
+     * The expected-landing window is the deliberate exception: forcedisassembleall / forceclearwheel land a
+     * stuck ship's own head while its state still reads assembled, and that landing MUST follow — refuse it
+     * and the record sticks at the old cell forever, so the repair command would not repair.
+     */
+    @Test
+    void anExpectedLandingFollowsEvenWhileAssembled() {
+        assertTrue(ShipWheelManager.followMoved(WheelState.LOADED, true));
+        assertTrue(ShipWheelManager.followMoved(WheelState.UNLOADED_RECOVERABLE, true));
+    }
+
+    /** An ordinary mover carry of a parked wheel, or an orphan's landed head, always follows its block. */
+    @Test
+    void aParkedOrOrphanedWheelFollowsItsBlock() {
+        for (boolean expected : new boolean[]{false, true}) {
+            assertTrue(ShipWheelManager.followMoved(WheelState.NOT_ASSEMBLED, expected));
+            assertTrue(ShipWheelManager.followMoved(WheelState.ORPHAN, expected));
+        }
+    }
 }
