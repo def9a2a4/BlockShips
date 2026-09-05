@@ -23,15 +23,15 @@ Other plugins that work nicely with BlockShips:
 
 # Features
 
-Build a ship out of allowed blocks, place a Ship's wheel on it and right click, and click "assemble" in the menu. Your blocks are now a mobile ship! Depending on the density (fully configurable) of the blocks in your ship, your ship might float lower or higher in the water. Use enough "lighter than air" blocks like glowstone, and your ship will be a flying airship.
+Build a ship out of allowed blocks, place a Ship's wheel on it and right click, and click "assemble" in the menu. Your blocks are now a mobile ship! Depending on the density (fully configurable) of the blocks in your ship, your ship might float lower or higher in the water. Use enough "lighter than air" blocks like glowstone, and your ship will be a flying airship — or bolt on enough upward thrust and fly a heavy one. See [the flight model](docs/flight-model.md) for how lift, sail power and thrust combine.
 
 
 Ships can include:
 
 - **Functional blocks** - Crafting tables, anvils, enchanting tables work as normal. (furnaces/brewing stands don't fully yet work)
 - **Storage** - Chests, barrels, dispensers, etc remain accessible
-- **Seats** - any stair becomes a passenger seat you can sit on.
-- **Lead points** - Anything leashed to a fence will stay tied to the ship. You can lead things to the ship while its moving. Prefab ships have a single lead point.
+- **Seats** - bottom-half stairs become passenger seats you can sit on (wooden, copper and purpur; copper ones have to be straight). Wool carpets work too.
+- **Lead points** - Anything leashed to a fence will stay tied to the ship. You can lead things to the ship while its moving. The Small Ship and Large Ship each have one lead point; the Small Airship has none.
 - **Cannons** - a dispenser with a block of obsidian behind it will shoot its contents. fire all through the ship menu, or right click on the obsidian to fire.
 - **Health & damage** - Ships have health, take damage from collisions/attacks, and regenerate over time. When they run out of health, ships will attempt to place themselves back in the world.
 - **Sounds & effects** - Movement and damage come with visual effects and audio.
@@ -40,14 +40,15 @@ Ships can include:
 
 ## Custom Ships
 
-1. Build a structure from allowed blocks (see or edit this in `blocks.yml`)
+1. Build a structure from allowed blocks (see [the blocks.yml section](#blocksyml) to change the list)
   - generally, wood/metal/functional blocks are allowed, while stone/dirt/other natural blocks are not
-  - light-giving blocks, like glowstone, end rods, and beacons, serve as floatation aids. enough of these, and you get an airship! 
+  - light-giving blocks, like glowstone, end rods, and beacons, serve as floatation aids. enough of these, and you get an airship!
+  - or skip the glowstone entirely: propellers and thrusters mounted vertically, on a floor or a ceiling, will lift a heavy hull
 3. Craft a "Ship Wheel"
 4. Place the wheel on your structure
-5. Right-click the wheel to assemble
-6. Right-click again to board and steer
-7. Right-click the wheel, or sneak right-click, to open menu and disassemble
+5. Right-click the wheel to open its menu, and click "assemble"
+6. Right-click the ship itself, or a seat, to board and steer
+7. Right-click where the wheel was to open the menu again and disassemble
 
 ## Prefab Ships
 
@@ -57,11 +58,13 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 - **Large Ship** - Larger water vessel with more health. Two double chests, many seats.
 - **Small Airship** - Floats in the air with vertical controls. Also two seats and a double chest.
 
-**Command:** `/blockships give <item>` (items: `ship_wheel`, `small_ship`, `large_ship`, `small_airship`)
+**Command:** `/blockships give <item>` — items are `ship_wheel`, `captains_manual`, `balloon`, `smallship`, `bigship`, `smallairship`. Run `/blockships give` with no argument to print the list your server actually has.
 
 ## Physics System
 - **Walk on your ships** - Players can walk around on deck while sailing/flying. this is still buggy!
 - **Buoyancy** - Ships float based on block weight and density. this is buggy sometimes!
+- **Propulsion** - Fans, propellers and thrusters add speed, turning or lift depending on which way they are mounted; a reaction wheel only ever turns, whichever way it sits
+- **Lift** - A ship with less lift than it needs cannot climb and sinks, faster the more it is short by
 - **Movement** - Acceleration, drag, and collision response
 - **Collision detection** - Ships interact with terrain and entities (interacting with other ships is buggy)
 
@@ -73,8 +76,8 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 | S      | Move backward / brake   |
 | A      | Rotate left             |
 | D      | Rotate right            |
-| Space  | Ascend (airships only)  |
-| Sprint | Descend (airships only) |
+| Space  | Ascend (flying ships)   |
+| Sprint | Descend (flying ships)  |
 
 
 
@@ -87,6 +90,7 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 | **Large Ship**<br>*Wood type, banner customizable*                | ![Large Ship](docs/assets/crafting/large_ship.png)       |
 | **Ship Balloon**<br>*Wool color customizable*                   | ![Ship Balloon](docs/assets/crafting/ship_balloon.png)   |
 | **Small Airship**<br>*Wood type, balloon type customizable* | ![Small Airship](docs/assets/crafting/small_airship.png) |
+| **Captain's Manual**<br>*Shapeless: ship wheel + book*    | —                                                        |
 
 
 ## Cannons
@@ -98,42 +102,95 @@ Spawn ready-to-use ships, with customizable banners/colors/wood types:
 
 ## Commands
 
-| Command                           | Description                                  | Permission             |
-| --------------------------------- | -------------------------------------------- | ---------------------- |
-| `/blockships help`                | Show help and list all commands              | -                      |
-| `/blockships info`                | Show ship and wheel statistics               | -                      |
-| `/blockships dismount`            | Force-dismount from a ship                   | `blockships.dismount`  |
-| `/blockships reload`              | Reload configuration                         | `blockships.reload`    |
-| `/blockships give <item>`         | Give yourself a ship wheel or ship kit       | `blockships.give`      |
-| `/blockships recipes [player]`    | Unlock crafting recipes                      | `blockships.recipes`   |
-| `/blockships forcedisassembleall` | **(DANGEROUS) Disassemble all custom ships** | `blockships.admin`     |
-| `/blockships killentities`        | **(DANGEROUS) Remove all ship entities**     | `blockships.admin`     |
+Commands marked † must be run by a player, not from the console.
+
+| Command                                          | Description                                                              | Permission             |
+| ------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------- |
+| `/blockships help`                               | Show help and list all commands                                          | -                      |
+| `/blockships info`                               | Show ship and wheel statistics                                           | `blockships.info` (default: everyone) |
+| `/blockships dismount` †                         | Force-dismount from a ship                                               | `blockships.dismount`  |
+| `/blockships reload`                             | Reload configuration                                                     | `blockships.reload`    |
+| `/blockships give <item>` †                      | Give yourself a ship wheel, kit or item                                  | `blockships.give`      |
+| `/blockships spawndrowned` †                     | Spawn a wheel-carrying drowned captain                                   | `blockships.give`      |
+| `/blockships recipes [player]`                   | Unlock crafting recipes                                                  | `blockships.recipes`   |
+| `/blockships highlightseats` †                   | Highlight a ship's seats (debug)                                         | `blockships.highlight` |
+| `/blockships highlightcolliders` †               | Highlight a ship's colliders (debug)                                     | `blockships.highlight` |
+| `/blockships wheels <inspect\|list\|adopt\|purge>` | Inspect or repair ship wheel records                                     | `blockships.admin`     |
+| `/blockships forceclearwheel <wheelId> <first8>` | **(DANGEROUS) Delete one wheel record** — takes the id's first 8 chars   | `blockships.admin`     |
+| `/blockships forcedisassembleall confirm`        | **(DANGEROUS) Disassemble all ships**                                    | `blockships.admin`     |
+| `/blockships killentities confirm`               | **(DANGEROUS) Remove ship entities in loaded chunks**                    | `blockships.admin`     |
 
 # Installation
 
-1. Download the BlockShips jar file from modrinth: [modrinth.com/plugin/blockships](https://modrinth.com/plugin/blockships)
-2. **IMPORTANT: Download [ProtocolLib](https://www.spigotmc.org/resources/protocollib.1997/)** if using 1.21.2 or below! ProtocolLib is no longer required as of BlockShips 0.0.16
-3. Place both jars in your server's `plugins` folder
-4. Restart the server
+## Requirements
+
+- **Paper 1.21.9 or newer**, or a Paper fork. Development and CI run on **1.21.11**, and CI also covers **26.1.2** and **26.2**, on both Paper and Purpur — those are the versions actually tested. 1.21.9 and 1.21.10 should work but are not covered by automated tests.
+- **Java 21 or newer.** Note that Minecraft 26.x servers themselves require Java 25 — that is a requirement of the server jar, not of BlockShips.
+- **Spigot and Folia are not supported.**
+
+## Required
+
+**[DefCoreLib](https://modrinth.com/plugin/defcorelib) 0.5.0 or newer.** BlockShips declares a hard dependency on it and will not load without it. DefCoreLib is also what sets the 1.21.9 floor. There is no version check between the two, so install the DefCoreLib release published alongside this version of BlockShips.
+
+Install only `defCoreLib-<version>.jar`. If you also drop in the `-plain` jar, Paper reports "Ambiguous plugin name" and neither loads.
+
+## Recommended
+
+These are DefCoreLib companion plugins. Everything they unlock already lives inside DefCoreLib — these jars switch on its **crafting recipes**. Without them the blocks still exist and still work if you already have some (from an older world, creative, or `/defcorelib give`); they just can't be crafted in survival, and **nothing is printed in your server log to tell you so**.
+
+- **[Mechanism](https://modrinth.com/plugin/mechanism)** — the recipes for propellers, thrusters, fans and reaction wheels, and for the **Glue Brush** (brush + slimeball) that attaches blocks a ship couldn't otherwise carry. Jar is `Mechanism-<version>.jar`; it appears in `/plugins` as **`mech`**.
+- **[BetterBanners](https://modrinth.com/plugin/betterbanners)** — large and huge banners, the two best sails (20 and 50 sail points, against 7 for a plain banner). Jar is `BetterBanners-<version>.jar`; it appears in `/plugins` as **`bbanners`**.
+
+## Optional
+
+- **[WorldGuard](https://enginehub.org/worldguard)** — ships respect region build permissions; disassembly inside a region you can't build in drops blocks as items instead of placing them.
+- **[DynLight](https://github.com/def9a2a4/DynLight)** — light-emitting blocks on an assembled ship emit dynamic light.
+
+## Install
+
+1. Download `BlockShips-<version>.jar` and `defCoreLib-<version>.jar`, plus `Mechanism` and `BetterBanners` if you want them.
+2. Drop them all in your server's `plugins` folder.
+3. Restart the server.
+
+No resource pack or client mod is needed.
 
 # Configuration
 
 ## config.yml
 
-Main plugin settings including:
+Lives at `plugins/BlockShips/config.yml` and is read from disk normally — edit it in place. Main plugin settings including:
 
 - Ship physics (speed, acceleration, drag)
 - Buoyancy values (density, strength)
 - Collision settings (mass, response)
+- Cannons (cooldown, whether TNT can be fired)
 - Crafting recipes
 
 ## blocks.yml
 
-Configure which blocks can be used in custom ships:
+Configures which blocks can be used in custom ships:
 
-- **Weight scale** - Affects buoyancy
+- **Weight scale** - Affects buoyancy, and how much thrust it takes to lift the ship
 - **Collider** - Custom collision shapes
 - **Seat/storage** - Special block behaviors
+
+**`blocks.yml` is read from inside the jar, not from the plugin folder.** Same for `items.yml` and the prefab ship models. That way a plugin update ships current block definitions instead of being hidden by a copy you generated two releases ago. To customize it, put your edited copy in the `config/` subfolder:
+
+```
+plugins/BlockShips/config/blocks.yml
+```
+
+A file at the plugin folder root (`plugins/BlockShips/blocks.yml`) is **not read at all**. To get a copy to edit:
+
+```sh
+unzip -o BlockShips-0.0.18.jar blocks.yml -d plugins/BlockShips/config/
+```
+
+or download [`blocks.yml`](https://raw.githubusercontent.com/def9a2a4/BlockShips/main/blockships/src/main/resources/blocks.yml) and save it to that path.
+
+Your copy **replaces** the bundled one rather than merging with it, so start from the whole file and re-check it after each update — blocks added in later releases won't appear until you add them. The startup log tells you which copy is in force and warns when yours is missing entries the bundled default has.
+
+Note that natural blocks (stone, dirt, ores) are excluded on purpose: assembly flood-fills through connected allowed blocks, so allowing them lets a docked ship swallow the terrain it is sitting on.
 
 
 
@@ -155,4 +212,4 @@ You are free to use this plugin only for non-commercial projects and servers. Fo
 
 # Developing
 
-You will need java and gradle installed. Running `make build` will compile the plugin and create a jar file in `bin/`.
+You will need **Java 21** and gradle installed, plus a [defCoreLib](https://github.com/def9a2a4/defCoreLib) checkout as a sibling directory — `make build` builds that first and compiles against it, and the build fails outright without it. Point elsewhere with `DEFCORELIB_DIR=` or `DEFCORELIB_JAR=` if your checkout lives somewhere else. `make build` puts the jar in `bin/`; `make test` runs the unit tests, which `build` deliberately does not.

@@ -47,68 +47,87 @@ public class BlockConfigManager {
     }
 
     /**
-     * Load block configuration from blocks.yml
+     * Load block configuration from blocks.yml.
+     *
+     * <p>Parses into a fresh map and swaps only once that succeeds. A reload must never leave the
+     * server holding a half-parsed allow-list: an admin who saves a typo and runs {@code /blockships
+     * reload} would otherwise trade a working config for jar defaults, live, with ships in the air.
+     *
+     * @return where the configuration came from, for the startup/reload summary
      */
-    public void loadConfig() {
-        blockPropertiesCache.clear();
-
+    public ConfigResources.Loaded loadConfig() {
         // Load blocks.yml from config/ override if present, else straight from the jar.
         // We deliberately do NOT extract a copy to disk: that copy would go stale and hide
         // newly-added blocks (e.g. *_shelf) on plugin updates.
-        FileConfiguration blocksConfig = ConfigResources.load(plugin, "blocks.yml");
+        ConfigResources.Loaded loaded = ConfigResources.loadDetailed(plugin, "blocks.yml");
 
-        // Parse all block entries from root level
-        for (String key : blocksConfig.getKeys(false)) {
-            ConfigurationSection blockConfig = blocksConfig.getConfigurationSection(key);
-            if (blockConfig == null) {
-                continue;
+        // A reload whose override does not parse gets the bundled file back. At startup that is the
+        // right answer; here it is not - swapping a working allow-list for the defaults, live, would
+        // re-permit everything the admin had disallowed. Keep what is already running instead.
+        if (loaded.error() != null && !blockPropertiesCache.isEmpty()) {
+            logger.severe("Keeping the block configuration already in force (" + blockPropertiesCache.size()
+                + " materials) rather than reverting to the bundled defaults. Fix config/blocks.yml and"
+                + " reload again.");
+            return loaded;
+        }
+
+        FileConfiguration blocksConfig = loaded.config();
+        Set<String> keys = blocksConfig.getKeys(false);
+
+        Map<Material, BlockProperties> parsed = new EnumMap<>(Material.class);
+        parseInto(blocksConfig, parsed);
+
+        // Parses cleanly but defines no block at all: an empty file, or every entry mis-indented to a
+        // scalar (what a botched hand-edit looks like). Applying that would clear the allow-list and
+        // disallow every block, live. An empty result must not take effect — fall back to the bundled
+        // default, which always has entries, so ships keep picking blocks up. Only an OVERRIDE has a
+        // better source to fall back to; a JAR/MISSING source is already the last resort.
+        if (parsed.isEmpty()) {
+            if (!keys.isEmpty()) {
+                logger.warning("blocks.yml parsed " + keys.size() + " top-level entries but none of them"
+                    + " defined a block. Each entry needs indented properties under it, e.g."
+                    + " \"andesite:\" then \"  allowed: true\" on the next line.");
             }
-
-            try {
-                parseBlockEntry(key, blockConfig);
-            } catch (Exception e) {
-                logger.warning("Failed to parse block config for '" + key + "': " + e.getMessage());
+            if (loaded.source() == ConfigResources.Source.OVERRIDE) {
+                logger.severe("config/blocks.yml defined no blocks; using the bundled default instead so"
+                    + " ships can still pick blocks up. Fix the override and reload.");
+                // loadJarOnly records the jar as blocks.yml's provenance, so describeSources() and the
+                // summary line below stop attributing the substituted jar content to the override.
+                loaded = ConfigResources.loadJarOnly(plugin, "blocks.yml");
+                parseInto(loaded.config(), parsed);
             }
         }
 
-        logger.info("Loaded block configuration for " + blockPropertiesCache.size() + " materials from blocks.yml");
+        blockPropertiesCache.clear();
+        blockPropertiesCache.putAll(parsed);
+        logger.info("Loaded block configuration for " + blockPropertiesCache.size()
+            + " materials from " + loaded.describeSource());
+        return loaded;
     }
 
     /**
      * Reload block configuration from blocks.yml
      */
-    public void reloadConfig() {
-        loadConfig();
+    public ConfigResources.Loaded reloadConfig() {
+        return loadConfig();
     }
 
-    private void parseOldFormat() {
-        // Legacy support: check if blocks are in config.yml instead
-        ConfigurationSection blocksSection = plugin.getConfig().getConfigurationSection("blocks");
-        if (blocksSection == null) {
-            return;
-        }
-
-        logger.info("Found legacy blocks configuration in config.yml, loading from there instead");
-        blockPropertiesCache.clear();
-
-        // Parse all block entries
-        for (String key : blocksSection.getKeys(false)) {
-            ConfigurationSection blockConfig = blocksSection.getConfigurationSection(key);
+    /** Runs every top-level entry of {@code src} through the block parser into {@code target}. */
+    private void parseInto(FileConfiguration src, Map<Material, BlockProperties> target) {
+        for (String key : src.getKeys(false)) {
+            ConfigurationSection blockConfig = src.getConfigurationSection(key);
             if (blockConfig == null) {
                 continue;
             }
-
             try {
-                parseBlockEntry(key, blockConfig);
+                parseBlockEntry(target, key, blockConfig);
             } catch (Exception e) {
                 logger.warning("Failed to parse block config for '" + key + "': " + e.getMessage());
             }
         }
-
-        logger.info("Loaded block configuration for " + blockPropertiesCache.size() + " materials");
     }
 
-    private void parseBlockEntry(String key, ConfigurationSection config) {
+    private void parseBlockEntry(Map<Material, BlockProperties> target, String key, ConfigurationSection config) {
         // Parse base properties
         boolean allowed = config.getBoolean("allowed", false);
 
@@ -138,13 +157,13 @@ public class BlockConfigManager {
             List<BlockProperties.ConditionalRule> conditionalRules = parseConditionalRules(rulesList);
             BlockProperties baseProps = new BlockProperties(allowed, weight, CollisionConfig.DEFAULT, leadable, seat, displayRotation, interaction, storage, conditionalRules);
 
-            applyToMaterials(key, baseProps);
+            applyToMaterials(target, key, baseProps);
         } else {
             // Simple non-conditional properties
             CollisionConfig collider = parseCollider(config.get("collider"));
             BlockProperties props = new BlockProperties(allowed, weight, collider, leadable, seat, displayRotation, interaction, storage, null);
 
-            applyToMaterials(key, props);
+            applyToMaterials(target, key, props);
         }
     }
 
@@ -172,42 +191,6 @@ public class BlockConfigManager {
         }
 
         return rules;
-    }
-
-    private BlockProperties.BlockDataMatcher createMatcher(ConfigurationSection conditionSection) {
-        Map<String, String> conditions = new HashMap<>();
-        for (String key : conditionSection.getKeys(false)) {
-            conditions.put(key, conditionSection.getString(key));
-        }
-
-        return blockData -> {
-            for (Map.Entry<String, String> condition : conditions.entrySet()) {
-                String property = condition.getKey();
-                String expectedValue = condition.getValue().toUpperCase();
-
-                // Check different block data types
-                if (blockData instanceof Slab slab) {
-                    if (property.equals("type") && !slab.getType().name().equals(expectedValue)) {
-                        return false;
-                    }
-                } else if (blockData instanceof Stairs stairs) {
-                    if (property.equals("half") && !stairs.getHalf().name().equals(expectedValue)) {
-                        return false;
-                    }
-                    if (property.equals("shape") && !stairs.getShape().name().equals(expectedValue)) {
-                        return false;
-                    }
-                    if (property.equals("facing") && !stairs.getFacing().name().equals(expectedValue)) {
-                        return false;
-                    }
-                } else if (blockData instanceof Orientable orientable) {
-                    if (property.equals("axis") && !orientable.getAxis().name().equals(expectedValue)) {
-                        return false;
-                    }
-                }
-            }
-            return true;
-        };
     }
 
     private BlockProperties.BlockDataMatcher createMatcherFromMap(Map<?, ?> conditionMap) {
@@ -298,24 +281,24 @@ public class BlockConfigManager {
         return new ShipModel.StorageConfig(storageType, name);
     }
 
-    private void applyToMaterials(String key, BlockProperties properties) {
+    private void applyToMaterials(Map<Material, BlockProperties> target, String key, BlockProperties properties) {
         if (WildcardMatcher.isTag(key)) {
             // Minecraft tag reference
             Set<Material> materials = resolveTag(key.substring(1));
             for (Material material : materials) {
-                blockPropertiesCache.putIfAbsent(material, properties);
+                target.putIfAbsent(material, properties);
             }
         } else if (WildcardMatcher.isWildcard(key)) {
             // Wildcard pattern
             Set<Material> materials = WildcardMatcher.getMatchingMaterials(key);
             for (Material material : materials) {
-                blockPropertiesCache.putIfAbsent(material, properties);
+                target.putIfAbsent(material, properties);
             }
         } else {
             // Specific material
             try {
                 Material material = Material.valueOf(key.toUpperCase());
-                blockPropertiesCache.putIfAbsent(material, properties);
+                target.putIfAbsent(material, properties);
             } catch (IllegalArgumentException e) {
                 logger.warning("Unknown material: " + key);
             }
@@ -345,6 +328,53 @@ public class BlockConfigManager {
     public boolean isAllowed(Material material) {
         BlockProperties props = blockPropertiesCache.get(material);
         return props != null && props.isAllowed();
+    }
+
+    /**
+     * Whether {@code blocks.yml} says anything at all about this material.
+     *
+     * <p>Distinguishes "configured with weight 0" from "never mentioned". {@link #getProperties}
+     * synthesises a forbidden entry for an unknown material whose {@code weight} autoboxes to
+     * {@code Integer 0} — so {@link BlockProperties#hasWeight()} returns true and the block reads as
+     * weightless rather than unpriced. That is fine while the allow-list is the only way in, but a
+     * GLUED block is deliberately not allow-listed: left alone it would add 0 to the ship's weight
+     * while still incrementing the divisor, dragging mean density toward 0 (i.e. toward the airship
+     * threshold) and making glue the cheapest way to make a ship fly.
+     */
+    public boolean isConfigured(Material material) {
+        return blockPropertiesCache.containsKey(material);
+    }
+
+    /**
+     * The signed buoyancy weight to use for a block, or {@code null} when the block is deliberately
+     * excluded from density (an explicit {@code weight: null} in blocks.yml).
+     *
+     * <p>A material blocks.yml has never heard of is, in practice, a GLUED block — nothing else can
+     * get into a ship. Those fall back to defCoreLib's mass table so they weigh something real
+     * instead of nothing. That table is inertial mass and is always {@code >= 0}, which is the
+     * conservative answer here: a glued stone makes a ship sit lower, never higher.
+     *
+     * <p>Use this rather than {@code getProperties(...).getWeight()} anywhere weight feeds density,
+     * mass or health.
+     */
+    public Integer resolveWeight(Material material, BlockData blockData) {
+        if (isConfigured(material)) {
+            BlockProperties props = getProperties(material, blockData);
+            return props.hasWeight() ? props.getWeight() : null;
+        }
+        return corelibMass(material);
+    }
+
+    /** defCoreLib's inertial mass for a material, rounded to BlockShips' integer weight scale. */
+    private static Integer corelibMass(Material material) {
+        try {
+            double m = anon.def9a2a4.corelib.CoreLibPlugin.getInstance()
+                .getMechanismRegistry().massRegistry().get(material, null);
+            return (int) Math.round(m);
+        } catch (Throwable t) {
+            // CoreLib unavailable/faulted — a sane non-zero default beats a weightless ghost block.
+            return 1;
+        }
     }
 
     /**

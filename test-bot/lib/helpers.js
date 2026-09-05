@@ -134,6 +134,13 @@ async function clearInventory(bot) {
   await sleep(300)
 }
 
+// HEADING INVARIANT, written down once because every directional assertion in both suites leans on it:
+// the bots are teleported with INTEGER coordinate literals, and vanilla /tp CENTRE-CORRECTS those
+// (`/tp @s 1000 100 0` lands at x=1000.5, z=0.5). A floor wheel's facing comes from the placing player's
+// position via a 16-way rotation snapped to cardinal — and thanks to the centring, the bot stands exactly
+// one block south of the wheel cell, dead centre, so the delta is exactly (0,·,-1): yaw 180, NORTH, no
+// 45-degree tie. Change the teleport to non-integer literals (or move the bot's stand-cell) and every
+// dz/heading assertion silently starts testing a different bearing.
 function findWaterNearby(bot, pos, maxZOffset = -5) {
   for (let zOffset = -1; zOffset >= maxZOffset; zOffset--) {
     const checkPos = pos.offset(0, -1, zOffset)
@@ -156,15 +163,22 @@ async function waitForWater(bot, pos, maxRetries = 20, delayMs = 500) {
   return null
 }
 
-async function waitForShulkers(bot, maxDist = 50, maxRetries = 20, delayMs = 500) {
+// Poll until at least `minCount` shulkers are in range, then return them.
+//
+// minCount matters: assembly spawns colliders over several ticks, so "first non-empty result" can
+// return a partial ship — or a leftover preview marker — and make a caller conclude the assembly
+// failed. Pass the number you actually expect. On timeout this returns whatever it last saw (possibly
+// fewer than minCount, possibly none), so callers still report the real count in their failure text.
+async function waitForShulkers(bot, maxDist = 50, maxRetries = 20, delayMs = 500, minCount = 1) {
+  let shulkers = []
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    const shulkers = findShulkers(bot, maxDist)
-    if (shulkers.length > 0) return shulkers
+    shulkers = findShulkers(bot, maxDist)
+    if (shulkers.length >= minCount) return shulkers
     if (attempt < maxRetries) {
       await sleep(delayMs)
     }
   }
-  return []
+  return shulkers
 }
 
 function findNearestPosition(positions, targets, tolerance = 1) {
@@ -215,6 +229,11 @@ const CUSTOM_SHIP = {
   }
 }
 
+// NOTE the 'W' here is in LAYER 0 (deck level), unlike CUSTOM_SHIP's layer-1 wheel. That routes wheel
+// placement through a different branch entirely: the north neighbour wins the face pick, the wheel goes on
+// as a WALL head, and the wall-head path derives facing from the clicked face — player yaw is never
+// consulted, so the /tp centring note above doesn't protect this ship. Moving 'W' between layers changes
+// the assembled heading silently; if you touch it, re-read the dz assertions first.
 const CUSTOM_AIRSHIP = {
   layers: [
     ["G P G",
@@ -797,6 +816,63 @@ function setupBotEvents(bot, log, onMain) {
     if (text.trim()) {
       log(`[CHAT] ${text}`)
     }
+    recordChat(bot, text)
+  })
+}
+
+// =============================================================================
+// Chat Assertions
+// =============================================================================
+//
+// Chat used to be logged and discarded, which is why a whole class of bug was invisible to this
+// suite: the plugin printed one Speed figure in chat and a different one in the wheel menu for the
+// same ship, and nothing here could tell. Anything the plugin SAYS is now assertable.
+//
+// IMPORTANT: message.toString() strips the section-sign colour codes. The plugin sends
+// "§7Sails: §f1 wool ...", the bot sees "Sails: 1 wool ...". Assertion patterns must NOT contain §
+// or they will never match and the test will time out instead of failing usefully. (Existing proof:
+// the dismount handler below compares strictly against un-prefixed text and works.)
+
+const CHAT_BUFFER_LIMIT = 200
+
+function recordChat(bot, text) {
+  if (!bot._chatLog) bot._chatLog = []
+  bot._chatLog.push(text)
+  if (bot._chatLog.length > CHAT_BUFFER_LIMIT) bot._chatLog.shift()
+}
+
+/** Drop everything received so far, so a later wait can't match a stale line. */
+function clearChat(bot) {
+  bot._chatLog = []
+}
+
+/** Every line received since the last clearChat, oldest first. */
+function getChat(bot) {
+  return bot._chatLog || []
+}
+
+/**
+ * Resolve with the first buffered-or-subsequent chat line matching `pattern`, or null on timeout.
+ * Checks the existing buffer first, so it is safe to call after the message has already arrived.
+ */
+function waitForChat(bot, pattern, timeoutMs = 5000) {
+  const existing = getChat(bot).find((line) => pattern.test(line))
+  if (existing) return Promise.resolve(existing)
+
+  return new Promise((resolve) => {
+    let timeoutId = null
+    const handler = (message) => {
+      const text = message.toString()
+      if (!pattern.test(text)) return
+      clearTimeout(timeoutId)
+      bot.removeListener('message', handler)
+      resolve(text)
+    }
+    timeoutId = setTimeout(() => {
+      bot.removeListener('message', handler)
+      resolve(null)
+    }, timeoutMs)
+    bot.on('message', handler)
   })
 }
 
@@ -818,7 +894,7 @@ function getMenuTitle(window) {
 }
 
 async function clickWheelMenu(bot, log, action) {
-  const slots = { detect: 10, assemble: 14, disassemble: 16 }
+  const slots = { detect: 10, lock: 13, assemble: 14, disassemble: 16 }
   const slot = slots[action]
 
   if (slot === undefined) {
@@ -1016,6 +1092,10 @@ module.exports = {
   getMenuTitle,
   clickWheelMenu,
   disassembleViaWheelMenu,
+
+  clearChat,
+  getChat,
+  waitForChat,
 
   // Server log scanning
   serverLogPath,

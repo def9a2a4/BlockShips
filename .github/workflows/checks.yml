@@ -2,15 +2,64 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, defcorelib-integration]
   pull_request:
     branches: [main]
+
+# One live run per ref: a push-push burst otherwise queues full 6-cell server matrices behind each other.
+# Applies to the called server-test.yml jobs too — caller-level concurrency covers the whole run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # No timeout anywhere in CI meant a hung Gradle daemon billed the full 6h default.
+    timeout-minutes: 30
     steps:
+      # MUST stay first: actions/checkout defaults to clean:true (git clean -ffdx), so it would
+      # wipe the defCoreLib checkout below if that landed in the workspace ahead of it.
       - uses: actions/checkout@v4
+
+      # blockships/gradle.properties records which defCoreLib commit CI builds against. This job is
+      # its only reader — local builds use the sibling checkout and ignore it — so it rots silently
+      # unless bumped with `make defcorelib-pin`. `tr -d '\r'` guards a CRLF checkout, which would
+      # otherwise smuggle a carriage return into the ref and into every path derived from it.
+      - name: Resolve defCoreLib ref
+        id: defcorelib
+        run: |
+          ref=$(sed -n 's/^[[:space:]]*defCoreLibRef[[:space:]]*=[[:space:]]*//p' \
+                blockships/gradle.properties | head -1 | tr -d '\r')
+          [ -n "$ref" ] || { echo "defCoreLibRef not set in blockships/gradle.properties"; exit 1; }
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "Building against defCoreLib $ref"
+
+      # Build defCoreLib from source rather than pulling a prebuilt jar, so a defCoreLib change is
+      # consumable here as soon as it is pushed — no third-party build to wait on first.
+      # def9a2a4/defCoreLib is public, so the default GITHUB_TOKEN suffices; if it ever goes private
+      # this needs a PAT/deploy key, and that secret would break CI for fork PRs.
+      #
+      # Checked out at `main` with full history, then moved to the pinned ref by `git checkout` below,
+      # rather than passing the ref to the action directly: actions/checkout only treats `ref:` as a
+      # commit when it is a full 40- (or 64-) hex SHA, and looks anything shorter up as a branch then
+      # a tag before failing. defCoreLibRef is a short SHA by convention (`make defcorelib-pin` writes
+      # `git rev-parse --short HEAD`), and this job is its only consumer — local builds compile
+      # against the sibling checkout and ignore the pin entirely.
+      - name: Check out defCoreLib
+        uses: actions/checkout@v4
+        with:
+          repository: def9a2a4/defCoreLib
+          ref: main
+          fetch-depth: 0
+          path: defcorelib
+          persist-credentials: false
+
+      - name: Pin defCoreLib to ${{ steps.defcorelib.outputs.ref }}
+        working-directory: defcorelib
+        run: |
+          git checkout --detach "${{ steps.defcorelib.outputs.ref }}"
+          git --no-pager log -1 --format='defCoreLib pinned at %H%n%s'
 
       - name: Set up Java 21
         uses: actions/setup-java@v4
@@ -18,17 +67,49 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
+      # Pinned: the Build step below runs bare `gradle`, so without this the runner image's Gradle-of-the-
+      # week decides whether the build works. 9.7.1 matches the local toolchain.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.7.1"
+
+      # `:shadowJar` with the leading colon builds ONLY the root (core) jar — a bare `shadowJar`
+      # name-matches the task across all 8 projects and builds every companion plugin too.
+      # ./gradlew pins the same Gradle the pinned jars have always been built with.
+      - name: Build defCoreLib
+        working-directory: defcorelib
+        run: ./gradlew :shadowJar --no-daemon
+
+      # Glob rather than hardcode the version (it comes from defCoreLib's build.gradle.kts). The
+      # lowercase name is the SHADOW jar; the thin jar is capital-D `DefCoreLib-*-plain.jar`, which
+      # this deliberately does not match.
+      - name: Stage defCoreLib jar
+        run: |
+          src=$(ls defcorelib/build/libs/defCoreLib-*.jar | grep -v -- '-plain' | head -1)
+          [ -n "$src" ] || { echo "no defCoreLib shadow jar in defcorelib/build/libs"; exit 1; }
+          mkdir -p .download-cache/plugins
+          dest=".download-cache/plugins/defCoreLib-${{ steps.defcorelib.outputs.ref }}.jar"
+          cp "$src" "$dest"
+          echo "DEFCORELIB_JAR=$PWD/$dest" >> "$GITHUB_ENV"
+          echo "Staged $src -> $dest"
 
       - name: Build
-        run: cd blockships && gradle build --no-daemon
+        run: cd blockships && gradle build --no-daemon -PdefCoreLibJar="$DEFCORELIB_JAR"
 
       - name: Upload JAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: BlockShips
           path: blockships/build/libs/BlockShips-*.jar
+
+      # The 6 matrix cells need the DefCoreLib plugin jar in plugins/ (BlockShips has a hard
+      # `depend:`), and they never run Gradle. Ship the one we just built.
+      - name: Upload defCoreLib artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: defCoreLib
+          path: .download-cache/plugins/defCoreLib-*.jar
 
   server-test:
     needs: build

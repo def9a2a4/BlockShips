@@ -266,14 +266,33 @@ public class BlockStructureScanner {
     // ========== Main Methods ==========
 
     /**
-     * Scans blocks using flood fill from the ship wheel location.
-     * Uses BlockConfigManager and ShipDetector to find all allowed connected blocks.
+     * Result of {@link #scanStructure}: the derived {@link ShipModel} plus the live world blocks that
+     * produced it, in {@code parts}-index order ({@code orderedBlocks.get(i)} corresponds to
+     * {@code model.parts.get(i)}). The blocks are still in the world (air-out is deferred) so a delegated
+     * assembler can consume them with block-index parity.
      *
-     * @param wheelLocation The location of the ship wheel block
-     * @param facing The direction the ship wheel is facing
-     * @return A ShipModel representing the scanned blocks, or null if scan fails
+     * @param bannerTiersUnreadable the scan could not see the ship's large/huge banner displays, so
+     *        {@code model}'s tier counts are zero by default rather than by measurement.
+     *        <b>Refuse the assembly when this is set</b> — {@code ShipModel.toMap} persists those
+     *        counts, so proceeding writes a permanently under-powered ship to the sidecar. It is
+     *        transient (Paper's entity load is still in flight); the next click reads the real value.
      */
-    public static ShipModel scanStructure(Location wheelLocation, BlockFace facing) {
+    public record ScanResult(ShipModel model, List<Block> orderedBlocks, boolean bannerTiersUnreadable) {}
+
+    public static ScanResult scanStructure(Location wheelLocation, BlockFace facing) {
+        return scanStructure(wheelLocation, facing, null);
+    }
+
+    /**
+     * @param preCapture runs between the flood fill and the world snapshot, handed the MUTABLE fill set.
+     *        The assembly path's foreign-wheel exclusion removes cells here — the one point where a cell
+     *        can be dropped without either leaving its head inside the captured model (sweeping after
+     *        capture) or breaking the i↔i block parity every downstream consumer assumes (airing a
+     *        captured cell). Membership-only: a hook that mutates the world here would be committing to an
+     *        assembly that the checks after this call can still refuse.
+     */
+    public static ScanResult scanStructure(Location wheelLocation, BlockFace facing,
+                                           java.util.function.Consumer<Set<Location>> preCapture) {
         // Get max ship size from config
         BlockShipsPlugin plugin = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
         int maxShipSize = 1000; // Default
@@ -283,9 +302,13 @@ public class BlockStructureScanner {
             maxScanSize = plugin.getConfig().getInt("custom-ships.max-scan-size", 5000);
         }
 
+        // Blocks the player glued to the wheel join the ship regardless of the blocks.yml allow-list,
+        // and seed the fill so it expands THROUGH them to allowed hull on their far side.
+        Set<Location> glued = ShipGlue.gluedCells(wheelLocation.getBlock());
+
         // Use ShipDetector to flood fill and find all ship blocks
         ShipDetector detector = new ShipDetector(maxShipSize, maxScanSize);
-        ShipDetector.ShipDetectionResult result = detector.detectShipDetailed(wheelLocation);
+        ShipDetector.ShipDetectionResult result = detector.detectShipDetailed(wheelLocation, glued);
 
         if (!result.isSuccess()) {
             return null;
@@ -296,7 +319,259 @@ public class BlockStructureScanner {
             return null;
         }
 
+        if (preCapture != null) {
+            preCapture.accept(shipBlocks);
+            if (shipBlocks.isEmpty()) {
+                return null;
+            }
+        }
+
+        return captureCells(wheelLocation, facing, shipBlocks);
+    }
+
+    /**
+     * Large/huge banners hosted on the structure's blocks, keyed by host block — or {@code null} when
+     * the answer is <b>unknown</b> rather than empty.
+     *
+     * <p>One region query for the whole ship. defCoreLib's banner displays are entities, so this is a
+     * nearby-entity sweep; doing it per candidate block would mean hundreds of sweeps during an
+     * assembly that already walks every cell.
+     *
+     * <p>The box is padded by 4 because a large banner's display entity is spawned in the neighbour
+     * cell toward the face it hangs on, and scaled up from there — a box fitted tightly to the hull
+     * would miss precisely the banners mounted on its outside.
+     *
+     * <p><b>"Unknown" is not "none", and the difference is the whole point of this signature.</b> Null
+     * means <b>entities are not loaded yet</b>: Paper loads a chunk's entities ASYNCHRONOUSLY, after its
+     * blocks are ready, so there is a window in which every host block is present and every banner
+     * display is invisible to {@code getNearbyEntities}. Detecting in that window reported zero tier
+     * sails and stored it; assembling in it wrote the zeros into the sidecar, where they survived
+     * restarts. The check covers the PADDED box's chunks, not the hull's — the displays live outside the
+     * hull, which is why the box is padded in the first place.
+     *
+     * <p>Callers must treat null as "ask again later": keep whatever counts they already had, and never
+     * persist a count derived from it. It is <i>transient by construction</i> — the pending
+     * {@code EntitiesLoadEvent} is already on its way — which is what makes it safe for a caller to
+     * refuse an assembly over.
+     *
+     * <p><b>A defCoreLib fault is deliberately NOT null.</b> A {@code /reload} or PlugMan unload leaves
+     * {@code getInstance()} permanently null, and answering "ask again later" to a condition that will
+     * never change would tell the player to wait forever. That path logs once and degrades to an empty
+     * map instead — no longer silently, which was the actual complaint.
+     *
+     * <p>Be clear about what that buys, because it is not what the old comment claimed. It does NOT
+     * rescue assembly: {@code ShipWheelManager.assembleShip} dereferences
+     * {@code CoreLibPlugin.getInstance().getMechanismRegistry()} outside any try a few dozen lines
+     * after the scan, so with a null instance the assembly dies there regardless — the degrade merely
+     * happens first. What it does rescue is the READ-ONLY side: the docked detect and the Ship Info
+     * menu, where every CoreLib dereference is already guarded, keep working against a broken CoreLib
+     * instead of erroring out.
+     *
+     * <p>The cost is real and worth stating: on a non-null fault — a {@code bannerTiersIn} version
+     * mismatch, say, rather than a missing plugin — an assembly proceeds and writes {@code {0,0}} tier
+     * counts into the sidecar permanently. See {@link ScanResult#bannerTiersUnreadable()}.
+     */
+    private static Map<Block, List<anon.def9a2a4.corelib.BannerTier>> queryBannerTiers(
+            Collection<Location> cells) {
+        if (cells.isEmpty()) return Collections.emptyMap();
+        try {
+            // getWorld() belongs inside the try: it throws IllegalArgumentException once a Location's
+            // weak world reference has been collected (and returns null for a null-world Location).
+            org.bukkit.World world = null;
+            double minX = Double.MAX_VALUE, minY = Double.MAX_VALUE, minZ = Double.MAX_VALUE;
+            double maxX = -Double.MAX_VALUE, maxY = -Double.MAX_VALUE, maxZ = -Double.MAX_VALUE;
+            for (Location l : cells) {
+                if (world == null) world = l.getWorld();
+                minX = Math.min(minX, l.getBlockX()); maxX = Math.max(maxX, l.getBlockX() + 1);
+                minY = Math.min(minY, l.getBlockY()); maxY = Math.max(maxY, l.getBlockY() + 1);
+                minZ = Math.min(minZ, l.getBlockZ()); maxZ = Math.max(maxZ, l.getBlockZ() + 1);
+            }
+            if (world == null) return Collections.emptyMap();
+            org.bukkit.util.BoundingBox box =
+                new org.bukkit.util.BoundingBox(minX, minY, minZ, maxX, maxY, maxZ).expand(4.0);
+            if (!entitiesLoadedOver(world, box)) return null;
+            return anon.def9a2a4.corelib.CoreLibPlugin.getInstance().bannerTiersIn(world, box);
+        } catch (Throwable t) {
+            // Degrade, do not block — see the javadoc. No cast to BlockShipsPlugin here: only
+            // getLogger() is wanted, and a ClassCastException raised inside a catch block escapes the
+            // method entirely, defeating the very catch it lives in.
+            if (!bannerQueryFaultLogged) {
+                bannerQueryFaultLogged = true;
+                org.bukkit.plugin.Plugin plugin =
+                    org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
+                java.util.logging.Logger log =
+                    plugin != null ? plugin.getLogger() : org.bukkit.Bukkit.getLogger();
+                log.log(java.util.logging.Level.WARNING,
+                    "Could not read banner-tier displays from DefCoreLib; ships will report no large or "
+                    + "huge sails until this is fixed. Logged once per server start.", t);
+            }
+            return Collections.emptyMap();
+        }
+    }
+
+    /**
+     * Latch so a broken DefCoreLib writes one warning rather than one per Ship Info click — the menu
+     * re-runs a full detect on every click, so an unlatched log would flood.
+     */
+    private static volatile boolean bannerQueryFaultLogged = false;
+
+    /**
+     * Whether every chunk the padded box touches has its ENTITIES loaded, not merely its blocks.
+     *
+     * <p>Deliberately does not load anything. A chunk whose entities are still pending will fire its
+     * own {@code EntitiesLoadEvent} shortly, so the right response is to answer "unknown" and let the
+     * player's next click read the real value — the same defer-don't-race idiom defCoreLib uses in
+     * {@code MechanismRegistry.recoverMechanismsInChunk} and {@code CustomBlockRegistry.restoreLoadedChunks}.
+     *
+     * <p>An UNLOADED chunk counts as ready, and that leaves a known narrow hole. A flood fill only
+     * reaches cells it read through {@code Location.getBlock()}, which loads their chunks synchronously,
+     * so no unloaded chunk holds a ship <i>cell</i> — but a banner's <i>display</i> lives in the
+     * neighbour cell of its host and can therefore sit in an unloaded chunk across a border. A hull at
+     * the very edge of loaded terrain can still undercount its outermost banners.
+     *
+     * <p>That is accepted rather than fixed, both ways out being worse: treating unloaded as "not ready"
+     * would refuse those detects <b>permanently</b>, since nothing is going to load that chunk on its
+     * own; and force-loading chunks from here would fire on every Ship Info click, which re-runs a full
+     * detect. The condition needs a player standing at the edge of the loaded world, and one more step
+     * toward the ship dissolves it.
+     */
+    private static boolean entitiesLoadedOver(org.bukkit.World world, org.bukkit.util.BoundingBox box) {
+        int minCX = (int) Math.floor(box.getMinX()) >> 4, maxCX = (int) Math.floor(box.getMaxX()) >> 4;
+        int minCZ = (int) Math.floor(box.getMinZ()) >> 4, maxCZ = (int) Math.floor(box.getMaxZ()) >> 4;
+        for (int cx = minCX; cx <= maxCX; cx++) {
+            for (int cz = minCZ; cz <= maxCZ; cz++) {
+                if (!world.isChunkLoaded(cx, cz)) continue;
+                if (!world.getChunkAt(cx, cz).isEntitiesLoaded()) return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The height of a block's bottom face, wheel-relative, or {@link Float#NaN} for a block that must
+     * not contribute to the hull's lower bound at all.
+     *
+     * <p>Two rules, both of which decide where a ship's waterline sits:
+     * <ul>
+     *   <li>A <b>trapdoor</b> is excluded (NaN). It is usually a hatch hanging below the deck, and
+     *       letting it set the bottom would float the hull a block too high.</li>
+     *   <li>A <b>top slab</b>'s solid half starts half a block up, so its bottom face is {@code y+0.5}.</li>
+     * </ul>
+     *
+     * <p>Shared with {@code ShipWheelManager}'s docked buoyancy helpers, which used a raw block Y and so
+     * predicted a different waterline from the one the ship actually floated at — the preview shulker
+     * sat in the wrong place for any hull bottomed out in slabs or trapdoors.
+     */
+    public static float bottomFaceY(BlockData blockData, float blockY) {
+        if (blockData instanceof TrapDoor) return Float.NaN;
+        if (blockData instanceof Slab slab && slab.getType() == Slab.Type.TOP) return blockY + 0.5f;
+        return blockY;
+    }
+
+    /**
+     * Count the LARGE and HUGE banners hosted on a structure's cells, as {@code {large, huge}} — or
+     * {@code null} when they could not be read at all (see {@link #queryBannerTiers}).
+     *
+     * <p><b>Null is not {@code {0,0}}.</b> A caller that collapses the two re-opens the bug this
+     * signature exists to close: a scan racing Paper's async entity load would report a banner-rigged
+     * ship as having no tier sails, and — on the assembly path — persist that. Keep the previous
+     * counts and try again instead.
+     *
+     * <p>Shared by the assembly path ({@link #captureCells}) and the docked preview
+     * ({@code ShipWheelManager.detectShip}) so the two cannot drift — a ship that reports four huge
+     * banners in flight has to report four while docked, and that only stays true if one function
+     * answers for both.
+     *
+     * <p>Three things here are load-bearing and easy to "simplify" wrongly:
+     * <ul>
+     *   <li><b>Iterate the CELLS and look each one up — never walk the map's values.</b>
+     *       {@link #queryBannerTiers} pads its region, so the map also contains hosts OUTSIDE this
+     *       structure. Iterating cells is what filters them; a values() walk would credit a
+     *       neighbouring build's banners to this ship.</li>
+     *   <li><b>NORMAL tiers are skipped.</b> Not, as an earlier comment here claimed, to avoid
+     *       double-counting a vanilla banner block — a plain banner placed on a banner block creates no
+     *       display at all. The NORMAL displays that exist are fence flags and bed banners, whose hosts
+     *       are fences/walls/bars/panes/beds and so never match the {@code "BANNER"} material test the
+     *       caller uses. Counting them here would score them docked and assembled-but-not-by-material,
+     *       i.e. it would invent the very divergence this method exists to prevent.</li>
+     *   <li><b>{@link Block} is a safe map key.</b> defCoreLib builds its keys with
+     *       {@code world.getBlockAt(x, y, z)} and both callers look up with {@code loc.getBlock()};
+     *       CraftBlock equality is world + packed position, so these match. Do not "fix" this to a
+     *       location key.</li>
+     * </ul>
+     */
+    public static int[] countLargeHuge(Collection<Location> cells) {
+        Map<Block, List<anon.def9a2a4.corelib.BannerTier>> bannerTiers = queryBannerTiers(cells);
+        if (bannerTiers == null) return null;
+        if (bannerTiers.isEmpty()) return new int[] {0, 0};
+        int large = 0, huge = 0;
+        for (Location cell : cells) {
+            List<anon.def9a2a4.corelib.BannerTier> hosted = bannerTiers.get(cell.getBlock());
+            if (hosted == null) continue;
+            for (anon.def9a2a4.corelib.BannerTier tier : hosted) {
+                if (tier == anon.def9a2a4.corelib.BannerTier.HUGE) huge++;
+                else if (tier == anon.def9a2a4.corelib.BannerTier.LARGE) large++;
+            }
+        }
+        return new int[] {large, huge};
+    }
+
+    /**
+     * Assemble from a wheel's FROZEN cell set instead of a flood fill. The frozen set is the wheel's RAW glue
+     * offsets ({@link ShipGlue#rawGlueCells} — NOT {@code resolveGlue}, so the derived sticky closure can't
+     * sneak adjacent slime/honey into a locked ship) plus the wheel itself. Cells that are now air are dropped
+     * (the ship comes back smaller); nothing new can ever be added, which is the whole point.
+     *
+     * @return null when the wheel cell itself is gone, nothing survives, or the set exceeds the limit
+     */
+    public static ScanResult scanFrozen(Location wheelLocation, BlockFace facing) {
+        Block wheelBlock = wheelLocation.getBlock();
+        if (wheelBlock.getType().isAir()) {
+            return null;   // no wheel, no ship — the offsets are relative to it
+        }
+        // A SET, not a list: the wheel is added unconditionally below on the assumption that (0,0,0) is
+        // never a stored glue offset, and rawGlueCells does not enforce that. If one ever did reach the
+        // PDC, a list would hand captureCells the wheel twice — double weight, double block count, double
+        // banner credit — while the docked preview (which already dedupes) counted it once. Ordered so
+        // the block-index parity captureCells promises stays deterministic.
+        Set<Location> cells = new LinkedHashSet<>();
+        for (Location c : ShipGlue.rawGlueCells(wheelBlock)) {
+            if (c.getBlock().getType().isAir()) continue;        // a cell broken since the freeze is dropped
+            cells.add(c);
+        }
+        cells.add(wheelLocation.clone());   // the wheel is always a member (not stored as a glue offset)
+        // Re-check against the CURRENT limit: an admin may have lowered max-ship-size since the freeze.
+        BlockShipsPlugin plugin = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
+        if (plugin != null) {
+            int maxShipSize = plugin.getConfig().getInt("custom-ships.max-ship-size", 1000);
+            if (cells.size() > maxShipSize) {
+                return null;
+            }
+        }
+        return captureCells(wheelLocation, facing, cells);
+    }
+
+    /**
+     * Capture an explicit list of world cells into a {@link ShipModel} plus its parity-ordered block
+     * list. Extracted from {@link #scanStructure} so the frozen-set path ({@link #scanFrozen}) shares
+     * it verbatim rather than reimplementing it — block-index parity, seats, cannons, storage, sign
+     * and banner data, centre of volume, health and the float offset all have to agree exactly, and a
+     * second implementation would drift.
+     *
+     * <p>Safe to extract because the per-cell loop has no order dependencies: every accumulator is
+     * commutative, and everything order-sensitive (driver-seat resolution, cannon detection, assembly
+     * yaw) happens after the loop and is index-derived.
+     */
+    public static ScanResult captureCells(Location wheelLocation, BlockFace facing,
+                                          Collection<Location> shipBlocks) {
+        BlockShipsPlugin plugin = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
+
         List<ShipModel.ModelPart> parts = new ArrayList<>();
+        // Live world blocks in the SAME order as parts (orderedBlocks[i] ↔ parts[i]) so a delegated
+        // assembler (defCoreLib assembleMechanism) receives them with block-index parity — the mechanism's
+        // block index i then equals parts index i, keeping every seat/storage/collision index valid.
+        // Blocks are still in the world here (air-out is deferred to removeBlocks — see below).
+        List<Block> orderedBlocks = new ArrayList<>();
         List<ShipModel.SeatInfo> seats = new ArrayList<>();
         BlockConfigManager configManager = BlockConfigManager.getInstance();
 
@@ -312,11 +587,25 @@ public class BlockStructureScanner {
         int weightedBlockCount = 0;
         float sumX = 0, sumY = 0, sumZ = 0;
 
-        // Track sail blocks and engines for ship stats (power-to-mass ratio)
+        // Track sail blocks for ship stats (power-to-mass ratio)
         int woolCount = 0;
         int bannerCount = 0;
-        int engineCount = 0;
-        List<Integer> engineBlockIndices = new ArrayList<>();
+
+        // Large/huge banners are defCoreLib display entities attached to a host block, not block
+        // states, so no material test can find them — one region query answers for the whole
+        // structure. Shared with the docked preview so the two readouts cannot drift.
+        // Null means "couldn't read them", not "there are none" — carried out on the ScanResult so the
+        // caller can refuse rather than bake zeros into a saved ship. See countLargeHuge.
+        int[] tierBanners = countLargeHuge(shipBlocks);
+        boolean bannerTiersUnreadable = tierBanners == null;
+        int largeBannerCount = bannerTiersUnreadable ? 0 : tierBanners[0];
+        int hugeBannerCount = bannerTiersUnreadable ? 0 : tierBanners[1];
+
+        // defCoreLib propulsion blocks, classified by which way they push relative to the hull.
+        // Done here, during the scan, because the blocks are still in the world at this point — after
+        // assembly they are aired out and only the mechanism can answer.
+        List<ShipModel.ThrustBlock> thrustBlocks = new ArrayList<>();
+        float scanAssemblyYaw = blockFaceToYaw(facing);
 
         // Track ship bounds (for all blocks)
         float minY = Float.MAX_VALUE;
@@ -337,8 +626,8 @@ public class BlockStructureScanner {
             }
 
             // Clear waterlogged state so the stored model never carries water. Whether a
-            // re-placed block ends up waterlogged is decided fresh from the destination cell
-            // at disassembly time (see placeBlocks), never inherited from assembly.
+            // re-placed block ends up waterlogged is decided fresh from the destination cell at
+            // disassembly time (by the delegated landing seams), never inherited from assembly.
             if (blockData instanceof org.bukkit.block.data.Waterlogged w && w.isWaterlogged()) {
                 w.setWaterlogged(false);
             }
@@ -353,24 +642,25 @@ public class BlockStructureScanner {
 
             // Track ship bounds (all blocks contribute, except trapdoors)
             float blockY = (float) dy;
-            if (!(blockData instanceof TrapDoor)) {
-                float adjustedMinY = blockY;
+            float bottom = bottomFaceY(blockData, blockY);
+            if (!Float.isNaN(bottom)) {
                 float adjustedMaxY = blockY;
-                if (blockData instanceof Slab slab) {
-                    if (slab.getType() == Slab.Type.TOP) {
-                        adjustedMinY = blockY + 0.5f;
-                    } else if (slab.getType() == Slab.Type.BOTTOM) {
-                        adjustedMaxY = blockY - 0.5f;
-                    }
+                if (blockData instanceof Slab slab && slab.getType() == Slab.Type.BOTTOM) {
+                    adjustedMaxY = blockY - 0.5f;
                 }
-                if (adjustedMinY < minY) minY = adjustedMinY;
+                if (bottom < minY) minY = bottom;
                 if (adjustedMaxY > maxY) maxY = adjustedMaxY;
             }
 
             // Only accumulate weight and center of volume for blocks with weight
             // Blocks with null weight are excluded from density calculations
-            if (props.hasWeight()) {
-                int weight = props.getWeight();
+            // resolveWeight, not props.getWeight(): a GLUED block is not in blocks.yml, and the
+            // synthesised "unknown material" entry weighs 0 while still counting toward the density
+            // divisor — so gluing stone would push a ship toward the airship threshold instead of
+            // sinking it. Unconfigured materials fall back to defCoreLib's mass table.
+            Integer resolvedWeight = configManager.resolveWeight(block.getType(), blockData);
+            if (resolvedWeight != null) {
+                int weight = resolvedWeight;
                 totalWeight += weight;
                 if (weight > 0) {
                     totalMass += weight;
@@ -381,24 +671,25 @@ public class BlockStructureScanner {
                 sumZ += (float) dz;
             }
 
-            // Count sail blocks and engines for ship stats
-            boolean isEngine = false;
+            // Count sail blocks for ship stats
             Material blockMaterial = block.getType();
             if (Tag.WOOL.isTagged(blockMaterial)) {
                 woolCount++;
             } else if (blockMaterial.name().contains("BANNER")) {
                 bannerCount++;
-            } else if (blockMaterial == Material.BLAST_FURNACE && plugin != null) {
-                // Check PDC for ship engine tag
-                org.bukkit.block.BlockState blockState = block.getState();
-                if (blockState instanceof org.bukkit.block.TileState tileState) {
-                    NamespacedKey engineKey = new NamespacedKey(plugin, "custom_item_id");
-                    String val = tileState.getPersistentDataContainer()
-                        .get(engineKey, org.bukkit.persistence.PersistentDataType.STRING);
-                    if ("ship_engine".equals(val)) {
-                        isEngine = true;
-                        engineCount++;
-                        engineBlockIndices.add(blockIndex);
+            }
+            // (Large/huge banners are counted once for the whole structure by countLargeHuge above —
+            // they are display entities on a host block, not a material this loop could see.)
+
+            // Propulsion. Only player heads can be defCoreLib custom blocks, so the material check
+            // keeps this off the hot path for the other 99% of a hull.
+            if (blockMaterial == Material.PLAYER_HEAD || blockMaterial == Material.PLAYER_WALL_HEAD) {
+                String thrustType = anon.def9a2a4.blockships.ShipThrust.typeIdOf(block);
+                if (anon.def9a2a4.blockships.ShipThrust.isThrustBlock(thrustType)) {
+                    anon.def9a2a4.blockships.ShipThrust.Axis axis =
+                        anon.def9a2a4.blockships.ShipThrust.classify(block, thrustType, scanAssemblyYaw);
+                    if (axis != null) {
+                        thrustBlocks.add(new ShipModel.ThrustBlock(blockIndex, thrustType, axis));
                     }
                 }
             }
@@ -441,9 +732,6 @@ public class BlockStructureScanner {
 
             // Create raw YAML map (for compatibility)
             Map<String, Object> rawYaml = new HashMap<>();
-            if (isEngine) {
-                rawYaml.put("is_engine", true);
-            }
 
             // Check for storage blocks (chests, furnaces, hoppers, etc.)
             ShipModel.StorageConfig storage = null;
@@ -588,7 +876,7 @@ public class BlockStructureScanner {
             }
 
             // Persist a block's custom name (anvil-renamed containers, banners, ...) - Nameable tile-entity
-            // NBT that blockdata can't carry. Restored generically in placeBlocks; used as the storage GUI title.
+            // NBT that blockdata can't carry. Restored generically at landing; used as the storage GUI title.
             if (block.getState() instanceof org.bukkit.Nameable nameable) {
                 net.kyori.adventure.text.Component cn = nameable.customName();
                 if (cn != null) {
@@ -598,6 +886,7 @@ public class BlockStructureScanner {
             }
 
             parts.add(new ShipModel.ModelPart(blockData, transform, collision, storage, rawYaml));
+            orderedBlocks.add(block);
             blockIndex++;
         }
 
@@ -671,8 +960,10 @@ public class BlockStructureScanner {
         // Load configurable sail power values
         int woolPower = plugin.getConfig().getInt("custom-ships.stats.wool-power", 3);
         int bannerPower = plugin.getConfig().getInt("custom-ships.stats.banner-power", 7);
+        int largeBannerPower = plugin.getConfig().getInt("custom-ships.stats.large-banner-power", 20);
+        int hugeBannerPower = plugin.getConfig().getInt("custom-ships.stats.huge-banner-power", 50);
 
-        return new ShipModel(
+        ShipModel model = new ShipModel(
             parts,
             Collections.emptyList(),  // No items for MVP
             initialRotation,
@@ -693,11 +984,15 @@ public class BlockStructureScanner {
             assemblyYaw,  // Store for disassembly rotation calculation
             woolCount,
             bannerCount,
+            largeBannerCount,
+            hugeBannerCount,
             woolPower,
             bannerPower,
-            engineCount,
-            engineBlockIndices
+            largeBannerPower,
+            hugeBannerPower,
+            thrustBlocks
         );
+        return new ScanResult(model, orderedBlocks, bannerTiersUnreadable);
     }
 
     /**
@@ -763,7 +1058,7 @@ public class BlockStructureScanner {
 
         // O(1) gate: only pay per-cell WorldGuard queries in worlds that actually have regions.
         // Admin toggle: unattended/system paths (player == null) opting into place-anyway see no regions,
-        // so no cell is counted as protected (matches placeBlocks, which places them normally). Under
+        // so no cell is counted as protected (matching the landing seams, which place them normally). Under
         // failClosedOnWgError the gate itself fails closed so a WG fault doesn't skip the whole scan.
         anon.def9a2a4.blockships.integration.WorldGuardHook wg = anon.def9a2a4.blockships.integration.WorldGuardHook.get();
         boolean wgOn = (failClosedOnWgError ? wg.mightRestrictFailClosed(wheelLocation.getWorld())
@@ -808,438 +1103,6 @@ public class BlockStructureScanner {
         return new PlacementConflicts(fragile, hard, protectedCount);
     }
 
-    /**
-     * Places blocks from a ShipModel into the world with rotation support.
-     *
-     * @param wheelLocation The center location to place blocks
-     * @param model The ship model containing block data
-     * @param currentShipYaw The ship's current yaw rotation
-     * @return true if placement succeeded, false otherwise
-     */
-    public static boolean placeBlocks(Location wheelLocation, ShipModel model, float currentShipYaw) {
-        return placeBlocks(wheelLocation, model, currentShipYaw, false, null, false);
-    }
-
-    public static boolean placeBlocks(Location wheelLocation, ShipModel model, float currentShipYaw, boolean force) {
-        return placeBlocks(wheelLocation, model, currentShipYaw, force, null, false);
-    }
-
-    /**
-     * Places blocks from a ShipModel into the world with rotation support.
-     *
-     * @param wheelLocation The center location to place blocks
-     * @param model The ship model containing block data
-     * @param currentShipYaw The ship's current yaw rotation
-     * @param force If true, destroys fragile blocks (grass, flowers, etc.) that are in the way.
-     *              Non-fragile conflicting blocks will cause the ship block to be skipped.
-     * @param player The acting player (nullable — crash/system paths), used for WorldGuard checks.
-     * @param anchorProtected Decided once by the caller: if true, the wheel-anchor cell is inside a
-     *              protected region, so its head is SKIPPED here (the caller drops the wheel item and
-     *              deregisters instead). Passing this in — rather than re-querying — keeps the skip and
-     *              the caller's deregister decision in perfect agreement.
-     * @return true if placement succeeded, false otherwise
-     */
-    public static boolean placeBlocks(Location wheelLocation, ShipModel model, float currentShipYaw, boolean force,
-                                      org.bukkit.entity.Player player, boolean anchorProtected) {
-        // Only the non-force path needs the conflict scan (to abort on any obstruction). Under force the
-        // result is unused, so skip this full O(n) scan — and its per-cell WorldGuard pass — entirely.
-        if (!force) {
-            PlacementConflicts conflicts = validatePlacementArea(wheelLocation, model, currentShipYaw, player);
-            if (!conflicts.isClear()) {
-                return false;
-            }
-        }
-
-        // O(1) gate: only pay per-cell WorldGuard queries in worlds that actually have regions.
-        // Admin toggle: unattended/system paths (player == null) that opt into place-anyway skip the drop
-        // routing entirely, so protected cells are placed normally (pre-integration wreck behavior).
-        boolean wgOn = anon.def9a2a4.blockships.integration.WorldGuardHook.get().mightRestrict(wheelLocation.getWorld())
-            && !(player == null && anon.def9a2a4.blockships.integration.WorldGuardHook.get().systemPathPlacesInRegions());
-
-        // Calculate rotation delta from assembly orientation
-        float rotationDelta = currentShipYaw - model.assemblyYaw;
-        while (rotationDelta < 0) rotationDelta += 360;
-        while (rotationDelta >= 360) rotationDelta -= 360;
-
-        for (ShipModel.ModelPart part : model.parts) {
-            // Extract position from transformation matrix
-            Vector3f pos = new Vector3f();
-            part.local.getTranslation(pos);
-
-            // Rotate position by delta
-            Vector3f rotatedPos = rotatePosition(pos, rotationDelta);
-
-            // Round to nearest integer to avoid floating-point precision errors
-            // (e.g., cos(90 deg) ~ 6.12e-17 instead of exactly 0 can cause off-by-one block placement)
-            Location blockLoc = wheelLocation.clone().add(
-                Math.round(rotatedPos.x),
-                Math.round(rotatedPos.y),
-                Math.round(rotatedPos.z)
-            );
-            Block block = blockLoc.getBlock();
-            Material existingType = block.getType();
-            BlockData existingData = block.getBlockData();
-
-            try {
-            // WorldGuard: the wheel anchor is handled by the caller (drop wheel item + deregister),
-            // so skip placing its head here when protected. Must come first so the wheel is never
-            // routed through dropPartAsItems (which would drop a plain head) or destroyed as terrain.
-            if (isWheelAnchor(blockLoc, wheelLocation)) {
-                if (anchorProtected) continue;   // skip placement, no drop — caller drops the wheel item
-                // else fall through and place the wheel head normally
-            } else if (force && wgOn
-                    && anon.def9a2a4.blockships.integration.WorldGuardHook.get().isBuildDenied(blockLoc, player)) {
-                // Non-anchor cell in a protected region: drop the block (and its contents) as items
-                // instead of writing it into the region, then leave the existing terrain untouched.
-                dropPartAsItems(part, blockLoc);
-                continue;
-            }
-
-            // Handle conflicts in force mode
-            if (!existingType.isAir() && existingType != Material.WATER && existingType != Material.LAVA) {
-                if (force && FragileBlocks.isFragile(existingType)) {
-                    // Destroy fragile block (no drops)
-                    block.setType(Material.AIR, false);
-                } else if (force) {
-                    // Hard conflict in force mode - skip this ship block
-                    continue;
-                }
-                // In non-force mode, we already validated so this shouldn't happen
-            }
-
-            // Place the block - prefer stored blockdata string if available (preserves all properties)
-            // Also rotate block properties (stair facing, chest facing, etc.)
-            BlockData rotatedData;
-            if (part.rawYaml.containsKey("blockdata")) {
-                String blockDataString = (String) part.rawYaml.get("blockdata");
-                try {
-                    BlockData originalData = org.bukkit.Bukkit.createBlockData(blockDataString);
-                    rotatedData = rotateBlockData(originalData, rotationDelta);
-                } catch (IllegalArgumentException e) {
-                    // Fallback to part.block if string parse fails
-                    rotatedData = rotateBlockData(part.block, rotationDelta);
-                }
-            } else {
-                rotatedData = rotateBlockData(part.block, rotationDelta);
-            }
-
-            // Waterlogging is decided authoritatively by the destination cell, never inherited
-            // from the stored model: clear it first, then set it only when this waterloggable
-            // block is replacing a water *source* (Levelled level 0, not transient flowing water).
-            // This also self-heals old saved ships whose blockdata carried waterlogged=true.
-            if (rotatedData instanceof org.bukkit.block.data.Waterlogged waterlogged) {
-                waterlogged.setWaterlogged(false);
-                if (existingType == Material.WATER
-                        && existingData instanceof org.bukkit.block.data.Levelled lv
-                        && lv.getLevel() == 0) {
-                    waterlogged.setWaterlogged(true);
-                }
-            }
-
-            block.setBlockData(rotatedData, false);  // false = don't apply physics immediately
-
-            // Restore special metadata for player heads and banners
-            // Note: BlockData rotation is already handled above
-            if (part.rawYaml.containsKey("skull_profile")) {
-                // Restore player head texture
-                String profileData = (String) part.rawYaml.get("skull_profile");
-                com.destroystokyo.paper.profile.PlayerProfile profile = deserializeProfile(profileData);
-
-                if (block.getState() instanceof org.bukkit.block.Skull && profile != null) {
-                    org.bukkit.block.Skull skull = (org.bukkit.block.Skull) block.getState();
-                    skull.setPlayerProfile(profile);
-                    skull.update();
-                }
-            }
-
-            if (part.rawYaml.containsKey("banner_patterns")) {
-                // Restore banner patterns
-                @SuppressWarnings("unchecked")
-                java.util.List<Map<String, Object>> patternList = (java.util.List<Map<String, Object>>) part.rawYaml.get("banner_patterns");
-
-                if (block.getState() instanceof org.bukkit.block.Banner && patternList != null) {
-                    org.bukkit.block.Banner banner = (org.bukkit.block.Banner) block.getState();
-                    java.util.List<org.bukkit.block.banner.Pattern> patterns = new java.util.ArrayList<>();
-
-                    for (Map<String, Object> patternMap : patternList) {
-                        String colorName = (String) patternMap.get("color");
-                        String patternName = (String) patternMap.get("pattern");
-
-                        org.bukkit.DyeColor color = org.bukkit.DyeColor.valueOf(colorName);
-                        org.bukkit.block.banner.PatternType patternType =
-                            Registry.BANNER_PATTERN.get(NamespacedKey.minecraft(patternName.toLowerCase()));
-
-                        if (patternType != null) {
-                            patterns.add(new org.bukkit.block.banner.Pattern(color, patternType));
-                        }
-                    }
-
-                    banner.setPatterns(patterns);
-                    banner.update();
-                }
-            }
-
-            // Restore engine PDC tag on blast furnaces
-            if (Boolean.TRUE.equals(part.rawYaml.get("is_engine"))) {
-                org.bukkit.block.BlockState state = block.getState();
-                if (state instanceof org.bukkit.block.TileState tileState) {
-                    BlockShipsPlugin bsPlugin = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
-                    if (bsPlugin != null) {
-                        NamespacedKey engineKey = new NamespacedKey(bsPlugin, "custom_item_id");
-                        tileState.getPersistentDataContainer().set(engineKey,
-                            org.bukkit.persistence.PersistentDataType.STRING, "ship_engine");
-                        tileState.update();
-                    }
-                }
-            }
-
-            // Restore container inventories
-            // NOTE: Must get a fresh BlockState AFTER setBlockData, and set inventory contents
-            // on the snapshot BEFORE calling update(), otherwise the inventory is cleared.
-            if (part.rawYaml.containsKey("container_items") && block.getState() instanceof org.bukkit.block.Container) {
-                @SuppressWarnings("unchecked")
-                java.util.List<Map<String, Object>> itemsData =
-                    (java.util.List<Map<String, Object>>) part.rawYaml.get("container_items");
-
-                org.bukkit.block.Container container = (org.bukkit.block.Container) block.getState();
-                java.util.List<org.bukkit.inventory.ItemStack> overflow = new java.util.ArrayList<>();
-                org.bukkit.inventory.ItemStack[] items = deserializeInventory(itemsData, container.getSnapshotInventory().getSize(), overflow);
-
-                // Set items on the snapshot's inventory, then update to persist
-                container.getSnapshotInventory().setContents(items);
-                container.update();
-                // Drop any overflow (virtual GUI larger than the real block, e.g. a furnace) so it's not lost
-                for (org.bukkit.inventory.ItemStack extra : overflow) {
-                    block.getWorld().dropItemNaturally(block.getLocation().add(0.5, 0.5, 0.5), extra);
-                }
-            }
-
-            // Restore TileStateInventoryHolder blocks (shelves, chiseled bookshelves)
-            // These are NOT Containers, so need separate restoration
-            if (part.rawYaml.containsKey("container_items")
-                    && block.getState() instanceof io.papermc.paper.block.TileStateInventoryHolder tileInv) {
-                @SuppressWarnings("unchecked")
-                java.util.List<Map<String, Object>> itemsData =
-                    (java.util.List<Map<String, Object>>) part.rawYaml.get("container_items");
-
-                java.util.List<org.bukkit.inventory.ItemStack> overflow = new java.util.ArrayList<>();
-                org.bukkit.inventory.ItemStack[] items = deserializeInventory(itemsData, tileInv.getSnapshotInventory().getSize(), overflow);
-                tileInv.getSnapshotInventory().setContents(items);
-                tileInv.update();
-                for (org.bukkit.inventory.ItemStack extra : overflow) {
-                    block.getWorld().dropItemNaturally(block.getLocation().add(0.5, 0.5, 0.5), extra);
-                }
-            }
-
-            // Restore sign text
-            if (part.rawYaml.containsKey("sign_data") && block.getState() instanceof org.bukkit.block.Sign sign) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> signData = (Map<String, Object>) part.rawYaml.get("sign_data");
-                for (org.bukkit.block.sign.Side side : org.bukkit.block.sign.Side.values()) {
-                    org.bukkit.block.sign.SignSide signSide = sign.getSide(side);
-                    String key = side.name().toLowerCase();
-                    @SuppressWarnings("unchecked")
-                    java.util.List<String> lines = (java.util.List<String>) signData.get(key + "_lines");
-                    if (lines != null) {
-                        for (int i = 0; i < lines.size() && i < 4; i++) {
-                            signSide.line(i, net.kyori.adventure.text.serializer.gson.GsonComponentSerializer
-                                .gson().deserialize(lines.get(i)));
-                        }
-                    }
-                    String color = (String) signData.get(key + "_color");
-                    if (color != null) signSide.setColor(org.bukkit.DyeColor.valueOf(color));
-                    Boolean glowing = (Boolean) signData.get(key + "_glowing");
-                    if (glowing != null) signSide.setGlowingText(glowing);
-                }
-                Boolean waxed = (Boolean) signData.get("waxed");
-                if (waxed != null) sign.setWaxed(waxed);
-                sign.update();
-            }
-
-            // Restore a Nameable block's custom name (containers, banners) captured at scan. Separate generic
-            // pass so it fires even for a named block with no items/patterns. Safe double-update: getState()
-            // reads the just-written world state, so setting only the name preserves items/patterns.
-            if (part.rawYaml.containsKey("custom_name")) {
-                org.bukkit.block.BlockState nameState = block.getState();
-                if (nameState instanceof org.bukkit.Nameable n) {
-                    n.customName(net.kyori.adventure.text.serializer.gson.GsonComponentSerializer
-                        .gson().deserialize(String.valueOf(part.rawYaml.get("custom_name"))));
-                    nameState.update();
-                }
-            }
-            } catch (Exception e) {
-                // A block is always placed (setBlockData above) before any throwing metadata restore, so a
-                // bad banner/sign/container value only skips this one block's decoration - the rest of the
-                // ship still places and the ship still fully disassembles + deregisters.
-                org.bukkit.Bukkit.getLogger().warning("[BlockShips] placeBlocks: failed to restore block at "
-                    + blockLoc + ", skipping its metadata: " + e.getMessage());
-            }
-        }
-
-        return true;
-    }
-
-    /** True if this cell is the ship's wheel anchor (local translation (0,0,0) → equals the wheel location). */
-    private static boolean isWheelAnchor(Location blockLoc, Location wheelLocation) {
-        return blockLoc.getBlockX() == wheelLocation.getBlockX()
-            && blockLoc.getBlockY() == wheelLocation.getBlockY()
-            && blockLoc.getBlockZ() == wheelLocation.getBlockZ();
-    }
-
-    /**
-     * Drops a ship block (and its stored container/engine-fuel contents) as items instead of placing it,
-     * used for cells inside a WorldGuard-protected region during a forced disassembly. Preserves custom-item
-     * identity: engines drop as the ship engine item; vanilla blocks drop as their item form (wall-mounted
-     * variants remapped to their floor item). The wheel anchor is never routed here — the caller drops it.
-     */
-    private static void dropPartAsItems(ShipModel.ModelPart part, Location blockLoc) {
-        org.bukkit.World world = blockLoc.getWorld();
-        if (world == null) return;
-        Location drop = blockLoc.clone().add(0.5, 0.5, 0.5);
-
-        // Multi-cell blocks (doors, tall plants, beds) occupy two cells that each carry an item-bearing
-        // material. Drop from the primary half only so the item isn't duplicated. The non-primary half
-        // has no container contents either, so returning early loses nothing.
-        // NOTE: Stairs and TrapDoor are single-cell Bisected blocks where `half` is an ORIENTATION
-        // (upside-down stairs, top-hung trapdoor), not a stacked second cell - they must NOT be skipped
-        // or they'd silently vanish. Re-check this exclusion list on Minecraft version updates in case a
-        // new single-cell Bisected type is added.
-        if (part.block instanceof org.bukkit.block.data.Bisected bisected
-                && !(part.block instanceof org.bukkit.block.data.type.Stairs)
-                && !(part.block instanceof org.bukkit.block.data.type.TrapDoor)
-                && bisected.getHalf() == org.bukkit.block.data.Bisected.Half.TOP) {
-            return;
-        }
-        if (part.block instanceof org.bukkit.block.data.type.Bed bed
-                && bed.getPart() == org.bukkit.block.data.type.Bed.Part.HEAD) {
-            return;
-        }
-
-        // 1) Stored container / engine-fuel contents (synced into the model before placement, so current).
-        if (part.rawYaml.containsKey("container_items")) {
-            @SuppressWarnings("unchecked")
-            java.util.List<Map<String, Object>> itemsData =
-                (java.util.List<Map<String, Object>>) part.rawYaml.get("container_items");
-            if (itemsData != null) {
-                for (Map<String, Object> itemData : itemsData) {
-                    byte[] serialized = (byte[]) itemData.get("item");
-                    if (serialized == null) continue;
-                    try {
-                        org.bukkit.inventory.ItemStack stack = org.bukkit.inventory.ItemStack.deserializeBytes(serialized);
-                        if (stack != null) world.dropItemNaturally(drop, stack);
-                    } catch (Exception e) {
-                        org.bukkit.Bukkit.getLogger().warning("[BlockShips] dropPartAsItems: failed to deserialize a "
-                            + "container item, skipping it: " + e.getMessage());
-                    }
-                }
-            }
-        }
-
-        // 2) The block itself, preserving custom-item identity where it has one.
-        BlockShipsPlugin bsPlugin = (BlockShipsPlugin) org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
-        org.bukkit.inventory.ItemStack mainItem = null;
-
-        if (Boolean.TRUE.equals(part.rawYaml.get("is_engine"))
-                && bsPlugin != null && bsPlugin.getDisplayShip() != null
-                && bsPlugin.getDisplayShip().getItemFactory() != null) {
-            mainItem = bsPlugin.getDisplayShip().getItemFactory().createItem("ship_engine", "_DEFAULT", null);
-        }
-
-        if (mainItem == null) {
-            // Vanilla block → its item form. Wall-mounted variants have no item; remap to the floor form.
-            Material m = part.block.getMaterial();
-            if (!m.isItem()) {
-                String name = m.name();
-                String remapped = name;
-                if (name.contains("_WALL_HEAD")) remapped = name.replace("_WALL_HEAD", "_HEAD");
-                else if (name.contains("_WALL_SKULL")) remapped = name.replace("_WALL_SKULL", "_SKULL");
-                else if (name.contains("_WALL_BANNER")) remapped = name.replace("_WALL_BANNER", "_BANNER");
-                else if (name.contains("_WALL_SIGN")) remapped = name.replace("_WALL_SIGN", "_SIGN");
-                else if (name.contains("WALL_TORCH")) remapped = name.replace("WALL_TORCH", "TORCH");
-                else if (name.equals("REDSTONE_WIRE")) remapped = "REDSTONE";
-                else if (name.equals("TRIPWIRE")) remapped = "STRING";
-                try {
-                    m = Material.valueOf(remapped);
-                } catch (IllegalArgumentException ignored) { /* fall through to isItem check */ }
-            }
-            if (m.isItem()) {
-                mainItem = new org.bukkit.inventory.ItemStack(m);
-            } else {
-                org.bukkit.Bukkit.getLogger().warning("[BlockShips] dropPartAsItems: no item form for "
-                    + part.block.getMaterial() + " in a protected region; block not dropped.");
-            }
-        }
-
-        if (mainItem != null) {
-            // Carry over head textures, banner patterns, and custom names so a decorated block dropped
-            // in a protected region keeps its identity (the normal place path restores these from the
-            // same rawYaml keys). Sign text can't ride on a vanilla item, so it is not preserved here.
-            applyDroppedItemDecoration(mainItem, part);
-            world.dropItemNaturally(drop, mainItem);
-        }
-    }
-
-    /** Applies persisted head/banner/custom-name NBT from a part's rawYaml onto its dropped item. */
-    private static void applyDroppedItemDecoration(org.bukkit.inventory.ItemStack item, ShipModel.ModelPart part) {
-        // Belt-and-suspenders: this runs BEFORE the drop, so a cast/parse fault on corrupted or hand-edited
-        // model data must not escape (it would propagate to placeBlocks' per-cell catch and skip the drop,
-        // losing the whole block item). Worst case here is an undecorated drop, never a lost block.
-        try {
-            org.bukkit.inventory.meta.ItemMeta meta = item.getItemMeta();
-            if (meta == null) return;
-            boolean changed = false;
-
-            // Player-head texture
-            if (part.rawYaml.containsKey("skull_profile")
-                    && meta instanceof org.bukkit.inventory.meta.SkullMeta skullMeta) {
-                com.destroystokyo.paper.profile.PlayerProfile profile =
-                    deserializeProfile((String) part.rawYaml.get("skull_profile"));
-                if (profile != null) {
-                    skullMeta.setPlayerProfile(profile);
-                    changed = true;
-                }
-            }
-
-            // Banner patterns
-            if (part.rawYaml.containsKey("banner_patterns")
-                    && meta instanceof org.bukkit.inventory.meta.BannerMeta bannerMeta) {
-                @SuppressWarnings("unchecked")
-                java.util.List<Map<String, Object>> patternList =
-                    (java.util.List<Map<String, Object>>) part.rawYaml.get("banner_patterns");
-                if (patternList != null) {
-                    java.util.List<org.bukkit.block.banner.Pattern> patterns = new java.util.ArrayList<>();
-                    for (Map<String, Object> patternMap : patternList) {
-                        try {
-                            org.bukkit.DyeColor color = org.bukkit.DyeColor.valueOf((String) patternMap.get("color"));
-                            org.bukkit.block.banner.PatternType patternType = Registry.BANNER_PATTERN.get(
-                                NamespacedKey.minecraft(((String) patternMap.get("pattern")).toLowerCase()));
-                            if (patternType != null) {
-                                patterns.add(new org.bukkit.block.banner.Pattern(color, patternType));
-                            }
-                        } catch (IllegalArgumentException ignored) { /* skip a bad pattern entry */ }
-                    }
-                    bannerMeta.setPatterns(patterns);
-                    changed = true;
-                }
-            }
-
-            // Custom name (anvil-renamed containers, banners, ...) - stored as a serialized Adventure component.
-            if (part.rawYaml.containsKey("custom_name")) {
-                try {
-                    net.kyori.adventure.text.Component name = net.kyori.adventure.text.serializer.gson
-                        .GsonComponentSerializer.gson().deserialize((String) part.rawYaml.get("custom_name"));
-                    meta.displayName(name);
-                    changed = true;
-                } catch (Exception ignored) { /* leave the name off if it won't deserialize */ }
-            }
-
-            if (changed) item.setItemMeta(meta);
-        } catch (Throwable t) {
-            // Corrupted/hand-edited model data: keep the (undecorated) item rather than losing the drop.
-            org.bukkit.Bukkit.getLogger().warning("[BlockShips] applyDroppedItemDecoration: skipping decoration for a "
-                + item.getType() + " drop (bad model data): " + t);
-        }
-    }
 
     /**
      * Removes blocks that were part of a ship structure.
@@ -1340,9 +1203,8 @@ public class BlockStructureScanner {
             case SMOKER:
                 // Open a real 3-slot furnace GUI in flight (exact match to the block's 3 slots -> no overflow
                 // on disassembly). Smoker/blast furnace render as a furnace GUI (cosmetic; same 3 slots).
-                // Blast-furnace engines also hit this arm, but their storage inventory is inert at runtime
-                // (they use EngineMenuGUI), so it's harmless. Applies to newly assembled ships only; existing
-                // ships keep their persisted CHEST type (the disassembly overflow-drop keeps that safe).
+                // Applies to newly assembled ships only; existing ships keep their persisted CHEST type
+                // (the disassembly overflow-drop keeps that safe).
                 storageType = ShipModel.StorageType.FURNACE;
                 name = "Ship Furnace";
                 break;
@@ -1351,9 +1213,14 @@ public class BlockStructureScanner {
                 name = "Ship Hopper";
                 break;
             case DROPPER:
-            case DISPENSER:
                 storageType = ShipModel.StorageType.DROPPER;
                 name = "Ship Dropper";
+                break;
+            case DISPENSER:
+                // Its own type now so it opens the real 3x3 dispenser GUI (previously folded into DROPPER,
+                // a 1x9 chest row). Same 9 slots -> no overflow on disassembly.
+                storageType = ShipModel.StorageType.DISPENSER;
+                name = "Ship Dispenser";
                 break;
             default:
                 return null;  // Not a recognized storage type

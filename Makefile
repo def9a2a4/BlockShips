@@ -1,13 +1,68 @@
+# =============================================================================
+# defCoreLib — compile-time dependency AND runtime `depend: [DefCoreLib]` plugin
+# =============================================================================
+# MUST stay above the targets that use it: make expands a rule's prerequisites when it READS the
+# rule, so $(DEFCORELIB_BUILD_DEP) below would silently expand to nothing if defined further down.
+#
+# BlockShips refuses to enable without the DefCoreLib plugin jar in plugins/, so both CI
+# (test-server-*) and the local loop (server-*) need a jar, not just a classpath entry. There is no
+# published artifact to fetch — it always comes from a checkout on disk:
+#
+#   make build                              build ../defCoreLib, compile + run against it (default)
+#   make build DEFCORELIB_DIR=/other/repo    ... using a checkout somewhere else
+#   make build DEFCORELIB_JAR=/abs/x.jar     use that exact jar; skips the sibling build (CI does this)
+#
+# One switch drives both sides on purpose — you can't compile against one engine build and run
+# against another by accident.
+#
+# blockships/gradle.properties still pins a defCoreLib ref, but nothing here reads it: it is CI's
+# alone (.github/workflows/checks.yml clones and builds that commit). Bump it with `make defcorelib-pin`.
+REPO_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+DEFCORELIB_DIR ?= $(REPO_ROOT)/../defCoreLib
+
+# An explicit DEFCORELIB_JAR (command line or environment) short-circuits the sibling entirely —
+# that is what lets CI run with no defCoreLib checkout next to the repo.
+ifeq ($(strip $(DEFCORELIB_JAR)),)
+DEFCORELIB_BUILD_DEP   := defcorelib-build
+GRADLE_DEFCORELIB_ARGS  = -PdefCoreLibDir=$(DEFCORELIB_DIR)
+# Recursive `=`, NOT `:=` — the wildcard has to run after defcorelib-build has produced the jar.
+# shadow jar only, never the `-plain` thin jar (Paper: "Ambiguous plugin name 'DefCoreLib'").
+DEFCORELIB_JAR          = $(firstword $(filter-out %-plain.jar,\
+	$(wildcard $(DEFCORELIB_DIR)/bin/defCoreLib-*.jar)))
+else
+DEFCORELIB_BUILD_DEP   :=
+GRADLE_DEFCORELIB_ARGS  = -PdefCoreLibJar=$(DEFCORELIB_JAR)
+endif
 
 .PHONY: build
-build:
-	cd blockships && gradle shadowJar
+build: $(DEFCORELIB_BUILD_DEP)
+	cd blockships && gradle shadowJar $(GRADLE_DEFCORELIB_ARGS)
 	mkdir -p bin
 	cp blockships/build/libs/BlockShips-*.jar bin
+
+# Unit tests (blockships/src/test). Separate from `build` on purpose: `build` runs shadowJar, which does not
+# depend on `test`, and keeping it that way keeps the edit-compile loop fast. CI does NOT need this target —
+# .github/workflows/checks.yml runs `gradle build`, and Gradle's java plugin wires build -> check -> test.
+# Note that only pushes to the branches listed in that workflow's `on:` run it (plus any PR targeting main),
+# so on a branch not listed there this target is the only thing running these. This is the local one-liner.
+.PHONY: test
+test: $(DEFCORELIB_BUILD_DEP)
+	cd blockships && gradle test $(GRADLE_DEFCORELIB_ARGS)
 
 .PHONY: dump-issues
 dump-issues:
 	bash docs/dump-issues.sh
+
+# Print README.md with absolute links, for pasting into the Modrinth description.
+# README_REF is required — see the note in the script about why there is no default.
+.PHONY: readme-modrinth
+readme-modrinth:
+	@python3 docs/readme-modrinth.py "$(README_REF)"
+
+# Same rewrite, but assert nothing relative survived instead of printing.
+.PHONY: readme-modrinth-check
+readme-modrinth-check:
+	@python3 docs/readme-modrinth.py "$(README_REF)" --check
 
 .PHONY: clean
 clean:
@@ -19,9 +74,10 @@ clean:
 
 
 .PHONY: server-plugin-copy
-server-plugin-copy:
-	rm -f server/plugins/BlockShips*.jar
+server-plugin-copy: defcorelib-jar
+	rm -f server/plugins/BlockShips*.jar server/plugins/defCoreLib*.jar
 	cp bin/*.jar server/plugins/
+	cp $(DEFCORELIB_JAR) server/plugins/
 
 .PHONY: server-clear-plugin-data
 	rm -rf server/plugins/BlockShips/
@@ -53,6 +109,35 @@ DOWNLOAD_CACHE := .download-cache
 SERVER_VARIANT ?= paper
 MINECRAFT_VERSION ?= 1.21.11
 
+.PHONY: defcorelib-build
+defcorelib-build:
+	@test -d "$(DEFCORELIB_DIR)" || { \
+		echo "ERROR: no defCoreLib checkout at $(DEFCORELIB_DIR)"; \
+		echo "  git clone git@github.com:def9a2a4/defCoreLib.git $(DEFCORELIB_DIR)"; \
+		echo "  or point elsewhere: make <target> DEFCORELIB_DIR=/path/to/defCoreLib"; \
+		echo "  or use a prebuilt jar: make <target> DEFCORELIB_JAR=/abs/path/to.jar"; exit 1; }
+	$(MAKE) -C $(DEFCORELIB_DIR) build
+
+.PHONY: defcorelib-jar
+defcorelib-jar: $(DEFCORELIB_BUILD_DEP)
+	@test -n "$(DEFCORELIB_JAR)" && test -f "$(DEFCORELIB_JAR)" || { \
+		echo "ERROR: DefCoreLib runtime jar not found: '$(DEFCORELIB_JAR)'"; \
+		echo "  DEFCORELIB_DIR='$(DEFCORELIB_DIR)'"; exit 1; }
+	@echo "DefCoreLib runtime jar: $(DEFCORELIB_JAR)"
+
+# Bump the ref CI builds against to the sibling checkout's current HEAD. Local builds ignore the
+# pin, so it rots silently without this.
+.PHONY: defcorelib-pin
+defcorelib-pin:
+	@cd $(DEFCORELIB_DIR) && sha=$$(git rev-parse --short HEAD) && { \
+		git diff-index --quiet HEAD -- || \
+			echo "WARNING: $(DEFCORELIB_DIR) has uncommitted changes — they are NOT in $$sha"; \
+		git merge-base --is-ancestor HEAD @{u} 2>/dev/null || \
+			echo "WARNING: $$sha is not on the upstream branch — CI clones from GitHub and will fail to check it out"; \
+		sed -i "s/^defCoreLibRef=.*/defCoreLibRef=$$sha/" $(REPO_ROOT)/blockships/gradle.properties; \
+		echo "pinned defCoreLib $$sha"; \
+	}
+
 $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar:
 	@mkdir -p $(DOWNLOAD_CACHE)/plugins
 	curl -L -o $@ https://github.com/dmulloy2/ProtocolLib/releases/download/5.4.0/ProtocolLib.jar
@@ -66,13 +151,14 @@ $(DOWNLOAD_CACHE)/plugins/ViaBackwards.jar:
 	curl -L -o $@ https://github.com/ViaVersion/ViaBackwards/releases/download/5.7.1/ViaBackwards-5.7.1.jar
 
 .PHONY: test-server-download-to-cache
-test-server-download-to-cache: $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar $(DOWNLOAD_CACHE)/plugins/ViaVersion.jar $(DOWNLOAD_CACHE)/plugins/ViaBackwards.jar
+test-server-download-to-cache: $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar $(DOWNLOAD_CACHE)/plugins/ViaVersion.jar $(DOWNLOAD_CACHE)/plugins/ViaBackwards.jar $(DEFCORELIB_BUILD_DEP)
 
 .PHONY: test-server-plugin-copy
-test-server-plugin-copy:
+test-server-plugin-copy: defcorelib-jar
 	rm -rf $(TEST_SERVER_DIR)/plugins/
 	mkdir -p $(TEST_SERVER_DIR)/plugins
 	cp bin/*.jar $(TEST_SERVER_DIR)/plugins/
+	cp $(DEFCORELIB_JAR) $(TEST_SERVER_DIR)/plugins/
 ifeq ($(MINECRAFT_VERSION),1.21.1)
 	cp $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar $(TEST_SERVER_DIR)/plugins/
 endif

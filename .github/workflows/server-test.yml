@@ -7,11 +7,16 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Job-level because this is a workflow_call callee: workflow-level settings here don't compose with
+    # the caller. checks.yml's concurrency group already covers called runs.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        minecraft: ['1.21.1', '1.21.4', '1.21.8', '1.21.10', '1.21.11', '26.1.2', '26.2']
-        # minecraft: ['1.21.1', '1.21.11']
+        # DefCoreLib is 1.21.11+, and BlockShips hard-`depend:`s on it — on older servers DefCoreLib
+        # fails to enable and takes BlockShips down with it. Keep this in step with defCoreLib's own
+        # matrix (defCoreLib/.github/workflows/server-test.yml).
+        minecraft: ['1.21.11', '26.1.2', '26.2']
         server: ['paper', 'purpur']
 
     name: ${{ matrix.server }} ${{ matrix.minecraft }}
@@ -43,6 +48,24 @@ jobs:
           name: BlockShips
           path: bin/
 
+      # Built from source at the pinned ref by the `build` job (see checks.yml). BlockShips has a
+      # hard `depend: [DefCoreLib]`, so every matrix cell needs the plugin jar in plugins/.
+      - name: Download defCoreLib JAR
+        uses: actions/download-artifact@v4
+        with:
+          name: defCoreLib
+          path: .download-cache/plugins/
+
+      # There is no defCoreLib checkout in this workspace, so hand the Makefile the jar explicitly —
+      # that is what stops it trying to build a sibling. Make reads DEFCORELIB_JAR straight from the
+      # environment, so the `make test-server-*` steps below need no arguments of their own.
+      - name: Point the build at the downloaded defCoreLib jar
+        run: |
+          jar=$(ls "$PWD"/.download-cache/plugins/defCoreLib-*.jar | grep -v -- '-plain' | head -1)
+          [ -n "$jar" ] || { echo "no defCoreLib jar in the downloaded artifact"; exit 1; }
+          echo "DEFCORELIB_JAR=$jar" >> "$GITHUB_ENV"
+          echo "Using $jar"
+
       - name: Download server and plugins
         run: make test-server-download-all SERVER_VARIANT=${{ matrix.server }} MINECRAFT_VERSION=${{ matrix.minecraft }}
 
@@ -66,8 +89,11 @@ jobs:
             exit 1
           fi
 
-      - name: Upload logs on failure
-        if: failure()
+      # always(), not failure(): a green run's reports are what the flake-hunt diffs against, and the
+      # timeout-minutes above cancels the job rather than failing it — failure() skips uploads on exactly
+      # the runs that most need their logs.
+      - name: Upload logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: logs-${{ matrix.server }}-${{ matrix.minecraft }}
@@ -75,3 +101,5 @@ jobs:
             test-server/server.log
             test-server/errors.log
             test-bot/test-results.txt
+            test-bot/chunk-test-results.txt
+          if-no-files-found: ignore

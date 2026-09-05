@@ -5,6 +5,7 @@ import org.bukkit.Material;
 import org.bukkit.block.Block;
 
 import java.util.*;
+// Collections is used for the no-glue detectShipDetailed overload.
 
 /**
  * Detects ship blocks using 6-direction flood fill algorithm.
@@ -55,14 +56,58 @@ public class ShipDetector {
      * @param startLocation The ship wheel location
      * @return Internal result with blocks and status flags
      */
-    private InternalScanResult detectShipInternal(Location startLocation) {
+    private InternalScanResult detectShipInternal(Location startLocation, Set<Location> forcedMembers) {
+        // ANOTHER SHIP'S WHEEL IS AN ORDINARY BLOCK to this fill — a deliberate decision, not an oversight.
+        // player_head is on the allow-list (a wheel has to be scannable), so a neighbour's wheel parked
+        // flush against this hull is reached by the fill like any other allowed block. An exclusion was
+        // tried and reverted; every variant had a worse failure mode — a barrier silently amputates your
+        // own hull past a chokepoint, transparency absorbs a neighbour's whole hull through their wheel,
+        // and refusal is a park-a-wheel-and-brick-their-ship griefing primitive.
+        //
+        // What happens to a reached foreign wheel is decided LATER, not here: assembleShip's exclusion
+        // sweep (ShipWheelManager.excludeForeignWheels, run between this fill and the capture) drops any
+        // foreign-stamped wheel with a live record from the membership set and leaves it standing — /clone
+        // copies included — so no foreign identity rides inside the assembled ship. Note this is the
+        // "refusal" variant above applied to ONE cell rather than the whole scan, which is why it is not
+        // the griefing primitive that is: it costs the neighbour nothing and costs the assembler one block
+        // they did not own anyway. Heads that fail the sweep's guard — stamped heads with NO record,
+        // unstamped legacy wheels — are absorbed as ordinary blocks, and for an absorbed legacy wheel that
+        // loss is real: it has no stamp, no record follows it, and there is no player-reachable recovery
+        // (the wheels commands are admin-only).
         Set<Location> shipBlocks = new HashSet<>();
         Queue<Location> frontier = new LinkedList<>();
         boolean exceededLimit = false;
 
+        // No wheel, no ship. The seed used to be added unconditionally, which meant a scan started from
+        // a cell whose wheel block was gone — an assembled ship (the hull is aired out and the skull
+        // removed), or a wheel broken out of band — did not fail. It SUCCEEDED, seeded from air, and
+        // then expanded into whatever allow-listed blocks happened to sit next to the empty cell: a
+        // dock, a pier, someone else's deck. Callers saw a valid result and reported another
+        // structure's blocks as this ship's.
+        //
+        // This is the same guard BlockStructureScanner.scanFrozen already applies, and the same one the
+        // forcedMembers loop below has always applied to every cell except this one. Two callers depend
+        // on it — the wheel menu's docked readout and defCoreLib's glue-anchor connector provider —
+        // and neither can check for itself, because both legitimately run while the ship is elsewhere.
+        if (startLocation.getBlock().getType().isAir()) {
+            return new InternalScanResult(shipBlocks, false, false);
+        }
+
         // Start with the initial location
         frontier.add(startLocation.clone());
         shipBlocks.add(startLocation.clone());
+
+        // Glued cells join unconditionally and seed the frontier, so the fill expands THROUGH them —
+        // a glued dirt block bridges to allowed hull on its far side. They bypass the allow-list by
+        // design (that is what gluing is for), but never the air check: a glued cell whose block was
+        // broken while docked would otherwise become a ModelPart holding AIR blockdata, rendering an
+        // empty ItemDisplay and airing out an already-air cell at assembly.
+        for (Location forced : forcedMembers) {
+            if (forced.getBlock().getType().isAir()) continue;
+            Location cell = forced.clone();
+            if (!shipBlocks.add(cell)) continue;
+            frontier.add(cell);
+        }
 
         // BFS flood fill
         while (!frontier.isEmpty()) {
@@ -96,12 +141,12 @@ public class ShipDetector {
                     continue;
                 }
 
-                if (!configManager.isAllowed(material)) {
+                if (!configManager.isAllowed(material) && !forcedMembers.contains(neighbor)) {
                     // Skip forbidden blocks (don't add to ship, but continue scanning)
                     continue;
                 }
 
-                // Valid block, add to ship and frontier
+                // Valid block, add to ship
                 shipBlocks.add(neighbor.clone());
                 frontier.add(neighbor.clone());
             }
@@ -111,25 +156,19 @@ public class ShipDetector {
     }
 
     /**
-     * Detect all ship blocks starting from the ship wheel location.
-     * Uses BFS flood fill with 6-direction expansion.
-     *
-     * @param startLocation The ship wheel location
-     * @return Set of all blocks that are part of the ship, or null if detection failed
-     */
-    public Set<Location> detectShip(Location startLocation) {
-        InternalScanResult result = detectShipInternal(startLocation);
-        if (result.exceededLimit) {
-            return null;
-        }
-        return result.blocks;
-    }
-
-    /**
      * Detect ship and return detailed information about the ship.
      */
     public ShipDetectionResult detectShipDetailed(Location startLocation) {
-        InternalScanResult result = detectShipInternal(startLocation);
+        return detectShipDetailed(startLocation, Collections.emptySet());
+    }
+
+    /**
+     * Detect ship, treating {@code forcedMembers} (the wheel's glued cells) as ship blocks regardless
+     * of the {@code blocks.yml} allow-list. They also seed the flood fill, so the ship can expand
+     * through a glued block to allowed hull beyond it.
+     */
+    public ShipDetectionResult detectShipDetailed(Location startLocation, Set<Location> forcedMembers) {
+        InternalScanResult result = detectShipInternal(startLocation, forcedMembers);
 
         if (result.blocks.isEmpty()) {
             return new ShipDetectionResult(false, "No valid blocks found for ship", null, 0, false);
@@ -149,7 +188,8 @@ public class ShipDetector {
             return new ShipDetectionResult(false, message, null, blockCount, false);
         }
 
-        return new ShipDetectionResult(true, "Successfully detected ship with " + blockCount + " blocks", result.blocks, blockCount, false);
+        return new ShipDetectionResult(true, "Successfully detected ship with " + blockCount + " blocks",
+            result.blocks, blockCount, false);
     }
 
     /**
@@ -162,7 +202,8 @@ public class ShipDetector {
         private final int blockCount;
         private final boolean scanLimitHit;
 
-        public ShipDetectionResult(boolean success, String message, Set<Location> blocks, int blockCount, boolean scanLimitHit) {
+        public ShipDetectionResult(boolean success, String message, Set<Location> blocks, int blockCount,
+                                   boolean scanLimitHit) {
             this.success = success;
             this.message = message;
             this.blocks = blocks;

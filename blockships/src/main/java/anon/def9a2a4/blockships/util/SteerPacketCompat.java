@@ -35,14 +35,18 @@ public class SteerPacketCompat {
     }
 
     /**
-     * Get the airship controls help text for the current version.
+     * Get the flight controls help text for the current version.
+     *
+     * <p>Says "flying ship", not "airship": vertical control is no longer buoyancy-only — any hull with
+     * enough upward thrust flies and steers the same way.
+     *
      * @return Help text describing how to ascend/descend
      */
     public static String getAirshipControlsHelp() {
         if (isSprintAvailable()) {
-            return "WASD to move. Airship: Space for up, Sprint for down.";
+            return "WASD to move. Flying ship: Space for up, Sprint for down.";
         } else {
-            return "WASD to move. Airship: Space for up, S+Space for down.";
+            return "WASD to move. Flying ship: Space for up, S+Space for down.";
         }
     }
 }

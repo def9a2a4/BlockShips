@@ -30,6 +30,15 @@ public class ShipWheelData {
         }
     }
 
+    /**
+     * This wheel's identity, mirrored onto the block itself as {@code blockships:wheel_id}.
+     *
+     * <p>The block's copy is the authoritative one; this record's {@link #blockLocation} is a cache of where
+     * that block currently is. Minted here so a wheel always has an id even before its block is stamped, and
+     * so an entry loaded from a pre-identity {@code ship_wheels.yml} gets one for free.
+     */
+    private UUID wheelId = UUID.randomUUID();
+
     private Location blockLocation;
     private BlockFace facing;
     private UUID assembledShipUUID;  // UUID of ship if assembled, null if not
@@ -43,14 +52,10 @@ public class ShipWheelData {
     private int lastDetectedPositiveWeight;  // Positive weight sum (for health calculation)
     private int lastDetectedWoolCount;   // Wool blocks (for ship stats)
     private int lastDetectedBannerCount; // Banner blocks (for ship stats)
-    private int lastDetectedEngineCount; // Ship engine blocks
-    private int lastDetectedFueledEngineCount; // Engines whose furnace held fuel at detection time
-
-    // Engine fuel state (persisted across sessions)
-    // Key = engine block index, Value = array of 3 fuel ItemStacks (null = empty slot)
-    private final Map<Integer, ItemStack[]> engineFuelSlots = new HashMap<>();
-    // Key = engine block index, Value = remaining burn ticks on current fuel item
-    private final Map<Integer, Integer> engineBurnTicks = new HashMap<>();
+    // bbanners display-entity banners. Not findable by material, so they come from an entity query
+    // (BlockStructureScanner.countLargeHuge) rather than the block walk that fills the two above.
+    private int lastDetectedLargeBannerCount;
+    private int lastDetectedHugeBannerCount;
 
     // Categorized blocks for colored particle visualization
     private Set<Location> lastDetectedRegularBlocks;  // Non-seat blocks (white particles)
@@ -72,23 +77,63 @@ public class ShipWheelData {
     private double lastMaxHealth;      // Max health when assembled
 
     // Buoyancy calculation data (for Ship Info display)
-    public float lastCenterOfVolumeY;  // Y component of center of volume
-    public float lastMinY;             // Bottom of ship relative to wheel
-    public float lastSurfaceOffset;    // Calculated surface offset
 
     // Camera distance setting (persisted per-ship)
     // -1 means "not set, use calculated default based on block count"
     private float cameraDistance = -1;
 
+    // When true, this wheel's ship is "locked": membership is frozen to its glue offsets (stored on the wheel
+    // skull by defCoreLib) and the natural allow-list flood fill is disabled, so docking it next to a pile of
+    // dirt no longer swallows the dirt. The frozen cells live in the glue store, not here. False = unlocked.
+    private boolean naturalFrozen;
+
+    // Set when the wheel was UNLOCKED while its ship was out. The unlock's glue prune needs the wheel skull,
+    // which mid-voyage does not exist, so the whole materialized hull stays glued until something runs the
+    // prune later — and until then every hull-adjacent slime block joins via the sticky closure, and a cell a
+    // stranger has since built on becomes a forced member. This flag is that "something": assembleShip and
+    // disassembleShip's landing check it and prune. Persisted (written only when true) so a restart between
+    // the unlock and the landing doesn't lose it.
+    private boolean prunePending;
+
+    /**
+     * The name of {@link #blockLocation}'s world, captured whenever that location is set.
+     *
+     * <p>Exists so {@link #toMap} cannot throw. A {@code Location} holds a WEAK reference to its world, so
+     * {@code getWorld()} raises {@code IllegalArgumentException("World unloaded")} once that reference is
+     * collected — and {@code toMap} was reading it. A single wheel in a world unloaded at runtime therefore
+     * failed to serialise, and {@code saveAll}'s per-row catch dropped it: the record was PERMANENTLY
+     * DELETED from disk on the next save, while the log claimed the previous row had been preserved.
+     *
+     * <p>Every other field {@code toMap} writes is world-independent, so caching this one name makes the
+     * whole serialisation total for the unloaded-world case. It is a name rather than a {@code World} on
+     * purpose — a name survives an unload/reload cycle, whereas the {@code World} object does not.
+     *
+     * <p>Null only if the location handed in had no live world to begin with, which {@code toMap} then
+     * reports rather than throwing.
+     */
+    private @org.jetbrains.annotations.Nullable String worldName;
+
     public ShipWheelData(Location blockLocation, BlockFace facing) {
         this.blockLocation = blockLocation.clone();
+        // Via LocationUtil, not a bare getWorld(): otherwise this just moves the throw from save time to
+        // placement/load time. Both current callers hand in a live location, but nothing enforces that.
+        this.worldName = anon.def9a2a4.blockships.util.LocationUtil.worldName(blockLocation);
         this.facing = facing;
         this.assembledShipUUID = null;
         this.lastDetectedBlocks = null;
         this.particleTask = null;
         this.lastDetectedBlockCount = 0;
         this.lastDetectedWeight = 0;
-        this.lastDetectedFueledEngineCount = 0;
+    }
+
+    /** This wheel's identity. Never null. Mirrored onto the block as {@code blockships:wheel_id}. */
+    public UUID getWheelId() {
+        return wheelId;
+    }
+
+    /** Only for {@link #fromMap} (adopting a persisted id) and duplicate re-minting at load. */
+    void setWheelId(UUID wheelId) {
+        if (wheelId != null) this.wheelId = wheelId;
     }
 
     public Location getBlockLocation() {
@@ -100,12 +145,32 @@ public class ShipWheelData {
     }
 
     /**
-     * Updates the wheel's block location and facing direction.
-     * Used when a ship is disassembled at a different location than where it was assembled.
+     * Updates the wheel's cached block location and facing direction, after the ship lands somewhere other
+     * than where it was assembled.
+     *
+     * <p>Package-private on purpose: {@code blockLocation} is a cache of where the block currently is, and
+     * {@code ShipWheelManager.relocate} is its only legitimate writer. A caller that moved it directly would
+     * desync the cache from the block's {@code blockships:wheel_id} PDC with nothing to notice.
      */
-    public void updateBlockLocation(Location newLocation, BlockFace newFacing) {
+    void updateBlockLocation(Location newLocation, BlockFace newFacing) {
         this.blockLocation = newLocation.clone();
         this.facing = newFacing;
+        // Keep worldName in step with the only other writer of blockLocation. Guarded: a relocation into a
+        // world that has since gone keeps the last known name rather than nulling it, so the row still
+        // serialises to somewhere real.
+        String w = anon.def9a2a4.blockships.util.LocationUtil.worldName(newLocation);
+        if (w != null) this.worldName = w;
+    }
+
+    /**
+     * The name of the world this wheel's cell is in, or null if it never had a live one.
+     *
+     * <p>Survives that world being unloaded, unlike {@code getBlockLocation().getWorld()}. Use this for
+     * anything that only needs to NAME the world — cache keys, serialised rows, operator output — and
+     * {@code LocationUtil.liveWorld} for anything that needs to touch it.
+     */
+    public @org.jetbrains.annotations.Nullable String getWorldName() {
+        return worldName;
     }
 
     public UUID getAssembledShipUUID() {
@@ -142,15 +207,15 @@ public class ShipWheelData {
 
     public void setLastDetectedStats(int blockCount, int weightedBlockCount, int totalWeight,
                                      int positiveWeight, int woolCount, int bannerCount,
-                                     int engineCount, int fueledEngineCount) {
+                                     int largeBannerCount, int hugeBannerCount) {
         this.lastDetectedBlockCount = blockCount;
         this.lastDetectedWeightedBlockCount = weightedBlockCount;
         this.lastDetectedWeight = totalWeight;
         this.lastDetectedPositiveWeight = positiveWeight;
         this.lastDetectedWoolCount = woolCount;
         this.lastDetectedBannerCount = bannerCount;
-        this.lastDetectedEngineCount = engineCount;
-        this.lastDetectedFueledEngineCount = fueledEngineCount;
+        this.lastDetectedLargeBannerCount = largeBannerCount;
+        this.lastDetectedHugeBannerCount = hugeBannerCount;
     }
 
     public int getLastDetectedWeightedBlockCount() {
@@ -165,68 +230,12 @@ public class ShipWheelData {
         return lastDetectedBannerCount;
     }
 
-    public int getLastDetectedEngineCount() {
-        return lastDetectedEngineCount;
+    public int getLastDetectedLargeBannerCount() {
+        return lastDetectedLargeBannerCount;
     }
 
-    public int getLastDetectedFueledEngineCount() {
-        return lastDetectedFueledEngineCount;
-    }
-
-    // ===== Engine fuel state =====
-
-    public ItemStack[] getEngineFuelSlots(int engineBlockIndex) {
-        ItemStack[] slots = engineFuelSlots.get(engineBlockIndex);
-        return slots != null ? slots : new ItemStack[3];
-    }
-
-    public void setEngineFuelSlots(int engineBlockIndex, ItemStack[] slots) {
-        engineFuelSlots.put(engineBlockIndex, slots);
-    }
-
-    public int getEngineBurnTicks(int engineBlockIndex) {
-        return engineBurnTicks.getOrDefault(engineBlockIndex, 0);
-    }
-
-    public void setEngineBurnTicks(int engineBlockIndex, int ticks) {
-        engineBurnTicks.put(engineBlockIndex, ticks);
-    }
-
-    public Map<Integer, ItemStack[]> getAllEngineFuelSlots() {
-        return engineFuelSlots;
-    }
-
-    public Map<Integer, Integer> getAllEngineBurnTicks() {
-        return engineBurnTicks;
-    }
-
-    /**
-     * Returns the number of engines that currently have fuel (burn ticks > 0 or fuel items in slots).
-     * Takes the full list of engine block indices so engines without map entries are correctly counted as unfueled.
-     */
-    public int countFueledEngines(List<Integer> engineBlockIndices) {
-        int count = 0;
-        for (int idx : engineBlockIndices) {
-            if (engineBurnTicks.getOrDefault(idx, 0) > 0) {
-                count++;
-                continue;
-            }
-            ItemStack[] slots = engineFuelSlots.get(idx);
-            if (slots != null) {
-                for (ItemStack item : slots) {
-                    // Only burnable fuel counts as "fueled" - matches tickEngineFuel, which only
-                    // consumes items with getBurnTime > 0. Without this, a non-burnable item (raw iron,
-                    // cobblestone) sneaked into an engine's furnace slots reads as fueled forever and
-                    // grants permanent free thrust that never depletes.
-                    if (item != null && item.getType() != Material.AIR
-                            && EngineMenuGUI.getBurnTime(item.getType()) > 0) {
-                        count++;
-                        break;
-                    }
-                }
-            }
-        }
-        return count;
+    public int getLastDetectedHugeBannerCount() {
+        return lastDetectedHugeBannerCount;
     }
 
     public Set<Location> getLastDetectedRegularBlocks() {
@@ -344,6 +353,26 @@ public class ShipWheelData {
         this.cameraDistance = distance;
     }
 
+    /** True when natural allow-list spread is frozen (membership = the wheel's glue offsets). */
+    public boolean isLocked() {
+        return naturalFrozen;
+    }
+
+    /** Freeze (true) or unfreeze (false) natural spread. Callers must {@code saveAll()}. */
+    public void setNaturalFrozen(boolean frozen) {
+        this.naturalFrozen = frozen;
+    }
+
+    /** True when an unlock happened while the ship was out and the glue prune still owes a run. */
+    public boolean isPrunePending() {
+        return prunePending;
+    }
+
+    /** Set/clear the deferred-prune marker. Callers must {@code saveAll()}. */
+    public void setPrunePending(boolean pending) {
+        this.prunePending = pending;
+    }
+
     /**
      * Calculates a default camera distance based on the number of blocks in the ship.
      * Scales from 4 (small ships) to ~16 (large ships), capped at 20.
@@ -410,12 +439,22 @@ public class ShipWheelData {
      * Transient data (detection preview, particles) is not persisted.
      */
     public Map<String, Object> toMap() {
+        // TOTAL: this must not throw for any reachable state of this object. saveAll's per-row catch turns a
+        // throw here into permanent deletion of the row from disk, so "cannot serialise" and "should not
+        // exist" would become the same thing. Every read below is either a cached primitive or null-guarded.
         Map<String, Object> map = new HashMap<>();
-        map.put("world", blockLocation.getWorld().getName());
+        map.put("wheel_id", wheelId.toString());
+        // The cached name, NOT blockLocation.getWorld() — see the worldName field. Falling back to a live
+        // read covers a record built before the cache existed; if both are absent the row is written
+        // world-less and fromMap quarantines it, which is recoverable, unlike deleting it.
+        String w = worldName != null
+            ? worldName : anon.def9a2a4.blockships.util.LocationUtil.worldName(blockLocation);
+        if (w != null) map.put("world", w);
         map.put("x", blockLocation.getBlockX());
         map.put("y", blockLocation.getBlockY());
         map.put("z", blockLocation.getBlockZ());
-        map.put("facing", facing.name());
+        // facing is non-null on every current path, but nothing enforces it and an NPE here costs the row.
+        map.put("facing", (facing == null ? BlockFace.NORTH : facing).name());
         if (assembledShipUUID != null) {
             map.put("ship_uuid", assembledShipUUID.toString());
         }
@@ -423,27 +462,11 @@ public class ShipWheelData {
         if (cameraDistance >= 0) {
             map.put("camera_distance", cameraDistance);
         }
-        // Serialize engine fuel state
-        if (!engineFuelSlots.isEmpty()) {
-            List<Map<String, Object>> enginesList = new ArrayList<>();
-            for (Map.Entry<Integer, ItemStack[]> entry : engineFuelSlots.entrySet()) {
-                int idx = entry.getKey();
-                ItemStack[] slots = entry.getValue();
-                Map<String, Object> engineMap = new HashMap<>();
-                engineMap.put("block_index", idx);
-                engineMap.put("burn_ticks", engineBurnTicks.getOrDefault(idx, 0));
-                List<String> serializedSlots = new ArrayList<>();
-                for (ItemStack item : slots) {
-                    if (item != null && item.getType() != Material.AIR) {
-                        serializedSlots.add(Base64.getEncoder().encodeToString(item.serializeAsBytes()));
-                    } else {
-                        serializedSlots.add("");
-                    }
-                }
-                engineMap.put("fuel_slots", serializedSlots);
-                enginesList.add(engineMap);
-            }
-            map.put("engines", enginesList);
+        if (naturalFrozen) {
+            map.put("locked", true);
+        }
+        if (prunePending) {
+            map.put("prune_pending", true);
         }
         return map;
     }
@@ -454,10 +477,12 @@ public class ShipWheelData {
      * @return The deserialized ShipWheelData, or null if world doesn't exist
      */
     public static ShipWheelData fromMap(Map<String, Object> map) {
-        String worldName = (String) map.get("world");
-        World world = Bukkit.getWorld(worldName);
+        // Null-checked before the lookup: Bukkit.getWorld(String) lower-cases its argument and so NPEs on
+        // null, and toMap now omits the key entirely rather than throwing when it has no world to name.
+        Object rawWorld = map.get("world");
+        World world = rawWorld instanceof String s ? Bukkit.getWorld(s) : null;
         if (world == null) {
-            return null;  // World doesn't exist (deleted/renamed)
+            return null;  // World doesn't exist (deleted/renamed), or was never recorded
         }
 
         Location loc = new Location(world,
@@ -468,6 +493,18 @@ public class ShipWheelData {
 
         ShipWheelData data = new ShipWheelData(loc, facing);
 
+        // Absent for every wheel written before block identity existed; the constructor already minted one,
+        // so those simply keep the fresh id and get stamped onto their block the first time we look at it.
+        Object rawId = map.get("wheel_id");
+        if (rawId instanceof String s) {
+            try {
+                data.setWheelId(UUID.fromString(s));
+            } catch (IllegalArgumentException e) {
+                Bukkit.getLogger().warning("[BlockShips] Wheel at " + loc + " had an unreadable wheel_id ("
+                    + s + "); minting a new one.");
+            }
+        }
+
         if (map.containsKey("ship_uuid")) {
             data.setAssembledShipUUID(UUID.fromString((String) map.get("ship_uuid")));
         }
@@ -477,31 +514,19 @@ public class ShipWheelData {
             data.setCameraDistance(((Number) map.get("camera_distance")).floatValue());
         }
 
-        // Load engine fuel state
-        if (map.containsKey("engines")) {
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> enginesList = (List<Map<String, Object>>) map.get("engines");
-            for (Map<String, Object> engineMap : enginesList) {
-                int idx = ((Number) engineMap.get("block_index")).intValue();
-                int burnTicks = ((Number) engineMap.get("burn_ticks")).intValue();
-                data.engineBurnTicks.put(idx, burnTicks);
+        // Lock flag. New format is a plain boolean — the frozen cells live in the wheel's glue store, not here.
+        // A legacy LockedStructure blob (Map/section) loads as UNLOCKED: the packed store was retired, so those
+        // ships re-lock once. Absent (every pre-lock wheel) = unlocked.
+        Object lockedRaw = map.get("locked");
+        if (lockedRaw instanceof Boolean b) {
+            data.setNaturalFrozen(b);
+        } else if (lockedRaw instanceof Map || lockedRaw instanceof org.bukkit.configuration.ConfigurationSection) {
+            Bukkit.getLogger().info("[BlockShips] Wheel at " + loc + " carried a legacy locked-structure; "
+                + "loading it unlocked (re-lock from the wheel menu to freeze it again).");
+        }
 
-                @SuppressWarnings("unchecked")
-                List<String> serializedSlots = (List<String>) engineMap.get("fuel_slots");
-                ItemStack[] slots = new ItemStack[3];
-                for (int i = 0; i < Math.min(serializedSlots.size(), 3); i++) {
-                    String encoded = serializedSlots.get(i);
-                    if (encoded != null && !encoded.isEmpty()) {
-                        try {
-                            slots[i] = ItemStack.deserializeBytes(Base64.getDecoder().decode(encoded));
-                        } catch (Exception e) {
-                            org.bukkit.Bukkit.getLogger().warning("[BlockShips] Failed to deserialize fuel in engine " + idx + " slot " + i + ": " + e.getMessage());
-                            slots[i] = null;
-                        }
-                    }
-                }
-                data.engineFuelSlots.put(idx, slots);
-            }
+        if (map.get("prune_pending") instanceof Boolean p) {
+            data.setPrunePending(p);
         }
 
         return data;

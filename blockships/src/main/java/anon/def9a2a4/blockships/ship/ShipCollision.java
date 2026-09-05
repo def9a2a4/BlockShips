@@ -41,18 +41,25 @@ public class ShipCollision {
      * parked ships still react when hit.
      */
     public void detect() {
+        // Vertical velocity counts as movement. Without it a ship descending straight down — no
+        // throttle, no turn — ran no terrain checks at all, so a driverless fall was invisible to
+        // collision entirely. It only ever appeared to work because the pilot's Space/Sprint applies a
+        // small forward nudge that kept currentSpeed above the threshold.
         boolean isMoving = Math.abs(ship.physics.currentSpeed) > 0.001f ||
-                          Math.abs(ship.physics.currentRotationVelocity) > 0.01f;
+                          Math.abs(ship.physics.currentRotationVelocity) > 0.01f ||
+                          Math.abs(ship.physics.currentYVelocity) > 0.001f;
         boolean hasPreviousForce = ship.physics.collisionForce.lengthSquared() > 0.001f;
 
         // Reuse work vector instead of allocating new one
         workTotalForce.set(0, 0, 0);
         int collisionCount = 0;
 
-        // Terrain collisions: only check if ship is moving or was recently bumped
+        // Terrain collisions: only check if ship is moving or was recently bumped. Iterate the engine-agnostic
+        // collider boxes (M3) so terrain collision works for both native (prefab) and delegated (Mechanism) ships.
         if (isMoving || hasPreviousForce) {
-            for (CollisionBox cb : ship.colliders) {
-                Vector3f terrainForce = calculateTerrainCollisionForce(cb);
+            World world = ship.vehicle.getWorld();
+            for (org.bukkit.util.BoundingBox box : ship.colliderBoxes()) {
+                Vector3f terrainForce = calculateTerrainCollisionForce(box, world);
                 if (terrainForce.lengthSquared() > 0.001f) {
                     workTotalForce.add(terrainForce);
                     collisionCount++;
@@ -181,11 +188,20 @@ public class ShipCollision {
 
         // Apply vertical collision response
         if (Math.abs(verticalForce) > 0.001f) {
-            // Apply vertical force to Y velocity
-            if (verticalForce > 0 && ship.physics.currentYVelocity < 0) {
-                // Hitting ground while falling - stop downward velocity
+            // Apply vertical force to Y velocity.
+            //
+            // The two "stop" tests use <= 0 / >= 0, not < 0 / > 0, and the boundary is the whole point:
+            // a ship that has just LANDED sits at exactly 0, because ShipPhysics.clampFallToGround
+            // already trimmed the step. With a strict test, 0 fell through to the else and got pushed
+            // UPWARD every tick — the wheel-column sweep cannot see an overhanging hull, so terrain
+            // penetration keeps reporting a force forever. The ship bobbed, and toggling
+            // wasVerticallyMoving on every bounce spammed refreshCarrierTracking, which is the deck
+            // jitter that call exists to prevent. Only reachable since vertical-only movement started
+            // running terrain checks at all.
+            if (verticalForce > 0 && ship.physics.currentYVelocity <= 0) {
+                // Hitting ground while falling (or already resting on it) - stop downward velocity
                 ship.physics.currentYVelocity = 0;
-            } else if (verticalForce < 0 && ship.physics.currentYVelocity > 0) {
+            } else if (verticalForce < 0 && ship.physics.currentYVelocity >= 0) {
                 // Hitting ceiling while rising - stop upward velocity
                 ship.physics.currentYVelocity = 0;
             } else {
@@ -203,9 +219,7 @@ public class ShipCollision {
     // Maximum collisions to process per collision box (early termination optimization)
     private static final int MAX_COLLISIONS_PER_BOX = 4;
 
-    private Vector3f calculateTerrainCollisionForce(CollisionBox cb) {
-        org.bukkit.util.BoundingBox shulkerBox = cb.entity.getBoundingBox();
-        World world = cb.entity.getWorld();
+    private Vector3f calculateTerrainCollisionForce(org.bukkit.util.BoundingBox shulkerBox, World world) {
         workTerrainForce.set(0, 0, 0);  // Reuse work vector instead of allocating
         int collisionCount = 0;
         ShipConfig config = ship.config;

@@ -4,7 +4,7 @@ import anon.def9a2a4.blockships.customships.ShipWheelData;
 import anon.def9a2a4.blockships.customships.ShipWheelManager;
 import anon.def9a2a4.blockships.customships.ShipWheelMenu;
 import anon.def9a2a4.blockships.util.AttributeCompat;
-import anon.def9a2a4.blockships.ship.CollisionBox;
+import anon.def9a2a4.blockships.ship.CustomShipRender;
 import anon.def9a2a4.blockships.ship.ShipInstance;
 import org.bukkit.*;
 import org.bukkit.block.Block;
@@ -16,8 +16,6 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
-import org.bukkit.event.inventory.FurnaceBurnEvent;
-import org.bukkit.event.inventory.FurnaceSmeltEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
@@ -54,12 +52,20 @@ import java.util.stream.Collectors;
 
 public class DisplayShip implements Listener {
 
+    /**
+     * Cap on the downward velocity a dismounting player inherits from the ship, blocks/tick.
+     *
+     * <p>0.4 is roughly vanilla terminal-ish over a short drop and well inside survivable; the ship
+     * itself can now descend at {@code max-sink-speed} (0.5 by default, and faster while accelerating),
+     * which is not something to hand to a player whose fall distance was just reset to zero.
+     */
+    private static final float DISMOUNT_MAX_DOWNWARD_VELOCITY = 0.4f;
+
     private final JavaPlugin plugin;
     private final NamespacedKey BANNER_DATA_KEY;
     private final NamespacedKey WOOD_TYPE_KEY;
     private final NamespacedKey SHIP_TYPE_KEY;
     private ShipModel model;
-    private ShipPersistence persistence;
     private ShipWorldData shipWorldData;  // Per-world ship storage for chunk-based loading
     private Map<String, ShipModel> shipModels = new HashMap<>();
     private ItemTextureManager textureManager;
@@ -68,14 +74,13 @@ public class DisplayShip implements Listener {
     private final Map<UUID, Long> lastShulkerInteraction = new HashMap<>();  // Cooldown for preventing double-entry
     private final Set<UUID> shipsBeingRecovered = Collections.synchronizedSet(new HashSet<>());  // Prevent concurrent recovery
     private final Set<Long> chunksBeingRecovered = ConcurrentHashMap.newKeySet();  // Track chunks with pending async recovery
-    private final org.joml.Vector3f workWheelTranslation = new org.joml.Vector3f();  // Reusable for findWheelCollider
+    private final Map<UUID, java.util.logging.Level> migrationFailureLogged = new ConcurrentHashMap<>();  // Per-ship highest migration-failure level already logged (so a stuck ship logs once, not every chunk load)
 
     public DisplayShip(JavaPlugin plugin) {
         this.plugin = plugin;
         this.BANNER_DATA_KEY = new NamespacedKey(plugin, "banner_data");
         this.WOOD_TYPE_KEY = new NamespacedKey(plugin, "wood_type");
         this.SHIP_TYPE_KEY = new NamespacedKey(plugin, "ship_type");
-        this.persistence = new ShipPersistence(plugin);
         this.shipWorldData = new ShipWorldData(plugin);
         this.textureManager = new ItemTextureManager(plugin);
     }
@@ -83,6 +88,7 @@ public class DisplayShip implements Listener {
     public void initialize() {
         // Item textures and prefab models are read from the jar (or a config/ override) on demand;
         // nothing is extracted to disk.
+
 
         // Load item textures from items.yml
         textureManager.load();
@@ -96,117 +102,37 @@ public class DisplayShip implements Listener {
         // Register recipes for all ship types
         registerRecipes();
 
-        // Load chunk indices from per-world storage
-        shipWorldData.loadAllChunkIndices();
-
-        // Check for legacy ships.yml and migrate if needed
-        if (persistence.hasLegacyData()) {
-            migrateLegacyShipData();
-        }
-
-        // Scan loaded chunks for unregistered ships (handles spawn chunks, server restart)
-        recoverUnregisteredShips();
+        // NOTE: native-ship migration (migrateLoadedChunks) runs LATER in BlockShipsPlugin enable — AFTER
+        // forceRecoverDelegatedShips() — so corelib has already recovered delegated ships (setting byId) before
+        // the migration idempotency probe runs, shrinking the crash-mid-migration re-spawn window (#3).
 
         // Start periodic save task for ships in always-loaded chunks (spawn chunks)
         startPeriodicSaveTask();
     }
 
     /**
-     * Scans all loaded chunks for ship entities that aren't registered in ShipRegistry.
-     * This handles: spawn chunks that never unload, server restart, pre-migration ships.
+     * At enable, migrate any persisted NATIVE ship (released 0.0.17) in an already-loaded chunk (spawn chunks that
+     * never unload) into a delegated mechanism, and reap stragglers. Delegated ships recover via defCoreLib
+     * (forceRecoverDelegatedShips + the recovered MechanismAssembleEvent), not here. Called by BlockShipsPlugin
+     * AFTER forceRecoverDelegatedShips so corelib has recovered delegated ships before the migration probe runs.
      */
-    private void recoverUnregisteredShips() {
-        int recovered = 0;
+    public void migrateLoadedChunks() {
         for (World world : Bukkit.getWorlds()) {
             for (org.bukkit.Chunk chunk : world.getLoadedChunks()) {
-                recovered += recoverUnregisteredShipsInChunk(chunk);
+                // Defense in depth: this runs during onEnable, and reapStragglerEntities used to be able to
+                // throw (NPE on a torn sidecar) — which aborted the loop for every remaining chunk AND every
+                // remaining world, leaving the plugin half-enabled. The 3-state loader is the real fix; this
+                // stops any future throw here from taking the whole enable down with it.
+                try {
+                    migrateNativeShipsInChunk(world, chunk);
+                    reapStragglerEntities(world, chunk);
+                } catch (Throwable t) {
+                    plugin.getLogger().log(java.util.logging.Level.SEVERE,
+                        "Enable-time sweep failed for chunk " + chunk.getX() + "," + chunk.getZ()
+                            + " in " + world.getName() + " — continuing with the remaining chunks", t);
+                }
             }
         }
-        if (recovered > 0) {
-            plugin.getLogger().info("Recovered " + recovered + " unregistered ship(s) on startup");
-        }
-    }
-
-    /**
-     * Scans a chunk for ship root entities that aren't registered and recovers them.
-     * @return Number of ships recovered
-     */
-    private int recoverUnregisteredShipsInChunk(org.bukkit.Chunk chunk) {
-        int recovered = 0;
-
-        for (Entity entity : chunk.getEntities()) {
-            if (!(entity instanceof ArmorStand)) continue;
-
-            Set<String> tags = entity.getScoreboardTags();
-            UUID shipId = null;
-            boolean isRoot = false;
-
-            // Look for root tag: "displayship:{uuid}:root"
-            for (String tag : tags) {
-                if (tag.startsWith(ShipTags.SHIP_PREFIX) && tag.endsWith(":root")) {
-                    String idPart = tag.substring(ShipTags.SHIP_PREFIX.length(), tag.length() - 5);
-                    try {
-                        shipId = UUID.fromString(idPart);
-                        isRoot = true;
-                        break;
-                    } catch (IllegalArgumentException e) {
-                        continue;
-                    }
-                }
-            }
-
-            if (!isRoot || shipId == null) continue;
-            if (ShipRegistry.byId(shipId) != null) continue;  // Already registered
-
-            // Check if this ship is already being recovered (prevent concurrent recovery)
-            if (!shipsBeingRecovered.add(shipId)) {
-                continue;
-            }
-
-            try {
-                // Found unregistered ship root - check if we have saved metadata
-                ShipPersistence.ShipState state = shipWorldData.loadShipMetadata(chunk.getWorld(), shipId);
-
-                if (state == null) {
-                    // No metadata - can't recover without knowing ship type
-                    plugin.getLogger().warning("Found orphaned ship root " + shipId + " with no metadata - cannot recover");
-                    continue;
-                }
-
-                // Load model and recover
-                ShipModel model = loadModelForState(state);
-                if (model == null) {
-                    plugin.getLogger().warning("Failed to load model for orphaned ship " + shipId);
-                    continue;
-                }
-
-                ShipInstance ship = ShipInstance.fromState(plugin, state, model);
-                if (ship == null) {
-                    plugin.getLogger().warning("Failed to create ShipInstance for orphaned ship " + shipId);
-                    continue;
-                }
-
-                if (ship.recoverEntities(chunk)) {
-                    ShipRegistry.register(ship);
-
-                    // Ensure ship is in chunk index
-                    Location loc = ship.vehicle.getLocation();
-                    shipWorldData.addToChunkIndex(chunk.getWorld(), ship.id,
-                        loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
-                    shipWorldData.saveAllChunkIndices();
-
-                    plugin.getLogger().info("Recovered unregistered ship " + shipId + " in chunk " + chunk.getX() + "," + chunk.getZ());
-                    recovered++;
-                }
-            } catch (Exception e) {
-                // Never let one bad ship abort recovery of the rest of the startup sweep.
-                plugin.getLogger().warning("Failed to recover ship " + shipId + ", skipping: " + e.getMessage());
-            } finally {
-                shipsBeingRecovered.remove(shipId);
-            }
-        }
-
-        return recovered;
     }
 
     /**
@@ -220,61 +146,9 @@ public class DisplayShip implements Listener {
                 // Snapshot ship state on main thread, then write async
                 for (ShipInstance ship : ShipRegistry.getAllShips()) {
                     shipWorldData.saveShipMetadataAsync(ship);
-
-                    // Ensure ship is in chunk index (may have been missed or moved)
-                    Location loc = ship.vehicle.getLocation();
-                    int chunkX = loc.getBlockX() >> 4;
-                    int chunkZ = loc.getBlockZ() >> 4;
-                    shipWorldData.addToChunkIndex(loc.getWorld(), ship.id, chunkX, chunkZ);
                 }
-                shipWorldData.saveAllChunkIndicesAsync();
             }
         }.runTaskTimer(plugin, 20L * 60, 20L * 60);  // Every 60 seconds
-    }
-
-    public void loadShips() {
-        persistence.loadAll();
-    }
-
-    public void saveShips() {
-        persistence.saveAll();
-    }
-
-    /**
-     * Migrates ship data from legacy ships.yml to per-world YAML storage.
-     * This is a one-time migration that runs when the plugin detects ships.yml exists.
-     */
-    private void migrateLegacyShipData() {
-        plugin.getLogger().info("Migrating ship data from ships.yml to per-world storage...");
-
-        // Load all ships using the old persistence system
-        // This spawns them as entities with fresh references
-        persistence.loadAll();
-
-        int migrated = 0;
-        for (ShipInstance ship : ShipRegistry.getAllShips()) {
-            Location loc = ship.vehicle.getLocation();
-            World world = loc.getWorld();
-            if (world == null) continue;
-
-            // Save ship metadata to per-world storage
-            shipWorldData.saveShipMetadata(ship);
-
-            // Add to chunk index
-            int chunkX = loc.getBlockX() >> 4;
-            int chunkZ = loc.getBlockZ() >> 4;
-            shipWorldData.addToChunkIndex(world, ship.id, chunkX, chunkZ);
-
-            migrated++;
-        }
-
-        // Save all chunk indices to disk
-        shipWorldData.saveAllChunkIndices();
-
-        // Delete the old ships.yml file
-        persistence.clear();
-
-        plugin.getLogger().info("Migration complete: " + migrated + " ships migrated to per-world storage");
     }
 
     public void reload() {
@@ -285,24 +159,42 @@ public class DisplayShip implements Listener {
     }
 
     private void loadShipModels() {
-        shipModels.clear();
-
-        // Iterate through all ship types in config
+        // Parse into a fresh map and swap at the end: one broken prefab must not take down enable or
+        // /blockships reload. ShipModel.fromFile throws on a missing/empty file, a bad matrix, an unknown
+        // material or blockstate — any one typo'd override — and a throw here used to propagate out of
+        // onEnable BEFORE shipWheelManager was assigned (so even onDisable's wheel save was lost) and out
+        // of the reload command mid-way with the model map already cleared. Same per-entry-skip +
+        // keep-running-on-total-failure shape as BlockConfigManager.loadConfig; loadModelForState already
+        // guards its own fromFile call this way.
         var shipsSection = plugin.getConfig().getConfigurationSection("ships");
         if (shipsSection == null) {
             plugin.getLogger().warning("No ships defined in config!");
+            shipModels.clear();
             return;
         }
 
+        Map<String, ShipModel> fresh = new LinkedHashMap<>();
         List<String> loadedShips = new ArrayList<>();
         for (String shipType : shipsSection.getKeys(false)) {
             String modelPath = plugin.getConfig().getString("ships." + shipType + ".model-path");
-            if (modelPath != null) {
+            if (modelPath == null) continue;
+            try {
                 ShipModel model = ShipModel.fromFile(plugin, modelPath, shipType);
-                shipModels.put(shipType, model);
+                fresh.put(shipType, model);
                 loadedShips.add(shipType + " (" + model.parts.size() + " blocks)");
+            } catch (Exception e) {
+                plugin.getLogger().severe("Prefab ship '" + shipType + "' failed to load from '" + modelPath
+                    + "': " + e.getMessage() + " — skipped. Fix the file and /blockships reload.");
             }
         }
+
+        if (fresh.isEmpty() && !shipModels.isEmpty()) {
+            plugin.getLogger().severe("Every prefab ship failed to load; keeping the " + shipModels.size()
+                + " model(s) already in force.");
+            return;
+        }
+        shipModels.clear();
+        shipModels.putAll(fresh);
 
         if (!loadedShips.isEmpty()) {
             plugin.getLogger().info("Loaded prefab ships: " + String.join(", ", loadedShips));
@@ -362,8 +254,6 @@ public class DisplayShip implements Listener {
             ShipRegistry.unregister(ship);
             plugin.getLogger().fine("Suspended ship " + ship.id + " for chunk unload at " + chunk.getX() + "," + chunk.getZ());
         }
-        // Persist chunk indices (async - serialized behind metadata writes on ioExecutor)
-        shipWorldData.saveAllChunkIndicesAsync();
     }
 
     /**
@@ -376,288 +266,399 @@ public class DisplayShip implements Listener {
     public void onChunkLoad(ChunkLoadEvent event) {
         org.bukkit.Chunk chunk = event.getChunk();
         World world = event.getWorld();
-        int chunkX = chunk.getX();
-        int chunkZ = chunk.getZ();
-        long chunkKey = chunk.getChunkKey();
 
-        // PART 1: Normal recovery for ships indexed in this chunk (async file I/O)
-        List<UUID> shipIds = shipWorldData.getShipsInChunk(world, chunkX, chunkZ);
+        // Migrate any persisted NATIVE ship (released 0.0.17, custom + prefab) whose root is in this chunk into a
+        // delegated mechanism — the only engine. Delegated ships recover via defCoreLib's recovered
+        // MechanismAssembleEvent (onMechanismAssemble → reconstructDelegatedShip); nothing native remains to
+        // recover here.
+        migrateNativeShipsInChunk(world, chunk);
 
-        // Filter to ships that need recovery
-        List<UUID> shipsToRecover = new ArrayList<>();
-        for (UUID shipId : shipIds) {
-            if (ShipRegistry.byId(shipId) == null && shipsBeingRecovered.add(shipId)) {
-                shipsToRecover.add(shipId);
+        // Reap leftover native entity stragglers (an already-migrated ship's reap-fail leftovers, or a truly
+        // orphaned no-sidecar entity). A ship still PENDING migration (sidecar present + not migrated, root in an
+        // unloaded chunk) is left untouched for its own migration.
+        reapStragglerEntities(world, chunk);
+    }
+
+    /** Blind reaper (M-D): remove native entity stragglers in a chunk — {@code displayship:*}, non-corelib, whose
+     *  whose sidecar is absent (orphan) or migrated (delegated). Never touches a delegated
+     *  ship's entities (corelib-tagged) or a ship still pending migration (sidecar present + not migrated). Runs on
+     *  every chunk-load + at enable, permanently, so multi-chunk reap-fail leftovers get swept when their chunk loads. */
+    private void reapStragglerEntities(World world, org.bukkit.Chunk chunk) {
+        Map<UUID, Boolean> reapDecision = new HashMap<>();
+        for (Entity e : new java.util.ArrayList<>(java.util.Arrays.asList(chunk.getEntities()))) {
+            Set<String> tags = e.getScoreboardTags();
+            if (ShipTags.isCorelibTagged(tags)) continue;      // delegated — owned by defCoreLib
+            UUID shipId = ShipTags.extractShipId(tags);
+            if (shipId == null) continue;                       // not a ship entity
+            // Do NOT skip when ShipRegistry.byId(shipId) != null: a migrated ship's leftover NATIVE parts
+            // (non-corelib — this entity) carry the SAME id as the now-delegated live ship, so a byId hit here means
+            // "straggler of a migrated ship", not "leave it alone". The migrated-sidecar check below is what
+            // distinguishes those (reap) from a still-pending native ship (leave for migrateNativeShip).
+            Boolean reap = reapDecision.get(shipId);
+            if (reap == null) {
+                // FAIL CLOSED. Only a genuinely ABSENT sidecar means "orphan"; a sidecar we could not READ
+                // (torn write, bad YAML, I/O blip) used to arrive here as a plain null and reap a live ship's
+                // entities. CORRUPT ones stay CORRUPT — never renamed, never reaped; the loader SEVEREs once
+                // per sidecar with the operator playbook.
+                ShipWorldData.MetadataLoad load = shipWorldData.loadShipMetadataChecked(world, shipId);
+                reap = switch (load.status()) {
+                    case ABSENT -> true;                        // no sidecar — orphan
+                    case OK -> load.state().migrated;           // already-delegated straggler
+                    case CORRUPT, TRANSIENT -> false;           // unreadable — never destructive
+                };
+                reapDecision.put(shipId, reap);
             }
+            if (!reap) continue;                                // pending migration — leave for migrateNativeShip
+            dropLeadsAndDetach(e);
+            e.remove();
         }
+    }
 
-        if (!shipsToRecover.isEmpty()) {
-            // Mark chunk as having pending recovery
-            chunksBeingRecovered.add(chunkKey);
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Native → delegated MIGRATION (M-A). Converts released 0.0.17 NATIVE ships (custom + prefab) into delegated
+    // defCoreLib mechanisms on chunk-load + at enable, preserving the ship id. Lazy per-chunk + per-ship footprint
+    // force-load so multi-chunk ships reap completely. Ordering: migrate (reads pose from the root, force-loads the
+    // footprint) THEN reap the native entity graph — never reap before migration (the root holds the position).
+    // ─────────────────────────────────────────────────────────────────────────────
 
-            // Load all metadata asynchronously in parallel
-            List<CompletableFuture<ShipPersistence.ShipState>> futures = shipsToRecover.stream()
-                .map(id -> shipWorldData.loadShipMetadataAsync(world, id))
-                .toList();
-
-            // When all loads complete, sync back to main thread for entity operations
-            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                .thenRun(() -> {
-                    // Run entity recovery on main thread
-                    Bukkit.getScheduler().runTask(plugin, () -> {
-                        // Check if chunk was unloaded while we were loading
-                        if (!chunksBeingRecovered.remove(chunkKey) || !chunk.isLoaded()) {
-                            // Chunk unloaded - cleanup and skip recovery
-                            shipsToRecover.forEach(shipsBeingRecovered::remove);
-                            return;
-                        }
-
-                        Set<UUID> failedRecovery = new HashSet<>();
-
-                        for (int i = 0; i < shipsToRecover.size(); i++) {
-                            UUID shipId = shipsToRecover.get(i);
-                            try {
-                                // Re-check chunk state before each ship recovery (chunk could unload mid-loop)
-                                if (!chunk.isLoaded()) {
-                                    plugin.getLogger().fine("Chunk unloaded during recovery loop - aborting remaining ships");
-                                    // Clean up remaining ships (current ship's finally block will handle itself)
-                                    for (int j = i + 1; j < shipsToRecover.size(); j++) {
-                                        shipsBeingRecovered.remove(shipsToRecover.get(j));
-                                    }
-                                    return;
-                                }
-
-                                // Skip if already registered (another chunk may have recovered it)
-                                if (ShipRegistry.byId(shipId) != null) {
-                                    continue;
-                                }
-
-                                ShipPersistence.ShipState state;
-                                try {
-                                    state = futures.get(i).join();
-                                } catch (Exception e) {
-                                    plugin.getLogger().warning("Failed to load metadata for ship " + shipId + ": " + e.getMessage());
-                                    failedRecovery.add(shipId);
-                                    continue;
-                                }
-                                if (state == null) {
-                                    shipWorldData.removeFromChunkIndex(world, shipId, chunkX, chunkZ);
-                                    continue;
-                                }
-
-                                // Count entities in this chunk only
-                                int entitiesInChunk = countEntitiesInChunk(chunk, shipId);
-                                if (entitiesInChunk == 0) {
-                                    plugin.getLogger().fine("Ship " + shipId + " not in indexed chunk - removing stale index entry");
-                                    shipWorldData.removeFromChunkIndex(world, shipId, chunkX, chunkZ);
-                                    continue;
-                                }
-
-                                // Load model
-                                ShipModel model = loadModelForState(state);
-                                if (model == null) {
-                                    plugin.getLogger().warning("Could not load model for ship " + shipId + " (type: " + state.shipType + ")");
-                                    failedRecovery.add(shipId);
-                                    continue;
-                                }
-
-                                // Create ShipInstance from state
-                                ShipInstance ship = ShipInstance.fromState(plugin, state, model);
-                                if (ship == null) {
-                                    plugin.getLogger().warning("Failed to create ShipInstance for " + shipId);
-                                    failedRecovery.add(shipId);
-                                    continue;
-                                }
-
-                                ship.setExpectedEntityCount(state.entityCount);
-
-                                // Try to recover entities (re-check chunk state first)
-                                if (!chunk.isLoaded()) {
-                                    plugin.getLogger().fine("Chunk unloaded before entity recovery for " + shipId);
-                                    failedRecovery.add(shipId);
-                                    continue;
-                                }
-                                boolean recovered = ship.recoverEntities(chunk);
-                                if (!recovered) {
-                                    plugin.getLogger().info("Ship " + shipId + " vehicle not in this chunk - will recover when vehicle chunk loads");
-                                    shipWorldData.removeFromChunkIndex(world, shipId, chunkX, chunkZ);
-                                    failedRecovery.add(shipId);
-                                    continue;
-                                }
-
-                                ShipRegistry.register(ship);
-
-                                if (!ship.isRecoveryComplete()) {
-                                    plugin.getLogger().info("Ship " + shipId + " partially recovered - waiting for more chunks");
-                                } else {
-                                    plugin.getLogger().info("Recovered ship " + shipId + " from chunk load at " + chunkX + "," + chunkZ);
-                                }
-                            } catch (Exception e) {
-                                // recoverEntities (and other per-ship work) is otherwise unguarded here - a
-                                // throw would skip the rest of this chunk's batch. Skip just this ship.
-                                plugin.getLogger().warning("Failed to recover ship " + shipId + ", skipping: " + e.getMessage());
-                                failedRecovery.add(shipId);
-                            } finally {
-                                shipsBeingRecovered.remove(shipId);
-                            }
-                        }
-
-                        // Run orphan cleanup after async recovery completes (only if chunk still loaded)
-                        if (chunk.isLoaded()) {
-                            processOrphanCleanup(chunk, world, failedRecovery);
-                        }
-                    });
-                });
-        }
-
-        // PART 2: Immediate incremental recovery for already-registered incomplete ships
-        // (This runs synchronously since it doesn't involve file I/O)
-        Set<UUID> processedIncompleteShips = new HashSet<>();
-        for (Entity e : chunk.getEntities()) {
-            UUID entityShipId = ShipTags.extractShipId(e.getScoreboardTags());
-            if (entityShipId == null) continue;
-
-            ShipInstance ship = ShipRegistry.byId(entityShipId);
-            // Skip ships being recovered asynchronously to avoid concurrent modification
-            if (ship != null && !ship.isRecoveryComplete() && !shipsBeingRecovered.contains(entityShipId) && processedIncompleteShips.add(entityShipId)) {
-                ship.collectEntitiesFromChunk(chunk);
+    /** Migrate every persisted NATIVE ship whose root ArmorStand is in this loaded chunk. */
+    private void migrateNativeShipsInChunk(World world, org.bukkit.Chunk chunk) {
+        // Snapshot: migration + reap mutate entities, so don't iterate a live view.
+        for (Entity e : new java.util.ArrayList<>(java.util.Arrays.asList(chunk.getEntities()))) {
+            if (!(e instanceof ArmorStand root)) continue;
+            Set<String> tags = root.getScoreboardTags();
+            if (ShipTags.isCorelibTagged(tags)) continue;   // delegated vehicle — not ours
+            if (!ShipTags.isRoot(tags)) continue;            // only the ship root ArmorStand
+            UUID shipId = ShipTags.extractShipId(tags);
+            if (shipId == null) continue;
+            try {
+                migrateNativeShip(world, shipId, root);
+            } catch (Throwable t) {
+                logOnce(shipId, java.util.logging.Level.SEVERE,
+                    "could not be migrated (unexpected error) — please report this to the BlockShips developer; leaving native entities for retry.", t);
             }
-        }
-
-        // PART 3: Orphan cleanup - only if no async recovery is pending
-        // (If async recovery is pending, orphan cleanup runs after it completes)
-        if (shipsToRecover.isEmpty()) {
-            processOrphanCleanup(chunk, world, Collections.emptySet());
         }
     }
 
     /**
-     * Processes orphan cleanup for entities in a chunk.
-     * Handles unregistered ships by either recovering them or removing orphaned entities.
+     * Log helper with per-ship de-duplication for the migration path. When {@code key} is non-null (a
+     * migration attempt, which re-fires on every chunk load), the same ship logs at most ONCE per severity —
+     * so an operator gets one complete, forwardable diagnostic (reason + any stacktrace) instead of a line
+     * every load; a genuinely worse failure (higher level) still surfaces once, and a successful migration
+     * clears the entry ({@link #migrationFailureLogged}). When {@code key} is null (a one-shot fresh-spawn or
+     * delegated-recovery attempt), it always logs, as before.
      */
-    private void processOrphanCleanup(org.bukkit.Chunk chunk, World world, Set<UUID> failedRecoveryThisEvent) {
-        for (Entity e : chunk.getEntities()) {
-            UUID entityShipId = ShipTags.extractShipId(e.getScoreboardTags());
-            if (entityShipId == null) continue;
+    private void logOnce(UUID key, java.util.logging.Level level, String msg, Throwable t) {
+        if (key != null) {
+            java.util.logging.Level prev = migrationFailureLogged.get(key);
+            if (prev != null && prev.intValue() >= level.intValue()) return;  // already logged at >= this severity
+            migrationFailureLogged.put(key, level);
+            msg = "Ship " + key + ": " + msg;
+        }
+        if (t != null) plugin.getLogger().log(level, msg, t);
+        else plugin.getLogger().log(level, msg);
+    }
 
-            ShipInstance ship = ShipRegistry.byId(entityShipId);
-            if (ship != null) continue; // Already registered
-
-            // Skip if we already tried to recover this ship
-            if (failedRecoveryThisEvent.contains(entityShipId)) {
-                continue;
+    /** Migrate one native ship (custom or prefab) → delegated, preserving its id. Idempotent: an already-delegated
+     *  ship — live BlockShips registry, migrated-marker sidecar, OR corelib live/persisted state — is a reap-failed
+     *  straggler → reap-only, never re-assemble (re-assembling a corelib-owned id duplicates the mechanism). */
+    private void migrateNativeShip(World world, UUID shipId, ArmorStand root) {
+        ShipInstance live = ShipRegistry.byId(shipId);
+        if (live != null && live.mechanism != null) {   // already delegated (race / straggler) — reap the old graph
+            reapNativeEntities(shipId, root);
+            return;
+        }
+        ShipWorldData.MetadataLoad load = shipWorldData.loadShipMetadataChecked(world, shipId);
+        if (load.status() != ShipWorldData.LoadStatus.OK) {
+            // ABSENT — orphan cleanup's job, not migration's. CORRUPT/TRANSIENT — we cannot know what this
+            // ship was, so migrate nothing and destroy nothing; the entities stay for a later retry (and the
+            // reaper is fail-closed on the same statuses, so they will not be swept out from under us).
+            if (load.status() != ShipWorldData.LoadStatus.ABSENT) {
+                logOnce(shipId, java.util.logging.Level.WARNING,
+                    "cannot be migrated: its sidecar is " + load.status()
+                        + ". Native entities left in place for retry.", null);
             }
+            return;
+        }
+        ShipPersistence.ShipState state = load.state();
+        if (state.migrated) {                            // delegated sidecar — this native root is a straggler
+            reapNativeEntities(shipId, root);
+            return;
+        }
+        // DefCoreLib is a hard depend; this is defensive so a missing engine skips quietly (no throw + retry spam).
+        if (!Bukkit.getPluginManager().isPluginEnabled("DefCoreLib")) return;
+        anon.def9a2a4.corelib.MechanismRegistry reg =
+            anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry();
+        // Idempotency (#3): if corelib already owns this id — live (byId) OR persisted-but-not-yet-recovered
+        // (hasPersistedState, e.g. a crash between a prior migration's assemble+persist and its migrated-marker
+        // write) — re-assembling would duplicate the mechanism (the reaper skips corelib-tagged ghosts). Reap the
+        // stale native entities only; corelib's own recovery brings the delegated ship back.
+        if (reg.byId(shipId) != null || reg.hasPersistedState(world, shipId)) {
+            reapNativeEntities(shipId, root);
+            return;
+        }
+        ShipModel model = loadModelForState(state, shipId);
+        if (model == null) return;   // loadModelForState logged the reason once (via the dedupe key)
+        java.util.List<long[]> forced = forceLoadFootprint(world, root.getLocation(), model);
+        try {
+            Location pose = root.getLocation().clone();
+            if (!Float.isNaN(state.yaw)) pose.setYaw(state.yaw);
+            ShipCustomization customization = ShipInstance.buildCustomizationFromState(plugin, state);
+            // #2: load the native cargo into the mechanism's typed inventories BEFORE reg.persist (via the 6-arg
+            // overload) so the first crash-safe snapshot holds it — not a later re-snapshot. finalizeMigration no
+            // longer restores inventories.
+            java.util.Map<Integer, org.bukkit.inventory.ItemStack[]> cargo = ShipInstance.decodeCargo(state);
+            ShipInstance ship = spawnDelegatedFromModel(shipId, state.shipType, model, pose, customization, cargo);
+            if (ship == null) {
+                return;   // spawnDelegatedFromModel logged the reason once (via its non-null id)
+            }
+            ship.finalizeMigration(state);
+            ShipRegistry.register(ship);
+            // F4: re-link the wheel + recompute stats one tick later (same as delegated recovery) — else a migrated
+            // CUSTOM ship stays at its conservative preliminary stats (immovable) until an unload+reload.
+            scheduleWheelRelink(ship, shipId);
+            shipWorldData.saveShipMetadata(ship);        // re-persist as delegated (writes the migrated marker)
+            // AFTER successful migration (ordering is load-bearing). Scan the model footprint radius (≥64) so the reap
+            // covers exactly what forceLoadFootprint force-loaded — a >64-block-radius ship no longer strands native
+            // entities in its outer chunks for the straggler sweep to mop up later.
+            reapNativeEntities(shipId, root, Math.max(footprintRadius(model), 64));
+            migrationFailureLogged.remove(shipId);       // success: allow a future genuinely-new failure to log again
+            plugin.getLogger().info("Migrated native " + state.shipType + " ship " + shipId
+                + " to the delegated engine.");
+        } finally {
+            releaseFootprint(world, forced);
+        }
+    }
 
-            if (!shipWorldData.hasMetadata(world, entityShipId)) {
-                // No metadata - truly orphaned, remove entity
-                e.remove();
-                plugin.getLogger().fine("Removed orphaned entity " + e.getType() + " for deleted ship " + entityShipId);
-            } else if (ShipTags.isRoot(e.getScoreboardTags()) && e instanceof ArmorStand) {
-                // Found vehicle for unregistered ship with metadata - attempt recovery
-                if (shipsBeingRecovered.add(entityShipId)) {
-                    try {
-                        recoverShipFromVehicle(world, chunk, entityShipId, (ArmorStand) e, failedRecoveryThisEvent);
-                    } finally {
-                        shipsBeingRecovered.remove(entityShipId);
-                    }
+    /** Interaction fallback: a player clicked a ship collider whose ship isn't registered. The player is here, so
+     *  this chunk is loaded — migrate any native ship rooted in it now and return the (now delegated) instance, or
+     *  null if none/failed. (Chunk-load migration normally handles this first; this covers the rare miss.) */
+    private ShipInstance attemptInteractionMigration(UUID shipId, Shulker anchor) {
+        ShipInstance live = ShipRegistry.byId(shipId);
+        if (live != null) return live;
+        migrateNativeShipsInChunk(anchor.getWorld(), anchor.getLocation().getChunk());
+        return ShipRegistry.byId(shipId);
+    }
+
+    /** Force-load the chunks the ship's model footprint spans (root position + model radius, rotation-invariant,
+     *  +1 chunk margin for colliders overhanging block edges) so migration + reap see ALL of the ship's entities
+     *  across chunk boundaries. Returns the {cx,cz} of chunks we ticketed, to release afterwards. */
+    private java.util.List<long[]> forceLoadFootprint(World world, Location rootLoc, ShipModel model) {
+        // Rotation-invariant bound: the heading isn't known here and parts rotate with it, so force-load a square
+        // around the root sized by the farthest part's radius. A circle of radius maxR covers every heading; the
+        // old per-axis un-rotated extent under-covered a long ship turned ~90° (far chunk never ticketed → its
+        // native entities never reaped at migration time). Slightly over-covers for a long thin hull — fine for a
+        // one-shot migration force-load.
+        int r = footprintRadius(model);
+        int cx0 = ((rootLoc.getBlockX() - r) >> 4) - 1;
+        int cx1 = ((rootLoc.getBlockX() + r) >> 4) + 1;
+        int cz0 = ((rootLoc.getBlockZ() - r) >> 4) - 1;
+        int cz1 = ((rootLoc.getBlockZ() + r) >> 4) + 1;
+        java.util.List<long[]> forced = new java.util.ArrayList<>();
+        for (int cx = cx0; cx <= cx1; cx++) {
+            for (int cz = cz0; cz <= cz1; cz++) {
+                if (!world.isChunkLoaded(cx, cz)) {
+                    world.addPluginChunkTicket(cx, cz, plugin);
+                    forced.add(new long[]{cx, cz});
                 }
             }
         }
+        return forced;
     }
 
-    /**
-     * Counts ship entities in a chunk without modifying any state.
-     */
-    private int countEntitiesInChunk(org.bukkit.Chunk chunk, UUID shipId) {
+    private void releaseFootprint(World world, java.util.List<long[]> forced) {
+        for (long[] c : forced) {
+            world.removePluginChunkTicket((int) c[0], (int) c[1], plugin);
+        }
+    }
+
+    /** Block radius of the ship's model footprint: the farthest part's rotation-invariant distance from the root
+     *  (a circle of this radius covers every heading). Used to size both the migration force-load and the reap scan
+     *  so the reap covers exactly what was force-loaded. */
+    private int footprintRadius(ShipModel model) {
+        double maxR = 0;
+        for (ShipModel.ModelPart p : model.parts) {
+            maxR = Math.max(maxR, Math.hypot(p.local.m30(), p.local.m32()));
+        }
+        return (int) Math.ceil(maxR);
+    }
+
+    /** Reap the native entity graph ({@code displayship:{id}:*}, non-corelib) for a migrated/straggler ship across
+     *  its (now force-loaded) footprint. Drops leads on any leash-holder collider first (mirrors the native
+     *  lead-drop so leashed mobs aren't silently lost — the lead item returns to the world). */
+    private void reapNativeEntities(UUID shipId, ArmorStand root) {
+        reapNativeEntities(shipId, root, 64);
+    }
+
+    /** As {@link #reapNativeEntities(UUID, ArmorStand)} but with an explicit scan half-extent (blocks). The migration
+     *  success path passes the model footprint radius so the reap covers exactly what {@link #forceLoadFootprint}
+     *  force-loaded, rather than a fixed 64-block cube that would miss parts of a >64-block-radius ship. */
+    private void reapNativeEntities(UUID shipId, ArmorStand root, int halfExtent) {
         String shipTagPrefix = ShipTags.shipTag(shipId);
-        int count = 0;
-        for (Entity e : chunk.getEntities()) {
-            for (String tag : e.getScoreboardTags()) {
-                if (tag.startsWith(shipTagPrefix)) {
-                    count++;
-                    break;
-                }
-            }
+        for (Entity e : root.getWorld().getNearbyEntities(root.getLocation(), halfExtent, halfExtent, halfExtent)) {
+            Set<String> tags = e.getScoreboardTags();
+            if (ShipTags.isCorelibTagged(tags)) continue;   // never touch delegated entities
+            boolean mine = false;
+            for (String t : tags) { if (t.startsWith(shipTagPrefix)) { mine = true; break; } }
+            if (!mine) continue;
+            dropLeadsAndDetach(e);
+            e.remove();
         }
-        return count;
+        if (root.isValid()) root.remove();
     }
 
-    /**
-     * Recovers a ship starting from its vehicle entity.
-     * Used when ship entities are found in a chunk that isn't in the chunk index.
-     * @param failedRecoveryThisEvent Set to track ships that fail recovery (prevents duplicate attempts)
-     */
-    private void recoverShipFromVehicle(World world, org.bukkit.Chunk chunk, UUID shipId, ArmorStand vehicle, Set<UUID> failedRecoveryThisEvent) {
-        // Load metadata
-        ShipPersistence.ShipState state = shipWorldData.loadShipMetadata(world, shipId);
-        if (state == null) {
-            plugin.getLogger().fine("Ship " + shipId + " has vehicle but no metadata - removing orphan");
-            vehicle.remove();
-            return;
-        }
-
-        // Load model
-        ShipModel model = loadModelForState(state);
-        if (model == null) {
-            plugin.getLogger().warning("Could not load model for ship " + shipId);
-            failedRecoveryThisEvent.add(shipId);
-            return;
-        }
-
-        // Create ShipInstance
-        ShipInstance ship = ShipInstance.fromState(plugin, state, model);
-        if (ship == null) {
-            plugin.getLogger().warning("Failed to create ShipInstance for " + shipId);
-            failedRecoveryThisEvent.add(shipId);
-            return;
-        }
-
-        // Set expected entity count
-        ship.setExpectedEntityCount(state.entityCount);
-
-        // Recover entities
-        if (!ship.recoverEntities(chunk)) {
-            plugin.getLogger().warning("Failed to recover ship " + shipId + " from vehicle - will retry on next chunk load");
-            failedRecoveryThisEvent.add(shipId);
-            return;
-        }
-
-        // Register and update chunk index
-        ShipRegistry.register(ship);
-        Location loc = vehicle.getLocation();
-        shipWorldData.addToChunkIndex(world, shipId, loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
-        shipWorldData.saveAllChunkIndices();
-
-        if (!ship.isRecoveryComplete()) {
-            plugin.getLogger().info("Ship " + shipId + " recovered from moved location - waiting for more chunks");
-        } else {
-            plugin.getLogger().info("Ship " + shipId + " recovered from moved location at " + chunk.getX() + "," + chunk.getZ());
+    /** Drop + detach any leads whose holder is {@code holder} (a native collider being reaped), mirroring the
+     *  native ship-destroy lead-drop (ShipInstance) so Paper's tickLeash doesn't double-drop when the holder goes. */
+    private void dropLeadsAndDetach(Entity holder) {
+        for (Entity nearby : holder.getWorld().getNearbyEntities(holder.getLocation(), 12, 12, 12,
+                n -> n instanceof io.papermc.paper.entity.Leashable l && l.isLeashed()
+                        && holder.equals(l.getLeashHolder()))) {
+            holder.getWorld().dropItemNaturally(holder.getLocation(), new ItemStack(org.bukkit.Material.LEAD));
+            ((io.papermc.paper.entity.Leashable) nearby).setLeashHolder(null);
         }
     }
 
     /**
      * Loads the appropriate ShipModel for a saved ship state.
      */
-    private ShipModel loadModelForState(ShipPersistence.ShipState state) {
+    /** Loads the model for a saved ship. On failure, logs the reason via {@link #logOnce}: pass the ship id as
+     *  {@code dedupeKey} on the migration path (which retries every chunk load — so it logs once per ship with a
+     *  full, forwardable reason), or null on one-shot callers (which log every time and add their own context). */
+    private ShipModel loadModelForState(ShipPersistence.ShipState state, UUID dedupeKey) {
         if ("custom".equals(state.shipType) && state.modelData != null) {
             // Custom ship - deserialize model from stored data
             try {
                 return ShipModel.fromMap(state.modelData);
             } catch (Exception e) {
-                plugin.getLogger().warning("Failed to load custom ship model: " + e.getMessage());
+                logOnce(dedupeKey, java.util.logging.Level.WARNING,
+                    "could not load its stored custom model: " + e.getMessage(), e);
                 return null;
             }
         } else {
             // Prefab ship - load from model file
             String modelPath = plugin.getConfig().getString("ships." + state.shipType + ".model-path");
             if (modelPath == null) {
+                // Prefab type not (or no longer) configured — the most common migration-stuck cause. Log once so an
+                // admin sees it, but only on the migration path (dedupeKey != null); one-shot callers report their own.
+                if (dedupeKey != null) logOnce(dedupeKey, java.util.logging.Level.WARNING,
+                    "no model-path configured for ship type '" + state.shipType + "' — cannot migrate; leaving native.", null);
                 return null;
             }
             try {
                 return ShipModel.fromFile(plugin, modelPath, state.shipType);
             } catch (Exception e) {
-                plugin.getLogger().warning("Failed to load model file " + modelPath + ": " + e.getMessage());
+                logOnce(dedupeKey, java.util.logging.Level.WARNING,
+                    "could not load model file '" + modelPath + "': " + e.getMessage(), e);
                 return null;
+            }
+        }
+    }
+
+    // ----- Delegated (defCoreLib) ship recovery (M5) -----
+
+    /**
+     * M5: reconstruct a DELEGATED custom ship when defCoreLib re-recovers its mechanism after a restart or an
+     * in-play chunk reload — both come through here (defCoreLib parks a mechanism when its chunk unloads and
+     * re-recovers it on reload, firing a recovered {@code MechanismAssembleEvent}). Fresh (non-recovered)
+     * assemblies are built directly by ShipWheelManager, so they're ignored here.
+     */
+    @EventHandler
+    public void onMechanismAssemble(anon.def9a2a4.corelib.MechanismAssembleEvent event) {
+        if (!event.isRecovered()) return;
+        // Delegated custom ("blockship:custom") AND delegated prefab ("blockship:prefab", P7.C) both rebuild here.
+        if (!"blockship:custom".equals(event.getType()) && !"blockship:prefab".equals(event.getType())) return;
+        reconstructDelegatedShip(event.getMechanism());
+    }
+
+    /**
+     * defCoreLib re-solved a mechanism's rotation network, so what is powered aboard may have changed
+     * — an engine started or ran dry. Invalidate that ship's cached thrust.
+     *
+     * <p>Ship id IS mechanism id, so the lookup is direct. Fires at most once per 20 ticks per
+     * mechanism, and only on an actual change.
+     */
+    @EventHandler
+    public void onMechanismRotationSolved(anon.def9a2a4.corelib.MechanismRotationSolvedEvent event) {
+        ShipInstance ship = ShipRegistry.byId(event.getMechanism().id());
+        if (ship != null && ship.physics != null) ship.physics.markThrustDirty();
+    }
+
+    /**
+     * Rebuild a {@link ShipInstance} around an already-recovered delegated {@link anon.def9a2a4.corelib.Mechanism}
+     * (idempotent: no-op if the ship is already registered). Main-thread only (recovery fires from EntitiesLoad).
+     * Used by the recovered-event listener and by enable-time forced recovery ({@link #forceRecoverDelegatedShips}).
+     */
+    void reconstructDelegatedShip(anon.def9a2a4.corelib.Mechanism mech) {
+        UUID mechId = mech.id();
+        if (ShipRegistry.byId(mechId) != null) return; // already live
+        org.bukkit.entity.Entity veh = mech.vehicle();
+        if (!(veh instanceof ArmorStand vehicle)) {
+            plugin.getLogger().warning("Delegated ship " + mechId + " recovered without an ArmorStand vehicle; skipping");
+            return;
+        }
+        World world = vehicle.getWorld();
+        ShipWorldData.MetadataLoad load = shipWorldData.loadShipMetadataChecked(world, mechId);
+        if (load.status() != ShipWorldData.LoadStatus.OK) {
+            // The mechanism is live either way — it just has no ShipInstance wrapped around it. That is the
+            // "orphan" WS1's disassemble path exists to land. Name the actual reason: saying "missing" for a
+            // corrupt or unreadable file sends an operator looking for the wrong thing.
+            plugin.getLogger().warning("Delegated ship " + mechId + " recovered but its ships/" + mechId
+                + ".yml sidecar is " + load.status() + "; cannot rebuild the ShipInstance");
+            return;
+        }
+        ShipPersistence.ShipState state = load.state();
+        ShipModel model = loadModelForState(state, null);  // one-shot recovery: log every time (caller adds context below)
+        if (model == null) {
+            plugin.getLogger().warning("Delegated ship " + mechId + " recovered but its model could not be loaded");
+            return;
+        }
+        ShipInstance ship = ShipInstance.fromRecoveredMechanism(plugin, state, model, vehicle, mech);
+        // A2: repopulate the whole-ship leadable shulker. Fresh spawn wires it (spawnDelegatedPrefab), but
+        // fromRecoveredMechanism does not — so without this the "click any block with a lead to attach" shortcut
+        // is dead after a restart/chunk reload (the per-collider fence fallback in the interaction handler still
+        // works). Mirror the spawn-time wiring exactly.
+        for (int i = 0; i < model.parts.size(); i++) {
+            if (Boolean.TRUE.equals(model.parts.get(i).rawYaml.get("leadable"))) {
+                ship.leadableShulker = mech.colliderEntity(i);
+                break;
+            }
+        }
+        ship.applyInitialDrivenPose(); // render the saved heading on frame 1 (no one-tick yaw flash)
+        ShipRegistry.register(ship);
+        scheduleWheelRelink(ship, mechId);
+        plugin.getLogger().info("Recovered delegated " + ("custom".equals(state.shipType) ? "custom" : "prefab")
+            + " ship " + mechId);
+    }
+
+    /** Re-link a delegated ship's wheel + recompute its stats one tick later. Custom-ship speed/turn derive from
+     *  the wheel, whose PDC blocks are loaded lazily by {@code ShipWheelManager.loadAll}, and {@code resolveWheelData}
+     *  is lazy — so a synchronous call would find no wheel and leave the ship at its conservative preliminary stats
+     *  (immovable). No-op for prefab (no wheel). MUST be called AFTER the ship is registered; the identity guard
+     *  drops the task if the ship was replaced/removed in the intervening tick. Shared by the delegated-recovery
+     *  path ({@code reconstructDelegatedShip}) and the native→delegated migration ({@code migrateNativeShip}). */
+    private void scheduleWheelRelink(ShipInstance ship, UUID id) {
+        new BukkitRunnable() {
+            @Override public void run() {
+                if (ShipRegistry.byId(id) != ship) return; // ship replaced/removed meanwhile
+                ship.resolveWheelData();
+                ship.physics.recomputeStats();
+            }
+        }.runTask(plugin);
+    }
+
+    /**
+     * BS5: at enable, force defCoreLib to recover persisted mechanisms in every already-loaded chunk. Chunks
+     * that loaded during world init (before either plugin enabled) fired their EntitiesLoadEvent before this
+     * listener existed, so their recovered events were missed; driving {@code recoverMechanismsInChunk} here
+     * re-fires them ({@code → onMechanismAssemble → reconstructDelegatedShip}) with wheels already loaded.
+     */
+    public void forceRecoverDelegatedShips() {
+        anon.def9a2a4.corelib.MechanismRegistry mechRegistry =
+            anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry();
+        if (mechRegistry == null) return;
+        for (World world : Bukkit.getWorlds()) {
+            for (org.bukkit.Chunk chunk : world.getLoadedChunks()) {
+                mechRegistry.recoverMechanismsInChunk(chunk);
             }
         }
     }
@@ -796,10 +797,6 @@ public class DisplayShip implements Listener {
 
         item.setItemMeta(meta);
         return item;
-    }
-
-    private ItemStack makeShipKit(String shipType, ItemStack banner, String woodType) {
-        return createShipKit(shipType, banner, woodType, plugin);
     }
 
     /**
@@ -1097,21 +1094,286 @@ public class DisplayShip implements Listener {
                 .textureManager(textureManager)
                 .build();
 
-        // Create ship instance (ShipInstance detects airship type from config automatically)
-        ShipInstance instance = new ShipInstance(plugin, shipType, shipModel, spawnAt, customization);
+        // Assemble the prefab ship as a DELEGATED defCoreLib mechanism (the only engine). No native fallback:
+        // if assembly fails (or the model is unsupported), refuse the spawn and DO NOT consume the kit.
+        ShipInstance instance = spawnDelegatedPrefab(shipType, shipModel, spawnAt, customization);
+        if (instance == null) {
+            p.sendMessage(net.kyori.adventure.text.Component.text(
+                    "Couldn't assemble that ship right now — please try again.",
+                    net.kyori.adventure.text.format.NamedTextColor.RED));
+            plugin.getLogger().warning("Delegated assembly returned null for " + shipType
+                + "; kit not consumed, no ship spawned.");
+            return;
+        }
         ShipRegistry.register(instance);
 
-        // Register with per-world storage for chunk recovery
-        Location loc = instance.vehicle.getLocation();
+        // Ship-level sidecar (ships/{id}.yml) — delegated recovery reads it in reconstructDelegatedShip
+        // (ships recover via defCoreLib's own persistence).
         shipWorldData.saveShipMetadata(instance);
-        shipWorldData.addToChunkIndex(loc.getWorld(), instance.id, loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
-        shipWorldData.saveAllChunkIndices();
 
         // Consume one kit
         if (p.getGameMode() != GameMode.CREATIVE) {
             hand.setAmount(hand.getAmount() - 1);
             p.getInventory().setItemInMainHand(hand);
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // P7.C: delegated prefab assembly (prefab ship → defCoreLib block-free mechanism)
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Spawn a PREFAB ship as a DELEGATED defCoreLib mechanism (block-free assembly) instead of the native
+     * entity engine. Builds a {@code PartSpec} list from the {@link ShipModel} + customization using the
+     * EXACT native transform composition (so the delegated render matches native by construction), assembles
+     * a driven block-free mechanism, and wraps it in a delegated {@link ShipInstance}. Returns {@code null}
+     * on failure (caller falls back to native). See the Phase 7 plan for the transform derivation.
+     */
+    private ShipInstance spawnDelegatedPrefab(String shipType, ShipModel model, Location spawnAt,
+                                              ShipCustomization customization) {
+        return spawnDelegatedFromModel(null, shipType, model, spawnAt, customization);
+    }
+
+    /**
+     * Spawn a ship as a DELEGATED defCoreLib mechanism (block-free assembly) from a {@link ShipModel} + pose. Shared
+     * by the fresh prefab kit spawn ({@code id == null} → a random mechanism id) and the native→delegated migration
+     * ({@code id != null} → the mechanism keeps the original ship id via defCoreLib's id-preserving overload). Builds
+     * a {@code PartSpec} list — prefab models via {@link #buildPrefabParts}, custom (player-built) models via
+     * {@link #buildCustomParts} — assembles a driven block-free mechanism, and wraps it in a delegated
+     * {@link ShipInstance}. Returns {@code null} on failure (the caller decides fallback/retry).
+     */
+    private ShipInstance spawnDelegatedFromModel(java.util.UUID id, String shipType, ShipModel model, Location pose,
+                                                 ShipCustomization customization) {
+        return spawnDelegatedFromModel(id, shipType, model, pose, customization, null);
+    }
+
+    /** As above, plus an optional {@code cargo} map (block index → ItemStack[]) loaded into the mechanism's
+     *  storage BEFORE it is persisted — used by the native→delegated migration to carry a native ship's captured
+     *  chest contents across (block index i == model.parts index i == mechanism block index i). */
+    private ShipInstance spawnDelegatedFromModel(java.util.UUID id, String shipType, ShipModel model, Location pose,
+                                                 ShipCustomization customization,
+                                                 java.util.Map<Integer, org.bukkit.inventory.ItemStack[]> cargo) {
+        boolean custom = "custom".equals(shipType);
+        // A Y-axis mechanism cannot render a non-identity rotation-matrix. Custom models are always identity
+        // (BlockStructureScanner); prefab models could in principle carry one (none shipped do).
+        if (!model.rotationTransform.equals(new org.joml.Matrix3f())) {
+            logOnce(id, java.util.logging.Level.WARNING,
+                "prefab model has a non-identity rotation-matrix, unsupported by the Y-axis mechanism; skipping delegation.", null);
+            return null;
+        }
+        anon.def9a2a4.corelib.MechanismRegistry reg =
+            anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry();
+
+        // Vehicle: full-size ArmorStand (rideOffset 1.975 applies), entity yaw FORCED to 0 so display
+        // passengers don't double-rotate by the heading (heading rides the mechanism transform). The
+        // delegated ShipInstance ctor adds the ship-root tag + health.
+        ArmorStand vehicle = pose.getWorld().spawn(pose.clone(), ArmorStand.class, as -> {
+            as.setInvisible(true);
+            as.setGravity(false);
+            as.setSilent(true);
+            as.setPersistent(true);
+            as.setMarker(false);
+            as.setRotation(0f, 0f);
+            as.customName(net.kyori.adventure.text.Component.empty());
+            as.setCustomNameVisible(false);
+        });
+
+        anon.def9a2a4.corelib.Mechanism mechanism = null;
+        ShipInstance ship = null;
+        try {
+            String type = custom ? "blockship:custom" : "blockship:prefab";
+            java.util.List<anon.def9a2a4.corelib.MechanismRegistry.PartSpec> specs =
+                custom ? buildCustomParts(model) : buildPrefabParts(model, customization);
+            float rideOffset = anon.def9a2a4.corelib.MechanismRegistry.ARMORSTAND_RIDE_OFFSET;
+            mechanism = (id != null)
+                ? reg.assembleFromParts(id, type, specs, vehicle, rideOffset)
+                : reg.assembleFromParts(type, specs, vehicle, rideOffset);
+            ship = new ShipInstance(plugin, shipType, model, pose, customization, vehicle, mechanism);
+            ship.adoptMechanismSeats();
+            // Leadable: wire the single leadable shulker from its model-part collider (convenience; the
+            // interaction handler's per-collider model-part fallback covers the general case).
+            for (int i = 0; i < model.parts.size(); i++) {
+                if (Boolean.TRUE.equals(model.parts.get(i).rawYaml.get("leadable"))) {
+                    ship.leadableShulker = mechanism.colliderEntity(i);
+                    break;
+                }
+            }
+            // Migration: load carried-over native cargo into the freshly assembled (empty) typed inventories
+            // BEFORE persist, so defCoreLib snapshots the contents. Without this, migration would spawn empty
+            // chests and the native cargo would be lost.
+            if (cargo != null) {
+                for (java.util.Map.Entry<Integer, org.bukkit.inventory.ItemStack[]> e : cargo.entrySet()) {
+                    org.bukkit.inventory.Inventory inv = mechanism.getStorage(e.getKey());
+                    org.bukkit.inventory.ItemStack[] items = e.getValue();
+                    if (inv != null && items != null) {
+                        inv.setContents(java.util.Arrays.copyOf(items, inv.getSize()));
+                    }
+                }
+            }
+            reg.persist(mechanism); // crash-safe: survives restart + chunk reload via the M5 path
+            ship.applyInitialDrivenPose(); // render the heading on frame 1 (no one-tick yaw flash)
+        } catch (Throwable t) {
+            // Rollback. assembleFromParts BORROWS the vehicle (ownsVehicle=false), so mechanism.destroy() only
+            // strips the vehicle's tag and leaves the ArmorStand alive — the final unconditional remove kills it.
+            // If ship != null, ship.destroy() already removed the vehicle (isValid-guarded), so the trailing
+            // remove no-ops. Must not skip vehicle removal when mechanism != null but the ShipInstance ctor threw.
+            if (mechanism != null) { try { mechanism.destroy(); } catch (Throwable ignored) {} }
+            if (ship != null)      { try { ship.destroy();      } catch (Throwable ignored) {} }
+            if (vehicle.isValid()) vehicle.remove();
+            logOnce(id, java.util.logging.Level.SEVERE,
+                "delegated assembly failed for type '" + shipType + "'.", t);
+            return null;
+        }
+        return ship;
+    }
+
+    /** Translate a CUSTOM (player-built) {@link ShipModel} into a defCoreLib PartSpec list. Mirrors the native
+     *  custom display loop: block parts carry their FULL persisted BlockData ({@code part.block}, so stairs/logs/
+     *  slabs/doors keep their state) with a {@code display_yaw} rotation baked in; heads/skulls and banners become
+     *  ItemDisplay parts (via {@link CustomShipRender}) with their captured NBT + HEAD/FIXED transform. Parts stay
+     *  in {@code model.parts} order so the block index == collider/seat index. Transforms are vehicle-relative
+     *  ({@code p.local}); the mechanism supplies the ride-offset (what the retired native display-offset did) and the heading
+     *  (via currentYaw), so no initialRotation/positionOffset/displayOffset is baked in here. */
+    private java.util.List<anon.def9a2a4.corelib.MechanismRegistry.PartSpec> buildCustomParts(ShipModel model) {
+        java.util.List<anon.def9a2a4.corelib.MechanismRegistry.PartSpec> parts = new java.util.ArrayList<>();
+        for (int i = 0; i < model.parts.size(); i++) {
+            ShipModel.ModelPart p = model.parts.get(i);
+            // Collider frame: mirror buildPrefabParts' reconciliation with initialRotation=identity, Po=0.
+            anon.def9a2a4.corelib.CollisionConfig col;
+            if (p.collision.enable) {
+                org.joml.Vector3f l3 = p.local.transformDirection(
+                    new org.joml.Vector3f(1, 1, 1), new org.joml.Vector3f());
+                org.joml.Vector3f off = new org.joml.Vector3f(p.collision.offset).sub(l3.mul(0.5f)).add(0f, 0.5f, 0f);
+                col = new anon.def9a2a4.corelib.CollisionConfig(true, p.collision.size, off);
+            } else {
+                col = anon.def9a2a4.corelib.CollisionConfig.NONE;
+            }
+
+            if (CustomShipRender.isItemDisplayPart(p.rawYaml)) {
+                // Head/skull or banner → ItemDisplay part (no +0.5 corner shift; skull/banner transform applied).
+                org.joml.Matrix4f lt = CustomShipRender.applyDisplayTransform(new org.joml.Matrix4f(p.local), p.rawYaml);
+                parts.add(anon.def9a2a4.corelib.MechanismRegistry.PartSpec.display(
+                    CustomShipRender.buildDisplayItem(p.rawYaml, plugin, i),
+                    CustomShipRender.displayMode(p.rawYaml), lt, col));
+                continue;
+            }
+
+            // Normal block part: full-fidelity BlockData from part.block; +0.5 cancels the BlockDisplay corner
+            // shift; display_yaw (chest-style directional) baked about the block centre before the +0.5.
+            org.joml.Matrix4f lt = new org.joml.Matrix4f(p.local);
+            CustomShipRender.applyDisplayYaw(lt, p.rawYaml);
+            lt.mul(new org.joml.Matrix4f().translation(0.5f, 0.5f, 0.5f));
+            if (p.storage != null) {
+                org.bukkit.event.inventory.InventoryType it = p.storage.type.invType != null
+                    ? p.storage.type.invType : org.bukkit.event.inventory.InventoryType.CHEST;
+                parts.add(anon.def9a2a4.corelib.MechanismRegistry.PartSpec.block(
+                    p.block, lt, col, it, p.storage.type.slots, p.storage.name));
+            } else {
+                parts.add(anon.def9a2a4.corelib.MechanismRegistry.PartSpec.block(p.block, lt, col));
+            }
+        }
+        return parts;
+    }
+
+    /** Translate a prefab {@link ShipModel} + customization into a defCoreLib PartSpec list using the exact
+     *  native transform composition. Block parts FIRST + in order (block index i == model.parts index i ==
+     *  SeatInfo.blockIndex), then standalone item parts (banners/sails/balloon). See the Phase 7 plan. */
+    private java.util.List<anon.def9a2a4.corelib.MechanismRegistry.PartSpec> buildPrefabParts(
+            ShipModel model, ShipCustomization customization) {
+        org.joml.Matrix4f ri = new org.joml.Matrix4f()
+            .rotateY((float) Math.toRadians(model.initialRotation.x))
+            .rotateX((float) Math.toRadians(model.initialRotation.y))
+            .rotateZ((float) Math.toRadians(model.initialRotation.z));
+
+        java.util.List<anon.def9a2a4.corelib.MechanismRegistry.PartSpec> parts = new java.util.ArrayList<>();
+        // Block parts (must stay first + in order — seat/collider block indices reference model.parts).
+        for (ShipModel.ModelPart p : model.parts) {
+            // localTransform = R_i · T(Po) · L · T(+0.5): the trailing +0.5 cancels the engine's BlockDisplay
+            // -0.5 corner shift exactly (for any rotation/scale in L).
+            org.joml.Matrix4f lt = new org.joml.Matrix4f(ri)
+                .mul(new org.joml.Matrix4f().translation(model.positionOffset))
+                .mul(p.local)
+                .mul(new org.joml.Matrix4f().translation(0.5f, 0.5f, 0.5f));
+            anon.def9a2a4.corelib.CollisionConfig col;
+            if (p.collision.enable) {
+                // collision.offset = R_i·(Co − Po + b − 0.5·L₃ₓ₃·(1,1,1)) + (0,+0.5,0): reconcile the engine's
+                // display↔collider frame (Po→Co, re-inject b, undo the baked +0.5 and the engine's fixed -0.5Y).
+                org.joml.Vector3f l3 = p.local.transformDirection(
+                    new org.joml.Vector3f(1, 1, 1), new org.joml.Vector3f());
+                org.joml.Vector3f inner = new org.joml.Vector3f(model.collisionOffset)
+                    .sub(model.positionOffset).add(p.collision.offset).sub(l3.mul(0.5f));
+                org.joml.Vector3f off = ri.transformDirection(inner, new org.joml.Vector3f()).add(0f, 0.5f, 0f);
+                col = new anon.def9a2a4.corelib.CollisionConfig(true, p.collision.size, off);
+            } else {
+                col = anon.def9a2a4.corelib.CollisionConfig.NONE;
+            }
+            if (p.storage != null) {
+                // Typed, named cargo: the engine builds + persists the inventory (getStorage routes to it).
+                // invType null => a size-based CHEST/BARREL/double-chest; pass CHEST so createTypedInventory
+                // sizes by slots (27/54) rather than typing.
+                org.bukkit.event.inventory.InventoryType it = p.storage.type.invType != null
+                    ? p.storage.type.invType : org.bukkit.event.inventory.InventoryType.CHEST;
+                parts.add(anon.def9a2a4.corelib.MechanismRegistry.PartSpec.block(
+                    customizedPrefabBlock(p, customization), lt, col,
+                    it, p.storage.type.slots, p.storage.name));
+            } else {
+                parts.add(anon.def9a2a4.corelib.MechanismRegistry.PartSpec.block(
+                    customizedPrefabBlock(p, customization), lt, col));
+            }
+        }
+        // Standalone item parts (banners/sails/balloon) — AFTER all block parts so indices never shift.
+        for (ShipModel.ItemPart p : model.items) {
+            org.joml.Matrix4f lt = new org.joml.Matrix4f(ri)
+                .mul(new org.joml.Matrix4f().translation(model.positionOffset))
+                .mul(p.local); // item primaries skip the -0.5 corner shift — no +0.5 here
+            parts.add(anon.def9a2a4.corelib.MechanismRegistry.PartSpec.display(
+                customizedPrefabItem(p, customization), p.displayMode, lt,
+                anon.def9a2a4.corelib.CollisionConfig.NONE));
+        }
+        return parts;
+    }
+
+    /** Wood-type-customized {@link org.bukkit.block.data.BlockData} for a prefab block part (mirrors the
+     *  native prefab path in ShipInstance). */
+    private org.bukkit.block.data.BlockData customizedPrefabBlock(ShipModel.ModelPart p,
+                                                                  ShipCustomization customization) {
+        String blockName = String.valueOf(p.rawYaml.get("block"));
+        String name = customization.getWoodType() != null
+            ? WoodTypeUtil.replaceWoodType(blockName, customization.getWoodType()) : blockName;
+        Object propsObj = p.rawYaml.get("properties");
+        if (propsObj instanceof java.util.Map<?, ?> props && !props.isEmpty()) {
+            StringBuilder s = new StringBuilder("minecraft:").append(name.toLowerCase()).append("[");
+            boolean first = true;
+            for (java.util.Map.Entry<?, ?> e : props.entrySet()) {
+                if (!first) s.append(",");
+                s.append(e.getKey()).append("=").append(e.getValue());
+                first = false;
+            }
+            s.append("]");
+            return Bukkit.createBlockData(s.toString());
+        }
+        return Bukkit.createBlockData(Material.valueOf(name));
+    }
+
+    /** Customization-applied ItemStack for a prefab item part (custom banner / balloon color; mirrors native). */
+    private ItemStack customizedPrefabItem(ShipModel.ItemPart p, ShipCustomization customization) {
+        ItemStack item = p.item.clone();
+        if (customization.getCustomBanner() != null && item.getType().name().endsWith("_BANNER")) {
+            item = customization.getCustomBanner().clone();
+        }
+        if (customization.getBalloonColor() != null && customization.getTextureManager() != null
+                && item.getType() == Material.PLAYER_HEAD && item.hasItemMeta()) {
+            org.bukkit.inventory.meta.ItemMeta meta = item.getItemMeta();
+            if (meta instanceof org.bukkit.inventory.meta.SkullMeta skull) {
+                String tex = customization.getTextureManager()
+                    .getTexture("BALLOONS", customization.getBalloonColor());
+                if (tex != null) {
+                    ItemUtil.applyPlayerHeadTextureFromBase64(skull, tex, plugin);
+                    item.setItemMeta(meta);
+                }
+            }
+        }
+        return item;
     }
 
     @EventHandler
@@ -1184,17 +1446,15 @@ public class DisplayShip implements Listener {
             // Past cooldown - allow interaction (timestamp updated after successful action)
         }
 
-        // Parse shulker tags: displayship:{uuid}, storage:{blockIndex}, shipseat:{seatIndex}, shipwheel:{location}, interact:{blockIndex}
+        // Parse shulker tags: displayship:{uuid}, shipseat:{seatIndex}, shipwheel:{location}, interact:{blockIndex}
         // Tag creation: ShipInstance constructor (collision boxes and seats)
         UUID shipId = null;
-        int storageBlockIndex = -1;
         int seatIndex = -1;
         String wheelLocation = null;
         int interactBlockIndex = -1;
 
         Set<String> tags = shulker.getScoreboardTags();
         shipId = ShipTags.extractShipId(tags);
-        storageBlockIndex = ShipTags.extractStorageIndex(tags);
         seatIndex = ShipTags.extractSeatIndex(tags);
         wheelLocation = ShipTags.extractWheelLocation(tags);
         interactBlockIndex = ShipTags.extractInteractIndex(tags);
@@ -1202,7 +1462,28 @@ public class DisplayShip implements Listener {
         if (shipId == null) return;
 
         ShipInstance inst = ShipRegistry.byId(shipId);
-        if (inst == null || !inst.vehicle.isValid()) return;
+        if (inst == null) {
+            // Unregistered ship: migration may not have run yet (the player is here, so this chunk is loaded).
+            // Migrate any native ship rooted in this chunk now, then fall through.
+            inst = attemptInteractionMigration(shipId, shulker);
+            if (inst == null) {
+                e.setCancelled(true); // consume the click like the other ship-interaction branches
+                return;
+            }
+        }
+        if (!inst.vehicle.isValid()) return;
+
+        // Delegated ships (M4) tag seats via corelib (block-index), not shipseat:{seatIdx}. Recover BlockShips'
+        // seat index from the populated seatShulkers list so direct-seat-click mount + occupancy work.
+        if (seatIndex < 0 && inst.mechanism != null) {
+            seatIndex = inst.seatShulkers.indexOf(shulker);
+        }
+
+        // Delegated ships (M4) tag colliders only as corelib:mech:{id}:{i}:collider|seat, so the native
+        // block-index extractors above (leadable/cannon/interact/storage) all return -1. Resolve the mechanism
+        // block index once here; the lead/cannon/interact/storage branches below fall back to it for a delegated
+        // ship (parity invariant: mechanism block index == model.parts index). -1 for a native/prefab ship.
+        int mci = (inst.mechanism != null) ? ShipTags.extractCorelibBlockIndex(tags) : -1;
 
         // Check if player is holding a ship wheel - show info message
         if (isShipWheel(player.getInventory().getItemInMainHand())) {
@@ -1226,27 +1507,19 @@ public class DisplayShip implements Listener {
             return;
         }
 
-        // Check if this is a ship wheel collider - open menu regardless of shift
+        // Check if this is a ship wheel collider - open menu regardless of shift.
+        //
+        // Resolve by SHIP, not by the tag's coordinates. The tag is re-stamped on every assembleShip so it is
+        // not stale — but while the ship is assembled its wheel cell is AIR, so no block- or location-based
+        // lookup can resolve it at all. The tag's job here is only "this shulker is the wheel collider";
+        // its X,Y,Z payload is vestigial and is no longer parsed.
         if (wheelLocation != null) {
-            // Parse location from tag: "X,Y,Z"
-            String[] coords = wheelLocation.split(",");
-            if (coords.length == 3) {
-                try {
-                    int x = Integer.parseInt(coords[0]);
-                    int y = Integer.parseInt(coords[1]);
-                    int z = Integer.parseInt(coords[2]);
-                    Location loc = new Location(shulker.getWorld(), x, y, z);
-
-                    ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
-                    ShipWheelData wheelData = manager.getWheelAt(loc);
-                    if (wheelData != null) {
-                        ShipWheelMenu.openMenu(player, wheelData);
-                        e.setCancelled(true);
-                        return;
-                    }
-                } catch (NumberFormatException ignored) {
-                    // Invalid wheel location tag - continue with normal interaction
-                }
+            ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
+            ShipWheelData wheelData = manager.getWheelByShipUUID(shipId);
+            if (wheelData != null) {
+                ShipWheelMenu.openMenu(player, wheelData);
+                e.setCancelled(true);
+                return;
             }
         }
 
@@ -1277,6 +1550,11 @@ public class DisplayShip implements Listener {
         // Check if this shulker is leadable (fence block) - handle lead attach/detach
         // For custom ships: attach to specific fence. For prefab ships: detach from lead point.
         int leadableBlockIndex = ShipTags.extractLeadableIndex(tags);
+        // Delegated fallback: a corelib collider carries no leadable:{i} tag, so consult the model part's
+        // leadable flag (same source native uses — BlockStructureScanner sets it from BlockProperties.isLeadable).
+        if (leadableBlockIndex < 0 && mci >= 0 && isModelPartLeadable(inst, mci)) {
+            leadableBlockIndex = mci;
+        }
         if (leadableBlockIndex >= 0) {
             ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
             List<Entity> leashedEntities = manager.findEntitiesLeashedTo(shulker);
@@ -1301,6 +1579,12 @@ public class DisplayShip implements Listener {
 
         // Check if this shulker is a cannon trigger (obsidian block)
         int cannonObsidianIndex = ShipTags.extractCannonIndex(tags);
+        // Delegated fallback: route mci ONLY when it is genuinely a cannon obsidian (model.cannons membership).
+        // The cannon branch cancels+returns on index alone, so a bare mci (>= 0 for EVERY collider) would swallow
+        // every delegated click and break interact/storage/seat-mount — the membership guard is load-bearing.
+        if (cannonObsidianIndex < 0 && mci >= 0 && isDelegatedCannonObsidian(inst, mci)) {
+            cannonObsidianIndex = mci;
+        }
         if (cannonObsidianIndex >= 0) {
             inst.fireCannonsByObsidian(cannonObsidianIndex);
             e.setCancelled(true);
@@ -1308,25 +1592,24 @@ public class DisplayShip implements Listener {
         }
 
         // Check if this shulker is an interaction block (crafting table, anvil, etc.)
-        if (interactBlockIndex >= 0) {
-            Material blockMaterial = (interactBlockIndex >= 0 && interactBlockIndex < inst.model.parts.size())
-                ? inst.model.parts.get(interactBlockIndex).block.getMaterial() : null;
+        // Delegated fallback: use mci directly — openInteraction self-gates (returns false for a non-interactable
+        // material) so a plain hull/seat block falls through without cancelling.
+        int effInteractIndex = interactBlockIndex >= 0 ? interactBlockIndex : mci;
+        if (effInteractIndex >= 0) {
+            Material blockMaterial = effInteractIndex < inst.model.parts.size()
+                ? inst.model.parts.get(effInteractIndex).block.getMaterial() : null;
             if (blockMaterial != null && InteractionBlockHandler.openInteraction(player, blockMaterial)) {
                 e.setCancelled(true);
                 return;
             }
         }
 
-        // Check if this shulker is a ship engine - open fuel GUI
-        if (storageBlockIndex >= 0 && inst.model.engineBlockIndices.contains(storageBlockIndex)) {
-            anon.def9a2a4.blockships.customships.EngineMenuGUI.open(player, inst, storageBlockIndex);
-            e.setCancelled(true);
-            return;
-        }
-
-        // Check if this shulker has storage
-        if (storageBlockIndex >= 0) {
-            Inventory storage = inst.storages.get(storageBlockIndex);
+        // Check if this shulker has storage — it lives on the mechanism, keyed by block index. Returns the live
+        // captured container inventory (vanilla chest/barrel/dispenser or custom block); edits round-trip on
+        // disassemble via defCoreLib's container restore. Prefab container parts also route here —
+        // assembleFromParts builds a typed inventory from the PartSpec storageType and getStorage returns it.
+        if (mci >= 0) {
+            Inventory storage = inst.mechanism.getStorage(mci);
             if (storage != null) {
                 player.openInventory(storage);
                 e.setCancelled(true);
@@ -1358,8 +1641,10 @@ public class DisplayShip implements Listener {
             // Set camera distance before mounting
             setCameraDistanceOnShulker(availableSeatShulker, getCameraDistanceForShip(inst));
             availableSeatShulker.addPassenger(player);
-            // Mark seat as occupied (extract seat index from shulker tags)
+            // Mark seat as occupied (extract seat index from shulker tags; delegated ships resolve via the
+            // populated seatShulkers list since their seats carry corelib tags, not shipseat:{seatIdx}).
             int idx = ShipTags.extractSeatIndex(availableSeatShulker.getScoreboardTags());
+            if (idx < 0) idx = inst.seatShulkers.indexOf(availableSeatShulker);
             if (idx >= 0) {
                 inst.occupySeat(idx);
             }
@@ -1367,6 +1652,28 @@ public class DisplayShip implements Listener {
             recordShulkerInteraction(player.getUniqueId());
         }
         e.setCancelled(true);
+    }
+
+    /**
+     * Whether model block index {@code i} is a leadable fence. Mirrors the exact source native uses
+     * ({@code BlockStructureScanner} sets {@code rawYaml["leadable"]=true} from {@code BlockProperties.isLeadable},
+     * and native lead transfer / tagging read that same flag — see {@code ShipInstance} tag-bind and
+     * {@code ShipWheelManager}'s leads-in seam). Used to route delegated collider clicks that carry no
+     * native {@code leadable:{i}} tag.
+     */
+    private boolean isModelPartLeadable(ShipInstance inst, int i) {
+        if (i < 0 || i >= inst.model.parts.size()) return false;
+        Map<?, ?> rawYaml = inst.model.parts.get(i).rawYaml;
+        return rawYaml != null && Boolean.TRUE.equals(rawYaml.get("leadable"));
+    }
+
+    /** Whether model block index {@code i} is a cannon obsidian (a {@code CannonInfo.obsidianBlockIndex}). The
+     *  delegated cannon route needs this membership test because the cannon click branch cancels on index alone. */
+    private boolean isDelegatedCannonObsidian(ShipInstance inst, int i) {
+        for (ShipModel.CannonInfo cannon : inst.model.cannons) {
+            if (cannon.obsidianBlockIndex == i) return true;
+        }
+        return false;
     }
 
     /**
@@ -1426,9 +1733,16 @@ public class DisplayShip implements Listener {
         UUID shipId = ShipTags.extractShipId(exitTags);
         int seatIndex = ShipTags.extractSeatIndex(exitTags);
 
-        if (shipId != null && seatIndex >= 0) {
+        if (shipId != null) {
             ShipInstance inst = ShipRegistry.byId(shipId);
-            if (inst != null) {
+            // Delegated seats carry corelib:mech:{id}:{i}:seat, not shipseat:{i}, so extractSeatIndex is -1.
+            // Recover the seat index from the populated seatShulkers list (mirrors the mount-side M4 fallback)
+            // so a dismount actually frees the seat — otherwise occupiedSeatIndices/hasDriver stay set and a
+            // phantom driver keeps the delegated ship moving after the rider leaves.
+            if (seatIndex < 0 && inst != null && inst.mechanism != null) {
+                seatIndex = inst.seatShulkers.indexOf(shulker);
+            }
+            if (inst != null && seatIndex >= 0) {
                 inst.freeSeat(seatIndex);
                 // Speed persists - don't reset currentSpeed
 
@@ -1439,7 +1753,13 @@ public class DisplayShip implements Listener {
                 player.teleport(safePos);
                 player.setFallDistance(0);
                 float currentSpeed = inst.physics.currentSpeed;
-                float currentYVelocity = inst.physics.currentYVelocity;
+                // Momentum handed to the player, not a launch. The point of carrying velocity over is a
+                // smooth hop-off, so the downward component is capped: a ship can now descend several
+                // times faster than it ever could before, and passing that straight to a dismounting
+                // rider — right after setFallDistance(0), so the damage clock restarts from full height
+                // — turns stepping off a descending deck into a reliable death. The DRIVER escapes this
+                // by accident (freeSeat() zeroes the velocity before this reads it); passengers do not.
+                float currentYVelocity = Math.max(inst.physics.currentYVelocity, -DISMOUNT_MAX_DOWNWARD_VELOCITY);
 
                 float yawRad = (float) Math.toRadians(-inst.physics.currentYaw);
                 double forwardX = Math.sin(yawRad) * currentSpeed;
@@ -1497,7 +1817,13 @@ public class DisplayShip implements Listener {
         if (shipId == null) return;
 
         ShipInstance inst = ShipRegistry.byId(shipId);
-        if (inst == null || !inst.vehicle.isValid()) return;
+        if (inst == null) {
+            // Unregistered native ship: hitting it triggers migration to the delegated engine
+            // (chunk-load only fires on the load transition), like the shulker-click hook.
+            inst = attemptInteractionMigration(shipId, shulker);
+            if (inst == null) return;   // couldn't migrate — leave it native (as before)
+        }
+        if (!inst.vehicle.isValid()) return;
 
         // Ignore drowning damage - ships don't take drowning damage
         // Set air to max int so this rarely fires again
@@ -1562,6 +1888,10 @@ public class DisplayShip implements Listener {
         // Check if this shulker belongs to a ship
         UUID shipId = ShipTags.extractShipId(shulker.getScoreboardTags());
         if (shipId == null) return;
+        // extractShipId now resolves any corelib:mech: entity, including foreign mechanisms owned by sibling
+        // plugins (pipes/railbound/etc.). Only suppress drops for a real BlockShips ship — matches every other
+        // shulker handler's byId guard and keeps this from reaching into another plugin's entities.
+        if (ShipRegistry.byId(shipId) == null) return;
 
         // Clear all drops - ship colliders should never drop items
         e.getDrops().clear();
@@ -1581,7 +1911,12 @@ public class DisplayShip implements Listener {
         if (shipId == null) return;
 
         ShipInstance inst = ShipRegistry.byId(shipId);
-        if (inst == null || !inst.vehicle.isValid()) return;
+        if (inst == null) {
+            // Unregistered native ship: a projectile hit triggers migration too (like click/melee).
+            inst = attemptInteractionMigration(shipId, shulker);
+            if (inst == null) return;
+        }
+        if (!inst.vehicle.isValid()) return;
 
         Projectile projectile = e.getEntity();
 
@@ -1660,10 +1995,10 @@ public class DisplayShip implements Listener {
      * Color interpolates from grey (full health) to red (zero health).
      */
     private void spawnWheelHealthParticles(ShipInstance ship, double healthPercent) {
-        CollisionBox wheelCollider = findWheelCollider(ship);
-        if (wheelCollider == null || wheelCollider.entity == null || !wheelCollider.entity.isValid()) return;
+        Shulker wheel = findWheelShulker(ship);
+        if (wheel == null || !wheel.isValid()) return;
 
-        Location wheelLoc = wheelCollider.entity.getLocation().add(0, 0.5, 0);
+        Location wheelLoc = wheel.getLocation().add(0, 0.5, 0);
         World world = wheelLoc.getWorld();
         if (world == null) return;
 
@@ -1679,16 +2014,11 @@ public class DisplayShip implements Listener {
     }
 
     /**
-     * Finds the wheel collider (the one at position 0,0,0 in the ship's coordinate system).
+     * The Mechanism-owned wheel shulker (the block at local (0,0,0)). Returns null if not found.
      */
-    private CollisionBox findWheelCollider(ShipInstance ship) {
-        for (CollisionBox collider : ship.colliders) {
-            collider.base.getTranslation(workWheelTranslation);
-            if (Math.abs(workWheelTranslation.x) < 0.01f && Math.abs(workWheelTranslation.y) < 0.01f && Math.abs(workWheelTranslation.z) < 0.01f) {
-                return collider;
-            }
-        }
-        return null;
+    private Shulker findWheelShulker(ShipInstance ship) {
+        int i = ship.model.wheelPartIndex();
+        return i >= 0 ? ship.mechanism.colliderEntity(i) : null;
     }
 
     /**
@@ -1755,85 +2085,70 @@ public class DisplayShip implements Listener {
                           String.format("%.1f", maxHealthValue));
         player.sendMessage("§eSpeed: §f" + String.format("%.3f", inst.physics.currentSpeed));
 
-        // Find the CollisionBox for this shulker
-        CollisionBox matchedBox = null;
-        int colliderIndex = -1;
-        int index = 0;
-        for (CollisionBox box : inst.colliders) {
-            if (box.entity.equals(shulker)) {
-                matchedBox = box;
-                colliderIndex = index;
-                break;
+        // The Mechanism owns the collider shulkers. Resolve the block index from the corelib tag (same as the
+        // interaction router) and read the box/part detail from the mechanism + model.
+        if (inst.mechanism != null) {
+            int i = ShipTags.extractCorelibBlockIndex(shulker.getScoreboardTags());
+            org.bukkit.util.BoundingBox box = i >= 0 ? inst.mechanism.getColliderBoxByBlock(i) : null;
+            ShipModel.ModelPart part = (i >= 0 && i < inst.model.parts.size()) ? inst.model.parts.get(i) : null;
+            if (box == null || part == null) {
+                player.sendMessage("§c(No mechanism collider for this shulker)");
+                return;
             }
-            index++;
-        }
-
-        if (matchedBox != null) {
             player.sendMessage("");
-            player.sendMessage("§b--- Collision Box ---");
-            player.sendMessage("§eCollider Index: §f" + colliderIndex);
-            player.sendMessage("§eSize: §f" + matchedBox.config.size);
-            player.sendMessage("§eOffset: §f[" +
-                              matchedBox.config.offset.x + ", " +
-                              matchedBox.config.offset.y + ", " +
-                              matchedBox.config.offset.z + "]");
-            player.sendMessage("§eWorld Position: §f[" +
-                              String.format("%.2f", shulker.getLocation().getX()) + ", " +
-                              String.format("%.2f", shulker.getLocation().getY()) + ", " +
-                              String.format("%.2f", shulker.getLocation().getZ()) + "]");
-
-            // Display transformation matrix
+            player.sendMessage("§b--- Collision Box (delegated) ---");
+            player.sendMessage("§eBlock Index: §f" + i);
+            player.sendMessage("§eSize: §f" + part.collision.size);
+            player.sendMessage("§eOffset: §f[" + part.collision.offset.x + ", " +
+                              part.collision.offset.y + ", " + part.collision.offset.z + "]");
+            player.sendMessage("§eWorld Box: §f[" +
+                              String.format("%.2f", box.getMinX()) + ".." + String.format("%.2f", box.getMaxX()) + ", " +
+                              String.format("%.2f", box.getMinY()) + ".." + String.format("%.2f", box.getMaxY()) + ", " +
+                              String.format("%.2f", box.getMinZ()) + ".." + String.format("%.2f", box.getMaxZ()) + "]");
             player.sendMessage("");
-            player.sendMessage("§b--- Transformation Matrix ---");
-            org.joml.Matrix4f m = matchedBox.base;
-            player.sendMessage("§f[" + String.format("%.4f", m.m00()) + ", " + String.format("%.4f", m.m10()) + ", " + String.format("%.4f", m.m20()) + ", " + String.format("%.4f", m.m30()) + "]");
-            player.sendMessage("§f[" + String.format("%.4f", m.m01()) + ", " + String.format("%.4f", m.m11()) + ", " + String.format("%.4f", m.m21()) + ", " + String.format("%.4f", m.m31()) + "]");
-            player.sendMessage("§f[" + String.format("%.4f", m.m02()) + ", " + String.format("%.4f", m.m12()) + ", " + String.format("%.4f", m.m22()) + ", " + String.format("%.4f", m.m32()) + "]");
-            player.sendMessage("§f[" + String.format("%.4f", m.m03()) + ", " + String.format("%.4f", m.m13()) + ", " + String.format("%.4f", m.m23()) + ", " + String.format("%.4f", m.m33()) + "]");
-
-            // Find corresponding ModelPart by matching transformation matrix
-            ShipModel.ModelPart matchedPart = null;
-            for (ShipModel.ModelPart part : inst.model.parts) {
-                if (part.collision.enable && MathUtil.matricesEqual(part.local, matchedBox.base)) {
-                    matchedPart = part;
-                    break;
-                }
-            }
-
-            // Alternative: match by collider index if matrix comparison fails
-            if (matchedPart == null) {
-                int enabledCount = 0;
-                for (ShipModel.ModelPart part : inst.model.parts) {
-                    if (part.collision.enable) {
-                        if (enabledCount == colliderIndex) {
-                            matchedPart = part;
-                            break;
-                        }
-                        enabledCount++;
-                    }
-                }
-            }
-
-            if (matchedPart != null) {
-                player.sendMessage("");
-                player.sendMessage("§b--- Original YAML ---");
-                FormatUtil.formatYamlToChat(player, matchedPart.rawYaml, "");
-            } else {
-                player.sendMessage("");
-                player.sendMessage("§c(Could not find matching ModelPart)");
-            }
-        } else {
-            player.sendMessage("§c(CollisionBox not found for this shulker)");
+            player.sendMessage("§b--- Original YAML ---");
+            FormatUtil.formatYamlToChat(player, part.rawYaml, "");
+            return;
         }
     }
 
     // ===== Custom Ship Wheel System =====
 
     /**
-     * Helper: Check if an item is a ship wheel custom item
+     * Helper: Check if an item is a ship wheel custom item.
+     *
+     * <p>Three arms, because a wheel item can reach a player's hand three ways. Keeping them in one place is
+     * what stops a corelib-minted wheel (an explosion drop, say) from being silently rejected and failing
+     * the {@code captains_manual} recipe.
      */
     private boolean isShipWheel(ItemStack stack) {
-        return matchesCustomItemId(stack, "ship_wheel");
+        // 1. BlockShips' own mint — every wheel crafted, given or dropped through our paths.
+        if (matchesCustomItemId(stack, "ship_wheel")) return true;
+        // 2. defCoreLib's mint, for a drop that came out of the registered block (explosion, enrichDrop).
+        //    Via the public accessor: CustomBlockRegistry.BLOCK_TYPE_KEY is package-private to corelib.
+        if (CustomItem.SHIP_WHEEL_CORELIB_ID.equals(
+                anon.def9a2a4.corelib.CustomBlockRegistry.getItemTypeId(stack))) {
+            return true;
+        }
+        // 3. MIGRATION ONLY. A legacy wheel broken by vanilla physics during the un-migrated window drops a
+        //    head carrying the right skin and NEITHER key. Matching on the skin is a deliberate
+        //    false-positive surface — any player head wearing this texture reads as a wheel — and is
+        //    tolerable only because the texture is not obtainable in survival. Delete this arm at the same
+        //    time as the legacy arm of isShipWheelBlock.
+        String declared = anon.def9a2a4.blockships.customships.ShipWheelBlockType.texture();
+        return declared != null && declared.equals(headTextureBase64(stack));
+    }
+
+    /** The raw base64 {@code textures} profile property on a player-head item, or null. */
+    private static String headTextureBase64(ItemStack stack) {
+        if (stack == null || stack.getType() != Material.PLAYER_HEAD || !stack.hasItemMeta()) return null;
+        if (!(stack.getItemMeta() instanceof SkullMeta skull)) return null;
+        com.destroystokyo.paper.profile.PlayerProfile profile = skull.getPlayerProfile();
+        if (profile == null) return null;
+        for (com.destroystokyo.paper.profile.ProfileProperty p : profile.getProperties()) {
+            if ("textures".equals(p.getName())) return p.getValue();
+        }
+        return null;
     }
 
     /**
@@ -1851,9 +2166,16 @@ public class DisplayShip implements Listener {
     /**
      * Whether a crafting-grid item satisfies a recipe ingredient. Custom-item ingredients are matched by
      * their custom_item_id PDC (rename-proof); everything else uses the ingredient's own matcher.
+     *
+     * <p>The ship wheel is the exception: it exists in more than one mint (ours and defCoreLib's), so it is
+     * matched by {@link #isShipWheel}, which knows about all of them. This is the other half of the
+     * material-only {@code RecipeChoice} for the wheel — see {@code CustomItemIngredient.getRecipeChoice}.
+     * Together they make wheel matching independent of exact PDC equality. Deliberately scoped to the wheel:
+     * widening it to every custom item would loosen the balloons too.
      */
     private boolean ingredientMatches(RecipeIngredient ingredient, ItemStack item) {
         if (ingredient instanceof CustomItemIngredient ci) {
+            if ("ship_wheel".equals(ci.getCustomItemId())) return isShipWheel(item);
             return matchesCustomItemId(item, ci.getCustomItemId());
         }
         return ingredient.matches(item);
@@ -1863,10 +2185,29 @@ public class DisplayShip implements Listener {
      * Helper: Check if a block is a placed ship wheel
      */
     private boolean isShipWheelBlock(Block block) {
-        Material type = block.getType();
-        if (type != Material.PLAYER_HEAD && type != Material.PLAYER_WALL_HEAD) return false;
-        ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
-        return manager.getWheelAt(block.getLocation()) != null;
+        return resolveWheelBlock(block) != null;
+    }
+
+    /**
+     * Resolve a block to its wheel, by the block's own identity.
+     *
+     * <p>Callers should use THIS and keep the result rather than calling {@code isShipWheelBlock} and then
+     * looking the wheel up again: resolution now reads the block's PDC (and may adopt a legacy wheel), so
+     * doing it twice per event is real work, and the two answers could differ.
+     */
+    private @org.jetbrains.annotations.Nullable ShipWheelData resolveWheelBlock(Block block) {
+        return resolveWheelBlock(block, null);
+    }
+
+    /**
+     * As {@link #resolveWheelBlock(Block)}, with the clicking player so a mismatch refusal can tell them
+     * why nothing happened. Pass the player only from the right-click path; the break path and predicates
+     * use the plain overload.
+     */
+    private @org.jetbrains.annotations.Nullable ShipWheelData resolveWheelBlock(
+            Block block, @org.jetbrains.annotations.Nullable Player player) {
+        if (block == null) return null;
+        return ((BlockShipsPlugin) plugin).getShipWheelManager().getWheelAtBlock(block, player);
     }
 
     /**
@@ -1883,20 +2224,73 @@ public class DisplayShip implements Listener {
     public void onPlaceShipWheel(PlayerInteractEvent event) {
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
 
+        // NO HAND GUARD, DELIBERATELY. PlayerInteractEvent fires once per hand and each hand is a separate
+        // interaction carrying only its own item, so an off-hand-only guard is the wrong shape in both
+        // directions. A previous `if (getHand() != HAND) return;` here sat ABOVE the item check and caused
+        // the exact bug its comment claimed to prevent: with an empty main hand (or a sword in it) and a
+        // wheel in the off hand, the main-hand pass saw a null item and returned WITHOUT cancelling, and the
+        // off-hand pass — the only one holding the wheel — was dropped on the floor. Vanilla then placed the
+        // head, corelib marked it from its own BlockPlaceEvent handler, and BlockShips never recorded it:
+        // an untracked look-alike that is dead on right-click, unrepairable, and destroys the item on break.
+        // Sword in main hand + wheel in off hand is entirely ordinary play.
+        //
+        // The invariant that replaces it: if the ACTING hand holds a wheel, this handler owns the
+        // interaction. Checking the item first is what enforces that for both hands.
+        //
+        // Do NOT "fix" the both-hands case with `if (hand == OFF_HAND && isShipWheel(mainHandItem)) return;`.
+        // It is redundant after a successful main-hand place (the cell then holds a head, so the occupancy
+        // arm below returns anyway) and actively harmful after a FAILED one: the stamp-failure branch reverts
+        // the cell to air while the main hand still holds a wheel, so the guard would skip the off-hand pass
+        // and let vanilla plant exactly the untracked head this exists to prevent.
         ItemStack item = event.getItem();
         if (!isShipWheel(item)) return;
 
         Block clickedBlock = event.getClickedBlock();
         if (clickedBlock == null) return;
 
-        // Don't place if clicking an existing ship wheel (let onShipWheelRightClick handle it)
-        if (isShipWheelBlock(clickedBlock)) return;
+        // Clicking an existing wheel: onShipWheelRightClick owns the interaction, and this cancels so vanilla
+        // cannot also plant the held wheel against its face.
+        //
+        // This used to return UNCANCELLED, justified by "both handlers sit at the same priority so their
+        // relative order is unspecified". That was false when it was written: onShipWheelRightClick is at
+        // LOW and this handler is at bare NORMAL, so LOW runs first, always. The comment 150 lines down on
+        // onShipWheelRightClick itself already said so. The cost of the false premise was the second half of
+        // the off-hand bug: sword in main hand, wheel in off hand, right-click your own wheel — the LOW
+        // handler dropped the off-hand pass (it is main-hand only, correctly, so one click is one menu), this
+        // handler waved it through, and vanilla planted an untracked head on the wheel's face.
+        //
+        // Cancelling is safe in every case because this arm only fires on a block that RESOLVES TO A TRACKED
+        // WHEEL (isShipWheelBlock goes through getWheelAtBlock). On the main-hand pass the LOW handler has
+        // already opened the menu and cancelled, so this is a no-op; on the off-hand pass there is nothing to
+        // suppress but the unwanted placement. The wheel type registers no onInteract, so no corelib
+        // ignoreCancelled dispatcher is starved either.
+        //
+        // The trade, stated plainly: a wheel can no longer be placed against the face of an existing wheel at
+        // all. Previously that "worked", but only by producing an untracked head — so nothing that functioned
+        // has been taken away.
+        if (isShipWheelBlock(clickedBlock)) {
+            event.setCancelled(true);
+            return;
+        }
 
         BlockFace face = event.getBlockFace();
         Block targetBlock = clickedBlock.getRelative(face);
 
-        // Check if target location is valid for placement
-        if (!targetBlock.getType().isAir()) return;
+        // Check if target location is valid for placement.
+        //
+        // isAir() alone is too narrow, and returning here without cancelling is the bug: water, lava, fire,
+        // snow layers and tall grass are all replaceable but not air, so vanilla would go on to place the
+        // wheel item as a plain head. That head still carries corelib's identity key (it is on the item), so
+        // corelib adopts it while BlockShips has no record of it — an untracked look-alike that breaks into
+        // nothing and can be minted indefinitely. Placing into replaceable cells instead keeps every wheel on
+        // the tracked path, and routes MORE cells through the WorldGuard check below rather than fewer.
+        //
+        // Genuinely occupied cells still return WITHOUT cancelling, on purpose. Vanilla cannot place into an
+        // occupied cell either, so there is nothing to suppress — and cancelling would swallow the click on
+        // whatever was actually clicked. A chest, door, lever or another plugin's GUI block sitting where
+        // getRelative(face) happens to be solid would simply stop responding whenever the player is holding a
+        // wheel, including for corelib's own ignoreCancelled interact dispatcher.
+        if (!targetBlock.getType().isAir() && !targetBlock.isReplaceable()) return;
 
         Player player = event.getPlayer();
 
@@ -1974,38 +2368,79 @@ public class DisplayShip implements Listener {
 
         // Register with ShipWheelManager
         ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
-        boolean success = manager.placeWheel(targetBlock.getLocation(), wheelFacing);
+        ShipWheelManager.PlaceResult result = manager.placeWheel(targetBlock.getLocation(), wheelFacing);
 
-        if (success) {
+        if (result == ShipWheelManager.PlaceResult.OK) {
             // Consume item (unless creative mode)
             if (player.getGameMode() != GameMode.CREATIVE) {
                 item.setAmount(item.getAmount() - 1);
             }
             event.setCancelled(true);
         } else {
-            // Failed to place - revert block
+            // All failures share this cleanup. Cancel as well as reverting — without the cancel vanilla
+            // places a plain head here AND consumes the item, which is exactly the untracked look-alike the
+            // guard above exists to prevent. The item is not consumed on any path. The air-out doubles as
+            // SAVE_FAILED's rollback: the stamp lives in the tile entity, so clearing the block erases it —
+            // which is why that arm must stay inside this shared cleanup.
+            //
+            // notifyRemoved BEFORE setType(AIR), like the break path: it reads the block's type PDC to know
+            // what it is removing, and stamp()'s markBlock left a location-index entry in corelib that the
+            // bare air-out would strand. Unconditional is safe: on CELL_RESERVED no stamp ever ran, so
+            // getTypeFromBlock is null and this no-ops; on SAVE_FAILED the record was already rolled back,
+            // so the re-entrant removal callback no-ops at its wheel==null check. (Double-rare accepted
+            // corner: STAMP_FAILED where markBlock succeeded but the wheel_id write threw, WITH a stale
+            // docked record claiming this cell — the re-entry can reap that stale record.)
+            anon.def9a2a4.blockships.customships.ShipWheelBlockType.notifyRemoved(targetBlock);
             targetBlock.setType(Material.AIR);
+            event.setCancelled(true);
+            if (result == ShipWheelManager.PlaceResult.CELL_RESERVED) {
+                player.sendMessage("§cThat spot is another ship's dock — it's out sailing right now and will "
+                    + "need to land there. Put your wheel somewhere else.");
+            } else if (result == ShipWheelManager.PlaceResult.SAVE_FAILED) {
+                player.sendMessage("§cCouldn't place that ship wheel — the record could not be saved to disk. "
+                    + "Nothing was kept; tell an admin to check the server log and free disk space.");
+            } else {
+                player.sendMessage("§cCouldn't place that ship wheel — its identity could not be written. "
+                    + "Tell an admin to check the server log for a DefCoreLib registration error.");
+            }
         }
     }
 
     /**
      * Event: Right-click ship wheel block to open menu
      */
-    @EventHandler
+    @EventHandler(priority = org.bukkit.event.EventPriority.LOW)
     public void onShipWheelRightClick(PlayerInteractEvent event) {
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+        // PlayerInteractEvent fires for BOTH hands; only the main hand should open the menu (else it opens
+        // twice). Mirrors the guard on onShulkerClick. Unlike onPlaceShipWheel, this guard is correct here:
+        // the off-hand pass has nothing to do, rather than something to do that would be skipped.
+        if (event.getHand() != EquipmentSlot.HAND) return;
+
+        // Honour an upstream cancellation. Its sibling onShipWheelBreak has always done this; this handler
+        // never did, so a protection plugin that cancels the interact (GriefPrevention and Towny cancel
+        // right-clicks in claims broadly) was overruled and the menu opened anyway. That matters because the
+        // menu is not a viewer: Disassemble, Force Disassemble — whose own lore reads "N ship block(s) will
+        // be LOST" — Lock and Fire Cannons all act on the world.
+        //
+        // KNOWN, ACCEPTED GAP: the menu itself has NO ownership or permission model. There is no owner
+        // field on ShipWheelData and no hasPermission call anywhere in the menu path — any player who can
+        // right-click a docked wheel can open its menu and, WorldGuard permitting, assemble that ship.
+        // Deliberate for now (trusted-player servers); protection plugins and the per-action WorldGuard
+        // gating in onShipWheelMenuClick are the only fences. Revisit as its own feature if that changes.
+        //
+        // LOW priority is deliberate: onPlaceShipWheel sits at NORMAL and now CANCELS for a block that
+        // resolves to a tracked wheel (see its comment), so this handler must run FIRST — at equal priority
+        // their order would be getDeclaredMethods() order, unspecified. LOW-before-NORMAL makes "menu opens,
+        // then the placement pass suppresses the off-hand plant" a guaranteed sequence, not a lucky one.
+        if (event.isCancelled()) return;
 
         Block block = event.getClickedBlock();
-        if (block == null || !isShipWheelBlock(block)) return;
+        ShipWheelData wheelData = resolveWheelBlock(block, event.getPlayer());
+        if (wheelData == null) return;
 
-        Player player = event.getPlayer();
-        ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
-        ShipWheelData wheelData = manager.getWheelAt(block.getLocation());
-
-        if (wheelData != null) {
-            ShipWheelMenu.openMenu(player, wheelData);
-            event.setCancelled(true);
-        }
+        ShipWheelMenu.openMenu(event.getPlayer(), wheelData);
+        event.setCancelled(true);
     }
 
     /**
@@ -2028,17 +2463,36 @@ public class DisplayShip implements Listener {
 
         if (action == ShipWheelMenu.MenuAction.NONE) return;
 
-        // Get wheel data from the custom inventory holder
+        ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
+
+        // Re-resolve the record from the id the holder carries, EVERY click. The holder used to keep a hard
+        // ShipWheelData reference, which is how a menu outlives the record behind it: many paths deregister
+        // a wheel — a player breaks it; the ship is destroyed with destroyOnDeath while you have the menu
+        // open from the collider; an admin purges it; an explosion removes the block; a landing that could
+        // not place its wheel; the protected-anchor arm of disassembleShip — and several reopen this menu
+        // a tick later on the now-detached object. (Deliberately no count on that list; two edits in a row
+        // let a stale "seven" survive a six-entry list. The foreign-wheel sweep at a neighbour's assembly
+        // is deliberately NOT on it: it excludes the cell from their ship and deregisters nothing.)
+        // Acting on the detached object writes through a cached cell that may now hold somebody
+        // else's block — assembleShip would flood-fill their build into a ship, toggleLock would overwrite
+        // a neighbour's glue, detectShip would spawn a marker in their base.
+        //
+        // A null answer here is a COMPLETE staleness test rather than a heuristic, because every one of
+        // those paths ends in the same placedWheels.remove that this lookup consults.
         ShipWheelMenu.ShipWheelMenuHolder holder = (ShipWheelMenu.ShipWheelMenuHolder) event.getInventory().getHolder();
-        ShipWheelData wheelData = holder.getWheelData();
+        ShipWheelData wheelData = manager.getWheelById(holder.getWheelId());
 
         if (wheelData == null) {
-            player.sendMessage("§cShip wheel data not found!");
+            player.sendMessage("§cThat ship wheel is no longer tracked — it was destroyed, purged, "
+                + "or returned to you as an item.");
             player.closeInventory();
             return;
         }
 
-        ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
+        if (!menuActionAllowed(player, wheelData, action)) {
+            player.sendMessage("§cYou can't do that to a ship wheel in this protected region.");
+            return;
+        }
 
         boolean stateChanged = false;
 
@@ -2049,8 +2503,7 @@ public class DisplayShip implements Listener {
             case DETECT:
                 manager.detectShip(player, wheelData);
                 // Refresh menu to update ship info lore
-                player.closeInventory();
-                Bukkit.getScheduler().runTaskLater(plugin, () -> ShipWheelMenu.openMenu(player, wheelData), 1L);
+                reopenWheelMenuLater(player, wheelData.getWheelId());
                 break;
             case ASSEMBLE:
                 stateChanged = manager.assembleShip(player, wheelData);
@@ -2060,11 +2513,12 @@ public class DisplayShip implements Listener {
                 break;
             case DISASSEMBLE:
                 stateChanged = manager.disassembleShip(player, wheelData);
-                // If disassembly failed but force is available, reopen menu to show force option
+                // If disassembly failed but force is available, reopen menu to show force option.
+                // setPendingMenuReopen must be set BEFORE the close — onShipWheelMenuClose reads it to decide
+                // whether to keep the conflict list that the force option is rendered from.
                 if (!stateChanged && wheelData.canForceDisassemble()) {
                     wheelData.setPendingMenuReopen(true);
-                    player.closeInventory();
-                    Bukkit.getScheduler().runTaskLater(plugin, () -> ShipWheelMenu.openMenu(player, wheelData), 1L);
+                    reopenWheelMenuLater(player, wheelData.getWheelId());
                     return;
                 }
                 break;
@@ -2093,19 +2547,123 @@ public class DisplayShip implements Listener {
                 handleCameraDistanceChange(player, wheelData, action == ShipWheelMenu.MenuAction.CAMERA_DISTANCE_INCREASE, event.getInventory());
                 // Don't set stateChanged - we update items in place
                 break;
+            case TOGGLE_LOCK: {
+                // Shift-click re-freezes an already-locked wheel instead of unlocking it — the repair
+                // path, so a ship that lost blocks to an obstructed landing can be re-snapshotted
+                // without briefly unlocking (which would let it swallow whatever is beside it).
+                boolean refreeze = event.isShiftClick() && wheelData.isLocked();
+                String result = manager.toggleLock(player, wheelData, refreeze);
+                if (result != null) {
+                    player.sendMessage("§b" + result);
+                    ShipWheelMenu.updateLockItem(event.getInventory(), wheelData);
+                }
+                // Don't set stateChanged - we update the item in place
+                break;
+            }
         }
 
         // Close and reopen menu if state changed (for assemble/disassemble)
         if (stateChanged) {
-            player.closeInventory();
-            // Reopen after a tick to show updated state
-            new BukkitRunnable() {
-                @Override
-                public void run() {
-                    ShipWheelMenu.openMenu(player, wheelData);
-                }
-            }.runTaskLater(plugin, 1L);
+            reopenWheelMenuLater(player, wheelData.getWheelId());
         }
+    }
+
+    /**
+     * Close the wheel menu and reopen it a tick later, by id.
+     *
+     * <p>The single reopen path. Every caller here has just run an action that can DEREGISTER the wheel it is
+     * about to reopen — {@code verifyWheelLanded} drops the record when a wheel does not land where it was
+     * expected, and the protected-anchor arm of {@code disassembleShip} drops it deliberately — and both of
+     * those still return {@code true}, so the reopen fires. Resolving the id inside the task rather than
+     * capturing the record is what stops the menu coming back attached to an object the manager has already
+     * forgotten.
+     *
+     * <p>No message on the stale path: the action itself has already reported what happened, and the menu
+     * simply not reappearing is the honest outcome. This method does NOT touch {@code pendingMenuReopen} —
+     * {@code onShipWheelMenuClose} clears it, unconditionally, when the closeInventory below fires its
+     * close event; an earlier javadoc here claimed the clearing as this method's job, which it never was.
+     */
+    private void reopenWheelMenuLater(Player player, java.util.UUID wheelId) {
+        player.closeInventory();
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (!player.isOnline()) return;
+            ShipWheelData live = ((BlockShipsPlugin) plugin).getShipWheelManager().getWheelById(wheelId);
+            if (live == null) return;
+            ShipWheelMenu.openMenu(player, live);
+        }, 1L);
+    }
+
+    /**
+     * Whether this menu action may act on this wheel here.
+     *
+     * <p>Gates the ACTIONS rather than the menu, on purpose. Refusing to open would tell the player nothing
+     * about which action was the problem, and would make a ship parked in a spawn or market region — a region
+     * its owner is deliberately not a member of — permanently uncontrollable. Reads stay open.
+     *
+     * <p>{@code ASSEMBLE} is absent because {@code assembleShip} already runs a per-cell WorldGuard check over
+     * the whole detected hull, which is strictly stronger than anything that could be checked here; adding a
+     * second anchor-cell-only test would refuse assemblies the real gate allows.
+     *
+     * <p>The {@code mightRestrict} pre-check is not an optimisation — {@code isBuildDenied} answers
+     * "not explicitly allowed", so calling it unguarded denies everywhere in a world with region support off.
+     */
+    private boolean menuActionAllowed(Player player, ShipWheelData wheelData, ShipWheelMenu.MenuAction action) {
+        if (!isRegionGated(action)) return true;
+
+        // WHICH CELL. This used to be wheelData.getBlockLocation() unconditionally — the DOCK, which is fixed
+        // for the entire voyage and is exactly the wrong cell for four of these five actions. A ship launched
+        // from a region its owner cannot build in became permanently uncontrollable EVERYWHERE, and a ship
+        // sailed INTO a protected region stayed fully controllable there. The check has to follow the ship.
+        //
+        // TOGGLE_LOCK is the exception and genuinely wants the dock: locking is docked-only and writes glue
+        // offsets into the wheel block standing there.
+        org.bukkit.Location cell = wheelData.getBlockLocation();
+        if (action != ShipWheelMenu.MenuAction.TOGGLE_LOCK) {
+            ShipInstance ship = ((BlockShipsPlugin) plugin).getShipWheelManager()
+                .resolveWheelState(wheelData).ship();
+            // Fall back to the dock rather than failing open. ship() is null for UNLOADED_RECOVERABLE and
+            // ORPHAN, and vehicle can be invalid, so "no live ship" is a reachable state for a wheel whose
+            // menu is open — and an ungated action is worse than one gated on a stale-but-real cell.
+            if (ship != null && ship.vehicle != null && ship.vehicle.isValid()) {
+                cell = ship.vehicle.getLocation();
+            }
+        }
+
+        // liveWorld, not getWorld(): the latter throws once the world is unloaded, and this runs on a click.
+        org.bukkit.World world = anon.def9a2a4.blockships.util.LocationUtil.liveWorld(cell);
+        if (world == null) return true;   // nothing to check it against
+        anon.def9a2a4.blockships.integration.WorldGuardHook wg =
+            anon.def9a2a4.blockships.integration.WorldGuardHook.get();
+        return !wg.mightRestrict(world) || !wg.isBuildDenied(cell, player);
+    }
+
+    /**
+     * Which menu actions are subject to a region build check.
+     *
+     * <p>Split out from {@link #menuActionAllowed} so it is a pure function of the action and can be pinned
+     * by a unit test — the set is a decision table, and the failure mode of getting it wrong is silent in
+     * both directions (an over-gated action refuses an owner in their own region; an under-gated one hands a
+     * passer-by a tool).
+     *
+     * <p><b>DISASSEMBLE must stay in the set.</b> It looks like it could be dropped — surely the per-cell
+     * placement policy refuses protected cells anyway? It does not: under force the policy DEGRADES TO
+     * DROPPING THE BLOCKS AS ITEMS rather than refusing, so without this gate a passer-by could force-
+     * disassemble someone's ship inside a region they cannot build in and convert the whole hull to ground
+     * items.
+     *
+     * <p><b>ASSEMBLE must stay out.</b> Assembly is gated per-cell at the scan, which is strictly finer than
+     * a single check at the wheel.
+     */
+    static boolean isRegionGated(ShipWheelMenu.MenuAction action) {
+        // Exhaustive on purpose — NO default arm. This is a switch expression over an enum, so the
+        // compiler refuses to build until a newly added MenuAction is placed in one of these lists;
+        // a default would let it silently opt out of region gating instead. (A test used to claim to
+        // catch that; with a default present it provably could not.)
+        return switch (action) {
+            case ALIGN, DISASSEMBLE, FORCE_DISASSEMBLE, TOGGLE_LOCK, FIRE_CANNONS -> true;
+            case HELP, INFO, DETECT, HIGHLIGHT_SEATS,
+                 CAMERA_DISTANCE_DECREASE, CAMERA_DISTANCE_INCREASE, ASSEMBLE, NONE -> false;
+        };
     }
 
     /**
@@ -2118,7 +2676,10 @@ public class DisplayShip implements Listener {
         }
 
         ShipWheelMenu.ShipWheelMenuHolder holder = (ShipWheelMenu.ShipWheelMenuHolder) event.getInventory().getHolder();
-        ShipWheelData wheelData = holder.getWheelData();
+        // By id, like the click handler: a menu closing because its wheel was just destroyed has nothing left
+        // to clear, and reaching through a detached record to clear state on it is pointless at best.
+        ShipWheelData wheelData = ((BlockShipsPlugin) plugin).getShipWheelManager()
+            .getWheelById(holder.getWheelId());
         if (wheelData != null) {
             // Only clear conflicts if the menu isn't about to reopen (for force disassemble option)
             if (!wheelData.isPendingMenuReopen()) {
@@ -2151,6 +2712,9 @@ public class DisplayShip implements Listener {
         newValue = Math.max(4f, Math.min(32f, newValue));  // Clamp to valid range
 
         wheelData.setCameraDistance(newValue);
+        // Persist now. Every other mutating wheel path saves immediately; this one didn't, so a crash
+        // (or any shutdown that skips onDisable) silently reverted the player's setting.
+        ((BlockShipsPlugin) plugin).getShipWheelManager().saveAll();
 
         // Update all seat shulkers immediately (so change takes effect if player is riding)
         for (Shulker shulker : ship.seatShulkers) {
@@ -2213,7 +2777,8 @@ public class DisplayShip implements Listener {
     @EventHandler(priority = org.bukkit.event.EventPriority.HIGHEST)
     public void onShipWheelBreak(BlockBreakEvent event) {
         Block block = event.getBlock();
-        if (!isShipWheelBlock(block)) return;
+        ShipWheelData wheelData = resolveWheelBlock(block);
+        if (wheelData == null) return;
 
         // Respect a break already cancelled by another protection plugin (GriefPrevention/Towny/etc.):
         // leave the wheel intact instead of manually breaking + dropping it.
@@ -2232,243 +2797,33 @@ public class DisplayShip implements Listener {
         event.setCancelled(true);
 
         ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
-        ShipWheelData wheelData = manager.getWheelAt(block.getLocation());
 
-        if (wheelData != null) {
-            // Check if ship is assembled - warn player
-            if (wheelData.isAssembled()) {
-                Player player = event.getPlayer();
-                player.sendMessage("§cWarning: Breaking this wheel will destroy the assembled ship!");
-            }
+        // No isAssembled() warning here: assembly airs the wheel out of the world, so a BlockBreakEvent can
+        // never fire on an assembled wheel's cell. Under the old location keying that branch WAS reachable —
+        // by planting a head on the vacated cell — which was the user-visible face of the impersonation bug.
 
-            // Remove wheel (this also destroys the ship if assembled)
-            manager.removeWheel(block.getLocation());
+        // Remove wheel (this also destroys the ship if assembled). removeWheel neither airs the block nor
+        // drops the item, because this handler does both itself just below.
+        manager.removeWheel(wheelData);
 
-            // Manually remove the block since we cancelled the event
-            block.setType(Material.AIR);
+        // Tell corelib the block is going, because our own cancel above guarantees it will never find out.
+        // corelib cleans up its location index from a MONITOR + ignoreCancelled BlockBreakEvent handler; we
+        // cancel at HIGHEST, which runs first, so that handler is skipped on EVERY tracked wheel break and
+        // the entry leaks. Must run BEFORE setType(AIR) — it reads the block's type PDC to identify what it
+        // is removing, and an air block carries nothing.
+        //
+        // Safe against re-entry: this dispatches the type's own onBlockRemoved callback, which calls back
+        // into onEngineRemovedWheelBlock — but removeWheel above has already dropped the record, so the
+        // re-entrant lookup finds nothing and returns.
+        anon.def9a2a4.blockships.customships.ShipWheelBlockType.notifyRemoved(block);
 
-            // Drop ship wheel item
-            World world = block.getWorld();
-            ItemStack wheelItem = createShipWheelItem();
-            world.dropItemNaturally(block.getLocation(), wheelItem);
-        }
-    }
-
-    // ===== Engine Menu GUI event handlers =====
-
-    @EventHandler
-    public void onEngineMenuClick(InventoryClickEvent event) {
-        if (!(event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder)
-            && !(event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineBlockMenuHolder)) return;
-
-        // Block double-click collect (could pull non-fuel items from player inventory)
-        if (event.getClick() == org.bukkit.event.inventory.ClickType.DOUBLE_CLICK) {
-            event.setCancelled(true);
-            return;
-        }
-
-        int slot = event.getRawSlot();
-        // Allow fuel slot interactions, block everything else in the top inventory
-        if (slot >= 0 && slot < 9) {
-            if (!anon.def9a2a4.blockships.customships.EngineMenuGUI.isFuelSlot(slot)) {
-                event.setCancelled(true);
-                // Click-to-refresh on status slot
-                if (slot == anon.def9a2a4.blockships.customships.EngineMenuGUI.STATUS_SLOT) {
-                    if (event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder holder) {
-                        anon.def9a2a4.blockships.customships.EngineMenuGUI.saveFuelState(holder);
-                        anon.def9a2a4.blockships.customships.EngineMenuGUI.refreshStatus(holder);
-                    }
-                }
-                return;
-            }
-
-            // Block number-key hotbar swaps with non-fuel items
-            if (event.getClick() == org.bukkit.event.inventory.ClickType.NUMBER_KEY) {
-                org.bukkit.entity.Player player = (org.bukkit.entity.Player) event.getWhoClicked();
-                ItemStack hotbarItem = player.getInventory().getItem(event.getHotbarButton());
-                if (hotbarItem != null && hotbarItem.getType() != Material.AIR
-                        && !anon.def9a2a4.blockships.customships.EngineMenuGUI.isValidFuel(hotbarItem.getType())) {
-                    event.setCancelled(true);
-                    return;
-                }
-            }
-
-            // Validate fuel: if placing an item via cursor, check it's valid fuel
-            ItemStack cursor = event.getCursor();
-            if (cursor != null && cursor.getType() != Material.AIR) {
-                if (!anon.def9a2a4.blockships.customships.EngineMenuGUI.isValidFuel(cursor.getType())) {
-                    event.setCancelled(true);
-                }
-            }
-        }
-        // Block shift-clicks from player inventory that would move non-fuel items into engine GUI
-        if (event.isShiftClick() && slot >= 9) {
-            ItemStack clicked = event.getCurrentItem();
-            if (clicked != null && !anon.def9a2a4.blockships.customships.EngineMenuGUI.isValidFuel(clicked.getType())) {
-                event.setCancelled(true);
-            }
-        }
-    }
-
-    @EventHandler
-    public void onEngineMenuDrag(org.bukkit.event.inventory.InventoryDragEvent event) {
-        if (!(event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder)
-            && !(event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineBlockMenuHolder)) return;
-
-        // Check if any dragged slots are in the top inventory (engine GUI)
-        for (int rawSlot : event.getRawSlots()) {
-            if (rawSlot >= 0 && rawSlot < 9) {
-                // If dragging into a non-fuel slot, or dragging a non-fuel item, cancel
-                if (!anon.def9a2a4.blockships.customships.EngineMenuGUI.isFuelSlot(rawSlot)
-                        || !anon.def9a2a4.blockships.customships.EngineMenuGUI.isValidFuel(event.getOldCursor().getType())) {
-                    event.setCancelled(true);
-                    return;
-                }
-            }
-        }
-    }
-
-    @EventHandler
-    public void onEngineMenuClose(InventoryCloseEvent event) {
-        if (event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineMenuHolder holder) {
-            anon.def9a2a4.blockships.customships.EngineMenuGUI.saveFuelState(holder);
-            // Recompute stats immediately so fuel changes take effect without waiting for movement
-            holder.getShip().physics.recomputeStats();
-        } else if (event.getInventory().getHolder() instanceof anon.def9a2a4.blockships.customships.EngineMenuGUI.EngineBlockMenuHolder blockHolder) {
-            anon.def9a2a4.blockships.customships.EngineMenuGUI.saveBlockFuelState(blockHolder);
-        }
-    }
-
-    // ===== Ship Engine event handlers =====
-
-    /**
-     * Opens custom fuel GUI instead of vanilla blast furnace UI on placed ship engines.
-     */
-    @EventHandler
-    public void onRightClickPlacedEngine(PlayerInteractEvent event) {
-        if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
-        if (event.getClickedBlock() == null) return;
-        if (event.getClickedBlock().getType() != Material.BLAST_FURNACE) return;
-        if (!isShipEngine(event.getClickedBlock())) return;
-
-        event.setCancelled(true);
-        anon.def9a2a4.blockships.customships.EngineMenuGUI.openForBlock(event.getPlayer(), event.getClickedBlock());
-    }
-
-    private static final String ENGINE_PDC_VALUE = "ship_engine";
-
-    /**
-     * Transfers PDC tag from a ship engine item to the placed block's TileState.
-     * Bukkit doesn't auto-transfer item PDC to blocks, so we do it manually.
-     */
-    @EventHandler
-    public void onPlaceShipEngine(BlockPlaceEvent event) {
-        // WorldGuard already blocks the underlying placement natively (this is a real BlockPlaceEvent);
-        // if it was cancelled, don't tag a block that won't exist.
-        if (event.isCancelled()) return;
-        ItemStack item = event.getItemInHand();
-        if (item.getType() != Material.BLAST_FURNACE || !item.hasItemMeta()) return;
-
-        PersistentDataContainer itemPdc = item.getItemMeta().getPersistentDataContainer();
-        NamespacedKey itemIdKey = new NamespacedKey(plugin, "custom_item_id");
-        String itemId = itemPdc.get(itemIdKey, PersistentDataType.STRING);
-        if (!ENGINE_PDC_VALUE.equals(itemId)) return;
-
-        // Transfer PDC to block TileState
-        Block block = event.getBlockPlaced();
-        org.bukkit.block.BlockState state = block.getState();
-        if (state instanceof org.bukkit.block.TileState tileState) {
-            tileState.getPersistentDataContainer().set(itemIdKey, PersistentDataType.STRING, ENGINE_PDC_VALUE);
-            tileState.update();
-        }
-    }
-
-    /**
-     * Prevents ship engines from burning fuel via vanilla smelting mechanics.
-     */
-    @EventHandler
-    public void onEngineFurnaceBurn(FurnaceBurnEvent event) {
-        if (isShipEngine(event.getBlock())) {
-            event.setCancelled(true);
-        }
-    }
-
-    /**
-     * Prevents ship engines from smelting items via vanilla mechanics.
-     */
-    @EventHandler
-    public void onEngineFurnaceSmelt(FurnaceSmeltEvent event) {
-        if (isShipEngine(event.getBlock())) {
-            event.setCancelled(true);
-        }
-    }
-
-    /**
-     * Drops the custom ship engine item when a player breaks an engine block.
-     * Without this, breaking drops a vanilla blast furnace (losing PDC tag and glint).
-     */
-    @EventHandler(priority = org.bukkit.event.EventPriority.HIGHEST)
-    public void onBreakShipEngine(BlockBreakEvent event) {
-        Block block = event.getBlock();
-        if (!isShipEngine(block)) return;
-
-        // Respect a break already cancelled by another protection plugin (GriefPrevention/Towny/etc.):
-        // leave the engine intact instead of manually breaking + handing back the item.
-        if (event.isCancelled()) return;
-
-        // WorldGuard: this handler cancels + manually breaks the block and hands back the engine item, so
-        // it would otherwise fire even when WG denied the break. Respect build rights: leave it intact.
-        anon.def9a2a4.blockships.integration.WorldGuardHook wgEngine = anon.def9a2a4.blockships.integration.WorldGuardHook.get();
-        if (wgEngine.mightRestrict(block.getWorld()) && wgEngine.isBuildDenied(block.getLocation(), event.getPlayer())) {
-            event.getPlayer().sendMessage("§cYou can't break this ship engine in this protected region.");
-            event.setCancelled(true);  // self-cancel; don't rely on WorldGuard's own handler firing
-            return;
-        }
-
-        event.setCancelled(true);
+        // Manually remove the block since we cancelled the event
         block.setType(Material.AIR);
-        block.getWorld().dropItemNaturally(
-            block.getLocation().add(0.5, 0.5, 0.5),
-            itemFactory.createItem("ship_engine", "_DEFAULT", null));
-    }
 
-    /**
-     * Handles explosions destroying ship engine blocks - drops custom item instead of vanilla.
-     */
-    @EventHandler
-    public void onEngineExplode(org.bukkit.event.entity.EntityExplodeEvent event) {
-        handleExplosionEngineDrops(event.blockList());
-    }
-
-    @EventHandler
-    public void onEngineBlockExplode(org.bukkit.event.block.BlockExplodeEvent event) {
-        handleExplosionEngineDrops(event.blockList());
-    }
-
-    private void handleExplosionEngineDrops(java.util.List<Block> blockList) {
-        java.util.Iterator<Block> it = blockList.iterator();
-        while (it.hasNext()) {
-            Block block = it.next();
-            if (isShipEngine(block)) {
-                it.remove();  // Prevent vanilla blast furnace drop
-                block.setType(Material.AIR);
-                block.getWorld().dropItemNaturally(
-                    block.getLocation().add(0.5, 0.5, 0.5),
-                    itemFactory.createItem("ship_engine", "_DEFAULT", null));
-            }
-        }
-    }
-
-    /**
-     * Checks if a block is a ship engine (blast furnace with engine PDC tag).
-     */
-    private boolean isShipEngine(Block block) {
-        if (block.getType() != Material.BLAST_FURNACE) return false;
-        org.bukkit.block.BlockState state = block.getState();
-        if (!(state instanceof org.bukkit.block.TileState tileState)) return false;
-        NamespacedKey itemIdKey = new NamespacedKey(plugin, "custom_item_id");
-        return ENGINE_PDC_VALUE.equals(
-            tileState.getPersistentDataContainer().get(itemIdKey, PersistentDataType.STRING));
+        // Drop ship wheel item
+        World world = block.getWorld();
+        ItemStack wheelItem = createShipWheelItem();
+        world.dropItemNaturally(block.getLocation(), wheelItem);
     }
 
     /**

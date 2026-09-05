@@ -1,11 +1,38 @@
+# Bumped by ConfigMigration when a shipped default changes. Do not edit by hand.
+# Keep in step with ConfigMigration.CURRENT_VERSION: a fresh install already HAS every current default,
+# so shipping a lower number here just makes the plugin re-save this file on its first boot for nothing.
+config-version: 2
+
 # BlockShips Plugin Configuration
 
-# Set to false to disable outdated resource file warnings on startup
+# Set to false to stop the startup warning about a config/ override drifting behind the bundled
+# defaults. It does NOT silence warnings about files the plugin cannot read or is not reading at all
+# - those mean your edits are being ignored, which you always want to hear about.
 warn-config-mismatch: true
 
-# Whether ship blocks emit dynamic light (requires DynLight plugin)
-# https://github.com/def9a2a4/DynLight
-ship-lights: true
+# ---------------------------------------------------------------------------
+# Customizing blocks.yml, items.yml and the prefab ship models
+#
+# These are NOT written to this folder. They are read from inside the plugin
+# jar, so that every update ships current defaults (a copy extracted years ago
+# would hide newly-supported blocks). To customize one, copy it out of the jar
+# into a "config" subfolder next to this file:
+#
+#     plugins/BlockShips/config/blocks.yml
+#
+#     unzip -o BlockShips-*.jar blocks.yml -d plugins/BlockShips/config/
+#
+# A file at the plugin folder ROOT (plugins/BlockShips/blocks.yml) is IGNORED.
+#
+# An override REPLACES the bundled file - the two are not merged. Copy the
+# whole file rather than writing a fragment, and re-check it after plugin
+# updates; the startup log warns when yours is missing entries the bundled
+# default has.
+#
+# This file (config.yml) works the other way round: it IS read from disk, from
+# the plugin folder root, right here. A copy under config/ is read by nothing.
+# ---------------------------------------------------------------------------
+
 
 # Integrations with other plugins
 plugins:
@@ -48,7 +75,6 @@ recipe-unlock:
 
 # Custom block ships configuration (assembled from ship wheels)
 custom-ships:
-  display-offset: [0, -2, 0]  # Offset for BlockDisplay entities (compensates for ArmorStand base height)
   collision-offset: [0.5, 0, 0.5]    # Additional offset for collision boxes
   assembly-nudge-height: 0.2  # Teleport nearby players up by this amount on assemble/disassemble (0 to disable)
   max-ship-size: 1000  # Maximum number of blocks in a custom ship
@@ -77,27 +103,100 @@ custom-ships:
     damping: 0.5
 
   # Ship stats (power-to-mass ratio system)
-  # Sails and engines provide power points; block weights provide mass.
+  # Sails provide power points; block weights provide mass.
   # ratio = power / mass determines ship performance.
   stats:
     # Master switch for the power-to-mass ratio system.
-    # true  = custom ships scale speed/rotation by sails, engines, and mass
+    # true  = custom ships scale speed/rotation by sails and mass (default)
     # false = custom ships ignore composition and use the fixed default stats below
-    #         (sails and engines become cosmetic; restores pre-stats behavior) (default)
-    # NOTE: disabled by default pending a rework of the stats system in a future update.
+    #         (sails become cosmetic; restores pre-stats behavior)
+    # This was previously off "pending a rework of the stats system". That rework has landed — sail
+    # tiers, propulsion blocks and the three-ratio model below — so it now defaults on. Existing
+    # servers are upgraded once, and only if they never turned it on themselves.
     # Feedback on ship stats balance and functionality welcome: https://github.com/def9a2a4/BlockShips/issues/18
-    enabled: false
+    enabled: true
     # Free power points every ship gets (ensures even tiny ships have some base ratio)
     base-power: 2
-    # Power points per fueled engine (unfueled engines contribute 0)
-    engine-power: 30
     # Power points per wool block used as sail
     wool-power: 3
     # Power points per banner block used as sail
     banner-power: 7
-    # Multiplier for fuel burn duration (2.0 = fuel lasts twice as long)
-    fuel-burn-multiplier: 1.0
-    # Sail contribution capped at this ratio (engines needed to push past it)
+    # Power points per LARGE / HUGE banner (defCoreLib bbanners). These are display entities attached
+    # to a host block rather than blocks of their own, so they are found by an entity query, not by
+    # material. Worth much more than a plain banner — roughly by rendered area.
+    large-banner-power: 20
+    huge-banner-power: 50
+    # Performance is three independent ratios, not one:
+    #   forward = capped sails + thrust pointing along the hull   -> speed, acceleration
+    #   turn    = thrust across the hull + gyroscopes, plus sails scaled by current speed
+    #             (a rudder needs flow)                           -> turn rate
+    #   lift    = thrust pointing down, against SIGNED weight     -> flight
+    # Sails still plateau at sail-cap-ratio, so propulsion is what closes the last gap.
+    #
+    # Free turning points every ship gets, so a bare hull can still steer a little.
+    base-turn: 2
+    # How much sail power aids turning. Multiplied by current speed / top speed, so sails do nothing
+    # for a stationary ship — that is what reaction wheels and side thrusters are for.
+    sail-turn-factor: 0.5
+    # Ticks for thrust to ramp UP from cold. Rotation power is all-or-nothing, so without this an engine
+    # running dry would cut every propeller in the same tick and drop a flying ship like a stone.
+    # Spooling DOWN is not the same length: the step scales with the current thrust, so it decays rather
+    # than ramping, and a big propeller bank takes several times this to reach zero (at 40, a 250-thrust
+    # bank needs about 259 ticks). That is intended — raise this to glide longer, lower it to stop harder.
+    thrust-spool-ticks: 40
+    # ── Flight ────────────────────────────────────────────────────────────────────────────────────
+    # Two separate questions, deliberately kept apart:
+    #   "can it hold itself up?"  -> lift = downward thrust vs SIGNED weight. 1.0 = neutral.
+    #                                Below 1.0 you cannot climb at all; how far below sets fall speed.
+    #                                A lighter-than-air hull starts at 1.0 for free.
+    #   "how fast does it move up/down?" -> the vertical ratio: buoyancy + sails + vertical thrust.
+    # So lift decides WHETHER you fly, the vertical ratio decides HOW FAST — a heavy helicopter can
+    # have a high ceiling and no permission to use it, and a balloon gains speed from adding fans.
+    #
+    # How fast a ship falls when it cannot hold itself up. Sink rate is
+    # max-sink-speed * (1 - lift)^sink-speed-exponent, so it is driven by how much lift is MISSING.
+    # 0.5 = 10 blocks/sec at zero lift. Values above 0.08 / (1 - vertical-drag) = 0.8 do nothing,
+    # because vertical drag becomes the limit first and the curve flattens out.
+    max-sink-speed: 0.5
+    # Shape of that curve. BELOW 1.0 makes a small shortfall immediately noticeable while keeping the
+    # badly-under-powered end well spread out; above 1.0 forgives near-misses and lumps everything
+    # worse than about half lift into one plummet. At 0.7: lift 0.99 drifts down at 0.4 blocks/sec,
+    # 0.9 sinks at 2, 0.5 at 6, 0 falls at 10 — every step stays distinguishable.
+    # (Note this runs OPPOSITE to the old lift-falloff-exponent it replaces: raising this is gentler.)
+    sink-speed-exponent: 0.7
+    # Holding Space with less than 1.0 lift cannot gain altitude — it points what thrust there is
+    # downward and slows the fall to this fraction of its free rate. Scaled by how much lift you have,
+    # so a ship with none gets no help at all.
+    lift-hold-sink-factor: 0.35
+    # Only SURPLUS lift climbs. Lift this far above 1.0 earns the full vertical speed; less climbs
+    # proportionally slower, and lift at or below 1.0 holds altitude but never gains any. Scales the
+    # ceiling rather than the acceleration, so a marginal ship still feels responsive — it just does
+    # not go anywhere fast.
+    climb-surplus-full: 0.25
+    # How much sail power feeds vertical SPEED (not lift). Sails catching air is what makes a rigged
+    # airship rise faster than a bare one; it never lets a heavy hull fly, since that is lift's job.
+    sail-vertical-factor: 0.5
+    # Thrust points per defCoreLib propulsion block, counted only while the block is actually powered
+    # (or, for the thruster, burning). Which stat a block feeds depends on how it is mounted: along
+    # the hull adds speed, across it adds turn rate, and flat adds lift. A reaction wheel always feeds
+    # turn rate whichever way it sits.
+    #
+    # Scale: these are compared against block WEIGHT (blocks.yml), where oak is 2. A huge propeller at
+    # 250 therefore lifts roughly a 125-block oak hull on its own — that is the "helicopter" budget,
+    # and it is what makes a heavier-than-air flier buildable rather than theoretical.
+    #
+    # KEEP IN SYNC with ShipThrust.DEFAULT_THRUST. These are read as
+    # getConfig().getInt(path, DEFAULT_THRUST), so whatever is written here WINS and the Java defaults
+    # only apply to a config that predates the key. Changing one and not the other means a fresh
+    # install and an upgraded server quietly play different games.
+    thrust:
+      fan: 10
+      propeller: 32
+      large-propeller: 100
+      huge-propeller: 250
+      thruster: 50
+      reaction-wheel: 10
+    # Sail contribution capped at this ratio
     sail-cap-ratio: 0.8
     # Ratio that maps to current default stats (0.55 max speed, 1.5 rotation, etc.)
     default-ratio: 0.7
@@ -115,9 +214,8 @@ custom-ships:
     cap-rotation-speed: -1
     cap-rotation-acceleration: -1
     cap-rotation-deceleration: -1
-    # Airship vertical stat scaling (density magnitude + engines)
+    # Airship vertical stat scaling (density magnitude)
     vertical-density-scale: 0.3
-    vertical-engine-scale: 0.01
     floor-max-vertical-speed: 0.03
     floor-vertical-acceleration: 0.01
     cap-max-vertical-speed: 0.5
@@ -153,7 +251,7 @@ physics:
   movement-threshold: 0.001
   # Minimum rotation (degrees) required to update armor stands and displays
   rotation-threshold: 0.001
-  # Radius in blocks to check for nearby players (for unmanned drag detection)
+  # Fallback radius in blocks for carrying riders up when a ship's collision radius is not yet known
   player-proximity-radius: 2.0
   # Display entity transform interpolation duration in ticks (1-4, default: 2)
   # Controls rotation/scale smoothing. Position follows vehicle instantly.
@@ -241,21 +339,9 @@ custom-items:
       result-item: PLAYER_HEAD
       result-texture-set: SHIP_WHEEL_SET
 
-  ship_engine:
-    display-name: "Ship Engine"
-    base-material: BLAST_FURNACE
-    enchant-glint: true
-    stackable: true
-    recipe:
-      pattern:
-        - "CCC"
-        - "CBC"
-        - "CCC"
-      ingredients:
-        C: [COPPER_INGOT]
-        B: [BLAST_FURNACE]
-      result-name: "Ship Engine"
-      result-item: BLAST_FURNACE
+  # (The old `ship_engine` item lived here. The experimental ship-engine subsystem was removed, and
+  # the item outlived it as a craftable blast furnace that nothing read. Propulsion now comes from
+  # defCoreLib's rotation blocks — propellers, thrusters and reaction wheels.)
 
   captains_manual:
     display-name: "Captain's Manual"
@@ -310,10 +396,9 @@ ships:
       active-deceleration: 0.025
       # Mounted drag: Speed multiplier when driver aboard but not pressing W/S (multiplicative)
       mounted-drag: 0.995
-      # Unmanned drag: Speed multiplier when players nearby but not driving (multiplicative)
-      unmanned-drag: 0.99
-      # Idle drag: Speed multiplier when no players nearby (multiplicative)
-      idle-drag: 0.98
+      # No-driver drag: Speed multiplier whenever nobody is driving (multiplicative).
+      # Replaces the old unmanned-drag/idle-drag pair, which were selected by player proximity.
+      no-driver-drag: 0.98
       # Minimum movement threshold: Below this speed, ship stops completely (prevents creeping)
       min-movement-threshold: 0.01
 
@@ -389,8 +474,7 @@ ships:
       acceleration: 0.02
       active-deceleration: 0.025
       mounted-drag: 0.995
-      unmanned-drag: 0.99
-      idle-drag: 0.98
+      no-driver-drag: 0.98
       min-movement-threshold: 0.01
 
       rotation-speed: 1.5
@@ -439,8 +523,7 @@ ships:
       acceleration: 0.015
       active-deceleration: 0.02
       mounted-drag: 0.995
-      unmanned-drag: 0.99
-      idle-drag: 0.98
+      no-driver-drag: 0.98
       min-movement-threshold: 0.01
 
       rotation-speed: 1.2

@@ -4,6 +4,7 @@ version: ${version}
 api-version: 1.21
 author: def9a2a4
 description: Rideable display entity ships with collision and persistence.
+depend: [DefCoreLib]
 softdepend: [ProtocolLib, WorldGuard]
 
 commands:

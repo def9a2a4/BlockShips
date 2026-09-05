@@ -251,6 +251,23 @@ class CustomItemIngredient implements RecipeIngredient {
             return new RecipeChoice.MaterialChoice(Material.PLAYER_HEAD);
         }
 
+        // The ship wheel matches on MATERIAL ONLY, deliberately, unlike every other custom item below.
+        //
+        // An ExactChoice is compared by full item components (Bukkit maps it to Ingredient.ofStacks, whose
+        // backing set is keyed on type AND components — the PDC included). The wheel now exists in more than
+        // one mint: BlockShips' own, and defCoreLib's, which drops from an explosion or `/defcorelib give`
+        // and carries corelib's identity key but none of ours. An ExactChoice built from CustomItem.create
+        // therefore silently rejects the corelib mint — and would reject any future mint the moment a PDC key
+        // is added anywhere. The failure is invisible: the recipe does not misbehave, it never engages, so
+        // even the re-validation in DisplayShip.onCraftShipKit never runs.
+        //
+        // Matching on the material and letting that re-validation decide (via isShipWheel, which knows about
+        // every mint) removes that whole class of breakage. The cost is that the recipe book renders a blank
+        // player head in this slot rather than the textured wheel.
+        if ("ship_wheel".equals(customItemId)) {
+            return new RecipeChoice.MaterialChoice(Material.PLAYER_HEAD);
+        }
+
         // Build an ExactChoice over every craftable variant of this custom item so the recipe book
         // renders the real (textured) item in the ingredient slot - e.g. actual balloons for the airship
         // instead of blank player heads - and matches it by full meta. (PrepareItemCraftEvent still does

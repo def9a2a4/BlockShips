@@ -21,6 +21,8 @@ const {
   steerShip,
   cleanup,
   clickWheelMenu,
+  clearChat,
+  waitForChat,
   disassembleViaWheelMenu,
   markServerLog,
   scanServerErrorsSince,
@@ -31,10 +33,11 @@ const {
 // Configuration
 const INTERACTIVE = process.argv.includes('--interactive')
 
-// Tests to skip on specific MC versions (key = version, value = array of test key substrings)
-const VERSION_SKIPS = {
-  '1.21.4': ['smallship']
-}
+// Tests to skip on specific MC versions (key = version, value = array of test key substrings).
+// The old '1.21.4': ['smallship'] entry was dead — nothing runs this suite on 1.21.4 (getVersion()'s
+// fallback is 1.21.1 and the Makefile/CI run 1.21.1/1.21.11/26.x) — unlike chunk-test's 1.21.1 entry,
+// which IS live for local runs.
+const VERSION_SKIPS = {}
 
 // Runway coordinates
 const RUNWAY_X = 0
@@ -174,7 +177,15 @@ async function runControlSequence(startPos) {
     log(`Dismount error: ${e.message}`)
   }
 
-  // Use player position after dismount (more reliable than vehicle position)
+  // Use player position after dismount (more reliable than vehicle position).
+  //
+  // The settle wait is load-bearing, not politeness. While the bot is a passenger the server sends it no
+  // position packets, so bot.entity.position is FROZEN at wherever it was when it mounted; the real value
+  // only arrives with the teleport that follows the dismount. customDismount returns the moment bot.vehicle
+  // clears, which is before that packet lands — so reading immediately gave a stale position, and for a ship
+  // that started and ended near the same spot it read as exactly 0.00 movement. A bit-for-bit zero after a
+  // multi-second drive with a gravity drop is the signature of this race, not of a ship that did not move.
+  await new Promise(resolve => setTimeout(resolve, 500))
   const endPos = bot.entity.position.clone()
   const dx = endPos.x - startPos.x
   const dy = endPos.y - startPos.y
@@ -249,8 +260,20 @@ async function testShipControls(shipType) {
     passed = false
   }
 
-  if (dx > -2.0) {
-    fail(shipType, `Expected >=2 blocks westward (negative X), got dX=${dx.toFixed(2)} (moved ${dx > 0 ? 'east' : dx < 0 ? 'west but <2' : 'nowhere'})`)
+  // Directional check on Z (north), NOT X. These ships are driven NORTH — the westward component is a
+  // side effect of the forward+A / back+D turn sequence, not thrust, so asserting on dX was measuring turn
+  // radius and calling it propulsion. The passing runs show the same thing: bigship moves ~40 blocks total
+  // with only ~6 of them west. chunk-test.js was already corrected this way in a1ac6f8.
+  if (dz > -2.0) {
+    fail(shipType, `Expected >=2 blocks northward (negative Z), got dZ=${dz.toFixed(2)} (moved ${dz > 0 ? 'south' : dz < 0 ? 'north but <2' : 'nowhere'})`)
+    passed = false
+  }
+
+  // Heading fence: north must DOMINATE sideways, not merely clear the -2.0 bar — the dZ gate alone would
+  // pass a ship that mostly slid west with a little northward drift, which is what a wrong heading looks
+  // like. Ten real CI data points pass this with >=4.5x margin, so it will not flake on turn-radius drift.
+  if (Math.abs(dx) >= Math.abs(dz)) {
+    fail(shipType, `Sideways movement dominates (|dX|=${Math.abs(dx).toFixed(2)} >= |dZ|=${Math.abs(dz).toFixed(2)}) — the heading is wrong`)
     passed = false
   }
 
@@ -260,7 +283,7 @@ async function testShipControls(shipType) {
   }
 
   if (passed) {
-    pass(`${shipType} (movement=${totalMovement.toFixed(1)}, west=${Math.abs(dx).toFixed(1)}${isAirship ? ', up=' + dy.toFixed(1) : ''})`)
+    pass(`${shipType} (movement=${totalMovement.toFixed(1)}, north=${Math.abs(dz).toFixed(1)}${isAirship ? ', up=' + dy.toFixed(1) : ''})`)
   }
 }
 
@@ -286,8 +309,11 @@ async function testCustomShipBase(testName, buildConfig, isAirship = false) {
 
   say('Assembling ship...')
   try {
+    // clickWheelMenu registers its own windowOpen listener, so start it BEFORE the right-click that
+    // opens the window — otherwise the event can land before anything is listening for it.
+    const menuPromise = clickWheelMenu(bot, log, 'assemble')
     await bot.activateBlock(buildResult.wheelBlock)
-    if (!await clickWheelMenu(bot, log, 'assemble')) {
+    if (!await menuPromise) {
       fail(testName, 'Assembly menu interaction failed')
       return
     }
@@ -324,8 +350,15 @@ async function testCustomShipBase(testName, buildConfig, isAirship = false) {
     passed = false
   }
 
-  if (dx > -2.0) {
-    fail(testName, `Expected >=2 blocks westward (negative X), got dX=${dx.toFixed(2)} (moved ${dx > 0 ? 'east' : dx < 0 ? 'west but <2' : 'nowhere'})`)
+  // Z, not X — see the note in testShipControls above.
+  if (dz > -2.0) {
+    fail(testName, `Expected >=2 blocks northward (negative Z), got dZ=${dz.toFixed(2)} (moved ${dz > 0 ? 'south' : dz < 0 ? 'north but <2' : 'nowhere'})`)
+    passed = false
+  }
+
+  // Heading fence — see the note in testShipControls above.
+  if (Math.abs(dx) >= Math.abs(dz)) {
+    fail(testName, `Sideways movement dominates (|dX|=${Math.abs(dx).toFixed(2)} >= |dZ|=${Math.abs(dz).toFixed(2)}) — the heading is wrong`)
     passed = false
   }
 
@@ -335,7 +368,7 @@ async function testCustomShipBase(testName, buildConfig, isAirship = false) {
   }
 
   if (passed) {
-    pass(`${testName} (movement=${totalMovement.toFixed(1)}, west=${Math.abs(dx).toFixed(1)}${isAirship ? ', up=' + dy.toFixed(1) : ''})`)
+    pass(`${testName} (movement=${totalMovement.toFixed(1)}, north=${Math.abs(dz).toFixed(1)}${isAirship ? ', up=' + dy.toFixed(1) : ''})`)
   }
 }
 
@@ -417,10 +450,48 @@ async function testWeirdBlocksShip() {
   }
   await teleportToRunway()
 
+  // Detect readout, DOCKED. WEIRD_SHIP carries exactly 1 wool and exactly 1 banner, which is what
+  // makes this assertion worth anything: the docked path used to hand-roll the sail string as
+  // `N + " wool, " + M + " banners"`, so it printed the ungrammatical "1 banners" and could not
+  // describe a tier at all, while the assembled path used a tier-aware helper. Both now go through
+  // the same one. If that is reverted, this line reads "1 banners" and the test fails.
+  //
+  // Colour codes do not survive message.toString(), so the pattern must not contain them.
+  //
+  // This does NOT cover the large/huge banner counts, which are the headline of the same fix:
+  // those need the BetterBanners plugin, and CI installs only the defCoreLib core jar. See
+  // TODO.md — that gap is known and accepted, not an oversight here.
+  say('Checking docked detect readout...')
+  clearChat(bot)
+  try {
+    // clickWheelMenu registers its own windowOpen listener as the last thing it does, so start it
+    // BEFORE the right-click that opens the window — otherwise the event can land first and be missed.
+    const menuPromise = clickWheelMenu(bot, log, 'detect')
+    await bot.activateBlock(buildResult.wheelBlock)
+    if (!await menuPromise) {
+      fail(testName, 'Detect menu interaction failed')
+      return
+    }
+  } catch (e) {
+    fail(testName, `Detect failed: ${e.message}`)
+    return
+  }
+  const sailsLine = await waitForChat(bot, /^Sails: /, 5000)
+  if (!sailsLine) {
+    fail(testName, 'Detect printed no Sails line within 5s')
+    return
+  }
+  log(`  detect sails: ${sailsLine}`)
+  if (!/^Sails: 1 wool, 1 banner \(\d+ pts\)$/.test(sailsLine)) {
+    fail(testName, `Docked sail readout wrong: expected "Sails: 1 wool, 1 banner (N pts)", got "${sailsLine}"`)
+    return
+  }
+
   say('Assembling weird ship...')
   try {
+    const menuPromise = clickWheelMenu(bot, log, 'assemble')
     await bot.activateBlock(buildResult.wheelBlock)
-    if (!await clickWheelMenu(bot, log, 'assemble')) {
+    if (!await menuPromise) {
       fail(testName, 'Assembly menu interaction failed')
       return
     }
@@ -430,7 +501,9 @@ async function testWeirdBlocksShip() {
   }
 
   // Full-spawn assertion: the hopper crash makes assembly throw -> destroy() -> ~0 shulkers.
-  const spawned = await waitForShulkers(bot, 50)
+  // Wait for the FULL expected count, not merely one: colliders spawn over several ticks, so a
+  // first-non-empty poll can catch the ship mid-spawn and report a false crash.
+  const spawned = await waitForShulkers(bot, 50, 20, 500, WEIRD_MIN_SHULKERS)
   say(`Ship spawned ${spawned.length} shulkers (need >= ${WEIRD_MIN_SHULKERS})`)
   if (spawned.length < WEIRD_MIN_SHULKERS) {
     fail(testName, `Assembly incomplete: only ${spawned.length} shulkers (need >= ${WEIRD_MIN_SHULKERS}) — likely container-inventory crash`)
@@ -454,6 +527,13 @@ async function testWeirdBlocksShip() {
     fail(testName, `Dismount failed: ${dismountError}`)
     return
   }
+  // NOTE: total movement alone is a weak assertion here. Dismount adds a ~1-block seat offset and the
+  // settle wait lets the player fall, so a ship that never moved can clear 2.0 on its own. The other
+  // two ship tests gate on dZ (these hulls are driven NORTH; steering is ship-relative, and this ship
+  // is built by the same helper with the wheel in the same cell). The same gate belongs here, but this
+  // hull carries 1 wool + 1 banner against custom_ship's 1 wool + 3 banners and no run has ever logged
+  // its per-axis figures — so report dZ now, read it from a real run, and set the threshold from that
+  // rather than assuming custom_ship's -2.0 transfers.
   if (totalMovement < 2.0) {
     fail(testName, `Insufficient movement (total=${totalMovement.toFixed(2)}, need >=2)`)
     return
@@ -522,7 +602,7 @@ async function testWeirdBlocksShip() {
     return
   }
 
-  pass(`${testName} (shulkers=${spawned.length}, movement=${totalMovement.toFixed(1)}, coal=${coalInHopper})`)
+  pass(`${testName} (shulkers=${spawned.length}, movement=${totalMovement.toFixed(1)}, north=${Math.abs(dz).toFixed(1)}, coal=${coalInHopper})`)
 }
 
 // Scan a small cube around `center` for the first block whose name matches `blockName`.
@@ -567,6 +647,238 @@ async function readContainerItemCount(bot, block, itemName) {
 }
 
 // =============================================================================
+// Wheel Security Scenarios (manual — user-run via `.testbot <key>` or `--only=<key>`)
+// =============================================================================
+//
+// These verify the wheel-identity gates from the OUTSIDE: what an ordinary player standing at a
+// sailing ship's vacated dock can and cannot do. They are `manual: true` — runAllTests skips them —
+// because each spends deliberate multi-second negative waits (a menu that must NOT open) and the CI
+// suite runs under a hard process timeout.
+//
+// Each scenario builds at its OWN X on the runway: wheel records accumulate at reused cells across
+// runs (`killentities` nulls links but keeps records, and by-cell lookups are first-match), so all
+// record assertions are COUNT DELTAS anchored on this run's own wheel uuid — and wheel_reserved
+// leaves its /setblock support stone behind, which must not sit flood-fill-adjacent to another
+// scenario's build.
+
+const WHEEL_RESERVED_X = -8
+const WHEEL_DECOY_X = 8
+
+/** Record count from `/blockships wheels list`'s header line, or -1 if it never arrived. */
+async function wheelRecordCount() {
+  clearChat(bot)
+  bot.chat('/blockships wheels list')
+  const header = await waitForChat(bot, /ship wheel\(s\):/, 5000)
+  if (!header) return -1
+  const m = header.match(/(\d+) ship wheel\(s\):/)
+  return m ? parseInt(m[1], 10) : -1
+}
+
+/** Build + assemble a custom ship at centerX; returns { cell, wheelId, recordsBefore, shulkers } or null (already failed). */
+async function buildAndAssembleAt(testName, centerX) {
+  await cleanup(bot)
+  await teleportToRunway()
+  await clearInventory(bot)
+
+  const build = await buildCustomShipWithWheel(bot, CUSTOM_SHIP, centerX, 101, RUNWAY_Z - 1)
+  if (!build.success) { fail(testName, `setup: ${build.error}`); return null }
+  const cell = build.wheelBlock.position.clone()
+
+  // Capture THIS wheel's uuid while it still stands: later assertions anchor on the uuid, never on
+  // the cell (stale records from earlier runs can cache the same cell, and by-cell reads are
+  // first-match arbitrary).
+  await bot.lookAt(cell.offset(0.5, 0.5, 0.5))
+  await sleep(300)
+  clearChat(bot)
+  bot.chat('/blockships wheels inspect')
+  const idLine = await waitForChat(bot, /blockships:wheel_id: /, 5000)
+  const idMatch = idLine && idLine.match(/blockships:wheel_id: ([0-9a-f-]{36})/)
+  if (!idMatch) { fail(testName, `setup: could not read the fresh wheel's id (${idLine})`); return null }
+  const wheelId = idMatch[1]
+
+  try {
+    // Start the windowOpen listener BEFORE the right-click, as testCustomShipBase does.
+    const menuPromise = clickWheelMenu(bot, log, 'assemble')
+    await bot.activateBlock(build.wheelBlock)
+    if (!await menuPromise) { fail(testName, 'setup: assembly menu interaction failed'); return null }
+  } catch (e) {
+    fail(testName, `setup: assembly failed: ${e.message}`)
+    return null
+  }
+  const shulkers = await waitForShulkers(bot)
+  if (!shulkers || shulkers.length === 0) { fail(testName, 'setup: no ship entities after assembly'); return null }
+
+  const recordsBefore = await wheelRecordCount()
+  if (recordsBefore < 0) { fail(testName, 'setup: wheels list did not answer'); return null }
+  return { cell, wheelId, recordsBefore, shulkerCount: findShulkers(bot, 40).length }
+}
+
+/**
+ * P2 — a fresh wheel cannot be placed on a sailing ship's dock. The dock cell is vacated the moment
+ * assembly completes (the hull is aired out), which is all CELL_RESERVED needs — deliberately no
+ * mount/sail/dismount: customDismount's killentities fallback would DESTROY the ship, flip the
+ * record to ORPHAN, un-reserve the cell, and fail this test with a totally misleading diagnosis.
+ */
+async function testWheelCellReserved() {
+  const T = 'wheel_reserved'
+  say(`=== TEST: Wheel Dock Reserved ===`)
+  const s = await buildAndAssembleAt(T, WHEEL_RESERVED_X)
+  if (!s) return
+
+  bot.chat('/blockships give ship_wheel')
+  await sleep(1000)
+  const wheelItem = bot.inventory.items().find(i => i.name === 'player_head')
+  if (!wheelItem) { fail(T, 'setup: no ship wheel item received'); return }
+
+  // The hull is aired out, so the cell has no neighbour to place against — give it one.
+  bot.chat(`/setblock ${s.cell.x} ${s.cell.y - 1} ${s.cell.z} minecraft:stone`)
+  await sleep(300)
+  const support = bot.blockAt(new Vec3(s.cell.x, s.cell.y - 1, s.cell.z))
+  if (!support || support.name !== 'stone') { fail(T, 'setup: support block did not appear'); return }
+  await bot.equip(wheelItem, 'hand')
+  await sleep(300)
+
+  const marker = markServerLog()
+  clearChat(bot)
+  // ONE raw placeBlock, outcome ignored entirely: the plugin briefly setTypes a head and then airs
+  // the cell out again, so the client can see either update — placeBlock may resolve or throw.
+  // The oracles are the refusal chat and the final state, never placeBlock's own result.
+  // (NOT placeWheelAtPosition: its 10x5 retry loop against a cancelled placement burns minutes.)
+  try { await bot.placeBlock(support, new Vec3(0, 1, 0)) } catch (e) {}
+  const refusal = await waitForChat(bot, /another ship's dock/, 5000)
+  await sleep(1000)
+
+  let ok = true
+  if (!refusal) { fail(T, 'no CELL_RESERVED refusal message'); ok = false }
+  const cellBlock = bot.blockAt(s.cell)
+  if (cellBlock && cellBlock.name !== 'air') { fail(T, `dock cell holds ${cellBlock.name}, expected air`); ok = false }
+  const recordsAfter = await wheelRecordCount()
+  if (recordsAfter !== s.recordsBefore) {
+    fail(T, `record count changed ${s.recordsBefore} -> ${recordsAfter}; the refused place must not create a record`)
+    ok = false
+  }
+  const shulkersAfter = findShulkers(bot, 40).length
+  if (shulkersAfter !== s.shulkerCount) { fail(T, `shulker count changed ${s.shulkerCount} -> ${shulkersAfter}`); ok = false }
+  const errors = scanServerErrorsSince(marker)
+  if (errors.length > 0) { fail(T, `server errors: ${errors[0]}`); ok = false }
+  if (ok) pass(`${T} (refused, records=${recordsAfter}, dock clear)`)
+}
+
+/**
+ * P1 — a plain head planted on a sailing ship's vacated dock is inert. The refusals under test are
+ * DELIBERATELY silent server-side (no chat, no log), so this asserts state: the wheel menu must not
+ * open on the decoy, breaking it is a plain vanilla break, and the sailing ship's record survives
+ * pointing at its own (absorbed) wheel. A wheel-SKINNED decoy is not used: the item-side texture
+ * migration arm accepts any head wearing the skin, which is the reserved-cell scenario, not this one.
+ */
+async function testWheelDecoyHead() {
+  const T = 'wheel_decoy'
+  say(`=== TEST: Decoy Head At Vacated Dock ===`)
+  const s = await buildAndAssembleAt(T, WHEEL_DECOY_X)
+  if (!s) return
+
+  // Sail the ship off the dock so the decoy stands alone. The dismount here is SETUP, not oracle:
+  // a killentities fallback destroys the ship and invalidates everything after.
+  const startPos = bot.entity.position.clone()
+  if (!await mountShip(bot, log)) { fail(T, 'setup: could not mount ship'); return }
+  await steerShip(bot, 1.0, 0, false, 2500)
+  await sleep(200)
+  try {
+    const dm = await customDismount(bot, log, startPos)
+    if (dm.usedFallback) { fail(T, 'setup: dismount used killentities fallback (ship destroyed)'); return }
+  } catch (e) {
+    fail(T, `setup: dismount failed: ${e.message}`)
+    return
+  }
+  await sleep(500)
+
+  // Back to a FIXED spot beside the dock: activateBlock/inspect need <=~4.5 block reach, and a
+  // failure to reach must read as setup failure, not as the refusal we are testing.
+  bot.chat(`/tp @s ${s.cell.x} ${s.cell.y} ${s.cell.z + 3}`)
+  await sleep(500)
+
+  const marker = markServerLog()
+  bot.chat(`/setblock ${s.cell.x} ${s.cell.y} ${s.cell.z} minecraft:player_head`)
+  await sleep(500)
+  const decoy = bot.blockAt(s.cell)
+  if (!decoy || !decoy.name.includes('head')) { fail(T, 'setup: decoy head did not appear'); return }
+
+  let ok = true
+
+  // 1. Right-click: the menu must NOT open (silent refusal; the 5s window timeout is the oracle).
+  let menuOpened
+  try {
+    const menuPromise = clickWheelMenu(bot, log, 'assemble')
+    await bot.activateBlock(decoy)
+    menuOpened = await menuPromise
+  } catch (e) {
+    fail(T, `setup: could not right-click the decoy: ${e.message}`)
+    return
+  }
+  if (menuOpened) { fail(T, 'wheel menu opened on a planted decoy head'); ok = false }
+
+  // 2. Inspect BEFORE digging (getTargetBlockExact needs the block standing): the decoy must carry
+  // no identity, and the real record must still be LOADED.
+  await bot.lookAt(s.cell.offset(0.5, 0.5, 0.5))
+  await sleep(300)
+  clearChat(bot)
+  bot.chat('/blockships wheels inspect')
+  const decoyId = await waitForChat(bot, /blockships:wheel_id: /, 5000)
+  if (!decoyId || !decoyId.includes('(none)')) { fail(T, `decoy carries identity: ${decoyId}`); ok = false }
+
+  // 3. Break it: for an unstamped head BlockShips returns without cancelling, so this is a plain
+  // vanilla break. A regression that resolves the break BY CELL would destroy the ship and drop a
+  // wheel item — caught below by the shulker/record/list asserts.
+  try { await bot.dig(bot.blockAt(s.cell)) } catch (e) {
+    fail(T, `setup: dig failed: ${e.message}`)
+    return
+  }
+  await sleep(500)
+  const afterDig = bot.blockAt(s.cell)
+  if (afterDig && afterDig.name !== 'air') {
+    fail(T, `decoy still standing (${afterDig.name}) — later asserts would be vacuous`)
+    return
+  }
+
+  // 4. The sailing ship is untouched: record still LOADED under the same uuid, count delta 0.
+  clearChat(bot)
+  bot.chat('/blockships wheels list')
+  const header = await waitForChat(bot, /ship wheel\(s\):/, 5000)
+  const mine = await waitForChat(bot, new RegExp(s.wheelId), 2000)
+  if (!mine || !mine.includes('[LOADED]')) { fail(T, `record ${s.wheelId} not LOADED after decoy break: ${mine}`); ok = false }
+  const m = header && header.match(/(\d+) ship wheel\(s\):/)
+  const recordsAfter = m ? parseInt(m[1], 10) : -1
+  if (recordsAfter !== s.recordsBefore) { fail(T, `record count changed ${s.recordsBefore} -> ${recordsAfter}`); ok = false }
+
+  const errors = scanServerErrorsSince(marker)
+  if (errors.length > 0) { fail(T, `server errors: ${errors[0]}`); ok = false }
+
+  // 5. Best-effort drive check: destruction is already ruled out by the asserts above; this only
+  // adds "it still steers". A dirty dismount here is logged, not failed — the ship has served.
+  bot.chat(`/tp @s ${s.cell.x} ${s.cell.y} ${s.cell.z - 15}`)
+  await sleep(700)
+  if (await mountShip(bot, log)) {
+    const before = bot.entity.position.clone()
+    await steerShip(bot, 1.0, 0, false, 1500)
+    await sleep(200)
+    try {
+      const dm = await customDismount(bot, log, before)
+      await sleep(500)
+      if (!dm.usedFallback) {
+        const dz = bot.entity.position.z - before.z
+        if (Math.abs(dz) < 0.5) { fail(T, `ship did not drive after decoy break (dz=${dz.toFixed(2)})`); ok = false }
+      } else {
+        log('drive check inconclusive: dismount used fallback')
+      }
+    } catch (e) { log(`drive check inconclusive: ${e.message}`) }
+  } else {
+    log('drive check inconclusive: could not re-mount')
+  }
+
+  if (ok) pass(`${T} (menu closed, decoy inert, record ${s.wheelId.slice(0, 8)} intact)`)
+}
+
+// =============================================================================
 // Test Registry and Interactive Mode
 // =============================================================================
 
@@ -577,12 +889,16 @@ const TESTS = {
   custom_ship: { name: 'Custom Ship', fn: testCustomShip },
   custom_airship: { name: 'Custom Airship', fn: testCustomAirship },
   weird_ship: { name: 'Weird Blocks Ship', fn: testWeirdBlocksShip },
+  // manual: skipped by runAllTests (and therefore by CI's test:all) — the deliberate negative waits
+  // don't fit the suite's hard timeout. Run by name: `.testbot wheel_reserved` or --only=wheel_
+  wheel_reserved: { name: 'Wheel Dock Reserved', fn: testWheelCellReserved, manual: true },
+  wheel_decoy: { name: 'Decoy Head At Vacated Dock', fn: testWheelDecoyHead, manual: true },
 }
 
 function listTests() {
   say('Available tests:')
   for (const [key, test] of Object.entries(TESTS)) {
-    say(`  .testbot ${key} - ${test.name}`)
+    say(`  .testbot ${key} - ${test.name}${test.manual ? ' (manual: not part of "all")' : ''}`)
   }
   say('  .testbot all - Run all tests')
   say('  .testbot help - Show this help')
@@ -627,6 +943,12 @@ async function runAllTests() {
 
   for (const [key, test] of Object.entries(TESTS)) {
     if (filter && !filter.some(f => key.includes(f))) continue
+    // Manual tests never run implicitly (that includes CI's test:all) — only when named via --only=
+    // or .testbot <key>. "User-run only" is a property of the registry, not of anyone's restraint.
+    if (test.manual && !filter) {
+      log(`Skipping ${test.name} (manual — run with --only=${key} or .testbot ${key})`)
+      continue
+    }
     if (skips.some(s => key.includes(s))) {
       log(`Skipping ${test.name} on ${bot.version}`)
       continue
