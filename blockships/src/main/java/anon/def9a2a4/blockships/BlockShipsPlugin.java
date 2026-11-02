@@ -5,6 +5,10 @@ import anon.def9a2a4.blockships.customships.ShipWheelData;
 import anon.def9a2a4.blockships.customships.ShipWheelManager;
 import anon.def9a2a4.blockships.ship.ShipCollisionCoordinator;
 import anon.def9a2a4.blockships.ship.ShipInstance;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.event.ClickEvent;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -32,6 +36,8 @@ public class BlockShipsPlugin extends JavaPlugin {
 
     /** Where users should report bugs and unexpected errors. */
     public static final String ISSUES_URL = "https://github.com/def9a2a4/BlockShips/issues";
+    public static final String GITHUB_URL = "https://github.com/def9a2a4/BlockShips";
+    public static final String DISCORD_URL = "https://def9a2a4.github.io/discord.html";
 
     private DisplayShip displayShip;
     private ShipSteeringListener steeringListener;
@@ -261,7 +267,17 @@ public class BlockShipsPlugin extends JavaPlugin {
             sender.sendMessage("§e/blockships forcedisassembleall §7- Force-disassemble all assembled ships §c§l[DANGEROUS]");
             sender.sendMessage("§e/blockships killentities §7- Remove all BlockShips entities from worlds §c§l[DANGEROUS]");
         }
-        sender.sendMessage("§7Found a bug? Report it at: §b" + ISSUES_URL);
+        sender.sendMessage(link("GitHub: ", GITHUB_URL));
+        sender.sendMessage(link("Discord: ", DISCORD_URL));
+        sender.sendMessage(link("Found a bug? Report it at: ", ISSUES_URL));
+    }
+
+    /** Gray label, then a clickable aqua URL (same style as DefCoreLib's help footer). */
+    private static Component link(String label, String url) {
+        return Component.text(label, NamedTextColor.GRAY)
+            .append(Component.text(url, NamedTextColor.AQUA)
+                .decorate(TextDecoration.UNDERLINED)
+                .clickEvent(ClickEvent.openUrl(url)));
     }
 
     /** forceclearwheel's refusal for a LOADED ship, shared by the preview and the confirm-time re-check. */

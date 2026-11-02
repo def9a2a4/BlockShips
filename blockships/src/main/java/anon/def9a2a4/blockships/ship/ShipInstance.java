@@ -589,7 +589,10 @@ public class ShipInstance {
                             return;  // Stop processing this tick
                         }
                         tickDamage();
-                        if (dying) return;
+                        if (dying) {
+                            propulsionUse.idle();  // a sinking ship's engines burn nothing
+                            return;
+                        }
                     }
                 }
             }

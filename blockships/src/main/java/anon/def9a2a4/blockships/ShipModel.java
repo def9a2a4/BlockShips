@@ -97,6 +97,12 @@ public final class ShipModel {
     /** True when this hull has at least one wheel on the ground: it drives as a land vehicle. */
     public boolean isLandVehicle() { return !groundWheels.isEmpty(); }
 
+    /** Whether this block is a wheel that reaches the ground (a spare on a wall or deck is not). */
+    public boolean isGroundWheel(int blockIndex) {
+        for (GroundWheel w : groundWheels) if (w.blockIndex() == blockIndex) return true;
+        return false;
+    }
+
     // Assembly rotation (for custom block ships disassembly)
     public final float assemblyYaw;             // Yaw angle when assembled (0=S, 90=W, 180=N, 270=E), 0 for prefab ships
 

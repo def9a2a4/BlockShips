@@ -1777,6 +1777,12 @@ public class DisplayShip implements Listener {
         if (mci >= 0) {
             Inventory storage = inst.mechanism.getStorage(mci);
             if (storage != null) {
+                // Same rule as a chest: inside someone's claim it needs container trust (the crew has it);
+                // wilderness is open. The protection plugin tells the player why on a refusal.
+                if (!anon.def9a2a4.corelib.ContainerAccess.mayOpen(player, e.getRightClicked().getLocation())) {
+                    e.setCancelled(true);
+                    return;
+                }
                 player.openInventory(storage);
                 e.setCancelled(true);
                 return;

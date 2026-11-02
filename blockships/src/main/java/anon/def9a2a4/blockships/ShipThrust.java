@@ -94,6 +94,8 @@ public final class ShipThrust {
         if (model == null || model.thrustBlocks.isEmpty()) return Totals.NONE;
         int axial = 0, perp = 0, vert = 0, turn = 0, ground = 0, powered = 0;
         for (ShipModel.ThrustBlock t : model.thrustBlocks) {
+            // A wheel pushes only if it reaches the ground; a spare on a wall or deck is decoration.
+            if (t.axis() == Axis.GROUND && !model.isGroundWheel(t.blockIndex())) continue;
             if (mechanism != null && !isProducing(mechanism, t)) continue;
             powered++;
             int pts = thrustOf(plugin, t.typeId());
@@ -156,7 +158,7 @@ public final class ShipThrust {
      * {@code idle_*}); everything else is a rotation consumer and reports through the network. Both
      * are cheap reads of a cached solve.
      */
-    private static boolean isProducing(anon.def9a2a4.corelib.Mechanism mechanism, ShipModel.ThrustBlock t) {
+    public static boolean isProducing(anon.def9a2a4.corelib.Mechanism mechanism, ShipModel.ThrustBlock t) {
         try {
             if ("mech:thruster".equals(t.typeId())) {
                 String state = mechanism.getBlock(t.blockIndex()).customState();

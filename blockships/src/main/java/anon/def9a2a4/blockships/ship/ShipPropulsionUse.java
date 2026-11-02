@@ -52,23 +52,31 @@ final class ShipPropulsionUse {
     }
 
     /**
-     * Lift use, 0..1. Only a flier uses its lift blocks: none on water, on the ground, or for a balloon,
-     * which floats on displacement. Climbing is full use; holding altitude uses the share of lift that
-     * carries the weight (1 / lift ratio); descending still holds some of it back.
+     * Lift use, 0..1. Climbing (Space) is full use for anything, a balloon or a ship lifting off the
+     * ground included: its lift blocks add climb speed. Otherwise only a flier uses them: none on water,
+     * on the ground, or for a balloon, which floats on displacement. Holding altitude uses the share of
+     * lift that carries the weight (1 / lift ratio); descending still holds some of it back.
      */
     float verticalUse() {
         ShipPhysics p = ship.physics;
+        if (ship.hasDriver && ship.isSpacePressed) return 1f;
         if (ship.isAirship || !p.isFlying() || p.isGrounded()) return 0f;
         float lift = p.liftRatio();
         float hover = lift <= 0f ? 1f : Math.min(1f, 1f / lift);
-        if (ship.hasDriver && ship.isSpacePressed) return 1f;
         if (ship.hasDriver && ship.isSprintPressed) return hover * 0.5f;
         return hover;
+    }
+
+    /** Report zero demand for every thrust block (a sinking ship no longer uses its engines). */
+    void idle() {
+        if (ship.mechanism == null || ship.model == null || ship.model.thrustBlocks.isEmpty()) return;
+        pushDemand(ship.model.thrustBlocks, 0f, 0f, 0f);
     }
 
     /** Push this tick's spin and demand to every thrust block. Cheap: field writes in defCoreLib. */
     void tick() {
         if (ship.mechanism == null || ship.model == null) return;
+        if (ship.mechanism != zeroedFor) zeroUnlistedDemand();
         var blocks = ship.model.thrustBlocks;
         if (blocks.isEmpty()) return;
         if (shown == null || shown.length != blocks.size()) shown = new float[blocks.size()];
@@ -77,6 +85,7 @@ final class ShipPropulsionUse {
         pushDemand(blocks, axial, turn, vertical);
         if (apiMissing) return;
         double wheelSign = wheelSpinSign(ship.model.assemblyYaw);
+        boolean grounded = ship.physics.isGrounded();
         try {
             for (int i = 0; i < blocks.size(); i++) {
                 ShipModel.ThrustBlock t = blocks.get(i);
@@ -84,10 +93,14 @@ final class ShipPropulsionUse {
                 if (t.axis() == ShipThrust.Axis.GROUND) {
                     // Rolling without slipping: angular speed = road speed / radius, in degrees per tick,
                     // about the axle. Every ground wheel shares the authored +X/+Z axle sign, so they all
-                    // get the same sign; only the radius differs.
-                    double radius = Math.max(0.1, ShipThrust.wheelDiameter(t.typeId()) / 2.0);
-                    double deg = Math.toDegrees(ship.physics.currentSpeed / radius) * wheelSign;
-                    deg = Math.max(-MAX_WHEEL_DEG_PER_TICK, Math.min(MAX_WHEEL_DEG_PER_TICK, deg));
+                    // get the same sign; only the radius differs. Off the ground, or a spare that never
+                    // touches it, the wheel doesn't roll.
+                    double deg = 0;
+                    if (grounded && ship.model.isGroundWheel(t.blockIndex())) {
+                        double radius = Math.max(0.1, ShipThrust.wheelDiameter(t.typeId()) / 2.0);
+                        deg = Math.toDegrees(ship.physics.currentSpeed / radius) * wheelSign;
+                        deg = Math.max(-MAX_WHEEL_DEG_PER_TICK, Math.min(MAX_WHEEL_DEG_PER_TICK, deg));
+                    }
                     ship.mechanism.setBlockSpinSpeed(t.blockIndex(), deg);
                     continue;
                 }
@@ -101,7 +114,10 @@ final class ShipPropulsionUse {
                 float d = target - cur;
                 cur = Math.abs(d) <= EASE ? target : cur + Math.signum(d) * EASE;
                 shown[i] = cur;
-                ship.mechanism.setBlockSpinScale(t.blockIndex(), cur);
+                // An unpowered propeller stays still: the override would otherwise borrow its spin
+                // animation and turn it with no thrust behind it.
+                ship.mechanism.setBlockSpinScale(t.blockIndex(),
+                    ShipThrust.isProducing(ship.mechanism, t) ? cur : 0f);
             }
         } catch (NoSuchMethodError | AbstractMethodError e) {
             apiMissing = true;  // older DefCoreLib: keep its always-on spin
@@ -121,12 +137,40 @@ final class ShipPropulsionUse {
                     case AXIAL -> Math.abs(axial);
                     case PERPENDICULAR, TURN_ONLY -> Math.abs(turn);
                     case VERTICAL -> vertical;
-                    case GROUND -> grounded ? Math.max(Math.abs(axial), Math.abs(turn)) : 0f;
+                    case GROUND -> grounded && ship.model.isGroundWheel(t.blockIndex())
+                        ? Math.max(Math.abs(axial), Math.abs(turn)) : 0f;
                 };
                 ship.mechanism.setBlockDemand(t.blockIndex(), d);
             }
         } catch (NoSuchMethodError | AbstractMethodError e) {
             demandApiMissing = true;  // older DefCoreLib: fixed burn
+        }
+    }
+
+    /** The mechanism whose unlisted blocks were last zeroed (a new one after reassembly or recovery). */
+    private anon.def9a2a4.corelib.Mechanism zeroedFor;
+
+    /**
+     * Zero the demand of every wheel, propeller or other demand-billed block aboard that is NOT a thrust
+     * block (a wheel on the bow or stern face, say): it does nothing, and defCoreLib bills an unreported
+     * block at full load. Once per mechanism; thrust blocks are then set every tick by pushDemand.
+     */
+    private void zeroUnlistedDemand() {
+        zeroedFor = ship.mechanism;
+        if (demandApiMissing) return;
+        java.util.Set<Integer> listed = new java.util.HashSet<>();
+        for (ShipModel.ThrustBlock t : ship.model.thrustBlocks) listed.add(t.blockIndex());
+        try {
+            int n = ship.mechanism.blockCount();
+            for (int i = 0; i < n; i++) {
+                if (listed.contains(i)) continue;
+                String type = ship.mechanism.getBlock(i).customTypeId;
+                if (type != null && ShipThrust.isThrustBlock(ShipThrust.canonicalTypeId(type))) {
+                    ship.mechanism.setBlockDemand(i, 0);
+                }
+            }
+        } catch (NoSuchMethodError | AbstractMethodError e) {
+            demandApiMissing = true;
         }
     }
 
