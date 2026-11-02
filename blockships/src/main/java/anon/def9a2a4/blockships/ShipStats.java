@@ -66,7 +66,17 @@ public final class ShipStats {
      */
     public static ShipStats of(ShipConfig config, ShipModel model, ShipThrust.Totals thrust,
                                float speedFrac) {
-        return withThrust(config, model.sailPower, model.mass, model.totalWeight, thrust, speedFrac);
+        return of(config, model, thrust, speedFrac, false);
+    }
+
+    /**
+     * As {@link #of(ShipConfig, ShipModel, ShipThrust.Totals, float)}, with ground thrust counted when
+     * {@code grounded}: a wheel only pushes while it touches the ground, so physics passes the live
+     * contact state, and a readout asking "what would this do on land" passes true.
+     */
+    public static ShipStats of(ShipConfig config, ShipModel model, ShipThrust.Totals thrust,
+                               float speedFrac, boolean grounded) {
+        return withThrust(config, model.sailPower, model.mass, model.totalWeight, thrust, speedFrac, grounded);
     }
 
     /**
@@ -85,19 +95,23 @@ public final class ShipStats {
                       + bannerCount * config.bannerPower
                       + largeBannerCount * config.largeBannerPower
                       + hugeBannerCount * config.hugeBannerPower;
-        return withThrust(config, sailPower, mass, totalWeight, thrust, speedFrac);
+        return withThrust(config, sailPower, mass, totalWeight, thrust, speedFrac, false);
     }
 
     private static ShipStats withThrust(ShipConfig config, int sailPower, int rawMass, int totalWeight,
-                                        ShipThrust.Totals thrust, float speedFrac) {
+                                        ShipThrust.Totals thrust, float speedFrac, boolean grounded) {
         int mass = Math.max(1, rawMass);
         float rawSail = (float) (config.basePower + sailPower) / mass;
         float cappedSail = Math.min(rawSail, config.sailCapRatio);
 
-        float forward = clamp01(cappedSail + (float) thrust.axial() / mass);
+        int ground = grounded ? thrust.ground() : 0;
+        float forward = clamp01(cappedSail + (float) (thrust.axial() + ground) / mass);
+        // Wheels steer like a car: better with speed, but never zero, or a stopped car could not turn
+        // out of a one-wide gap.
+        float groundTurn = ground * config.landGroundTurnFactor * Math.max(0.3f, clamp01(speedFrac));
         float turn = clamp01((config.baseTurn
                               + sailPower * config.sailTurnFactor * clamp01(speedFrac)
-                              + thrust.turning()) / mass);
+                              + thrust.turning() + groundTurn) / mass);
         // Lift is measured against SIGNED weight, so buoyancy counts toward flight instead of being
         // ignored: a hull that is already near-neutral needs only a little thrust, and a lighter-than-air
         // one is airborne with none. 1.0 means "holds its own weight"; ABOVE 1.0 is what climbs.

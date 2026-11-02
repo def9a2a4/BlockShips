@@ -26,7 +26,12 @@ public final class ShipThrust {
         /** Up or down: cancels weight, and is what lets a heavy ship fly. */
         VERTICAL,
         /** A reaction wheel — turn rate only, whichever way anything is pointing. */
-        TURN_ONLY
+        TURN_ONLY,
+        /**
+         * A drive wheel with its axle across the hull: forward push and turning, but only while the
+         * wheel is on the ground. Appended last so persisted ordinals/names of the others never move.
+         */
+        GROUND
     }
 
     /** Default thrust per block type; overridable under {@code custom-ships.stats.thrust}. */
@@ -36,8 +41,30 @@ public final class ShipThrust {
         "mech:large_propeller", 100,
         "mech:huge_propeller", 250,
         "mech:thruster", 50,
-        "mech:reaction_wheel", 10
+        "mech:reaction_wheel", 10,
+        // Wheels: thrust per power beats the matching propeller (20/3, 64/6, 160/12 against 32/5,
+        // 100/10, 250/20), because a wheel only pushes while it touches the ground.
+        "mech:wheel", 20,
+        "mech:large_wheel", 64,
+        "mech:huge_wheel", 160
     );
+
+    /** Wheel diameter in blocks, by type. Also the set of types that are wheels. */
+    private static final Map<String, Float> WHEEL_DIAMETER = Map.of(
+        "mech:wheel", 1.0f,
+        "mech:large_wheel", 2.0f,
+        "mech:huge_wheel", 3.0f
+    );
+
+    public static boolean isWheel(String typeId) {
+        return typeId != null && WHEEL_DIAMETER.containsKey(typeId);
+    }
+
+    /** Diameter in blocks of a wheel type, or 0 for anything that is not a wheel. */
+    public static float wheelDiameter(String typeId) {
+        Float d = typeId == null ? null : WHEEL_DIAMETER.get(typeId);
+        return d == null ? 0f : d;
+    }
 
     /**
      * Thrust currently being produced, split by what it drives.
@@ -45,9 +72,9 @@ public final class ShipThrust {
      * @param powered how many thrust blocks are actually running, for the driver readout
      * @param total   how many are aboard at all
      */
-    public record Totals(int axial, int perpendicular, int vertical, int turnOnly,
+    public record Totals(int axial, int perpendicular, int vertical, int turnOnly, int ground,
                          int powered, int total) {
-        public static final Totals NONE = new Totals(0, 0, 0, 0, 0, 0);
+        public static final Totals NONE = new Totals(0, 0, 0, 0, 0, 0, 0);
         /** Everything that turns the ship: side thrust plus gyroscopes. */
         public int turning() { return perpendicular + turnOnly; }
     }
@@ -65,7 +92,7 @@ public final class ShipThrust {
     public static Totals totalsFor(BlockShipsPlugin plugin, anon.def9a2a4.corelib.Mechanism mechanism,
                                    ShipModel model) {
         if (model == null || model.thrustBlocks.isEmpty()) return Totals.NONE;
-        int axial = 0, perp = 0, vert = 0, turn = 0, powered = 0;
+        int axial = 0, perp = 0, vert = 0, turn = 0, ground = 0, powered = 0;
         for (ShipModel.ThrustBlock t : model.thrustBlocks) {
             if (mechanism != null && !isProducing(mechanism, t)) continue;
             powered++;
@@ -75,9 +102,10 @@ public final class ShipThrust {
                 case PERPENDICULAR -> perp += pts;
                 case VERTICAL -> vert += pts;
                 case TURN_ONLY -> turn += pts;
+                case GROUND -> ground += pts;
             }
         }
-        return new Totals(axial, perp, vert, turn, powered, model.thrustBlocks.size());
+        return new Totals(axial, perp, vert, turn, ground, powered, model.thrustBlocks.size());
     }
 
     /**
@@ -97,7 +125,7 @@ public final class ShipThrust {
     public static Totals scanWorld(BlockShipsPlugin plugin, Iterable<org.bukkit.Location> cells,
                                    float assemblyYaw) {
         if (cells == null) return Totals.NONE;
-        int axial = 0, perp = 0, vert = 0, turn = 0, total = 0;
+        int axial = 0, perp = 0, vert = 0, turn = 0, ground = 0, total = 0;
         for (org.bukkit.Location loc : cells) {
             Block block = loc.getBlock();
             org.bukkit.Material mat = block.getType();
@@ -115,9 +143,10 @@ public final class ShipThrust {
                 case PERPENDICULAR -> perp += pts;
                 case VERTICAL -> vert += pts;
                 case TURN_ONLY -> turn += pts;
+                case GROUND -> ground += pts;
             }
         }
-        return new Totals(axial, perp, vert, turn, total, total);
+        return new Totals(axial, perp, vert, turn, ground, total, total);
     }
 
     /**
@@ -195,7 +224,28 @@ public final class ShipThrust {
         } catch (Throwable t) {
             return null;
         }
+        return classifyFacing(typeId, worldFacing, assemblyYaw);
+    }
+
+    /**
+     * The Bukkit-free half of {@link #classify}: thrust axis from a type and its world facing.
+     *
+     * <p>A wheel's facing is its axle (it hangs on a wall, facing away from it). Its axle must run
+     * ACROSS the hull for it to roll the ship forward; a wheel on the bow or stern face would roll
+     * sideways, which the ship cannot do, so it returns null — not stored, not counted. Use
+     * {@link #isMisalignedWheel} to tell that apart from "not a thrust block" for the detect readout.
+     */
+    public static Axis classifyFacing(String typeId, BlockFace worldFacing, float assemblyYaw) {
+        if (!isThrustBlock(typeId)) return null;
+        if ("mech:reaction_wheel".equals(typeId)) return Axis.TURN_ONLY;
         if (worldFacing == null) return null;
+        if (isWheel(typeId)) {
+            if (worldFacing == BlockFace.UP || worldFacing == BlockFace.DOWN) return null;
+            BlockFace local = anon.def9a2a4.blockships.customships.BlockStructureScanner
+                .rotateBlockFace(worldFacing, -assemblyYaw);
+            boolean axleAcross = local == BlockFace.EAST || local == BlockFace.WEST;
+            return axleAcross ? Axis.GROUND : null;
+        }
         if (worldFacing == BlockFace.UP || worldFacing == BlockFace.DOWN) return Axis.VERTICAL;
 
         // Into hull coordinates. The sign is -assemblyYaw, and it matters: with unsigned magnitudes
@@ -208,5 +258,10 @@ public final class ShipThrust {
         // blockFaceToYaw's convention (0 = SOUTH).
         boolean alongAxis = local == BlockFace.SOUTH || local == BlockFace.NORTH;
         return alongAxis ? Axis.AXIAL : Axis.PERPENDICULAR;
+    }
+
+    /** True for a wheel mounted where it cannot drive the ship (axle along the hull). */
+    public static boolean isMisalignedWheel(String typeId, BlockFace worldFacing, float assemblyYaw) {
+        return isWheel(typeId) && worldFacing != null && classifyFacing(typeId, worldFacing, assemblyYaw) == null;
     }
 }

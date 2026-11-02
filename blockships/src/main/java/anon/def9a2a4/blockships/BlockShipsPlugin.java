@@ -188,8 +188,11 @@ public class BlockShipsPlugin extends JavaPlugin {
         try {
             if (anon.def9a2a4.corelib.CoreLibPlugin.getInstance() == null) return "DefCoreLib did not enable";
             Class.forName("anon.def9a2a4.corelib.MechanismRotationSolvedEvent");
-            Class.forName("anon.def9a2a4.corelib.MechanismRegistry")
-                .getMethod("landingSolidWouldWin", org.bukkit.Material.class);
+            Class<?> registry = Class.forName("anon.def9a2a4.corelib.MechanismRegistry");
+            registry.getMethod("landingSolidWouldWin", org.bukkit.Material.class);
+            // Ships are saved only at world saves and chunk unloads, by DefCoreLib; BlockShips no longer saves
+            // them itself. Without this, a ship would only reach disk when it docked.
+            registry.getMethod("onWorldSave", org.bukkit.event.world.WorldSaveEvent.class);
             return null;
         } catch (ReflectiveOperationException | LinkageError e) {
             return "the installed version is too old (missing " + e.getMessage() + ")";
@@ -1057,6 +1060,14 @@ public class BlockShipsPlugin extends JavaPlugin {
                 ShipWheelManager.WheelState fcState = shipWheelManager.resolveWheelState(target).state();
                 if (!ShipWheelManager.forceClearAllowed(fcState)) {
                     sendForceClearLiveRefusal(sender, fcId);
+                    return true;
+                }
+                // A ship parked in an unloaded chunk also reads "still loading". Clearing its wheel then leaves a
+                // ship that comes back with no wheel and can never be docked.
+                org.bukkit.Location parked = shipWheelManager.parkedOutOfRange(target);
+                if (parked != null) {
+                    sender.sendMessage("§cThat ship is not stuck, it is parked out of range at " + fmt(parked)
+                        + ". Go there (or teleport) so it loads. Force-clear only if it still won't load once you're there.");
                     return true;
                 }
                 // ID-derived token rather than the literal "confirm", matching wheels adopt/purge: a stale or

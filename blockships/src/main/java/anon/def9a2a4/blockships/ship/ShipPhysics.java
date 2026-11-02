@@ -6,6 +6,7 @@ import anon.def9a2a4.blockships.util.TeleportCompat;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Sound;
+import org.bukkit.World;
 import org.bukkit.block.data.Waterlogged;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
@@ -60,12 +61,62 @@ public class ShipPhysics {
     private anon.def9a2a4.blockships.ShipThrust.Totals targetThrust =
         anon.def9a2a4.blockships.ShipThrust.Totals.NONE;
     /** Thrust actually applied, ramping toward the target — propellers have inertia. */
-    private float spooledAxial, spooledTurning, spooledVertical;
+    private float spooledAxial, spooledTurning, spooledVertical, spooledGround;
     /** Set by defCoreLib's re-solve event, or by the periodic poll. */
     private boolean thrustDirty = true;
     private int thrustPollCounter = 0;
     /** Last computed lift ratio, for the flight model and the readouts. */
     private float lastLiftRatio = 0f;
+
+    // ── Land vehicles ────────────────────────────────────────────────────────
+    /** Wheels touching the ground as of the last tick (latched for GROUND_GRACE_TICKS). */
+    private boolean grounded = false;
+    private int groundedGrace = 0;
+    private static final int GROUND_GRACE_TICKS = 3;
+    /** Whether the land branch drove the vertical physics last tick. */
+    private boolean landActive = false;
+    /** World Y the vehicle's bottom is being held at or raised to; NaN when there is none. */
+    private double landSupportY = Double.NaN;
+    /** A rise ahead taller than the wheels can climb, as of the last tick. */
+    private boolean landBlockedAhead = false;
+    /** Smallest step height over the ground wheels; computed once, NaN until then. */
+    private float landStepHeight = Float.NaN;
+    private int blockedMessageCooldown = 0;
+    private boolean blockedNoticePending = false;
+
+    /** Whether the flight branch drove the vertical physics last tick. */
+    private boolean flying = false;
+    public boolean isFlying() { return flying; }
+
+    /** Wheels touching the ground right now (with a few ticks' grace across bumps). */
+    public boolean isGrounded() { return grounded; }
+
+    /** Whether the land branch is driving this ship, and the bottom Y it is supported at. */
+    public boolean isLandActive() { return landActive; }
+    public double landSupportY() { return landSupportY; }
+
+    /** Tallest step this vehicle can climb: its smallest ground wheel's. 0 for a ship with none. */
+    public float landStepHeight() {
+        if (Float.isNaN(landStepHeight)) {
+            float h = Float.MAX_VALUE;
+            for (anon.def9a2a4.blockships.ShipModel.GroundWheel w : ship.model.groundWheels) {
+                h = Math.min(h, ship.config.stepHeightOf(w.typeId()));
+            }
+            landStepHeight = h == Float.MAX_VALUE ? 0f : h;
+        }
+        return landStepHeight;
+    }
+
+    /** Whether this ship drives as a land vehicle at all: ground wheels, and the stats system on. */
+    private boolean isLandCapable() {
+        return ship.model != null && ship.model.isLandVehicle() && ship.config.statsEnabled
+            && "custom".equals(ship.shipType) && !ship.isAirship;
+    }
+
+    /** The hull's lowest point relative to the vehicle: the tyres for a land vehicle, else the keel. */
+    private float bottomOffset() {
+        return ship.model != null && ship.model.isLandVehicle() ? ship.model.landBottomY : ship.model.minY;
+    }
 
     /** Force a thrust recompute on the next stats pass (defCoreLib re-solved this ship's network). */
     public void markThrustDirty() {
@@ -129,11 +180,12 @@ public class ShipPhysics {
         spooledAxial = approach(spooledAxial, targetThrust.axial(), step);
         spooledTurning = approach(spooledTurning, targetThrust.turning(), step);
         spooledVertical = approach(spooledVertical, targetThrust.vertical(), step);
+        spooledGround = approach(spooledGround, targetThrust.ground(), step);
         // The spooled turning total is carried in `perpendicular` with `turnOnly` zero: the two are
         // only ever consumed through turning(), which sums them, and they spool as one quantity.
         return new anon.def9a2a4.blockships.ShipThrust.Totals(
             Math.round(spooledAxial), Math.round(spooledTurning), Math.round(spooledVertical), 0,
-            targetThrust.powered(), targetThrust.total());
+            Math.round(spooledGround), targetThrust.powered(), targetThrust.total());
     }
 
     /**
@@ -241,7 +293,7 @@ public class ShipPhysics {
         // spool ramp by one step each time. A second call here would spool at double rate.
         anon.def9a2a4.blockships.ShipThrust.Totals live = liveThrust();
         anon.def9a2a4.blockships.ShipStats stats =
-            anon.def9a2a4.blockships.ShipStats.of(config, ship.model, live, speedFrac);
+            anon.def9a2a4.blockships.ShipStats.of(config, ship.model, live, speedFrac, grounded);
         float ratio = stats.forwardRatio;
         float turnRatio = stats.turnRatio;
         this.lastLiftRatio = stats.liftRatio;
@@ -249,6 +301,7 @@ public class ShipPhysics {
         // Compute horizontal stats
         effectiveMaxSpeed = config.computeStat(ratio, config.maxSpeed,
             config.floorMaxSpeed, config.capMaxSpeed);
+        if (landActive) effectiveMaxSpeed *= config.landSpeedMultiplier;
         effectiveAcceleration = config.computeStat(ratio, config.acceleration,
             config.floorAcceleration, config.capAcceleration);
         // Rotation runs off turnRatio, which in ratio3 mode is a different number from forward.
@@ -344,7 +397,8 @@ public class ShipPhysics {
      */
     private float clampFallToGround(Location vehicleLoc, float vy) {
         if (vy >= 0f) return vy;
-        double hullY = vehicleLoc.getY() + ship.model.minY;
+        // bottomOffset, not minY: a wheeled hull lands on its tyres, which can reach below the keel.
+        double hullY = vehicleLoc.getY() + bottomOffset();
         int from = (int) Math.floor(hullY - 0.001);   // the block the hull is standing in/on right now
         int to = (int) Math.floor(hullY + vy);        // the block it would end up in
         Location probe = reuseLocation3(vehicleLoc);
@@ -406,8 +460,10 @@ public class ShipPhysics {
             // Collapsed to idle-drag's value, the nobody-watching one.
             float dragMultiplier = ship.hasDriver ? config.mountedDrag : config.noDriverDrag;
 
-            // Apply extra drag in water (reuse work location)
-            if (isWaterOrWaterlogged(reuseLocation(vehicleLoc).subtract(0, 0.5, 0).getBlock())) {
+            // Apply extra drag in water (reuse work location); rolling resistance on land
+            if (landActive && grounded) {
+                dragMultiplier *= config.landGroundDrag;
+            } else if (isWaterOrWaterlogged(reuseLocation(vehicleLoc).subtract(0, 0.5, 0).getBlock())) {
                 dragMultiplier *= 0.98f;
             }
 
@@ -436,8 +492,27 @@ public class ShipPhysics {
         // right now". Keying it on live lift meant a single fan lying flat on a heavy deck — lift
         // 0.005, but greater than zero — pulled an ordinary boat off the buoyancy path the moment that
         // fan got power, and dropped it back when the power died.
-        boolean flies = ship.isAirship || (isThrustLifted() && (liftRatio() >= 1f || !hullInWater(vehicleLoc)));
-        if (flies) {
+        //
+        // Land comes first for a wheeled hull out of the water, and the order is the guard: without it
+        // a car carrying one flat fan (lift 0.005, but VERTICAL thrust) is "thrust-lifted" and drops
+        // onto the flight path the moment it leaves the water, never touching the land branch. A
+        // wheeled hull that CAN fly still does — lift >= 1 with Space held, or already airborne —
+        // and lands back onto its wheels to taxi.
+        boolean landCapable = isLandCapable();
+        Support support = landCapable ? computeSupport(vehicleLoc) : null;
+        if (landCapable) updateGrounded(vehicleLoc, support);
+        boolean wantsFlight = isThrustLifted() && liftRatio() >= 1f
+            && ((ship.hasDriver && ship.isSpacePressed) || !grounded);
+        boolean land = landCapable && !wantsFlight && !hullInWater(vehicleLoc);
+        landActive = land;
+        landSupportY = land && support.valid() ? support.targetY() : Double.NaN;
+        landBlockedAhead = land && support.blockedAhead();
+        boolean flies = !land
+            && (ship.isAirship || (isThrustLifted() && (liftRatio() >= 1f || !hullInWater(vehicleLoc))));
+        flying = flies;
+        if (land) {
+            handleLandPhysics(vehicleLoc, support);
+        } else if (flies) {
             applyAirshipVerticalPhysics(vehicleLoc);
         } else {
             handleBuoyancy(vehicleLoc);
@@ -510,12 +585,187 @@ public class ShipPhysics {
         float minSpeed = ship.isAirship ? config.airshipSoundMinSpeed : config.soundMinSpeed;
         if (totalSpeed >= minSpeed && soundCooldown == 0) {
             Location loc = ship.vehicle.getLocation();
-            Sound sound = ship.isAirship ? Sound.ITEM_ELYTRA_FLYING : Sound.ENTITY_BOAT_PADDLE_WATER;
+            // Land: a short gravel crunch per interval. Not ENTITY_MINECART_RIDING — that is a long loop
+            // and would stack on itself every soundIntervalTicks.
+            Sound sound = ship.isAirship ? Sound.ITEM_ELYTRA_FLYING
+                : landActive ? Sound.BLOCK_GRAVEL_STEP : Sound.ENTITY_BOAT_PADDLE_WATER;
             float baseVolume = ship.isAirship ? config.airshipSoundVolume : config.soundVolume;
             float movementVolume = (float) ship.plugin.getConfig().getDouble("sounds.movement-volume", 0.5);
             loc.getWorld().playSound(loc, sound, baseVolume * movementVolume, config.soundPitch);
             soundCooldown = ship.isAirship ? config.airshipSoundIntervalTicks : config.soundIntervalTicks;
         }
+    }
+
+    /**
+     * Ground under a land vehicle.
+     *
+     * @param valid        some sample found ground within reach (else: free fall)
+     * @param targetY      world Y the vehicle's bottom should sit at — the highest climbable ground
+     *                     under or just ahead of it
+     * @param blockedAhead a sample ahead hit a rise taller than the wheels can climb
+     */
+    record Support(boolean valid, double targetY, boolean blockedAhead) {}
+
+    /** How far below the bottom ground is looked for before the vehicle is treated as falling. */
+    private static final int SUPPORT_SCAN_BELOW = 3;
+
+    /**
+     * Sample the ground under the wheels and the hull footprint, and just ahead of them.
+     *
+     * <p>Every sample, not just the Ship's Wheel column, because the vehicle has to rise onto a step
+     * as soon as its FRONT reaches it — probing at the Ship's Wheel alone let the nose climb, fall back
+     * with the step inside the hull, and climb again until the wheel crossed over. The look-ahead is
+     * one climb's worth of travel, so the rise finishes by the time the front gets there instead of
+     * the hull driving into the step at speed.
+     */
+    private Support computeSupport(Location vehicleLoc) {
+        anon.def9a2a4.blockships.ShipModel model = ship.model;
+        float step = landStepHeight();
+        double bottom = vehicleLoc.getY() + model.landBottomY;
+        // Local (as-assembled) frame -> world: the mechanism is rotated by -(currentYaw - spawnYaw)
+        // about Y, matching BasicMechanism.rotate.
+        double rel = Math.toRadians(-(currentYaw - ship.spawnYaw));
+        double cos = Math.cos(rel), sin = Math.sin(rel);
+        double fwdRad = Math.toRadians(-currentYaw);
+        double fx = Math.sin(fwdRad), fz = Math.cos(fwdRad);
+        float climbTicks = (float) Math.ceil(step / Math.max(0.05f, ship.config.landStepUpSpeed));
+        double look = Math.abs(currentSpeed) * climbTicks + 0.5;
+        double dir = Math.signum(currentSpeed);
+        boolean probeAhead = Math.abs(currentSpeed) > ship.config.minMovementThreshold;
+
+        World world = vehicleLoc.getWorld();
+        double best = Double.NEGATIVE_INFINITY;
+        boolean blocked = false;
+        float[] xz = model.supportSamplesXZ;
+        for (int i = 0; i + 1 < xz.length; i += 2) {
+            double wx = vehicleLoc.getX() + xz[i] * cos + xz[i + 1] * sin;
+            double wz = vehicleLoc.getZ() - xz[i] * sin + xz[i + 1] * cos;
+            double top = groundTop(world, wx, wz, bottom, step);
+            if (!Double.isNaN(top)) best = Math.max(best, top);
+            if (probeAhead) {
+                double ahead = groundTop(world, wx + fx * dir * look, wz + fz * dir * look, bottom, step);
+                if (Double.isNaN(ahead)) blocked = true;
+                else best = Math.max(best, ahead);
+            }
+        }
+        boolean valid = best > Double.NEGATIVE_INFINITY;
+        return new Support(valid, valid ? best : Double.NaN, blocked);
+    }
+
+    /**
+     * Highest ground top in one column that the vehicle could stand on: NaN if the first solid thing
+     * found is taller than a step (a wall), -infinity if there is nothing within reach below.
+     *
+     * <p>Uses the block's collision shape, not its cell, so a fence or wall reads as 1.5 tall and a
+     * slab as 0.5 — "solid block plus one" would let small wheels hop a fence and then sit half a
+     * block inside its hitbox.
+     */
+    private static double groundTop(World world, double wx, double wz, double bottom, float step) {
+        int bx = (int) Math.floor(wx), bz = (int) Math.floor(wz);
+        return columnSupport(y -> collisionTop(world.getBlockAt(bx, y, bz)), bottom, step);
+    }
+
+    /** Top of a block's collision shape within its cell (0..1.5), or NaN when nothing collides. */
+    private static double collisionTop(org.bukkit.block.Block b) {
+        if (b.getType().isAir() || b.isLiquid()) return Double.NaN;
+        double maxY = Double.NaN;
+        for (org.bukkit.util.BoundingBox box : b.getCollisionShape().getBoundingBoxes()) {
+            maxY = Double.isNaN(maxY) ? box.getMaxY() : Math.max(maxY, box.getMaxY());
+        }
+        return maxY;
+    }
+
+    /**
+     * The Bukkit-free core of {@link #groundTop}: scan a column top-down from one step above the
+     * bottom to {@link #SUPPORT_SCAN_BELOW} below it.
+     *
+     * @param shapeTopAt for a block Y, the top of its collision shape within the cell, or NaN when the
+     *                   block does not collide
+     */
+    static double columnSupport(java.util.function.IntToDoubleFunction shapeTopAt, double bottom, float step) {
+        int from = (int) Math.floor(bottom + step + 0.001);
+        int to = (int) Math.floor(bottom) - SUPPORT_SCAN_BELOW;
+        for (int y = from; y >= to; y--) {
+            double shapeTop = shapeTopAt.applyAsDouble(y);
+            if (Double.isNaN(shapeTop)) continue;
+            double top = y + shapeTop;
+            if (top > bottom + step + 0.001) return Double.NaN;
+            return top;
+        }
+        return Double.NEGATIVE_INFINITY;
+    }
+
+    /** Wheels in contact: bottom at (or a hair above) the supported height, latched over bumps. */
+    private void updateGrounded(Location vehicleLoc, Support support) {
+        double bottom = vehicleLoc.getY() + ship.model.landBottomY;
+        boolean contact = support.valid() && bottom <= support.targetY() + 0.1;
+        if (contact) {
+            groundedGrace = GROUND_GRACE_TICKS;
+        } else if (groundedGrace > 0) {
+            groundedGrace--;
+        }
+        boolean now = groundedGrace > 0;
+        if (now != grounded) {
+            grounded = now;
+            statsComputed = false;  // ground thrust switches in or out
+        }
+    }
+
+    /**
+     * Vertical physics on wheels: rest on the ground, ease up steps, fall off ledges.
+     *
+     * <p>Stepping is a capped ease toward the supported height, not a jump. The vehicle stays on the
+     * ground through the whole climb, so it never loses ground thrust mid-step, and nothing launches
+     * it into a wall it has not yet risen above.
+     */
+    private void handleLandPhysics(Location vehicleLoc, Support support) {
+        ShipConfig config = ship.config;
+        double bottom = vehicleLoc.getY() + ship.model.landBottomY;
+        if (support.valid() && support.targetY() >= bottom - 0.001) {
+            double rise = support.targetY() - bottom;
+            currentYVelocity = rise < 0.001 ? 0f : (float) Math.min(rise, config.landStepUpSpeed);
+        } else {
+            // Falling: gravity with terminal velocity, landing on the sampled ground rather than
+            // passing it (clampFallToGround only sweeps the Ship's Wheel column).
+            currentYVelocity = Math.max(currentYVelocity - GRAVITY_PER_TICK, -config.maxSinkSpeed);
+            if (support.valid() && bottom + currentYVelocity < support.targetY()) {
+                currentYVelocity = (float) (support.targetY() - bottom);
+            }
+            currentYVelocity = clampFallToGround(vehicleLoc, currentYVelocity);
+        }
+
+        if (landBlockedAhead && ship.hasDriver && blockedMessageCooldown <= 0) {
+            blockedNoticePending = true;
+            blockedMessageCooldown = 60;
+        }
+        if (blockedMessageCooldown > 0) blockedMessageCooldown--;
+
+        // Settle-to-rest, as on the flight path: the vertical move ending is the land path's trigger
+        // for refreshCarrierTracking, or deck standers keep collision jitter after a step.
+        if (Math.abs(currentYVelocity) < 0.001f) {
+            currentYVelocity = 0f;
+            if (wasVerticallyMoving) {
+                wasVerticallyMoving = false;
+                ship.refreshCarrierTracking();
+            }
+        } else {
+            wasVerticallyMoving = true;
+        }
+    }
+
+    /**
+     * The "too steep" driver notice, at most once per few seconds. Returned to ShipInstance rather than
+     * sent from here because the speed bar owns the action bar; the two would overwrite each other.
+     */
+    public String takeBlockedNotice() {
+        if (!blockedNoticePending) return null;
+        blockedNoticePending = false;
+        return "§cToo steep — these wheels climb " + formatStep(landStepHeight())
+            + " block" + (landStepHeight() == 1f ? "" : "s") + ". Bigger wheels climb higher.";
+    }
+
+    private static String formatStep(float h) {
+        return h == Math.rint(h) ? String.valueOf((int) h) : String.valueOf(h);
     }
 
     /**

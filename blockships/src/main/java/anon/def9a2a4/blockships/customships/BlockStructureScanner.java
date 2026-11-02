@@ -924,8 +924,33 @@ public class BlockStructureScanner {
             driverBlockIndex = positionToBlockIndex.get(underKey);
         }
 
+        // 26.3 cushions (entities resting on a block; none on older servers): the block a cushion rests on is a
+        // passenger seat, and a cushion SITTING in the cell behind the wheel makes its block the driver seat.
+        // The rule above already lands there when that block is behind or under the wheel; this covers a
+        // passable scanned block in the way (a pressure plate, a carpet the cushion sits on).
+        // The seat is the block whose collider carries the cushion — the cushion's own block, or the one under it
+        // when that has no collider (a carpet, a pressure plate): its shulker is what the player rides.
+        for (anon.def9a2a4.blockships.CushionSupport.CushionSeat c
+                : anon.def9a2a4.blockships.CushionSupport.cushionSeats(orderedBlocks)) {
+            Block cell = c.cell();
+            if (cell.getX() - wheelOrigin.getBlockX() == opposite.getModX()
+                    && cell.getY() == wheelOrigin.getBlockY()
+                    && cell.getZ() - wheelOrigin.getBlockZ() == opposite.getModZ()) {
+                driverBlockIndex = c.seatIdx();
+            }
+            Block seatBlock = orderedBlocks.get(c.seatIdx());
+            seats.add(new ShipModel.SeatInfo(new Vector3f(
+                (float) (seatBlock.getX() - wheelOrigin.getBlockX()), (float) (seatBlock.getY() - wheelOrigin.getBlockY()),
+                (float) (seatBlock.getZ() - wheelOrigin.getBlockZ())), c.seatIdx(), false));
+        }
+
         Vector3f driverSeatOffset = new Vector3f(opposite.getModX(), 0, opposite.getModZ());
         seats.add(0, new ShipModel.SeatInfo(driverSeatOffset, driverBlockIndex, true));
+        // One seat per block: a stair/carpet/cushion block behind the wheel is BOTH a passenger seat (found above)
+        // and the driver seat, and they share one shulker — a duplicate inflates the menu's seat count and
+        // double-books occupancy. Keep the first (the driver at index 0).
+        java.util.Set<Integer> seatBlocks = new java.util.HashSet<>();
+        seats.removeIf(si -> !seatBlocks.add(si.blockIndex));
 
         // Create ShipModel with default settings
         // Calculate assembly yaw for disassembly rotation tracking

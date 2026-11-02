@@ -54,6 +54,14 @@ public class ShipConfig {
     public final int hugeBannerPower;        // Power points per huge banner (default: 50)
     public final int baseTurn;               // Free turning points every ship gets
     public final float sailTurnFactor;       // How much sail power aids turning, scaled by speed
+    // Land vehicles (ships with ground wheels): custom-ships.land
+    public final float landGroundDrag;        // Coasting drag multiplier while rolling on the ground
+    public final float landStepUpSpeed;       // Max blocks/tick the hull rises while climbing a step
+    public final float landSpeedMultiplier;   // Top-speed scale on land, so cars don't outrun chunk loading
+    public final float landGroundTurnFactor;  // How much ground thrust aids turning
+    public final float landStepHeightWheel;       // Step height per wheel size, in blocks
+    public final float landStepHeightLargeWheel;
+    public final float landStepHeightHugeWheel;
     public final int thrustSpoolTicks;       // Ticks for thrust to ramp UP; spool-down decays and takes
                                              // far longer (propeller inertia) — see ShipPhysics.approach
     public final float maxSinkSpeed;         // Terminal fall speed at zero lift (blocks/tick)
@@ -154,6 +162,13 @@ public class ShipConfig {
         this.baseTurn = b.baseTurn;
         this.sailTurnFactor = b.sailTurnFactor;
         this.thrustSpoolTicks = b.thrustSpoolTicks;
+        this.landGroundDrag = b.landGroundDrag;
+        this.landStepUpSpeed = b.landStepUpSpeed;
+        this.landSpeedMultiplier = b.landSpeedMultiplier;
+        this.landGroundTurnFactor = b.landGroundTurnFactor;
+        this.landStepHeightWheel = b.landStepHeightWheel;
+        this.landStepHeightLargeWheel = b.landStepHeightLargeWheel;
+        this.landStepHeightHugeWheel = b.landStepHeightHugeWheel;
         this.maxSinkSpeed = b.maxSinkSpeed;
         this.sinkSpeedExponent = b.sinkSpeedExponent;
         this.liftHoldSinkFactor = b.liftHoldSinkFactor;
@@ -306,6 +321,13 @@ public class ShipConfig {
             .baseTurn(cfg.getInt("custom-ships.stats.base-turn", 2))
             .sailTurnFactor((float) cfg.getDouble("custom-ships.stats.sail-turn-factor", 0.5))
             .thrustSpoolTicks(cfg.getInt("custom-ships.stats.thrust-spool-ticks", 40))
+            .landGroundDrag((float) cfg.getDouble("custom-ships.land.ground-drag", 0.9))
+            .landStepUpSpeed((float) cfg.getDouble("custom-ships.land.step-up-speed", 0.35))
+            .landSpeedMultiplier((float) cfg.getDouble("custom-ships.land.speed-multiplier", 0.7))
+            .landGroundTurnFactor((float) cfg.getDouble("custom-ships.land.ground-turn-factor", 0.5))
+            .landStepHeightWheel((float) cfg.getDouble("custom-ships.land.step-height.wheel", 1.0))
+            .landStepHeightLargeWheel((float) cfg.getDouble("custom-ships.land.step-height.large-wheel", 1.5))
+            .landStepHeightHugeWheel((float) cfg.getDouble("custom-ships.land.step-height.huge-wheel", 2.5))
             .maxSinkSpeed((float) cfg.getDouble("custom-ships.stats.max-sink-speed", 0.5))
             .sinkSpeedExponent((float) cfg.getDouble("custom-ships.stats.sink-speed-exponent", 0.7))
             .liftHoldSinkFactor((float) cfg.getDouble("custom-ships.stats.lift-hold-sink-factor", 0.35))
@@ -337,6 +359,17 @@ public class ShipConfig {
      * ratio 0.0 -> floor, ratio defaultRatio -> defaultVal, ratio 1.0 -> cap.
      * Result is clamped to [floor, cap].
      */
+    /** Step height for one wheel type, in blocks; 0 for anything that is not a wheel. */
+    public float stepHeightOf(String wheelTypeId) {
+        if (wheelTypeId == null) return 0f;
+        return switch (wheelTypeId) {
+            case "mech:wheel" -> landStepHeightWheel;
+            case "mech:large_wheel" -> landStepHeightLargeWheel;
+            case "mech:huge_wheel" -> landStepHeightHugeWheel;
+            default -> 0f;
+        };
+    }
+
     public float computeStat(float ratio, float defaultVal, float floor, float configCap) {
         float cap = configCap > 0 ? configCap : defaultVal * maxRatioMultiplier;
         float stat;
@@ -389,6 +422,13 @@ public class ShipConfig {
         int baseTurn = 2;
         float sailTurnFactor = 0.5f;
         int thrustSpoolTicks = 40;
+        float landGroundDrag = 0.9f;
+        float landStepUpSpeed = 0.35f;
+        float landSpeedMultiplier = 0.7f;
+        float landGroundTurnFactor = 0.5f;
+        float landStepHeightWheel = 1.0f;
+        float landStepHeightLargeWheel = 1.5f;
+        float landStepHeightHugeWheel = 2.5f;
         float maxSinkSpeed = 0.5f;
         float sinkSpeedExponent = 0.7f;
         float liftHoldSinkFactor = 0.35f;
@@ -470,6 +510,13 @@ public class ShipConfig {
         Builder baseTurn(int v) { baseTurn = v; return this; }
         Builder sailTurnFactor(float v) { sailTurnFactor = v; return this; }
         Builder thrustSpoolTicks(int v) { thrustSpoolTicks = v; return this; }
+        Builder landGroundDrag(float v) { landGroundDrag = v; return this; }
+        Builder landStepUpSpeed(float v) { landStepUpSpeed = v; return this; }
+        Builder landSpeedMultiplier(float v) { landSpeedMultiplier = v; return this; }
+        Builder landGroundTurnFactor(float v) { landGroundTurnFactor = v; return this; }
+        Builder landStepHeightWheel(float v) { landStepHeightWheel = v; return this; }
+        Builder landStepHeightLargeWheel(float v) { landStepHeightLargeWheel = v; return this; }
+        Builder landStepHeightHugeWheel(float v) { landStepHeightHugeWheel = v; return this; }
         Builder maxSinkSpeed(float v) { maxSinkSpeed = v; return this; }
         Builder sinkSpeedExponent(float v) { sinkSpeedExponent = v; return this; }
         Builder liftHoldSinkFactor(float v) { liftHoldSinkFactor = v; return this; }

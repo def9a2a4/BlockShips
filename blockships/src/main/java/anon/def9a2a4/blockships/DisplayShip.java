@@ -209,8 +209,7 @@ public class DisplayShip implements Listener {
 
 
     public void shutdown() {
-        // The server saves every world after plugins disable, so docked native ships can drop their sidecars now.
-        flushDockedSidecars(false);
+        flushAfterSaveWork();
         // Save all ships to per-world storage - entities persist via Minecraft
         shipWorldData.saveAll();
         // Shutdown async I/O executor
@@ -257,6 +256,11 @@ public class DisplayShip implements Listener {
             ShipRegistry.unregister(ship);
             plugin.getLogger().fine("Suspended ship " + ship.id + " for chunk unload at " + chunk.getX() + "," + chunk.getZ());
         }
+    }
+
+    @EventHandler
+    public void onWorldLoad(org.bukkit.event.world.WorldLoadEvent event) {
+        ((BlockShipsPlugin) plugin).getShipWheelManager().onWorldLoaded(event.getWorld());
     }
 
     /**
@@ -398,10 +402,14 @@ public class DisplayShip implements Listener {
         // (hasPersistedState, e.g. a crash between a prior migration's assemble+persist and its migrated-marker
         // write) — re-assembling would duplicate the mechanism (the reaper skips corelib-tagged ghosts). Reap the
         // stale native entities only; corelib's own recovery brings the delegated ship back.
-        if (reg.byId(shipId) != null || reg.hasPersistedState(world, shipId)) {
+        if (reg.byId(shipId) != null
+                || (reg.hasPersistedState(world, shipId) && hasDelegatedEntity(root.getLocation().getChunk(), shipId))) {
             reapNativeEntities(shipId, root);
             return;
         }
+        // A state file with no delegated entities beside the native root: the server stopped after a previous
+        // migration wrote it but before the new entities were saved. The native entities are the only copy of the
+        // ship, so migrate again (same id, the state file is overwritten).
         ShipModel model = loadModelForState(state, shipId);
         if (model == null) return;   // loadModelForState logged the reason once (via the dedupe key)
         java.util.List<long[]> forced = forceLoadFootprint(world, root.getLocation(), model);
@@ -430,7 +438,9 @@ public class DisplayShip implements Listener {
             // F4: re-link the wheel + recompute stats one tick later (same as delegated recovery) — else a migrated
             // CUSTOM ship stays at its conservative preliminary stats (immovable) until an unload+reload.
             scheduleWheelRelink(ship, shipId);
-            shipWorldData.saveShipMetadata(ship);        // re-persist as delegated (writes the migrated marker)
+            // Re-persist as delegated (writes the migrated marker) once the new entities are on disk. A chunk unload
+            // before then writes it anyway, together with the entities.
+            runAfterWorldSaved(world, () -> { if (ShipRegistry.byId(shipId) == ship) shipWorldData.saveShipMetadata(ship); });
             // AFTER successful migration (ordering is load-bearing). Scan the model footprint radius (≥64) so the reap
             // covers exactly what forceLoadFootprint force-loaded — a >64-block-radius ship no longer strands native
             // entities in its outer chunks for the straggler sweep to mop up later.
@@ -456,7 +466,7 @@ public class DisplayShip implements Listener {
         int dropped = ((BlockShipsPlugin) plugin).getShipWheelManager()
             .landNativeShip(shipId, at, yaw, model, ShipInstance.decodeCargo(state));
         reapNativeEntities(shipId, root, Math.max(footprintRadius(model), 64));
-        deleteSidecarAfterWorldSave(world, shipId);
+        runAfterWorldSaved(world, () -> shipWorldData.removeShip(world, shipId));
         migrationFailureLogged.remove(shipId);
         plugin.getLogger().info("Docked 0.0.17 ship " + shipId + " where it stood at " + at.getBlockX() + ","
             + at.getBlockY() + "," + at.getBlockZ() + " in " + world.getName() + " for the upgrade"
@@ -464,27 +474,62 @@ public class DisplayShip implements Listener {
             + ". Relaunch it from its wheel.");
     }
 
-    /** Docked native ships whose sidecar is deleted once their world has been saved. */
-    private final Map<World, Set<UUID>> dockedAwaitingSave = new HashMap<>();
-
     /**
-     * The sidecar goes only after a world save. Deleting it first, then crashing before the world saved, would
-     * bring back the native entities without their blocks, and with no sidecar the straggler sweep reaps them:
-     * the ship gone. Kept, the next boot docks it again; landNativeShip sees its wheel already on the cell
-     * when the blocks did reach disk, and does not place them twice.
+     * Delete a ship's sidecar once the world has saved the ship's current state (see {@link #runAfterWorldSaved}).
+     * For a dock or destroy: DefCoreLib keeps the mechanism's own state file until the landed blocks are on disk,
+     * so a crash in between recovers the ship — and it can only be wrapped back into a ship while its sidecar
+     * still exists. Deleting the sidecar at once left that recovery a frozen, unlinked mechanism.
      */
-    private void deleteSidecarAfterWorldSave(World world, UUID shipId) {
-        boolean first = dockedAwaitingSave.isEmpty();
-        dockedAwaitingSave.computeIfAbsent(world, w -> new HashSet<>()).add(shipId);
-        if (first) Bukkit.getScheduler().runTask(plugin, () -> flushDockedSidecars(true));
+    public void removeShipAfterWorldSaved(World world, UUID shipId) {
+        runAfterWorldSaved(world, () -> shipWorldData.removeShip(world, shipId));
     }
 
-    private void flushDockedSidecars(boolean saveWorld) {
-        for (Map.Entry<World, Set<UUID>> e : dockedAwaitingSave.entrySet()) {
-            if (saveWorld) e.getKey().save();
-            for (UUID id : e.getValue()) shipWorldData.removeShip(e.getKey(), id);
+    /** Per world: work waiting for the next save, and work whose world has been saved once since. */
+    private final Map<String, List<Runnable>> awaitingSave = new HashMap<>();
+    private final Map<String, List<Runnable>> savedOnce = new HashMap<>();
+
+    /**
+     * Runs {@code work} once the world's entities as they are now have reached disk. An upgrade migration replaces
+     * a 0.0.17 ship's entities with blocks or a new mechanism; the record that says "done" (sidecar deleted, or
+     * marked migrated) must not get to disk first, or a crash brings back the old entities with a record that
+     * says to reap them, and the ship is gone.
+     *
+     * <p>WorldSaveEvent fires before the chunks are written and Paper writes them asynchronously, so the work runs
+     * at the second save after it was queued. Both saves are requested here, five seconds apart, instead of
+     * waiting for autosaves.
+     */
+    private void runAfterWorldSaved(World world, Runnable work) {
+        boolean idle = !awaitingSave.containsKey(world.getName());
+        awaitingSave.computeIfAbsent(world.getName(), k -> new ArrayList<>()).add(work);
+        if (idle) Bukkit.getScheduler().runTask(plugin, () -> world.save());
+    }
+
+    @EventHandler
+    public void onWorldSave(org.bukkit.event.world.WorldSaveEvent event) {
+        World world = event.getWorld();
+        List<Runnable> due = savedOnce.remove(world.getName());
+        List<Runnable> next = awaitingSave.remove(world.getName());
+        if (next != null) {
+            savedOnce.put(world.getName(), next);
+            Bukkit.getScheduler().runTaskLater(plugin, () -> world.save(), 100);
         }
-        dockedAwaitingSave.clear();
+        if (due != null) due.forEach(Runnable::run);
+    }
+
+    /** Shutdown: the server saves every world after plugins disable, so everything queued can run now. */
+    private void flushAfterSaveWork() {
+        savedOnce.values().forEach(l -> l.forEach(Runnable::run));
+        awaitingSave.values().forEach(l -> l.forEach(Runnable::run));
+        savedOnce.clear();
+        awaitingSave.clear();
+    }
+
+    private static boolean hasDelegatedEntity(org.bukkit.Chunk chunk, UUID shipId) {
+        for (Entity e : chunk.getEntities()) {
+            Set<String> tags = e.getScoreboardTags();
+            if (ShipTags.isCorelibTagged(tags) && shipId.equals(ShipTags.extractShipId(tags))) return true;
+        }
+        return false;
     }
 
     /** Interaction fallback: a player clicked a ship collider whose ship isn't registered. The player is here, so
@@ -1061,25 +1106,47 @@ public class DisplayShip implements Listener {
         e.getInventory().setResult(result);
     }
 
-    @EventHandler
+    /**
+     * The Captain's Manual recipe keeps its ship wheel: give back as many wheels as the craft actually used up,
+     * counted from the grid a tick later. Returning one on every click handed out a free wheel whenever the click
+     * crafted nothing (cursor holding another item, another plugin cancelling it), and shift-click crafting several
+     * gave back only one.
+     */
+    @EventHandler(priority = org.bukkit.event.EventPriority.MONITOR, ignoreCancelled = true)
     public void onCraftNonConsumable(org.bukkit.event.inventory.CraftItemEvent event) {
         if (!(event.getRecipe() instanceof Keyed keyed)) return;
         if (!keyed.getKey().getNamespace().equals(plugin.getName().toLowerCase())) return;
-        String recipeKey = keyed.getKey().getKey();
-        if (!recipeKey.equals("captains_manual_kit_recipe")) return;
+        if (!keyed.getKey().getKey().equals("captains_manual_kit_recipe")) return;
+        if (event.getAction() == org.bukkit.event.inventory.InventoryAction.NOTHING) return;
 
-        // Return the ship wheel to the player after crafting
-        for (ItemStack item : event.getInventory().getMatrix()) {
-            if (item != null && isShipWheel(item)) {
-                ItemStack wheelCopy = item.clone();
-                wheelCopy.setAmount(1);
-                org.bukkit.entity.HumanEntity crafter = event.getWhoClicked();
-                Bukkit.getScheduler().runTask(plugin, () -> {
-                    crafter.getInventory().addItem(wheelCopy);
-                });
-                break;
-            }
+        org.bukkit.inventory.CraftingInventory grid = event.getInventory();
+        ItemStack wheel = null;
+        for (ItemStack item : grid.getMatrix()) {
+            if (item != null && isShipWheel(item)) { wheel = item.clone(); break; }
         }
+        if (wheel == null) return;
+        int before = countWheels(grid);
+        ItemStack template = wheel;
+        org.bukkit.entity.HumanEntity crafter = event.getWhoClicked();
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            // Closed in the same tick: the grid went back to the player, so its count says nothing. One craft.
+            boolean open = crafter.getOpenInventory().getTopInventory() == grid;
+            int used = open ? before - countWheels(grid) : 1;
+            if (used <= 0) return;
+            ItemStack back = template.clone();
+            back.setAmount(used);
+            for (ItemStack extra : crafter.getInventory().addItem(back).values()) {
+                crafter.getWorld().dropItem(crafter.getLocation(), extra);
+            }
+        });
+    }
+
+    private int countWheels(org.bukkit.inventory.CraftingInventory grid) {
+        int n = 0;
+        for (ItemStack item : grid.getMatrix()) {
+            if (item != null && isShipWheel(item)) n += item.getAmount();
+        }
+        return n;
     }
 
     @EventHandler
@@ -1483,6 +1550,16 @@ public class DisplayShip implements Listener {
             handleShulkerInteraction(e, shulker);
         }
 
+        // A 26.3 cushion carried on a ship seat: route the click to the seat's shulker. Left to vanilla, the player
+        // would sit on the cushion itself, outside the seat code (no steering, no occupancy). Only for a REGISTERED
+        // ship: every mechanism collider carries a corelib:mech id that extractShipId reads as a ship id, and
+        // handleShulkerInteraction consumes the click for an unknown one — so a cushion on a door or hoist keeps
+        // its vanilla seat.
+        if (anon.def9a2a4.blockships.CushionSupport.isCarried(clicked) && clicked.getVehicle() instanceof Shulker seat) {
+            UUID seatShip = ShipTags.extractShipId(seat.getScoreboardTags());
+            if (seatShip != null && ShipRegistry.byId(seatShip) != null) handleShulkerInteraction(e, seat);
+        }
+
         // Also handle clicking on collision carriers (ArmorStand or Interaction with shulker passengers)
         if (clicked instanceof ArmorStand || clicked instanceof org.bukkit.entity.Interaction) {
             // Check if the carrier has a shulker passenger
@@ -1564,6 +1641,10 @@ public class DisplayShip implements Listener {
             e.setCancelled(true);
             return;
         }
+
+        // DefCoreLib's wrench readout handles this click; boarding here too moved a seated driver off the helm.
+        if ("mech:wrench".equals(anon.def9a2a4.corelib.CustomBlockRegistry.getItemTypeId(
+                player.getInventory().getItemInMainHand()))) return;
 
         // Debug tool: if player holds echo shard, show collision info
         if (player.getInventory().getItemInMainHand().getType() == Material.ECHO_SHARD) {
@@ -1676,7 +1757,6 @@ public class DisplayShip implements Listener {
         if (mci >= 0) {
             Inventory storage = inst.mechanism.getStorage(mci);
             if (storage != null) {
-                openShipStorage.put(storage, inst.id);
                 player.openInventory(storage);
                 e.setCancelled(true);
                 return;
@@ -2801,27 +2881,6 @@ public class DisplayShip implements Listener {
             case HELP, INFO, DETECT, HIGHLIGHT_SEATS,
                  CAMERA_DISTANCE_DECREASE, CAMERA_DISTANCE_INCREASE, ASSEMBLE, NONE -> false;
         };
-    }
-
-    /** Ship storage inventories that have been opened, and their ship, so a close can save the cargo. */
-    private final Map<Inventory, UUID> openShipStorage = new WeakHashMap<>();
-
-    /**
-     * Saves a ship's cargo when a player closes one of its containers. Cargo otherwise reaches disk only at
-     * assembly, chunk crossings and shutdown, so after a crash a parked ship's chests came back as they were
-     * long before: items taken out since were duplicated, items put in were lost.
-     */
-    @EventHandler
-    public void onShipStorageClose(InventoryCloseEvent event) {
-        UUID shipId = openShipStorage.get(event.getInventory());
-        if (shipId == null) return;
-        ShipInstance ship = ShipRegistry.byId(shipId);
-        if (ship == null || ship.mechanism == null) return;
-        try {
-            anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry().persist(ship.mechanism);
-        } catch (java.io.UncheckedIOException e) {
-            plugin.getLogger().warning("Could not save ship " + shipId + "'s cargo: " + e.getMessage());
-        }
     }
 
     /**

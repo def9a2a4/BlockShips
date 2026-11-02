@@ -139,6 +139,66 @@ exactly lift 1.0 has a high ceiling and zero permission to use it. Sails and ver
 it, including on a lighter-than-air hull, so a glowstone airship with fans climbs faster than the same
 airship without them.
 
+## Land vehicles
+
+A ship drives on land when it has **wheels on the ground** (`mech:wheel`, `mech:large_wheel`,
+`mech:huge_wheel`). There is no separate steering item; the normal Ship's Wheel steers.
+
+**Mounting.** A wheel hangs on a wall, so its facing is its axle. It drives only with the axle
+**across** the hull, which means on the left or right side. A wheel on the bow or stern face would
+roll sideways, so it is ignored, and detect says so. A wheel counts as *on the ground* only if its
+tyre reaches within 0.25 of the vehicle's lowest point. That way a spare tyre on a cabin wall, wheels
+on a boat's gunwale above its keel, or an airship's gear above its gondola stay decoration.
+
+| wheel | diameter | tyre below its block | thrust | power | step height |
+|---|---|---|---|---|---|
+| wheel | 1 | 0 | 20 | 3 | 1 |
+| large wheel | 2 | 0.5 | 64 | 6 | 1.5 |
+| huge wheel | 3 | 1 | 160 | 12 | 2.5 |
+
+**Ground thrust** joins the forward and turning terms only while the wheels touch the ground, so a
+wheeled boat or flier gains nothing from them elsewhere. Wheel thrust per unit of power beats the
+matching propeller, because a wheel only works on land.
+- Turning from wheels scales with speed but never drops below 30%, so a stopped car can still turn
+  out of a one-wide gap.
+- Unpowered wheels still make the hull a land vehicle, so a sail cart rolls on its sails.
+- Top speed on land is scaled by `custom-ships.land.speed-multiplier` (0.7).
+
+**Stepping, not tilting.** The hull never pitches or rolls. Every tick the land physics samples the
+ground under each ground wheel and around the hull's footprint, and again one climb's worth of travel
+ahead. It then eases the hull up onto the highest climbable surface it finds, at most
+`step-up-speed` blocks per tick. The vehicle stays on the ground through the whole climb, so it
+keeps its wheel thrust.
+- Heights come from block **collision shapes**: a slab is half a step, a fence or wall 1.5.
+- A rise taller than the step height is a wall. Collision stops the vehicle, and the driver gets a
+  "too steep" notice.
+- The step height is the **smallest** ground wheel's, so mixing sizes is limited by the small ones.
+- Off a ledge the vehicle falls under the usual gravity and terminal velocity.
+
+**Which branch drives the vertical physics:**
+1. A wheeled hull out of the water is on the land branch, even with a fan or downward thruster aboard.
+2. It only flies when it can: lift ≥ 1 with Space held, or already airborne.
+3. In water it floats or sinks by density as usual, and its wheels give nothing.
+
+An airship with landing gear taxis on its wheels and takes off with Space.
+
+## Fuel: engines burn for what is used
+
+With DefCoreLib's `engines.burn-on-load` (on by default), an engine burns fuel for the share of its
+output that is actually used, not for what it could supply.
+- An engine with fuel stays running, so the network stays powered, but burns nothing while every
+  machine on it is idle.
+- BlockShips reports each thrust block's use as its demand:
+  - forward propellers follow the throttle
+  - side propellers and reaction wheels follow the steering
+  - lift propellers follow the climb, or the share of lift that holds the ship up while hovering
+  - wheels follow the throttle while on the ground
+- A thruster burns by its own use.
+- A parked ship with a lit engine therefore burns nothing, and half throttle burns about half.
+- Propellers and wheels also *spin* by use rather than whenever powered. Wheels roll at road speed,
+  backwards in reverse.
+- On an older DefCoreLib all of this degrades to the old fixed burn and always-on spin.
+
 ## The craft this is meant to support
 
 1. **A plain oak hull.** Sails on water, slowly.
@@ -152,10 +212,15 @@ airship without them.
    *consumer*, so this needs a power source — a windmill or an engine — on the same rotation network.
    (Not a water wheel: it supplies power in the static world but only *transmits* aboard a moving
    mechanism, so a ship built on one never spins up.) Takes off, and stops climbing the moment power drops.
+6. **A rover:** wheels on both sides of a hull on dry ground, powered through the rotation network the
+   same way a wall propeller is. Climbs steps its smallest wheels can take; a sail cart does the same
+   unpowered.
 
 ## Where this lives in the code
 
 - `ShipStats` — the three ratios, one calculator for every readout.
 - `ShipThrust` — classifies blocks by mount direction; `totalsFor` is live, `scanWorld` is potential.
 - `ShipPhysics.applyAirshipVerticalPhysics` — the climb/sink model.
+- `ShipPhysics.handleLandPhysics` / `computeSupport` — ground support and stepping; `ShipModel.groundWheels`
+  — which wheels count; `ShipPropulsionUse` — spin and fuel demand by use.
 - `ShipConfig.computeStat` — the two-segment curve from a ratio to a speed.

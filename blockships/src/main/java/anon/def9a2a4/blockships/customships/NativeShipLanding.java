@@ -29,11 +29,12 @@ final class NativeShipLanding {
     /**
      * Places every part of {@code model} around {@code shipLoc} (the ship root, snapped to a block corner),
      * turned to {@code yaw} (a multiple of 90). Fragile blocks in the way are cleared. A part whose cell holds
-     * a solid block is dropped as items, contents included, rather than lost.
+     * a solid block is dropped as items, contents included, rather than lost; the wheel (the head at the root
+     * cell) drops as {@code wheelItem}, not a plain head.
      *
      * @return how many parts were dropped instead of placed
      */
-    static int place(Location shipLoc, ShipModel model, float yaw) {
+    static int place(Location shipLoc, ShipModel model, float yaw, ItemStack wheelItem) {
         float rotationDelta = ((yaw - model.assemblyYaw) % 360 + 360) % 360;
         int dropped = 0;
 
@@ -50,7 +51,9 @@ final class NativeShipLanding {
                     if (FragileBlocks.isFragile(existingType)) {
                         block.setType(Material.AIR, false);
                     } else {
-                        dropPart(part, blockLoc);
+                        boolean wheel = blockLoc.getBlock().equals(shipLoc.getBlock())
+                            && part.block.getMaterial().name().endsWith("PLAYER_HEAD");
+                        dropPart(part, blockLoc, wheel ? wheelItem : null);
                         dropped++;
                         continue;
                     }
@@ -159,7 +162,7 @@ final class NativeShipLanding {
 
     /** A part that can't be placed: its contents and its item form go on the ground at its cell. */
     @SuppressWarnings("unchecked")
-    private static void dropPart(ShipModel.ModelPart part, Location blockLoc) {
+    private static void dropPart(ShipModel.ModelPart part, Location blockLoc, ItemStack asItem) {
         Location at = blockLoc.clone().add(0.5, 0.5, 0.5);
         if (part.rawYaml.get("container_items") instanceof List<?> itemsData) {
             List<ItemStack> all = new ArrayList<>();
@@ -169,6 +172,7 @@ final class NativeShipLanding {
             for (ItemStack item : all) at.getWorld().dropItemNaturally(at, item);
         }
         Material m = part.block.getMaterial();
-        if (m.isItem()) at.getWorld().dropItemNaturally(at, new ItemStack(m));
+        if (asItem != null) at.getWorld().dropItemNaturally(at, asItem);
+        else if (m.isItem()) at.getWorld().dropItemNaturally(at, new ItemStack(m));
     }
 }

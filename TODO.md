@@ -37,7 +37,7 @@
 
 ## HARDER
 
-- [ ] land vehicles: drive block structures on land, "jump" up blocks like horses. see https://github.com/def9a2a4/BlockShips/issues/10 and design doc docs/todo/TODO-land-vehicles.md
+- [ ] land vehicles: implemented (wheels, stepping, use-driven spin, burn-on-load). Verify in-game, then close https://github.com/def9a2a4/BlockShips/issues/10. Design + status: docs/todo/TODO-land-vehicles.md
 
 - [ ] cannon fire control: cannons already fire (DisplayShip.fireAllCannons), but firing control/aiming/timing is unimplemented. see https://github.com/def9a2a4/BlockShips/issues/22
 

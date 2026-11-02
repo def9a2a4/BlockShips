@@ -810,6 +810,10 @@ public class ShipWheelMenu {
         if (t.axial() > 0)      lore.add(ChatColor.GRAY + "  Forward thrust: " + ChatColor.WHITE + t.axial() + " pts");
         if (t.turning() > 0)    lore.add(ChatColor.GRAY + "  Turning thrust: " + ChatColor.WHITE + t.turning() + " pts");
         if (t.vertical() > 0)   lore.add(ChatColor.GRAY + "  Lift thrust: " + ChatColor.WHITE + t.vertical() + " pts");
+        // Its own line, not folded into Forward below: wheels only push on the ground, so adding them into
+        // the forward ratio would over-report a wheeled boat or airship everywhere else.
+        if (t.ground() > 0)     lore.add(ChatColor.GRAY + "  Wheel thrust: " + ChatColor.WHITE + t.ground() + " pts"
+            + ChatColor.DARK_GRAY + " (on land)");
 
         lore.add("");
         lore.add(ChatColor.GRAY + "Forward: " + ratioColor(info.forwardRatio)

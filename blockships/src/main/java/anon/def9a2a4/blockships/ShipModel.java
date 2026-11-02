@@ -72,6 +72,31 @@ public final class ShipModel {
     /** Propulsion blocks aboard, empty for a ship that carries none. */
     public final List<ThrustBlock> thrustBlocks;
 
+    /**
+     * A drive wheel that reaches the ground. Position is the wheel block's cell in the model's local
+     * (as-assembled) frame, relative to the Ship's Wheel; {@code contactY} is the tyre's lowest point.
+     */
+    public record GroundWheel(int blockIndex, String typeId, float localX, float localZ, float contactY) {}
+
+    /**
+     * Wheels that touch the ground, derived from {@link #thrustBlocks} and {@link #parts}. Only wheels
+     * whose tyre reaches within {@link #GROUND_WHEEL_TOLERANCE} of {@link #landBottomY} count: a spare
+     * tyre on a cabin wall, wheels on a boat's gunwale above its keel, or an airship's gear above its
+     * gondola are decoration, not running gear.
+     */
+    public final List<GroundWheel> groundWheels;
+    /** Lowest point of the vehicle including tyres: min(minY, lowest wheel contact). */
+    public final float landBottomY;
+    /** Local-frame XZ points where support is sampled: ground wheels, then the hull footprint's edges. */
+    public final float[] supportSamplesXZ;
+    /** Fore-aft half-length of the footprint, in blocks, for the support look-ahead. */
+    public final float footprintRadius;
+
+    public static final float GROUND_WHEEL_TOLERANCE = 0.25f;
+
+    /** True when this hull has at least one wheel on the ground: it drives as a land vehicle. */
+    public boolean isLandVehicle() { return !groundWheels.isEmpty(); }
+
     // Assembly rotation (for custom block ships disassembly)
     public final float assemblyYaw;             // Yaw angle when assembled (0=S, 90=W, 180=N, 270=E), 0 for prefab ships
 
@@ -107,6 +132,51 @@ public final class ShipModel {
         this.sailPower = woolCount * woolPower + bannerCount * bannerPower
                        + largeBannerCount * largeBannerPower + hugeBannerCount * hugeBannerPower;
         this.thrustBlocks = thrustBlocks != null ? thrustBlocks : Collections.emptyList();
+
+        // Land geometry. Derived rather than persisted, so every construction path (scan, fromMap,
+        // prefab) gets it, and an old save gains it on load with no format change.
+        org.joml.Vector3f t = new org.joml.Vector3f();
+        List<GroundWheel> wheels = new java.util.ArrayList<>();
+        float bottom = minY;
+        for (ThrustBlock tb : this.thrustBlocks) {
+            if (tb.axis() != ShipThrust.Axis.GROUND) continue;
+            if (parts == null || tb.blockIndex() < 0 || tb.blockIndex() >= parts.size()) continue;
+            parts.get(tb.blockIndex()).local.getTranslation(t);
+            // A wall head sits in its cell at the same height as the block it hangs on; the tyre is
+            // centred on the cell, so it reaches (diameter/2 - 0.5) below the cell's bottom face.
+            float contact = t.y + 0.5f - ShipThrust.wheelDiameter(tb.typeId()) / 2f;
+            wheels.add(new GroundWheel(tb.blockIndex(), tb.typeId(), t.x, t.z, contact));
+            bottom = java.lang.Math.min(bottom, contact);
+        }
+        final float landBottom = bottom;
+        wheels.removeIf(w -> w.contactY() > landBottom + GROUND_WHEEL_TOLERANCE);
+        this.groundWheels = Collections.unmodifiableList(wheels);
+        this.landBottomY = wheels.isEmpty() ? minY : landBottom;
+
+        // Footprint: the XZ bounding rectangle of the bottom layer, sampled at corners, edge midpoints
+        // and centre. Only built for land vehicles; nothing else reads it.
+        List<Float> samples = new java.util.ArrayList<>();
+        float radius = 0.5f;
+        if (!wheels.isEmpty() && parts != null) {
+            for (GroundWheel w : wheels) { samples.add(w.localX()); samples.add(w.localZ()); }
+            float x0 = Float.MAX_VALUE, x1 = -Float.MAX_VALUE, z0 = Float.MAX_VALUE, z1 = -Float.MAX_VALUE;
+            for (ModelPart part : parts) {
+                part.local.getTranslation(t);
+                if (t.y > minY + 0.01f) continue;
+                x0 = java.lang.Math.min(x0, t.x); x1 = java.lang.Math.max(x1, t.x);
+                z0 = java.lang.Math.min(z0, t.z); z1 = java.lang.Math.max(z1, t.z);
+            }
+            if (x0 <= x1) {
+                float xm = (x0 + x1) / 2f, zm = (z0 + z1) / 2f;
+                float[][] pts = {{x0, z0}, {x1, z0}, {x0, z1}, {x1, z1},
+                                 {xm, z0}, {xm, z1}, {x0, zm}, {x1, zm}, {xm, zm}};
+                for (float[] pt : pts) { samples.add(pt[0]); samples.add(pt[1]); }
+                for (float[] pt : pts) radius = java.lang.Math.max(radius, (float) java.lang.Math.hypot(pt[0], pt[1]) + 0.5f);
+            }
+        }
+        this.supportSamplesXZ = new float[samples.size()];
+        for (int i = 0; i < samples.size(); i++) this.supportSamplesXZ[i] = samples.get(i);
+        this.footprintRadius = radius;
     }
 
     /**

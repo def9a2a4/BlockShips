@@ -48,6 +48,28 @@
   are not swallowed the next time you assemble. Broken cells are dropped from the set;
   re-freeze to take them back.
 
+- **Cushions are seats** (Minecraft 26.3). Every cushion on your hull is a passenger seat.
+  A cushion in the spot behind the wheel is the driver's seat. Sit on it before you assemble
+  and you're already at the helm. When the ship docks you land back on the cushion. Item
+  frames and paintings on the hull now sail with it too, instead of popping off as items.
+
+- **Land vehicles** ([#10](https://github.com/def9a2a4/BlockShips/issues/10)). Hang wheels
+  (DefCoreLib's wheel, large wheel and huge wheel) on the left and right sides of a hull and it
+  drives on land with the normal Ship's Wheel. Powered wheels push it along. Unpowered ones
+  still roll, so a sail cart works. It hops up steps instead of tilting. A small wheel climbs 1
+  block, a large one 1.5 (fences and walls), a huge one 2.5, and the smallest wheel aboard sets
+  the limit. Detect tells you it's a land vehicle, which wheel limits its climb, and which wheels
+  are mounted the wrong way.
+
+- **Propellers spin when you use them.** Forward propellers follow the throttle, side ones and
+  reaction wheels the steering, lift propellers the climb. A parked ship with a lit engine no
+  longer sits there with everything turning. Wheels roll at road speed and backwards in reverse.
+
+- **Engines only burn fuel for power that's used.** A parked ship burns nothing, and half throttle
+  burns about half. Thrusters burn by their own use. Thruster exhaust and engine smoke now show on
+  ships under way, and go quiet when the engine is burning nothing. Needs the matching DefCoreLib.
+  Set `engines.burn-on-load: false` in DefCoreLib's rotation-config.yml for the old fixed burn.
+
 - **Re-craft your Captain's Manual.** The book has six new sections covering sails,
   propulsion, mounting, heavy flight, gluing and locking, plus a rewritten Weight &
   Buoyancy — but a manual already in your
@@ -173,6 +195,33 @@ Also:
 - `wheels adopt` carries a locked structure across, refuses to adopt a block of the wrong
   type, names the record it collided with, and no longer turns away a wheel that kept its
   DefCoreLib mark but lost its id — which is the one case adopt exists for.
+
+### Ships that could be lost
+
+- **Ships in worlds loaded by Multiverse (or another world manager) went dead after every
+  restart.** BlockShips read its wheel records before those worlds existed and never looked
+  again, so their ships could be neither steered nor docked, with nothing in the log. The
+  records are now read when the world loads, and BlockShips loads after Multiverse-Core.
+  This is the likely cause of [#46](https://github.com/def9a2a4/BlockShips/issues/46).
+- **`/kill @e[type=!player]` or a lag-clear plugin deleted every loaded custom ship**, blocks
+  and all. A ship whose vehicle is removed that way now puts its blocks back where it was.
+- **`forceclearwheel` on a ship that was only parked out of range** left a ship that came back
+  with no wheel and could never be docked. It now refuses, and says where the ship is. Players
+  see the same: "parked out of range, last seen at x, y, z" instead of "still loading".
+- **Ships are saved with the world.** DefCoreLib now saves every ship at each autosave, so after
+  a crash a ship's position and cargo roll back to the same moment as the players' inventories.
+  An airship that had climbed or sunk since its last save could fail to come back at all, and
+  chest edits saved on close were out of step with players, which duplicated items.
+- **A crash in the minutes after the upgrade could lose a prefab ship**, and docking a 0.0.17
+  ship at sea relied on a save that had not reached disk yet. Both now wait until the world has
+  been written.
+- **A 0.0.17 ship docked with its wheel cell blocked** dropped a plain player head. It now drops
+  a ship wheel.
+- **Crafting a Captain's Manual could cost you your ship wheel** when your inventory was full,
+  and could hand out wheels for clicks that crafted nothing. You get back exactly the wheels the
+  craft used, at your feet if there is no room.
+- **Clicking a ship chest opened it twice**, and clicking a propeller with the wrench moved a
+  seated driver to another seat.
 
 ### One broken file no longer takes the plugin down
 

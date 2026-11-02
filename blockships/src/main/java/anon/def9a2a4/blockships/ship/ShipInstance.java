@@ -129,6 +129,9 @@ public class ShipInstance {
 
     // Input state tracking (set by PaperInputListener on the main thread, read by ShipPhysics). The
     // ProtocolLib ShipSteeringListener also writes these, from netty, but only registers below 1.21.2.
+    /** Drives propeller and wheel spin from use. */
+    final ShipPropulsionUse propulsionUse = new ShipPropulsionUse(this);
+
     public boolean isForwardPressed = false;
     public boolean isBackwardPressed = false;
     public boolean isLeftPressed = false;
@@ -148,7 +151,6 @@ public class ShipInstance {
     public ShipModel sourceModel = null;  // Original block model for disassembly
 
     // Chunk tracking for persistence - updated on movement
-    private int currentChunkX, currentChunkZ;
 
     // Throttle passenger integrity checks (only needed after chunk reload, not every tick)
     private int passengerCheckCounter = 0;
@@ -368,10 +370,6 @@ public class ShipInstance {
             : this.spawnYaw;
         if (delegatedPrefab) this.previousYaw = this.physics.currentYaw;
 
-        // Initialize chunk tracking for persistence
-        this.currentChunkX = vehicle.getLocation().getBlockX() >> 4;
-        this.currentChunkZ = vehicle.getLocation().getBlockZ() >> 4;
-
         } catch (Throwable ex) {
             // Assembly failed partway - despawn everything already spawned (vehicle, parent,
             // block/item displays, collider carriers + shulkers) so no invisible ghosts remain,
@@ -415,10 +413,39 @@ public class ShipInstance {
      */
     private void destroyWithPersistenceCleanup() {
         if (plugin instanceof BlockShipsPlugin bsp && bsp.getDisplayShip() != null) {
+            if ("custom".equals(shipType) && mechanism != null) {
+                landAfterVehicleLost(bsp);
+                return;
+            }
             destroyWithCleanup(bsp.getDisplayShip().getShipWorldData());
         } else {
             destroy();
         }
+    }
+
+    /**
+     * The vehicle was removed from outside ({@code /kill @e[type=!player]}, a lag-clear plugin) while the hull is
+     * still live. Destroying it threw the player's whole build away; land the blocks where the ship is instead,
+     * the way an orphan is landed.
+     */
+    private void landAfterVehicleLost(BlockShipsPlugin bsp) {
+        if (task != null) task.cancel();
+        if (idleCheckTask != null) idleCheckTask.cancel();
+        for (Shulker seat : seatShulkers) {
+            if (seat == null || !seat.isValid()) continue;
+            for (Entity passenger : seat.getPassengers()) {
+                if (passenger instanceof Player p) seat.removePassenger(p);
+            }
+        }
+        ShipRegistry.unregister(this);
+        var wheels = bsp.getShipWheelManager();
+        var wd = wheels.getWheelByShipUUID(id);
+        if (wd != null) wheels.landOrphanExpected(wd, id);
+        else anon.def9a2a4.blockships.ShipOrphans.disassembleOrphan(bsp, id);
+        if (wd != null && id.equals(wd.getAssembledShipUUID())) wd.setAssembledShipUUID(null);
+        wheels.saveAll();
+        plugin.getLogger().warning("Ship " + id + "'s vehicle entity was removed by something other than BlockShips "
+            + "(a kill command or a lag-clear plugin?); its blocks were put back where it was.");
     }
 
     /**
@@ -579,6 +606,7 @@ public class ShipInstance {
         physics.update();    // Apply physics (movement, rotation, buoyancy)
         collision.applyResponse();  // Apply collision response
         cachedVehicleLoc = vehicle.getLocation();  // Refresh after physics moved the vehicle
+        propulsionUse.tick();       // Spin propellers/wheels by use (visual only)
 
         // NOTE: always true — `mechanism` is final and the constructor dereferences `mechanism.id()`, so a null
         // would NPE before the object exists. Kept as a block only to avoid re-indenting the whole body; there
@@ -635,24 +663,6 @@ public class ShipInstance {
                 }
             }
 
-            int nCX = cachedVehicleLoc.getBlockX() >> 4, nCZ = cachedVehicleLoc.getBlockZ() >> 4;
-            if (currentChunkX != nCX || currentChunkZ != nCZ) {
-                currentChunkX = nCX;
-                currentChunkZ = nCZ;
-                // M5: re-index the mechanism in defCoreLib's own persistence onto the new pivot chunk too, so a
-                // crash MID-VOYAGE recovers the ship where it actually is (corelib recovery keys on the pivot
-                // chunk; assembly-time persist() indexed only the launch chunk). persist() MOVES the entry (D4),
-                // so no bloat. Cheap: only fires on a chunk-boundary crossing.
-                anon.def9a2a4.corelib.MechanismRegistry mr =
-                    anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry();
-                try {
-                    if (mr != null) mr.persist(mechanism);
-                } catch (java.io.UncheckedIOException e) {
-                    // The previous state file is untouched, so the ship still recovers, just from where it was
-                    // last saved. Say so: a full disk or a permission problem is the admin's to fix.
-                    plugin.getLogger().warning("Could not save ship " + id + " on chunk crossing: " + e.getMessage());
-                }
-            }
             // Settle-time collider re-sync (native parity): on the first idle tick after movement,
             // re-track the mechanism's collider carriers so clients discard accumulated tracker drift
             // that jitters players standing on the deck. The native idle gate (updateCollisionPositions
@@ -778,6 +788,14 @@ public class ShipInstance {
         // throttle should read as full, not as a fraction of what a fully-rigged one could do.
         float topSpeed = java.lang.Math.max(0.0001f, physics.effectiveMaxSpeed());
         float speedPercent = physics.currentSpeed / topSpeed;  // -1.0 to 1.0
+        // A land vehicle stopped by a step it cannot climb: say why, in place of the speed bar. The bar
+        // redraws as soon as the speed changes again.
+        String blocked = physics.takeBlockedNotice();
+        if (blocked != null) {
+            player.sendActionBar(net.kyori.adventure.text.Component.text(blocked));
+            previousDisplayedSpeed = speedPercent;
+            return;
+        }
         if (java.lang.Math.abs(speedPercent - previousDisplayedSpeed) < SPEED_DISPLAY_THRESHOLD) {
             return;  // Speed hasn't changed enough, skip update
         }
@@ -1221,10 +1239,27 @@ public class ShipInstance {
             ShipModel.SeatInfo si = model.seats.get(seatIdx);
             mechanism.designateSeat(si.blockIndex, si.isDriver);
             Shulker s = mechanism.seatEntity(si.blockIndex);
-            if (s != null) seatShulkers.set(seatIdx, s);
+            if (s != null) {
+                seatShulkers.set(seatIdx, s);
+                // Someone sitting on a 26.3 cushion when the ship assembled is still on it (defCoreLib carried
+                // it onto this seat's shulker): seat them on the shulker itself, where steering reads riders.
+                if (!anon.def9a2a4.blockships.CushionSupport.moveCushionRidersOntoSeat(s).isEmpty()) {
+                    occupySeat(seatIdx);
+                }
+            }
         }
         // Mirror ship HP onto the newly-adopted seat shulkers for the vanilla riding HUD.
         syncSeatShulkerHealth(vehicle.getHealth());
+    }
+
+    /**
+     * Landing (run from the mechanism's before-entity-removal hook): put each seated player back on the cushion
+     * riding their seat, so defCoreLib lands them seated on it. Seats without a cushion are left alone.
+     */
+    public void reseatRidersOnCushions() {
+        for (Shulker seat : seatShulkers) {
+            if (seat != null && seat.isValid()) anon.def9a2a4.blockships.CushionSupport.moveSeatRiderOntoCushion(seat);
+        }
     }
 
     /**
@@ -1590,7 +1625,12 @@ public class ShipInstance {
         // defCoreLib owns the parent/displays/colliders — tear them down via the Mechanism (removes entities
         // WITHOUT restoring blocks). Idempotent if disassemble() already ran. The external vehicle is still
         // removed at the end.
-        try { mechanism.destroy(); } catch (Throwable ignored) {}
+        try {
+            mechanism.destroy();
+        } catch (Throwable t) {
+            // destroy() is what drops the cargo, so a throw here can lose it.
+            plugin.getLogger().log(java.util.logging.Level.SEVERE, "Destroying ship " + id + " failed; its cargo may be lost", t);
+        }
         // Remove root vehicle (defCoreLib owns the borrowed vehicle's displays/colliders; mechanism.destroy above
         // tore them down, but the vehicle ArmorStand itself is BlockShips-owned and removed here).
         if (vehicle != null && vehicle.isValid()) vehicle.remove();
@@ -1606,7 +1646,13 @@ public class ShipInstance {
         World world = (vehicle != null && vehicle.isValid()) ? vehicle.getLocation().getWorld() : null;
         destroy();  // Remove entities and unregister
         if (world != null && shipWorldData != null) {
-            shipWorldData.removeShip(world, this.id);
+            // After the world saves (see DisplayShip.removeShipAfterWorldSaved): a crash before then brings the
+            // entities back, and recovery needs the sidecar to rebuild the ship rather than strand it.
+            if (plugin instanceof anon.def9a2a4.blockships.BlockShipsPlugin bsp) {
+                bsp.getDisplayShip().removeShipAfterWorldSaved(world, this.id);
+            } else {
+                shipWorldData.removeShip(world, this.id);
+            }
         }
     }
 

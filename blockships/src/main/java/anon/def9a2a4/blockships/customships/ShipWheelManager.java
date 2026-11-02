@@ -79,10 +79,7 @@ public class ShipWheelManager {
      * because their world had not been loaded yet, occasionally because they duplicate an id or a cell.
      * Held verbatim and re-emitted by {@link #saveAll()} so that saving is never destructive.
      *
-     * <p>These rows are <b>not</b> re-parsed when their world later loads: {@link #loadAll()} runs once from
-     * plugin enable and there is no {@code WorldLoadEvent} hook. A wheel in a late-loading world therefore
-     * survives the file but stays non-functional until the next restart. That is a deliberate, documented
-     * limitation — the point of this list is to stop the data from being deleted, not to hot-recover it.
+     * <p>Re-parsed by {@link #onWorldLoaded} when a world loads after enable.
      */
     private final List<Map<String, Object>> unresolvedRows = new ArrayList<>();
 
@@ -383,15 +380,39 @@ public class ShipWheelManager {
             return;
         }
 
-        List<Map<?, ?>> wheelList = config.getMapList("wheels");
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (Map<?, ?> map : config.getMapList("wheels")) rows.add(copyRow(map));
+        int[] counts = loadRows(rows);
+        plugin.getLogger().info("Loaded " + counts[0] + " ship wheels"
+            + (counts[1] > 0 ? " (" + counts[1] + " unresolved, preserved on save)" : ""));
+    }
+
+    /**
+     * A world loaded after BlockShips enabled (Multiverse and other world managers): parse the rows that were
+     * waiting for it. Without this, every ship in that world lost its wheel at each restart and could be neither
+     * steered nor docked.
+     */
+    public void onWorldLoaded(World world) {
+        if (unresolvedRows.isEmpty()) return;
+        List<Map<String, Object>> rows = new ArrayList<>(unresolvedRows);
+        unresolvedRows.clear();
+        int loaded = loadRows(rows)[0];
+        if (loaded > 0) plugin.getLogger().info("Loaded " + loaded + " ship wheels in " + world.getName());
+    }
+
+    /** Parses rows into placedWheels; rows that can't be used go to unresolvedRows. @return {loaded, unresolved} */
+    private int[] loadRows(List<Map<String, Object>> rows) {
         int loaded = 0;
         int quarantined = 0;
         // Cells already claimed this load. Location keying used to merge same-cell rows silently; id keying
         // will not, so without this both survive forever and inflate /blockships stats.
         Set<String> seenCells = new HashSet<>();
+        for (ShipWheelData d : placedWheels.values()) {
+            String c = d.isAssembled() ? null : locationKey(d.getBlockLocation());
+            if (c != null) seenCells.add(c);
+        }
 
-        for (Map<?, ?> map : wheelList) {
-            Map<String, Object> row = copyRow(map);
+        for (Map<String, Object> row : rows) {
             try {
                 ShipWheelData data = ShipWheelData.fromMap(row);
                 if (data == null) {
@@ -443,8 +464,7 @@ public class ShipWheelManager {
             }
         }
 
-        plugin.getLogger().info("Loaded " + loaded + " ship wheels"
-            + (quarantined > 0 ? " (" + quarantined + " unresolved, preserved on save)" : ""));
+        return new int[] {loaded, quarantined};
     }
 
     /** Defensive copy of a raw config row into the shape {@link ShipWheelData#fromMap} and saveAll want. */
@@ -1835,7 +1855,7 @@ public class ShipWheelManager {
             }
             case REFUSE_STILL_LOADING -> {
                 // A detect on an unloaded chunk reads air and would freeze a one-block ship.
-                if (player != null) player.sendMessage("§cShip is still loading — try again in a moment.");
+                if (player != null) player.sendMessage(stillLoadingMessage(wheelData));
                 return null;
             }
             case REFUSE_SAILING -> {
@@ -1983,6 +2003,31 @@ public class ShipWheelManager {
         }
     }
 
+    /**
+     * Where this wheel's ship was last saved, if that spot is not loaded now: the ship is parked out of range,
+     * not stuck. Null when it can't be told (no sidecar, unreadable, or the spot is loaded).
+     */
+    public @Nullable Location parkedOutOfRange(ShipWheelData wheel) {
+        UUID id = wheel.getAssembledShipUUID();
+        if (id == null || !(plugin instanceof BlockShipsPlugin bsp) || bsp.getDisplayShip() == null) return null;
+        World world = liveWorld(wheel.getBlockLocation());
+        if (world == null) return null;
+        var load = bsp.getDisplayShip().getShipWorldData().loadShipMetadataChecked(world, id);
+        if (load.status() != anon.def9a2a4.blockships.ShipWorldData.LoadStatus.OK) return null;
+        var st = load.state();
+        World named = st.worldName != null ? org.bukkit.Bukkit.getWorld(st.worldName) : null;
+        World shipWorld = named != null ? named : world;
+        Location at = new Location(shipWorld, st.x, st.y, st.z);
+        return shipWorld.isChunkLoaded(at.getBlockX() >> 4, at.getBlockZ() >> 4) ? null : at;
+    }
+
+    private String stillLoadingMessage(ShipWheelData wheel) {
+        Location at = parkedOutOfRange(wheel);
+        if (at == null) return "§eShip is still loading — try again in a moment.";
+        return "§eThis wheel's ship is parked out of range, last seen at " + at.getBlockX() + ", " + at.getBlockY()
+            + ", " + at.getBlockZ() + ". Go there to bring it back.";
+    }
+
     /** True if this id has a persisted ship sidecar on disk (any world). Mirrors {@code collectPersistedShipIds}. */
     private boolean isPersistedShip(UUID id) {
         if (!(plugin instanceof BlockShipsPlugin bsp)) return false;
@@ -2060,7 +2105,7 @@ public class ShipWheelManager {
      * @return false (and nothing changed) when the wheel's ship is live
      */
     public boolean forceClearWheelLink(ShipWheelData wheel) {
-        if (!forceClearAllowed(resolveWheelState(wheel).state())) return false;
+        if (!forceClearAllowed(resolveWheelState(wheel).state()) || parkedOutOfRange(wheel) != null) return false;
         reconcileOrphan(wheel);
         return true;
     }
@@ -2128,7 +2173,8 @@ public class ShipWheelManager {
         // entities (a crash between the two saves). Placing again would duplicate the hull and its cargo.
         Material atWheel = shipLoc.getBlock().getType();
         boolean alreadyDocked = atWheel == Material.PLAYER_HEAD || atWheel == Material.PLAYER_WALL_HEAD;
-        int dropped = alreadyDocked ? 0 : NativeShipLanding.place(shipLoc, model, yaw);
+        int dropped = alreadyDocked ? 0 : NativeShipLanding.place(shipLoc, model, yaw,
+            ((BlockShipsPlugin) plugin).getDisplayShip().createShipWheelItem());
 
         if (wheel != null) {
             Location cell = shipLoc.getBlock().getLocation();
@@ -2215,7 +2261,7 @@ public class ShipWheelManager {
             return false;
         }
         if (wr.state() == WheelState.UNLOADED_RECOVERABLE) {
-            player.sendMessage("§eThis wheel's ship is still loading — try again in a moment.");
+            player.sendMessage(stillLoadingMessage(wheelData));
             return false;
         }
         if (wr.state() == WheelState.ORPHAN) {
@@ -2453,7 +2499,7 @@ public class ShipWheelManager {
         WheelResolution wr = resolveWheelState(wheelData);
         switch (wr.state()) {
             case NOT_ASSEMBLED -> { player.sendMessage("§cNo ship to align! Assemble a ship first."); return false; }
-            case UNLOADED_RECOVERABLE -> { player.sendMessage("§eShip is still loading — try again in a moment."); return false; }
+            case UNLOADED_RECOVERABLE -> { player.sendMessage(stillLoadingMessage(wheelData)); return false; }
             case ORPHAN -> {
                 reconcileOrphan(wheelData);
                 player.sendMessage("§cThat ship was lost — the wheel has been reset. You can assemble again.");
@@ -2526,7 +2572,7 @@ public class ShipWheelManager {
         WheelResolution wr = resolveWheelState(wheelData);
         switch (wr.state()) {
             case NOT_ASSEMBLED -> { if (player != null) player.sendMessage("§cNo ship to disassemble!"); return false; }
-            case UNLOADED_RECOVERABLE -> { if (player != null) player.sendMessage("§eShip is still loading — try again in a moment."); return false; }
+            case UNLOADED_RECOVERABLE -> { if (player != null) player.sendMessage(stillLoadingMessage(wheelData)); return false; }
             case ORPHAN -> {
                 reconcileOrphan(wheelData);
                 if (player != null) player.sendMessage("§cThat ship was lost — the wheel has been reset.");
@@ -2747,7 +2793,11 @@ public class ShipWheelManager {
             final Location fShipLoc = shipLoc.clone();
             final float fYaw = currentYaw;
             final anon.def9a2a4.corelib.Mechanism fMech = ship.mechanism;
-            ship.mechanism.setBeforeEntityRemoval(() -> transferLeadsFromMechanism(fMech, fModel, fShipLoc, fYaw));
+            final ShipInstance fShip = ship;
+            ship.mechanism.setBeforeEntityRemoval(() -> {
+                transferLeadsFromMechanism(fMech, fModel, fShipLoc, fYaw);
+                fShip.reseatRidersOnCushions();   // seated players land on their cushions
+            });
 
             // Track W (W3): defCoreLib's disassemble() is idempotent + mostly-complete; a mid-teardown throw is
             // rare. Do NOT abort (the idempotency latch blocks a clean re-restore) — log and CONTINUE to the
@@ -2814,19 +2864,13 @@ public class ShipWheelManager {
         // Nudge nearby players up to prevent clipping into placed blocks
         nudgeNearbyPlayersUp(shipLoc2, ship.config.assemblyNudgeHeight);
 
-        // Remove ship from per-world storage (delete the sidecar file). The ship is already
-        // gone from the world at this point, so a save failure here does not fail the disassembly -
-        // it is reported separately via outcome.persistFailed (and logged SEVERE by the callees).
+        // Remove ship from per-world storage (delete the sidecar file) — once the world has saved the landed
+        // blocks, not now: a crash before that recovers the ship from its entities, which needs the sidecar. A
+        // failed delete then is logged SEVERE by removeShip; outcome.persistFailed only covers an unresolved world.
         if (plugin instanceof BlockShipsPlugin bsp) {
             org.bukkit.World world = shipLoc.getWorld();
             if (world != null) {
-                ShipWorldData worldData = bsp.getDisplayShip().getShipWorldData();
-                boolean fileOk = worldData.removeShip(world, ship.id);
-                if (!fileOk) {
-                    outcome.persistFailed = true;
-                    plugin.getLogger().severe("disassembleShip: persistence cleanup failed for ship "
-                        + ship.id + " (world=" + world.getName() + ")");
-                }
+                bsp.getDisplayShip().removeShipAfterWorldSaved(world, ship.id);
             } else {
                 // Can't resolve the world, so the per-world YAML sidecar can't be cleaned. Flag
                 // it as a persistence failure rather than skip silently - the ship is gone in-world but
@@ -2872,6 +2916,9 @@ public class ShipWheelManager {
         double radius = 20;
         double radiusSq = radius * radius;
         for (Player p : center.getWorld().getPlayers()) {
+            // A seated player (on a seat shulker, or on a cushion) is placed by their vehicle — and teleporting a
+            // passenger dismounts it, which would knock them off the seat they assembled or landed on.
+            if (p.isInsideVehicle()) continue;
             Location pLoc = p.getLocation();
             if (pLoc.distanceSquared(center) <= radiusSq
                     && Math.abs(pLoc.getY() - center.getY()) < 10) {
@@ -3091,6 +3138,7 @@ public class ShipWheelManager {
                     player.sendMessage("§7Speed: "
                         + anon.def9a2a4.blockships.ShipStats.speedColor(speedPercent) + speedPercent + "%");
                     sendThrustSummary(player, thrust, true);
+                    sendLandSummary(player, config, ship.model.groundWheels, 0);
                 } else {
                     player.sendMessage("§7Stats: §8disabled");
                 }
@@ -3275,6 +3323,8 @@ public class ShipWheelManager {
                 + speedPercent + "%"
                 + (speedPercent < 50 ? " §8(add sails, or propellers along the hull)" : ""));
             sendThrustSummary(player, thrust, false);
+            sendDockedLandSummary(player, config, shipBlocks,
+                BlockStructureScanner.blockFaceToYaw(wheelData.getFacing()));
         } else {
             player.sendMessage("§7Stats: §8disabled");
         }
@@ -3324,6 +3374,76 @@ public class ShipWheelManager {
         if (t.axial() > 0)    player.sendMessage("  §7forward: §f" + t.axial() + " pts");
         if (t.turning() > 0)  player.sendMessage("  §7turning: §f" + t.turning() + " pts");
         if (t.vertical() > 0) player.sendMessage("  §7lift: §f" + t.vertical() + " pts");
+        if (t.ground() > 0)   player.sendMessage("  §7on land: §f" + t.ground() + " pts §8(wheels on the ground)");
+    }
+
+    /**
+     * The land-vehicle lines of a detect: ground wheel count, the step height and which wheel limits it,
+     * and any wheels mounted where they can't drive.
+     */
+    private static void sendLandSummary(Player player, ShipConfig config,
+                                        java.util.List<ShipModel.GroundWheel> wheels, int misaligned) {
+        if (wheels.isEmpty() && misaligned == 0) return;
+        if (!wheels.isEmpty()) {
+            float step = Float.MAX_VALUE;
+            String limiting = null;
+            for (ShipModel.GroundWheel w : wheels) {
+                float h = config.stepHeightOf(w.typeId());
+                if (h < step) { step = h; limiting = w.typeId(); }
+            }
+            player.sendMessage("§6⚙ LAND VEHICLE §7— " + plural(wheels.size(), "wheel", "wheels") + " on the ground");
+            player.sendMessage("§7  Climbs steps up to §f" + formatBlocks(step) + "§7 (limited by its "
+                + wheelName(limiting) + "s)");
+        }
+        if (misaligned > 0) {
+            player.sendMessage("§e  " + plural(misaligned, "wheel faces", "wheels face")
+                + " the bow or stern and won't drive. Mount wheels on the left or right side.");
+            if (wheels.isEmpty()) {
+                player.sendMessage("§e  Every wheel is sideways to the Ship's Wheel — is it facing the way you want to drive?");
+            }
+        }
+    }
+
+    /** {@link #sendLandSummary} for a docked ship, classified straight from the world blocks. */
+    private static void sendDockedLandSummary(Player player, ShipConfig config,
+                                              java.util.Collection<Location> cells, float assemblyYaw) {
+        int minY = Integer.MAX_VALUE;
+        java.util.List<Location> wheelCells = new java.util.ArrayList<>();
+        for (Location loc : cells) {
+            minY = Math.min(minY, loc.getBlockY());
+            Material m = loc.getBlock().getType();
+            if (m == Material.PLAYER_WALL_HEAD || m == Material.PLAYER_HEAD) wheelCells.add(loc);
+        }
+        java.util.List<ShipModel.GroundWheel> wheels = new java.util.ArrayList<>();
+        int misaligned = 0;
+        float bottom = minY;
+        for (Location loc : wheelCells) {
+            org.bukkit.block.Block block = loc.getBlock();
+            String typeId = anon.def9a2a4.blockships.ShipThrust.typeIdOf(block);
+            if (!anon.def9a2a4.blockships.ShipThrust.isWheel(typeId)) continue;
+            if (anon.def9a2a4.blockships.ShipThrust.classify(block, typeId, assemblyYaw)
+                    != anon.def9a2a4.blockships.ShipThrust.Axis.GROUND) {
+                misaligned++;
+                continue;
+            }
+            float contact = loc.getBlockY() + 0.5f - anon.def9a2a4.blockships.ShipThrust.wheelDiameter(typeId) / 2f;
+            wheels.add(new ShipModel.GroundWheel(-1, typeId, 0, 0, contact));
+            bottom = Math.min(bottom, contact);
+        }
+        final float landBottom = bottom;
+        wheels.removeIf(w -> w.contactY() > landBottom + ShipModel.GROUND_WHEEL_TOLERANCE);
+        sendLandSummary(player, config, wheels, misaligned);
+    }
+
+    private static String wheelName(String typeId) {
+        if ("mech:large_wheel".equals(typeId)) return "large wheel";
+        if ("mech:huge_wheel".equals(typeId)) return "huge wheel";
+        return "wheel";
+    }
+
+    private static String formatBlocks(float h) {
+        String n = h == Math.rint(h) ? String.valueOf((int) h) : String.valueOf(h);
+        return n + (h == 1f ? " block" : " blocks");
     }
 
     /** "3 wool, 2 banners, 1 large banner" — omits tiers the ship doesn't carry. */

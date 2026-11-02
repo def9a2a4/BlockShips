@@ -1385,6 +1385,144 @@ async function testWheelAfterRelog() {
 // Test Registry and Interactive Mode
 // =============================================================================
 
+// =============================================================================
+// Land vehicle: wheels + stepping (BlockShips #10)
+// =============================================================================
+
+// Off the runway, on dry ground. The floor is stone, which is not a ship block, so the flood fill
+// stops at it. A one-block plateau starts STEP_Z, ahead of the hull's bow.
+const LAND_X = RUNWAY_X + 60
+const LAND_Y = 101          // hull layer 0; the floor is at LAND_Y - 1
+const LAND_Z = -1           // hull centre (CUSTOM_SHIP spans z -4..+2)
+const STEP_Z = -12          // first plateau row
+const WALL_Z = -28          // a 3-high wall on the plateau: too tall for any wheel, so it must stop the car
+
+/** Min Y and mean Z of the ship's colliders, read from the shulkers' carriers. */
+function shipColliderStats() {
+  const shulkers = findShulkers(bot, 30)
+  if (shulkers.length === 0) return null
+  let minY = Infinity, sumZ = 0
+  for (const sh of shulkers) {
+    const p = getShipEntityPos(sh)
+    minY = Math.min(minY, p.y)
+    sumZ += p.z
+  }
+  return { minY, meanZ: sumZ / shulkers.length, count: shulkers.length }
+}
+
+async function testLandVehicle() {
+  const NAME = 'Land Vehicle Steps Up'
+  say(`=== TEST: ${NAME} ===`)
+  await cleanup(bot)
+  await clearInventory(bot)
+
+  const x1 = LAND_X - 6, x2 = LAND_X + 6
+  bot.chat(`/forceload add ${x1 - 2} 10 ${x2 + 2} -45`)
+  await sleep(1000)
+  bot.chat(`/fill ${x1} ${LAND_Y} 8 ${x2} ${LAND_Y + 8} -40 minecraft:air`)
+  await sleep(200)
+  bot.chat(`/fill ${x1} ${LAND_Y - 1} 8 ${x2} ${LAND_Y - 1} -40 minecraft:stone`)
+  await sleep(200)
+  bot.chat(`/fill ${x1} ${LAND_Y} ${STEP_Z} ${x2} ${LAND_Y} -40 minecraft:stone`)
+  await sleep(200)
+  bot.chat(`/fill ${x1} ${LAND_Y + 1} ${WALL_Z} ${x2} ${LAND_Y + 3} ${WALL_Z} minecraft:stone`)
+  await sleep(200)
+
+  // South of the hull, so the floating Ship's Wheel is placed looking north (the ship's heading).
+  bot.chat(`/tp @s ${LAND_X} ${LAND_Y} ${LAND_Z + 4} 180 0`)
+  await sleep(800)
+  const build = await buildCustomShipWithWheel(bot, CUSTOM_SHIP, LAND_X, LAND_Y, LAND_Z)
+  if (!build.success) { fail(NAME, build.error); return }
+  // buildCustomShipWithWheel clears y-1 under the hull; put the floor back (stone never joins the ship).
+  bot.chat(`/fill ${LAND_X - 2} ${LAND_Y - 1} ${LAND_Z - 4} ${LAND_X + 2} ${LAND_Y - 1} ${LAND_Z + 4} minecraft:stone`)
+  await sleep(300)
+
+  // Four wheels on the hull's east and west faces, axles across the hull. Clear first: the bot is in
+  // creative, so placing the Ship's Wheel did not use it up, and it is a player_head too.
+  await clearInventory(bot)
+  bot.chat('/defcorelib give mech:wheel 4')
+  await sleep(1000)
+  const wheelItem = () => bot.inventory.items().find(i => i.name === 'player_head')
+  const mounts = [
+    { x: LAND_X + 1, z: LAND_Z - 2, face: new Vec3(1, 0, 0), stand: LAND_X + 3 },
+    { x: LAND_X + 1, z: LAND_Z + 2, face: new Vec3(1, 0, 0), stand: LAND_X + 3 },
+    { x: LAND_X - 1, z: LAND_Z - 2, face: new Vec3(-1, 0, 0), stand: LAND_X - 3 },
+    { x: LAND_X - 1, z: LAND_Z + 2, face: new Vec3(-1, 0, 0), stand: LAND_X - 3 },
+  ]
+  for (const m of mounts) {
+    const item = wheelItem()
+    if (!item) { fail(NAME, 'No wheel item received from /defcorelib give mech:wheel'); return }
+    bot.chat(`/tp @s ${m.stand} ${LAND_Y} ${m.z} 0 0`)
+    await sleep(600)
+    await bot.equip(item, 'hand')
+    const ref = bot.blockAt(new Vec3(m.x, LAND_Y, m.z))
+    if (!ref || ref.name === 'air') { fail(NAME, `No hull block at ${m.x},${LAND_Y},${m.z}`); return }
+    try {
+      await bot.lookAt(new Vec3(m.x + 0.5 + m.face.x * 0.5, LAND_Y + 0.5, m.z + 0.5))
+      await bot.placeBlock(ref, m.face)
+    } catch (e) {
+      fail(NAME, `Wheel placement failed at ${m.x + m.face.x},${LAND_Y},${m.z}: ${e.message}`)
+      return
+    }
+    await sleep(300)
+  }
+
+  // Detect: the docked readout must call it a land vehicle.
+  bot.chat(`/tp @s ${LAND_X} ${LAND_Y} ${LAND_Z + 4} 180 0`)
+  await sleep(600)
+  clearChat(bot)
+  const landMsg = waitForChat(bot, /LAND VEHICLE/, 6000)
+  try {
+    const menuPromise = clickWheelMenu(bot, log, 'detect')
+    await bot.activateBlock(build.wheelBlock)
+    await menuPromise
+  } catch (e) { /* the assertion below reports it */ }
+  if (!await landMsg) {
+    fail(NAME, 'Detect did not report a LAND VEHICLE (are the wheels classified as ground wheels?)')
+    return
+  }
+
+  say('Assembling land vehicle...')
+  try {
+    const menuPromise = clickWheelMenu(bot, log, 'assemble')
+    await bot.activateBlock(build.wheelBlock)
+    if (!await menuPromise) { fail(NAME, 'Assembly menu interaction failed'); return }
+  } catch (e) { fail(NAME, `Assembly failed: ${e.message}`); return }
+  await sleep(3000)
+
+  const before = shipColliderStats()
+  if (!before) { fail(NAME, 'No ship colliders after assembly'); return }
+  if (!await mountShip(bot, log)) { fail(NAME, 'Could not mount the land vehicle'); return }
+
+  say('Driving at the step...')
+  await steerShip(bot, 1.0, 0, false, 8000)
+  await sleep(1500)
+  try { await customDismount(bot, log, bot.entity.position.clone()) } catch (e) { log(`Dismount: ${e.message}`) }
+  await sleep(800)
+
+  const after = shipColliderStats()
+  if (!after) { fail(NAME, 'Lost track of the ship colliders after driving'); return }
+  const rise = after.minY - before.minY
+  const travel = after.meanZ - before.meanZ
+  log(`Land vehicle: rise=${rise.toFixed(2)} travel(z)=${travel.toFixed(2)}`)
+
+  let ok = true
+  // The bow starts at z = LAND_Z - 3 and must end against the wall, not through it.
+  if (after.meanZ - 3 < WALL_Z - 0.5) {
+    fail(NAME, `Drove through the 3-high wall at z=${WALL_Z} (mean collider z ${after.meanZ.toFixed(2)})`)
+    ok = false
+  }
+  if (travel > -(LAND_Z - 4 - STEP_Z + 1)) {
+    fail(NAME, `Did not reach the plateau: travelled ${travel.toFixed(2)} in z (need <= ${-(LAND_Z - 4 - STEP_Z + 1)})`)
+    ok = false
+  }
+  if (Math.abs(rise - 1) > 0.3) {
+    fail(NAME, `Expected to ride up one block onto the plateau, rose ${rise.toFixed(2)}`)
+    ok = false
+  }
+  if (ok) pass(`${NAME} (rise=${rise.toFixed(2)}, travel=${(-travel).toFixed(1)})`)
+}
+
 const TESTS = {
   smallship: { name: 'Small Ship', fn: () => testShipControls('smallship') },
   bigship: { name: 'Big Ship', fn: () => testShipControls('bigship') },
@@ -1396,6 +1534,7 @@ const TESTS = {
   double_chest: { name: 'Double Chest Cargo Round Trip', fn: testDoubleChestCargo },
   wheel_after_relog: { name: 'Wheel Menu After Relog', fn: testWheelAfterRelog },
   cannon_tnt_disabled: { name: 'Cannon Keeps TNT When Disabled', fn: testCannonTntDisabled },
+  land_vehicle: { name: 'Land Vehicle Steps Up', fn: testLandVehicle },
   // manual: skipped by runAllTests (and therefore by CI's test:all) — the deliberate negative waits
   // don't fit the suite's hard timeout. Run by name: `.testbot wheel_reserved` or --only=wheel_
   wheel_reserved: { name: 'Wheel Dock Reserved', fn: testWheelCellReserved, manual: true },
