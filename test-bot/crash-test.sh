@@ -4,6 +4,7 @@
 # right. See crash-test.js.
 #   test-bot/crash-test.sh [DEFCORELIB_JAR]     (Paper 1.21.11, Java 21; uses test-server/, port 25565)
 #   ONLY=sail|drift    run only that case
+#   MC_PORT=25568      run the server on another port (default 25565)
 #   RUNTIME_JAR=path   run the server on this DefCoreLib jar instead (e.g. an older one, to see a case fail)
 set -e
 cd "$(dirname "$0")/.."
@@ -16,6 +17,8 @@ make clean-test-server
 make test-server-download-all MINECRAFT_VERSION=$V ${1:+DEFCORELIB_JAR=$1}
 make test-server-setup MINECRAFT_VERSION=$V ${1:+DEFCORELIB_JAR=$1}
 echo $V > test-bot/.mc-version
+export MC_PORT=${MC_PORT:-25565}
+sed -i "s/^server-port=.*/server-port=$MC_PORT/" test-server/server.properties
 rm -f test-bot/.crash-state.json test-bot/crash-server.log
 : > test-bot/crash-test-results.all
 
