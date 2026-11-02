@@ -2203,6 +2203,59 @@ public class ShipWheelManager {
     }
 
     /**
+     * What a landing drops for a block it can't place: one item for a two-cell block (bed, door), and the floor
+     * form of a wall-only block. The {@code DropItemHook} for every ship landing, including one redone after a
+     * crash.
+     */
+    private static @Nullable ItemStack landingDrop(anon.def9a2a4.corelib.MechanismBlockData mb, @Nullable ItemStack defaultDrop) {
+        org.bukkit.block.data.BlockData bd = mb.blockData;
+        if (bd instanceof org.bukkit.block.data.Bisected bis
+                && !(bd instanceof org.bukkit.block.data.type.Stairs)
+                && !(bd instanceof org.bukkit.block.data.type.TrapDoor)
+                && bis.getHalf() == org.bukkit.block.data.Bisected.Half.TOP) {
+            return null; // upper half — primary (bottom) half already dropped
+        }
+        if (bd instanceof org.bukkit.block.data.type.Bed bed
+                && bed.getPart() == org.bukkit.block.data.type.Bed.Part.HEAD) {
+            return null; // head half — foot already dropped
+        }
+        if (defaultDrop != null) return defaultDrop; // engine already had an item form
+        String name = bd.getMaterial().name();
+        String remapped = name;
+        if (name.contains("_WALL_HEAD")) remapped = name.replace("_WALL_HEAD", "_HEAD");
+        else if (name.contains("_WALL_SKULL")) remapped = name.replace("_WALL_SKULL", "_SKULL");
+        else if (name.contains("_WALL_BANNER")) remapped = name.replace("_WALL_BANNER", "_BANNER");
+        else if (name.contains("_WALL_SIGN")) remapped = name.replace("_WALL_SIGN", "_SIGN");
+        else if (name.contains("WALL_TORCH")) remapped = name.replace("WALL_TORCH", "TORCH");
+        else if (name.equals("REDSTONE_WIRE")) remapped = "REDSTONE";
+        else if (name.equals("TRIPWIRE")) remapped = "STRING";
+        try {
+            Material rm = Material.valueOf(remapped);
+            if (rm.isItem()) return new ItemStack(rm);
+        } catch (IllegalArgumentException ignored) { /* no floor form — suppress */ }
+        return null;
+    }
+
+    /**
+     * DefCoreLib is landing a ship again because a crash undid its dock. Same drop rules as the dock. The wheel:
+     * if no record sits at the cell its head lands in, the dock dropped the wheel as an item instead (its cell
+     * was protected or taken) and removed the record, so placing the head again would make a second wheel.
+     */
+    public void prepareRedoneLanding(anon.def9a2a4.corelib.Mechanism mechanism) {
+        mechanism.setDropItemHook(ShipWheelManager::landingDrop);
+        mechanism.setCellPlacePolicy((target, block) -> {
+            if (block != null && block.blockData != null) {
+                Material m = block.blockData.getMaterial();
+                if ((m == Material.PLAYER_HEAD || m == Material.PLAYER_WALL_HEAD)
+                        && byCachedCell(target.getLocation()) == null) {
+                    return anon.def9a2a4.corelib.Mechanism.PlaceDecision.SKIP;
+                }
+            }
+            return anon.def9a2a4.corelib.Mechanism.PlaceDecision.PLACE;
+        });
+    }
+
+    /**
      * Moves a wheel's <i>cached</i> cell after it lands somewhere new.
      *
      * <p>No map surgery: {@code placedWheels} is keyed by wheel id, which does not change when the block
@@ -2379,6 +2432,19 @@ public class ShipWheelManager {
                     + " block(s) are in a protected region you can't build in.");
                 return false;
             }
+        }
+
+        // Every other protection plugin (GriefPrevention, Towny, Lands, ...): ask each one about each block the
+        // ship would take, the way glue and minecart assembly already do. Without it a wheel placed beside a
+        // claim carried the claimed wall off.
+        int claimed = 0;
+        org.bukkit.inventory.ItemStack probeItem = new org.bukkit.inventory.ItemStack(Material.PLAYER_HEAD);
+        for (Block b : scan.orderedBlocks()) {
+            if (!anon.def9a2a4.corelib.BuildProbe.mayBuild(player, b, probeItem)) claimed++;
+        }
+        if (claimed > 0) {
+            player.sendMessage("§cCannot assemble — " + claimed + " block(s) are in a claim you can't build in.");
+            return false;
         }
 
         // Delegate the entity engine to defCoreLib (M1): spawn the vehicle, assemble a driven Mechanism from
@@ -2772,34 +2838,7 @@ public class ShipWheelManager {
 
             // Drop-item hook — (i) multi-cell dupe guard: drop only the primary half of a 2-cell block (else a
             // WG-denied bed/door drops twice); (ii) wall→floor material remap for variants with no item form.
-            ship.mechanism.setDropItemHook((mb, defaultDrop) -> {
-                org.bukkit.block.data.BlockData bd = mb.blockData;
-                if (bd instanceof org.bukkit.block.data.Bisected bis
-                        && !(bd instanceof org.bukkit.block.data.type.Stairs)
-                        && !(bd instanceof org.bukkit.block.data.type.TrapDoor)
-                        && bis.getHalf() == org.bukkit.block.data.Bisected.Half.TOP) {
-                    return null; // upper half — primary (bottom) half already dropped
-                }
-                if (bd instanceof org.bukkit.block.data.type.Bed bed
-                        && bed.getPart() == org.bukkit.block.data.type.Bed.Part.HEAD) {
-                    return null; // head half — foot already dropped
-                }
-                if (defaultDrop != null) return defaultDrop; // engine already had an item form
-                String name = bd.getMaterial().name();
-                String remapped = name;
-                if (name.contains("_WALL_HEAD")) remapped = name.replace("_WALL_HEAD", "_HEAD");
-                else if (name.contains("_WALL_SKULL")) remapped = name.replace("_WALL_SKULL", "_SKULL");
-                else if (name.contains("_WALL_BANNER")) remapped = name.replace("_WALL_BANNER", "_BANNER");
-                else if (name.contains("_WALL_SIGN")) remapped = name.replace("_WALL_SIGN", "_SIGN");
-                else if (name.contains("WALL_TORCH")) remapped = name.replace("WALL_TORCH", "TORCH");
-                else if (name.equals("REDSTONE_WIRE")) remapped = "REDSTONE";
-                else if (name.equals("TRIPWIRE")) remapped = "STRING";
-                try {
-                    Material rm = Material.valueOf(remapped);
-                    if (rm.isItem()) return new ItemStack(rm);
-                } catch (IllegalArgumentException ignored) { /* no floor form — suppress */ }
-                return null;
-            });
+            ship.mechanism.setDropItemHook(ShipWheelManager::landingDrop);
 
             // Leads-out — re-leash entities off the collider shulkers onto fresh LeashHitches on the landed
             // fences, after blocks land but before the colliders are removed (via transferLeadsFromMechanism).

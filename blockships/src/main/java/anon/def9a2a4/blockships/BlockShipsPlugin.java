@@ -183,6 +183,8 @@ public class BlockShipsPlugin extends JavaPlugin {
     }
 
     private static final String REQUIRED_CORELIB = "0.5.0";
+    /** CoreLibPlugin.API_LEVEL this build needs. */
+    private static final int REQUIRED_CORELIB_API = 1;
 
     /**
      * Why the installed DefCoreLib can't run BlockShips, or null if it can. plugin.yml's depend only checks
@@ -199,6 +201,13 @@ public class BlockShipsPlugin extends JavaPlugin {
             // Ships are saved only at world saves and chunk unloads, by DefCoreLib; BlockShips no longer saves
             // them itself. Without this, a ship would only reach disk when it docked.
             registry.getMethod("onWorldSave", org.bukkit.event.world.WorldSaveEvent.class);
+            // Every 0.5.0 build reports the same version, so the feature level is what tells a build that redoes a
+            // dock a crash undid, recovers a moving ship and burns fuel by use from one that doesn't. Read
+            // reflectively: a compiled-in constant would be our own copy.
+            int level = Class.forName("anon.def9a2a4.corelib.CoreLibPlugin").getField("API_LEVEL").getInt(null);
+            if (level < REQUIRED_CORELIB_API) {
+                return "the installed build is too old (feature level " + level + ", need " + REQUIRED_CORELIB_API + ")";
+            }
             return null;
         } catch (ReflectiveOperationException | LinkageError e) {
             return "the installed version is too old (missing " + e.getMessage() + ")";

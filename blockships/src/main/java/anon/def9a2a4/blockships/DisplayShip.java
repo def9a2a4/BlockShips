@@ -258,6 +258,13 @@ public class DisplayShip implements Listener {
         }
     }
 
+    /** DefCoreLib is redoing a ship's dock after a crash: give it the same landing rules the dock had. */
+    @EventHandler
+    public void onTeardownRedo(anon.def9a2a4.corelib.MechanismTeardownRedoEvent event) {
+        if (!"blockship:custom".equals(event.getMechanism().type())) return;
+        ((BlockShipsPlugin) plugin).getShipWheelManager().prepareRedoneLanding(event.getMechanism());
+    }
+
     @EventHandler
     public void onWorldLoad(org.bukkit.event.world.WorldLoadEvent event) {
         ((BlockShipsPlugin) plugin).getShipWheelManager().onWorldLoaded(event.getWorld());
