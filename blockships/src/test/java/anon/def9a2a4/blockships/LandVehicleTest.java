@@ -30,6 +30,18 @@ class LandVehicleTest {
 
     /** A wheel drives only with its axle across the hull, for every heading the Ship's Wheel can face. */
     @Test
+    void woodenWheelsMapToTheirSize() {
+        assertEquals("mech:wheel", ShipThrust.canonicalTypeId("mech:wheel_oak"));
+        assertEquals("mech:large_wheel", ShipThrust.canonicalTypeId("mech:large_wheel_dark_oak"));
+        assertEquals("mech:huge_wheel", ShipThrust.canonicalTypeId("mech:huge_wheel_pale_oak"));
+        // Not wheels, or not a known wood: unchanged.
+        assertEquals("mech:reaction_wheel", ShipThrust.canonicalTypeId("mech:reaction_wheel"));
+        assertEquals("mech:wheel_stone", ShipThrust.canonicalTypeId("mech:wheel_stone"));
+        assertEquals("mech:gearbox_oak", ShipThrust.canonicalTypeId("mech:gearbox_oak"));
+        assertTrue(ShipThrust.isWheel(ShipThrust.canonicalTypeId("mech:huge_wheel_warped")));
+    }
+
+    @Test
     void wheelOnTheSideIsGroundAndOnTheBowIsMisaligned() {
         for (BlockFace forward : CARDINALS) {
             float yaw = BlockStructureScanner.blockFaceToYaw(forward);

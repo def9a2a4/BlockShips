@@ -198,10 +198,29 @@ public final class ShipThrust {
         try {
             var registry = anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getRegistry();
             var type = registry.getTypeFromBlock(block);
-            return type == null ? null : type.fullId();
+            return type == null ? null : canonicalTypeId(type.fullId());
         } catch (Throwable t) {
             return null;
         }
+    }
+
+    private static final java.util.Set<String> WHEEL_WOODS = java.util.Set.of(
+        "oak", "acacia", "bamboo", "birch", "cherry", "crimson", "dark_oak",
+        "jungle", "mangrove", "pale_oak", "spruce", "warped");
+
+    /**
+     * A wheel's id with its wood stripped ({@code mech:large_wheel_oak} → {@code mech:large_wheel});
+     * any other id unchanged. Every wood of a size drives, climbs and weighs the same, so thrust,
+     * diameter, step height and the saved model all use the size id.
+     */
+    public static String canonicalTypeId(String typeId) {
+        if (typeId == null || !typeId.startsWith("mech:")) return typeId;
+        for (String size : new String[]{"mech:large_wheel", "mech:huge_wheel", "mech:wheel"}) {
+            if (typeId.startsWith(size + "_") && WHEEL_WOODS.contains(typeId.substring(size.length() + 1))) {
+                return size;
+            }
+        }
+        return typeId;
     }
 
     /**

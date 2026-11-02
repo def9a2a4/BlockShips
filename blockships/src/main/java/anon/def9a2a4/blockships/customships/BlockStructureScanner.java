@@ -694,8 +694,10 @@ public class BlockStructureScanner {
 
             // Propulsion. Only player heads can be defCoreLib custom blocks, so the material check
             // keeps this off the hot path for the other 99% of a hull.
+            float wheelDiameter = 0f;
             if (blockMaterial == Material.PLAYER_HEAD || blockMaterial == Material.PLAYER_WALL_HEAD) {
                 String thrustType = anon.def9a2a4.blockships.ShipThrust.typeIdOf(block);
+                wheelDiameter = anon.def9a2a4.blockships.ShipThrust.wheelDiameter(thrustType);
                 if (anon.def9a2a4.blockships.ShipThrust.isThrustBlock(thrustType)) {
                     anon.def9a2a4.blockships.ShipThrust.Axis axis =
                         anon.def9a2a4.blockships.ShipThrust.classify(block, thrustType, scanAssemblyYaw);
@@ -739,6 +741,15 @@ public class BlockStructureScanner {
                 );
             } else {
                 collision = new ShipModel.CollisionConfig(false, 1.0f, new Vector3f(0, 0, 0));
+            }
+            // Wheels: a collider the size of the tyre (a little smaller, so its bottom never touches the
+            // ground the land physics already rests the hull on), centred on the axle and pushed outboard
+            // like the tyre displays (wall_offset 0.25). Offset y is the box's bottom, x/z its centre.
+            if (wheelDiameter > 0f && blockData instanceof org.bukkit.block.data.Directional wheelDir) {
+                float size = wheelDiameter * 0.9f;
+                org.bukkit.util.Vector f = wheelDir.getFacing().getDirection();
+                collision = new ShipModel.CollisionConfig(true, size,
+                    new Vector3f((float) f.getX() * 0.25f, 0.5f - size / 2f, (float) f.getZ() * 0.25f));
             }
 
             // Create raw YAML map (for compatibility)

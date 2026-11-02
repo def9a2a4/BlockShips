@@ -54,7 +54,9 @@
   frames and paintings on the hull now sail with it too, instead of popping off as items.
 
 - **Land vehicles** ([#10](https://github.com/def9a2a4/BlockShips/issues/10)). Hang wheels
-  (DefCoreLib's wheel, large wheel and huge wheel) on the left and right sides of a hull and it
+  (DefCoreLib's wheel, large wheel and huge wheel, in every plank wood; a windmill with four
+  matching planks around it makes one, and the windmill's size sets the wheel's) on the left and
+  right sides of a hull and it
   drives on land with the normal Ship's Wheel. A wheel takes power through the block it hangs on,
   so run a shaft or engine along the axle to it. Powered wheels push it along. Unpowered ones
   still roll, so a sail cart works. It hops up steps instead of tilting. A small wheel climbs 1

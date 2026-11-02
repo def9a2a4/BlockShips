@@ -204,8 +204,13 @@ async function sail() {
   await sleep(2000)
   await customDismount(bot, log)
   await sleep(1000)
-  const p = bot.entity.position
+  const p = bot.entity.position.clone()
+  // The client does not move entities riding other entities, so its shulkers are still at the launch spot.
+  // Leaving tracking range and coming back makes the server send them where they are.
+  await tp(Math.round(p.x) + 300, 150, Math.round(p.z))
+  await sleep(2000)
   await tp(Math.round(p.x), 106, Math.round(p.z) + 3)
+  await sleep(2000)
   const after = findShulkers(bot, 40)
   if (after.length < 10) return fail('sail_setup', `only ${after.length} shulkers near the bot after sailing`)
   const end = centroid(after)

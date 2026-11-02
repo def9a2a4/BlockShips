@@ -3,6 +3,8 @@
 # sailed off with no world-save event since its launch; boots it again after each and checks the ship came back
 # right. See crash-test.js.
 #   test-bot/crash-test.sh [DEFCORELIB_JAR]     (Paper 1.21.11, Java 21; uses test-server/, port 25565)
+#   ONLY=sail          run only the sailing case
+#   RUNTIME_JAR=path   run the server on this DefCoreLib jar instead (e.g. an older one, to see a case fail)
 set -e
 cd "$(dirname "$0")/.."
 REPO=$PWD
@@ -53,8 +55,11 @@ autosave() {
     sed -i "s/^\(  *auto-save-interval:\).*/\1 $1/" test-server/config/paper-world-defaults.yml
 }
 
+if [ -n "$RUNTIME_JAR" ]; then rm -f test-server/plugins/defCoreLib-*.jar; cp "$RUNTIME_JAR" test-server/plugins/; fi
+
 FAILED=0
 start; stop                                # writes the default configs
+if [ "$ONLY" != sail ]; then
 autosave 72000
 start
 phase dock || FAILED=1
@@ -66,6 +71,7 @@ crash
 start
 phase verify-launch || FAILED=1
 stop
+fi
 
 autosave 40                                # chunks write themselves every 2 s; still no world-save event
 start

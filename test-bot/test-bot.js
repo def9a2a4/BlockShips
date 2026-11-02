@@ -1481,7 +1481,7 @@ async function testLandVehicle() {
   // Four wheels on the hull's east and west faces, axles across the hull. Clear first: the bot is in
   // creative, so placing the Ship's Wheel did not use it up, and it is a player_head too.
   await clearInventory(bot)
-  bot.chat('/defcorelib give mech:wheel 4')
+  bot.chat('/defcorelib give mech:wheel_oak 4')
   await sleep(1000)
   const wheelItem = () => bot.inventory.items().find(i => i.name === 'player_head')
   const mounts = [
@@ -1492,7 +1492,7 @@ async function testLandVehicle() {
   ]
   for (const m of mounts) {
     const item = wheelItem()
-    if (!item) { fail(NAME, 'No wheel item received from /defcorelib give mech:wheel'); return }
+    if (!item) { fail(NAME, 'No wheel item received from /defcorelib give mech:wheel_oak'); return }
     bot.chat(`/tp @s ${m.stand} ${LAND_Y} ${m.z} 0 0`)
     await sleep(600)
     await bot.equip(item, 'hand')
@@ -1615,7 +1615,7 @@ async function testPoweredCart() {
     ['mech:shaft', at(LAND_X - 2), east, standN(LAND_X - 1)],
     ['mech:engine', at(LAND_X - 1), east, standN(LAND_X)],
     ['mech:shaft', at(LAND_X), east, standN(LAND_X + 1)],
-    ['mech:wheel', at(LAND_X + 1), east, standN(LAND_X + 2)],
+    ['mech:wheel_oak', at(LAND_X + 1), east, standN(LAND_X + 2)],
   ]
   for (const [id, ref, face, stand] of steps) {
     const err = await placeCoreLibBlock(id, ref, face, stand)
@@ -1623,11 +1623,11 @@ async function testPoweredCart() {
   }
   bot.chat(`/setblock ${LAND_X - 2} ${Y} ${AZ} minecraft:air`)
   await sleep(300)
-  let err = await placeCoreLibBlock('mech:wheel', at(LAND_X - 1), west, standN(LAND_X - 2))
+  let err = await placeCoreLibBlock('mech:wheel_oak', at(LAND_X - 1), west, standN(LAND_X - 2))
   if (err) { fail(NAME, err); return }
   // Back wheels on the planks: they roll but aren't on the network.
   for (const [x, face, standX] of [[LAND_X + 1, east, LAND_X + 3], [LAND_X - 1, west, LAND_X - 3]]) {
-    err = await placeCoreLibBlock('mech:wheel', new Vec3(x, Y, LAND_Z + 2), face, new Vec3(standX + 0.5, Y, LAND_Z + 2.5))
+    err = await placeCoreLibBlock('mech:wheel_oak', new Vec3(x, Y, LAND_Z + 2), face, new Vec3(standX + 0.5, Y, LAND_Z + 2.5))
     if (err) { fail(NAME, err); return }
   }
 
