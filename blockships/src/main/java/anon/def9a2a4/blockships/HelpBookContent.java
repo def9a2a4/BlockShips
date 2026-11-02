@@ -57,7 +57,9 @@ public final class HelpBookContent {
         List<String[]> parsed = new ArrayList<>();
         for (Object entry : sectionList) {
             if (!(entry instanceof Map<?, ?> map)) continue;
-            String title = String.valueOf(map.get("title"));
+            // A section with no title gets no header line, rather than a bold "null".
+            Object titleObj = map.get("title");
+            String title = titleObj == null ? "" : String.valueOf(titleObj).trim();
             Object contentObj = map.get("content");
             // null content = dynamic (controls text varies by server version)
             String content = contentObj != null
@@ -94,31 +96,7 @@ public final class HelpBookContent {
 
         meta.setTitle(bookTitle);
         meta.setAuthor(bookAuthor);
-
-        StringBuilder currentPage = new StringBuilder();
-        int currentLines = 0;
-
-        for (int i = 0; i < sections.length; i++) {
-            String title = sections[i][0];
-            String content = sections[i][1];
-            int sectionLines = estimateSectionLines(content);
-
-            // Check if this section fits on current page
-            if (currentLines > 0 && currentLines + sectionLines > BOOK_LINES_PER_PAGE) {
-                currentPage.append(ChatColor.GRAY).append(ChatColor.ITALIC).append("(next page >>>)");
-                meta.addPage(currentPage.toString());
-                currentPage = new StringBuilder();
-                currentLines = 0;
-            }
-
-            currentPage.append(ChatColor.DARK_BLUE).append(ChatColor.BOLD).append(title).append("\n");
-            currentPage.append(ChatColor.BLACK).append(content).append("\n\n");
-            currentLines += sectionLines;
-        }
-
-        if (currentPage.length() > 0) {
-            meta.addPage(currentPage.toString());
-        }
+        for (String page : paginate(getSections())) meta.addPage(page);
 
         book.setItemMeta(meta);
         return book;
@@ -131,8 +109,52 @@ public final class HelpBookContent {
         player.openBook(createWrittenBook());
     }
 
-    private static int estimateSectionLines(String content) {
-        int contentLines = (int) Math.ceil((double) content.length() / BOOK_CHARS_PER_LINE);
-        return 1 + contentLines + 1; // title + content + blank line
+    /**
+     * Lays sections out into book pages, starting a section on a new page when it would run past
+     * {@link #BOOK_LINES_PER_PAGE}. A page that continues gets a "(next page >>>)" line; the budget is
+     * below the ~14 lines a vanilla page holds, which is what leaves room for it.
+     */
+    static List<String> paginate(String[][] sections) {
+        List<String> pages = new ArrayList<>();
+        StringBuilder currentPage = new StringBuilder();
+        int currentLines = 0;
+
+        for (String[] section : sections) {
+            String title = section[0];
+            String content = section[1];
+            int sectionLines = estimateSectionLines(title, content);
+
+            // Check if this section fits on current page
+            if (currentLines > 0 && currentLines + sectionLines > BOOK_LINES_PER_PAGE) {
+                currentPage.append(ChatColor.GRAY).append(ChatColor.ITALIC).append("(next page >>>)");
+                pages.add(currentPage.toString());
+                currentPage = new StringBuilder();
+                currentLines = 0;
+            }
+
+            if (!title.isEmpty()) {
+                currentPage.append(ChatColor.DARK_BLUE).append(ChatColor.BOLD).append(title).append("\n");
+            }
+            currentPage.append(ChatColor.BLACK).append(content).append("\n\n");
+            currentLines += sectionLines;
+        }
+
+        if (currentPage.length() > 0) {
+            pages.add(currentPage.toString());
+        }
+        return pages;
+    }
+
+    /** Lines a section takes: its title, its content (each embedded line wraps separately), a blank line. */
+    static int estimateSectionLines(String title, String content) {
+        int contentLines = 0;
+        for (String line : content.split("\n", -1)) {
+            contentLines += Math.max(1, (int) Math.ceil((double) line.length() / BOOK_CHARS_PER_LINE));
+        }
+        return (title.isEmpty() ? 0 : 1) + contentLines + 1;
+    }
+
+    static int linesPerPage() {
+        return BOOK_LINES_PER_PAGE;
     }
 }

@@ -5,6 +5,7 @@ import anon.def9a2a4.blockships.customships.ShipWheelManager;
 import anon.def9a2a4.blockships.customships.ShipWheelMenu;
 import anon.def9a2a4.blockships.util.AttributeCompat;
 import anon.def9a2a4.blockships.ship.CustomShipRender;
+import anon.def9a2a4.blockships.ship.ShipDamageSettings;
 import anon.def9a2a4.blockships.ship.ShipInstance;
 import org.bukkit.*;
 import org.bukkit.block.Block;
@@ -1586,7 +1587,7 @@ public class DisplayShip implements Listener {
             cannonObsidianIndex = mci;
         }
         if (cannonObsidianIndex >= 0) {
-            inst.fireCannonsByObsidian(cannonObsidianIndex);
+            inst.fireCannonsByObsidian(cannonObsidianIndex, player);
             e.setCancelled(true);
             return;
         }
@@ -1805,9 +1806,15 @@ public class DisplayShip implements Listener {
     }
 
     /**
-     * Handle damage to collision shulkers and apply it to the ship's health.
+     * Damage to a collision shulker comes off its ship's HP; the shulker itself never takes any.
+     *
+     * <p>A ship is one collider per block, and vanilla damages each entity an area effect reaches
+     * separately, so one hit arrives here as many events. They are grouped by the hit they belong to (see
+     * {@link #damageKey}) and charged through the ship's {@link anon.def9a2a4.blockships.ship.ShipDamageAggregator}
+     * according to {@code damage.mode}. Runs with ignoreCancelled so a protection plugin that cancelled the
+     * hit (WorldGuard, Skript) is respected.
      */
-    @EventHandler
+    @EventHandler(ignoreCancelled = true)
     public void onShulkerDamage(EntityDamageEvent e) {
         // Only handle shulker damage
         if (!(e.getEntity() instanceof Shulker shulker)) return;
@@ -1825,55 +1832,134 @@ public class DisplayShip implements Listener {
         }
         if (!inst.vehicle.isValid()) return;
 
+        EntityDamageEvent.DamageCause cause = e.getCause();
+
         // Ignore drowning damage - ships don't take drowning damage
         // Set air to max int so this rarely fires again
-        if (e.getCause() == EntityDamageEvent.DamageCause.DROWNING) {
+        if (cause == EntityDamageEvent.DamageCause.DROWNING) {
             e.setCancelled(true);
             shulker.setRemainingAir(Integer.MAX_VALUE);
             return;
         }
 
-        // Reduce suffocation damage by 75% - shulkers can briefly clip into blocks
-        if (e.getCause() == EntityDamageEvent.DamageCause.SUFFOCATION) {
-            e.setDamage(e.getDamage() * 0.25);
-        }
-
         // Cancel the damage to the shulker (keeps shulker effectively invulnerable)
         e.setCancelled(true);
+        if (inst.isDying()) return;
 
-        // Get the damage amount and apply directly to ship health
-        double damage = e.getDamage();
-        double currentHealth = inst.vehicle.getHealth();
-        double newHealth = currentHealth - damage;
+        double amount = e.getDamage();
+        switch (cause) {
+            // /kill on colliders (an "@e[type=shulker]" cleanup) should not sink every ship in the world.
+            case KILL -> { return; }
+            // An effect ticking on the collider itself. onColliderPotionEffect keeps new ones off and hands
+            // them to the ship; this strips any already there (from before that existed) without charging
+            // the ship, which otherwise took the tick from every poisoned collider at once.
+            case POISON, WITHER -> {
+                shulker.removePotionEffect(cause == EntityDamageEvent.DamageCause.POISON
+                    ? org.bukkit.potion.PotionEffectType.POISON : org.bukkit.potion.PotionEffectType.WITHER);
+                return;
+            }
+            case MAGIC -> {
+                Entity direct = e.getDamageSource().getDirectEntity();
+                if (!ShipDamageSettings.potions && (direct instanceof ThrownPotion || direct instanceof AreaEffectCloud)) return;
+            }
+            // Shulkers can briefly clip into blocks
+            case SUFFOCATION -> amount *= ShipDamageSettings.suffocationMultiplier;
+            case ENTITY_EXPLOSION, BLOCK_EXPLOSION -> amount *= ShipDamageSettings.explosionMultiplier;
+            default -> { }
+        }
+
+        double owed = inst.damageAggregator.add(damageKey(e), amount, Bukkit.getCurrentTick(),
+            damageWindowTicks(e), ShipDamageSettings.spread);
+        if (owed <= 0) return;
+
+        Player attacker = e instanceof EntityDamageByEntityEvent byEntity ? attackingPlayer(byEntity.getDamager()) : null;
+        applyShipDamage(inst, owed, shulker, attacker);
+    }
+
+    /**
+     * Which hit a collider's damage belongs to: the entity that dealt it directly (the TNT, creeper, potion,
+     * cloud or attacker — a sweep shares its attacker's key, so it folds into the main hit), else the block
+     * a block explosion came from, else just the cause.
+     */
+    private static Object damageKey(EntityDamageEvent e) {
+        org.bukkit.damage.DamageSource source = e.getDamageSource();
+        Entity direct = source.getDirectEntity();
+        if (direct != null) return direct.getUniqueId();
+        Location at = source.getDamageLocation();
+        if (at != null) return List.of(e.getCause(), at.getBlockX(), at.getBlockY(), at.getBlockZ());
+        return e.getCause();
+    }
+
+    /**
+     * How long events with one key count as one hit. A hit with a source lands all its events in the same
+     * tick. Sourceless contact damage (a collider clipping a block, freezing, cramming) repeats every tick
+     * because the shulker's own cancelled damage never starts vanilla's damage cooldown, so it gets that
+     * cooldown here.
+     */
+    private static int damageWindowTicks(EntityDamageEvent e) {
+        if (e.getDamageSource().getDirectEntity() != null) return 1;
+        return switch (e.getCause()) {
+            case SUFFOCATION, CONTACT, FREEZE, CRAMMING, HOT_FLOOR, FIRE, FIRE_TICK, LAVA -> 10;
+            default -> 1;
+        };
+    }
+
+    /** The player behind a hit: the attacker, or whoever shot or lit the thing that hit. */
+    private static Player attackingPlayer(Entity damager) {
+        if (damager instanceof Player p) return p;
+        if (damager instanceof Projectile projectile && projectile.getShooter() instanceof Player p) return p;
+        if (damager instanceof TNTPrimed tnt && tnt.getSource() instanceof Player p) return p;
+        return null;
+    }
+
+    /** Takes HP off the ship, with the hit feedback, at the collider that was hit. */
+    private void applyShipDamage(ShipInstance inst, double damage, Shulker hitAt, Player attacker) {
+        double newHealth = inst.damage(damage);
 
         org.bukkit.attribute.Attribute maxHealthAttr = anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth();
         org.bukkit.attribute.AttributeInstance maxHealthInstance = maxHealthAttr != null ? inst.vehicle.getAttribute(maxHealthAttr) : null;
         double maxHealth = maxHealthInstance != null ? maxHealthInstance.getBaseValue() : 100.0;  // Fallback to 100 if unavailable
 
         // Show health feedback to attacker via action bar
-        if (e instanceof EntityDamageByEntityEvent damageByEntity) {
-            Entity damager = damageByEntity.getDamager();
-            if (damager instanceof Player attackerPlayer) {
-                int displayHealth = (int) java.lang.Math.ceil(java.lang.Math.max(0, newHealth));
-                String healthText = "§cShip Health: §f" + displayHealth + "/" + (int) maxHealth;
-                attackerPlayer.sendActionBar(net.kyori.adventure.text.Component.text(healthText));
-            }
+        if (attacker != null) {
+            int displayHealth = (int) java.lang.Math.ceil(java.lang.Math.max(0, newHealth));
+            String healthText = "§cShip Health: §f" + displayHealth + "/" + (int) maxHealth;
+            attacker.sendActionBar(net.kyori.adventure.text.Component.text(healthText));
         }
 
         // Damage feedback effects
-        spawnDamageParticles(shulker);
-        playDamageSound(shulker.getLocation());
-        double healthPercent = Math.max(0, newHealth) / maxHealth;
+        spawnDamageParticles(hitAt);
+        playDamageSound(hitAt.getLocation());
+        double healthPercent = java.lang.Math.max(0, newHealth) / maxHealth;
         spawnWheelHealthParticles(inst, healthPercent);
         notifyRidersOfHealth(inst, newHealth, maxHealth);
+    }
 
-        // Check if ship should be destroyed (health reaches 0 or below)
-        if (newHealth <= 0) {
-            // Destroy ship and drop item immediately to prevent race condition
-            inst.destroyAndDropItem();
-        } else {
-            inst.vehicle.setHealth(newHealth);
-            inst.syncSeatShulkerHealth(newHealth);
+    /**
+     * Keeps potion effects off collider shulkers. Every collider a splash potion, lingering cloud, tipped
+     * arrow or mob attack reaches would otherwise carry the effect and tick it separately — one Poison I
+     * splash took an 836-HP ship to 60. With {@code damage.poison} on, poison and wither are applied to the
+     * ship once instead; repeats from the other colliders the same splash reached only refresh it.
+     */
+    @EventHandler(ignoreCancelled = true)
+    public void onColliderPotionEffect(org.bukkit.event.entity.EntityPotionEffectEvent e) {
+        if (!(e.getEntity() instanceof Shulker shulker)) return;
+        if (e.getCause() == org.bukkit.event.entity.EntityPotionEffectEvent.Cause.PLUGIN) return;
+        var action = e.getAction();
+        if (action != org.bukkit.event.entity.EntityPotionEffectEvent.Action.ADDED
+            && action != org.bukkit.event.entity.EntityPotionEffectEvent.Action.CHANGED) return;
+        UUID shipId = ShipTags.extractShipId(shulker.getScoreboardTags());
+        if (shipId == null) return;
+        ShipInstance inst = ShipRegistry.byId(shipId);
+        if (inst == null) return;
+
+        e.setCancelled(true);
+        org.bukkit.potion.PotionEffect effect = e.getNewEffect();
+        if (effect == null || !ShipDamageSettings.poison || inst.isDying()) return;
+        if (effect.getType().equals(org.bukkit.potion.PotionEffectType.POISON)) {
+            inst.applyPoison(effect.getAmplifier(), effect.getDuration());
+        } else if (effect.getType().equals(org.bukkit.potion.PotionEffectType.WITHER)) {
+            inst.applyWither(effect.getAmplifier(), effect.getDuration());
         }
     }
 
@@ -1926,36 +2012,20 @@ public class DisplayShip implements Listener {
         double damage = getProjectileDamage(projectile);
         if (damage <= 0) return;
 
-        // Apply damage to ship health
-        double currentHealth = inst.vehicle.getHealth();
-        double newHealth = currentHealth - damage;
-        org.bukkit.attribute.Attribute maxHealthAttr = anon.def9a2a4.blockships.util.AttributeCompat.getMaxHealth();
-        org.bukkit.attribute.AttributeInstance maxHealthInstance = maxHealthAttr != null ? inst.vehicle.getAttribute(maxHealthAttr) : null;
-        double maxHealth = maxHealthInstance != null ? maxHealthInstance.getBaseValue() : 100.0;  // Fallback to 100 if unavailable
-
-        // Show feedback if shooter is a player
-        if (projectile.getShooter() instanceof Player player) {
-            int displayHealth = (int) Math.ceil(Math.max(0, newHealth));
-            String healthText = "§cShip Health: §f" + displayHealth + "/" + (int) maxHealth;
-            player.sendActionBar(net.kyori.adventure.text.Component.text(healthText));
+        // Keyed by the projectile, so a damage event the same projectile also raises in this tick folds in
+        // instead of counting twice.
+        if (!inst.isDying()) {
+            double owed = inst.damageAggregator.add(projectile.getUniqueId(), damage, Bukkit.getCurrentTick(), 1,
+                ShipDamageSettings.spread);
+            if (owed > 0) {
+                applyShipDamage(inst, owed, shulker,
+                    projectile.getShooter() instanceof Player player ? player : null);
+            }
         }
 
-        // Damage feedback effects
-        spawnDamageParticles(shulker);
-        playDamageSound(shulker.getLocation());
-        double healthPercent = Math.max(0, newHealth) / maxHealth;
-        spawnWheelHealthParticles(inst, healthPercent);
-        notifyRidersOfHealth(inst, newHealth, maxHealth);
-
-        if (newHealth <= 0) {
-            inst.destroyAndDropItem();
-        } else {
-            inst.vehicle.setHealth(newHealth);
-            inst.syncSeatShulkerHealth(newHealth);
-        }
-
-        // Remove projectile (it would normally bounce/do nothing)
-        projectile.remove();
+        // Remove projectile (it would normally bounce/do nothing). Not a trident: that is the player's
+        // weapon, and removing it deleted it.
+        if (!(projectile instanceof Trident)) projectile.remove();
     }
 
     /**
@@ -1970,6 +2040,8 @@ public class DisplayShip implements Listener {
             return 6.0; // Ghast fireball
         } else if (projectile instanceof SmallFireball) {
             return 5.0; // Blaze fireball / fire charge
+        } else if (projectile instanceof Trident) {
+            return 8.0; // Vanilla thrown trident
         } else if (projectile instanceof ThrownPotion || projectile instanceof Snowball || projectile instanceof Egg) {
             return 0.0; // No impact damage
         }
@@ -2535,7 +2607,7 @@ public class DisplayShip implements Listener {
                 if (wheelData.isAssembled()) {
                     ShipInstance ship = ShipRegistry.byId(wheelData.getAssembledShipUUID());
                     if (ship != null) {
-                        ship.fireAllCannons();
+                        ship.fireAllCannons(player);
                     }
                 }
                 break;

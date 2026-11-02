@@ -17,22 +17,14 @@
 
 ## LONG TERM
 
-- [ ] Re-enable bot tests for 26.x once `minecraft-protocol` supports it. Currently only server startup is tested.
-  - https://github.com/PrismarineJS/minecraft-data/pull/1184
-  - https://github.com/PrismarineJS/node-minecraft-protocol/pull/1481
-- [ ] ShipRegistry uses non-thread-safe HashMap but is accessed from multiple threads (chunk events, periodic saves). Use ConcurrentHashMap to prevent ConcurrentModificationException.
-- [ ] (pre-1.21.9) Rotation logic bug - delta rotation math in ShipInstance.java:1110-1130 has inconsistencies, displays may rotate incorrectly (see https://github.com/def9a2a4/BlockShips/issues/7)
-  - the chunk-reload rotation snap is fixed in v0.0.16; the more severe collider/skin desync on legacy versions may remain
-- [ ] (pre-1.21.9) Custom ship spawnYaw mismatch - initial spawn uses vehicle.getYaw() but recovery uses model.initialRotation.x, causing rotation snap after restart (see https://github.com/def9a2a4/BlockShips/issues/7)
-- [ ] (pre-1.21.9) spawnYaw not persisted to save data - ships rotated before restart may snap when loaded (see https://github.com/def9a2a4/BlockShips/issues/7)
+- [ ] Re-enable bot tests for 26.x. Currently only server startup is tested there.
+  - mineflayer 4.39 / minecraft-protocol 1.68 support 26.1, and 26.1.1/26.1.2 share its protocol (775), so bumping test-bot should unlock 26.1.2
+  - 26.2 (776) and 26.3 (777) are listed in minecraft-data's protocol table but have no data yet; no release supports them
+- [ ] ShipRegistry is a plain HashMap. Every access is on the main thread today; the one off-main reader is the ProtocolLib ShipSteeringListener, which only registers below 1.21.2 (unreachable at the 1.21.9 floor). Fine as long as that holds; a main-thread assertion is cheaper than ConcurrentHashMap if it ever matters.
 - [ ] player does not get moved along with a ship, does not inherit velocity properly (see https://github.com/def9a2a4/BlockShips/issues/13)
-- [ ] ship to ship collisions not working, temporarily disabled
-  - NOTE: issue https://github.com/def9a2a4/BlockShips/issues/19 is CLOSED but this behavior is currently disabled — tracker gap, candidate for reopening
-- [ ] fix heads on walls display and colliders (see https://github.com/def9a2a4/BlockShips/issues/20)
-- [ ] multiple ships wheels is buggy? (see https://github.com/def9a2a4/BlockShips/issues/21 and design doc docs/todo/TODO-single-ship-wheel.md)
+- [ ] multiple ship's wheels (https://github.com/def9a2a4/BlockShips/issues/21): v0.0.18 leaves a neighbour's live-recorded wheel out of the ship. Record-less stamped heads and unstamped legacy heads are still absorbed as ordinary blocks. Verify in-game, then close #21
 - [ ] deck physics: if "player is not sending any input + player is standing on collision shulker + ship is moving", then teleport the player with the ship (see https://github.com/def9a2a4/BlockShips/issues/13)
   - sneak is fine. maybe only teleport along if the player is sneaking?
-- [ ] (pre-1.21.2) ShipInstance input fields (isForwardPressed, isBackwardPressed, isLeftPressed, isRightPressed, isSpacePressed, isSprintPressed, hasDriver) are non-volatile but written from ProtocolLib's netty I/O thread (ShipSteeringListener.setInputState) and read from the main server thread (ShipPhysics.update). Without volatile, the JIT can legally cache boolean reads in CPU registers, so the main thread may see stale values indefinitely. Masked on x86 by hardware cache coherence; real risk on ARM. Only affects pre-1.21.2 servers where ShipSteeringListener is used — PaperInputListener on 1.21.2+ runs on the main thread, eliminating the race. Fix: add volatile to all seven fields in ShipInstance.java:128-139. Zero performance cost for boolean reads at 20 TPS.
 
 ## UNCLEAR
 
@@ -41,16 +33,9 @@
 
 
 
-# REFACTORING
-
-- clean up code and use a unified "mechanism" class
-
 # FEATURES
 
 ## HARDER
-
-- [ ] ship-to-ship collisions
-  - NOTE: issue https://github.com/def9a2a4/BlockShips/issues/19 is CLOSED but collisions are currently disabled (see BUGS) — candidate for reopening
 
 - [ ] land vehicles: drive block structures on land, "jump" up blocks like horses. see https://github.com/def9a2a4/BlockShips/issues/10 and design doc docs/todo/TODO-land-vehicles.md
 
@@ -58,7 +43,7 @@
 
 - [ ] partial / progressive destruction: damage individual blocks rather than whole-ship destroy (distinct from the shipped full-destruction mode, #27). see https://github.com/def9a2a4/BlockShips/issues/24
 
-- [ ] implement furnaces (normal furnaces) on ships
+- [ ] furnaces smelt while sailing (furnace contents already ride along since v0.0.16; nothing burns in flight)
 - [ ] add TileEntity serialization for campfires, decorated pots, etc? (chiseled bookshelves, shelves, and signs done). see https://github.com/def9a2a4/BlockShips/issues/23 and design doc docs/todo/TODO-tileentities.md
 
 - [ ] allow setting extra colliders in a model. have this just be another list at the end, separate from blocks and items
@@ -87,15 +72,11 @@
 
 ## CODE QUALITY
 
-- ShipInstance has lots of duplication of code for banner/player head rotation/position etc etc. refactor this mess. see docs/todo/TODO-refactor-display-code.md
-- ServerVersion.java overflow at Minecraft 2.x - version number calculation assumes minor/patch < 100
 - Silent health regen failures after first tick in ShipInstance.java - only logs once, subsequent failures silent
 - Player disconnect handler in DisplayShip.java missing logging - hard to debug seat issues
-- SteerPacketCompat.logged field should be volatile for thread safety
 - BlockStructureScanner: Container/TileStateInventoryHolder double-match — Container extends TileStateInventoryHolder in Paper API, so both instanceof checks fire for every Container block. Harmless (isEmpty guard prevents data loss, double-restore is idempotent) but wasteful. Fix: restructure Container path to always serialize/clear regardless of StorageConfig, then use `else if` on TileStateInventoryHolder. Must handle brewing stand (Container with null StorageConfig).
 - BlockStructureScanner: cache `block.getState()` in serialization loop — currently 6+ calls each creating a new snapshot. Cache into a local variable and use pattern matching for Container/TileStateInventoryHolder/Sign/Skull/Banner checks.
 - PaperInputListener: constructor takes unused `JavaPlugin plugin` param — remove it and update call site in BlockShipsPlugin
-- recoverEntities() in ShipInstance.java starts tick task immediately on partial recovery and overwrites the `task` field without cancelling any pre-existing task — potential duplicate tick task leak. Not harmful in practice (tick is idempotent) but should cancel old task before starting new one.
 - suspendForChunkUnload() in ShipInstance.java does not zero vehicle velocity — `vehicle.setVelocity(displacement)` set during movement leaks into entity Motion NBT at chunk unload. Worth zeroing velocity in suspendForChunkUnload().
 
 ## CI / TEST ROBUSTNESS
@@ -107,6 +88,22 @@
 
 # RECENTLY DONE
 
+## v0.0.18 (cut, not yet tagged)
+
+- [x] engine moved onto DefCoreLib's Mechanism (now a hard dependency); 0.0.17 ships at sea convert on first chunk load
+- [x] propulsion from Mechanism fans/propellers/thrusters/reaction wheels, four sail tiers, reworked lift — docs/flight-model.md
+- [x] Glue Brush and the lock toggle. see https://github.com/def9a2a4/BlockShips/issues/44
+- [x] ship wheels identified by record, not position: closes the steal/strand/lose cases; `/blockships wheels inspect|adopt|purge`; foreign wheels left out of a ship. see https://github.com/def9a2a4/BlockShips/issues/21
+- [x] config failures are loud and non-destructive; startup/reload say which copy of each file is in force. see https://github.com/def9a2a4/BlockShips/issues/43
+- [x] docked vs assembled readouts agree (sails, max health, waterline). see https://github.com/def9a2a4/BlockShips/issues/18
+- [x] skull/banner transform deduplicated — docs/todo/done/TODO-refactor-display-code.md
+
+## v0.0.17
+
+- [x] WorldGuard region build permissions on assembly, disassembly and wheel placement. see https://github.com/def9a2a4/BlockShips/issues/30
+- [x] destructive admin commands report failures; `/blockships info` stats rework; new permission nodes
+- [x] WorldGuard drop path keeps head textures, banners and multi-cell blocks intact; waterlogging preserved on disassembly
+
 ## v0.0.16
 
 - [x] custom ship stats: power-to-mass ratio drives speed/rotation; sails (wool/banner) and fueled engines (blast furnaces) add power; stats shown in ship info. see https://github.com/def9a2a4/BlockShips/issues/18 — docs/todo/done/TODO-stats.md, docs/todo/done/TODO-stats-fixes.md
@@ -114,6 +111,7 @@
 - [x] Towny compat: ship entities set empty custom name to dodge Towny's mob removal timer. see https://github.com/def9a2a4/BlockShips/issues/17
 - [x] destruction: configurable full-destroy mode (`custom-ships.destruction-mode: destroy`), drops stored items/fuel/leads instead of placing blocks. see https://github.com/def9a2a4/BlockShips/issues/27
 - [x] tile entity support (partial): chiseled bookshelves, shelves, and sign text preserved across assembly. see https://github.com/def9a2a4/BlockShips/issues/23 — docs/todo/TODO-tileentities.md
+- [x] mob heads render correctly and wall heads get colliders. see https://github.com/def9a2a4/BlockShips/issues/20
 - [x] lower default special-drowned spawn chance 5% → 2% so they don't overwhelm heavy-spawn biomes. see https://github.com/def9a2a4/BlockShips/issues/29
 
 ## earlier

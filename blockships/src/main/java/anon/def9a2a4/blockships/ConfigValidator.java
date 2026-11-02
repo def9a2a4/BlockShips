@@ -74,7 +74,7 @@ public class ConfigValidator {
             Logger logger = plugin.getLogger();
             logger.severe("config.yml could not be parsed: " + error);
             logger.severe("EVERY setting in plugins/" + plugin.getName() + "/config.yml is being ignored"
-                + " - the plugin is running entirely on its bundled defaults.");
+                + " - the plugin is running on its built-in defaults instead.");
             logger.severe("Fix the YAML error above, then restart or run /blockships reload."
                 + " The file will not be modified while it is unreadable.");
             return new MainConfigStatus(true, error);

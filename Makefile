@@ -144,11 +144,11 @@ $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar:
 
 $(DOWNLOAD_CACHE)/plugins/ViaVersion.jar:
 	@mkdir -p $(DOWNLOAD_CACHE)/plugins
-	curl -L -o $@ https://github.com/ViaVersion/ViaVersion/releases/download/5.7.1/ViaVersion-5.7.1.jar
+	curl -L -o $@ https://github.com/ViaVersion/ViaVersion/releases/download/5.12.2/ViaVersion-5.12.2.jar
 
 $(DOWNLOAD_CACHE)/plugins/ViaBackwards.jar:
 	@mkdir -p $(DOWNLOAD_CACHE)/plugins
-	curl -L -o $@ https://github.com/ViaVersion/ViaBackwards/releases/download/5.7.1/ViaBackwards-5.7.1.jar
+	curl -L -o $@ https://github.com/ViaVersion/ViaBackwards/releases/download/5.12.2/ViaBackwards-5.12.2.jar
 
 .PHONY: test-server-download-to-cache
 test-server-download-to-cache: $(DOWNLOAD_CACHE)/plugins/ProtocolLib.jar $(DOWNLOAD_CACHE)/plugins/ViaVersion.jar $(DOWNLOAD_CACHE)/plugins/ViaBackwards.jar $(DEFCORELIB_BUILD_DEP)

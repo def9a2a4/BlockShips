@@ -81,6 +81,7 @@ public class ShipWheelData {
     // Camera distance setting (persisted per-ship)
     // -1 means "not set, use calculated default based on block count"
     private float cameraDistance = -1;
+    private double storedHealth = -1;  // HP carried across a disassemble (custom-ships.health.preserve-on-disassemble); -1 = none
 
     // When true, this wheel's ship is "locked": membership is frozen to its glue offsets (stored on the wheel
     // skull by defCoreLib) and the natural allow-list flood fill is disabled, so docking it next to a pile of
@@ -353,6 +354,18 @@ public class ShipWheelData {
         this.cameraDistance = distance;
     }
 
+    /**
+     * HP the ship had when it was last disassembled, to restore on its next assembly, or -1 for none. Only
+     * written while {@code custom-ships.health.preserve-on-disassemble} is on.
+     */
+    public double getStoredHealth() {
+        return storedHealth;
+    }
+
+    public void setStoredHealth(double health) {
+        this.storedHealth = health >= 0 ? health : -1;
+    }
+
     /** True when natural allow-list spread is frozen (membership = the wheel's glue offsets). */
     public boolean isLocked() {
         return naturalFrozen;
@@ -462,6 +475,9 @@ public class ShipWheelData {
         if (cameraDistance >= 0) {
             map.put("camera_distance", cameraDistance);
         }
+        if (storedHealth >= 0) {
+            map.put("stored_health", storedHealth);
+        }
         if (naturalFrozen) {
             map.put("locked", true);
         }
@@ -512,6 +528,9 @@ public class ShipWheelData {
         // Load camera distance if present (backwards compatible - defaults to -1 if missing)
         if (map.containsKey("camera_distance")) {
             data.setCameraDistance(((Number) map.get("camera_distance")).floatValue());
+        }
+        if (map.get("stored_health") instanceof Number storedHealth) {
+            data.setStoredHealth(storedHealth.doubleValue());
         }
 
         // Lock flag. New format is a plain boolean — the frozen cells live in the wheel's glue store, not here.

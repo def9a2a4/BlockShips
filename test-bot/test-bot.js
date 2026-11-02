@@ -24,6 +24,9 @@ const {
   clearChat,
   waitForChat,
   disassembleViaWheelMenu,
+  wheelMenuViaShulker,
+  readShipHealth,
+  findWheelBlock,
   markServerLog,
   scanServerErrorsSince,
   createBot,
@@ -879,6 +882,506 @@ async function testWheelDecoyHead() {
 }
 
 // =============================================================================
+// Damage, Cargo and Recovery Regressions
+// =============================================================================
+
+// Assemble CUSTOM_SHIP (or another layout) at the runway and wait for its colliders. Returns the
+// shulkers, or null after failing the test.
+async function buildAndAssemble(testName, config, minShulkers = 10) {
+  const buildResult = await buildCustomShipBlocks(config)
+  if (!buildResult.success) {
+    fail(testName, buildResult.error)
+    return null
+  }
+  await clearInventory(bot)
+  try {
+    const menuPromise = clickWheelMenu(bot, log, 'assemble')
+    await bot.activateBlock(buildResult.wheelBlock)
+    if (!await menuPromise) {
+      fail(testName, 'Assembly menu interaction failed')
+      return null
+    }
+  } catch (e) {
+    fail(testName, `Assembly failed: ${e.message}`)
+    return null
+  }
+  const shulkers = await waitForShulkers(bot, 50, 20, 500, minShulkers)
+  if (shulkers.length < minShulkers) {
+    fail(testName, `Assembly incomplete: ${shulkers.length} shulkers (need >= ${minShulkers})`)
+    return null
+  }
+  return shulkers
+}
+
+function centerOf(shulkers) {
+  const c = { x: 0, y: 0, z: 0 }
+  for (const s of shulkers) {
+    const p = getShipEntityPos(s)
+    c.x += p.x; c.y += p.y; c.z += p.z
+  }
+  return { x: c.x / shulkers.length, y: c.y / shulkers.length, z: c.z / shulkers.length }
+}
+
+function summonSplashPotion(at, potion) {
+  bot.chat(`/summon splash_potion ${at.x.toFixed(2)} ${(at.y + 1.5).toFixed(2)} ${at.z.toFixed(2)} ` +
+    `{Item:{id:"minecraft:splash_potion",count:1,components:{"minecraft:potion_contents":{potion:"minecraft:${potion}"}}},Motion:[0.0,-1.0,0.0]}`)
+}
+
+// #47: a splash potion reaches every collider in its radius, and each used to take the full hit off the
+// ship's one HP pool. CUSTOM_SHIP has about 50 HP and ~20 colliders inside a splash, so a Harming II
+// splash (12 per entity) sank it outright. Per-ship mode charges it once: at most 12.
+// Poison is off by default (damage.poison), so a poison splash must neither hurt the ship nor leave the
+// effect ticking on its colliders.
+async function testShipDamage() {
+  const testName = 'ship_damage'
+  say(`=== TEST: ${testName} ===`)
+
+  await cleanup(bot)
+  await teleportToRunway()
+  await clearInventory(bot)
+  const logMarker = markServerLog()
+
+  const shulkers = await buildAndAssemble(testName, CUSTOM_SHIP)
+  if (!shulkers) return
+
+  const before = await readShipHealth(bot, log)
+  if (!before) {
+    fail(testName, 'Could not read ship health from the wheel menu')
+    return
+  }
+  log(`  health before: ${before.hp}/${before.max}`)
+  if (before.max <= 13) {
+    fail(testName, `Ship max health ${before.max} is too low for this test to tell per-ship from per-block`)
+    return
+  }
+
+  say('Splashing Harming II on the ship...')
+  summonSplashPotion(centerOf(shulkers), 'strong_harming')
+  await sleep(1500)
+
+  if (findShulkers(bot, 50).length === 0) {
+    fail(testName, 'One Harming II splash sank the ship — damage is being counted once per collider')
+    return
+  }
+  const afterHarm = await readShipHealth(bot, log)
+  if (!afterHarm) {
+    fail(testName, 'Could not read ship health after the harming splash')
+    return
+  }
+  const lost = before.hp - afterHarm.hp
+  log(`  health after harming: ${afterHarm.hp}/${afterHarm.max} (lost ${lost})`)
+  // Up to 12 from the splash, plus 1 for the readout rounding up; regen can only make the loss look smaller.
+  if (lost > 13) {
+    fail(testName, `Harming II splash took ${lost} HP; per-ship damage should cap it at 12`)
+    return
+  }
+  if (lost < 1) {
+    fail(testName, `Harming II splash took no HP (${before.hp} -> ${afterHarm.hp}); the splash missed or damage is off`)
+    return
+  }
+
+  say('Splashing Poison II on the ship (poison is off by default)...')
+  summonSplashPotion(centerOf(findShulkers(bot, 50)), 'strong_poison')
+  await sleep(3000)
+  const afterPoison = await readShipHealth(bot, log)
+  if (!afterPoison) {
+    fail(testName, 'Could not read ship health after the poison splash')
+    return
+  }
+  log(`  health after poison: ${afterPoison.hp}/${afterPoison.max}`)
+  if (afterPoison.hp < afterHarm.hp) {
+    fail(testName, `Poison hurt the ship (${afterHarm.hp} -> ${afterPoison.hp}) with damage.poison off`)
+    return
+  }
+  clearChat(bot)
+  bot.chat('/execute if entity @e[type=shulker,distance=..30,nbt={active_effects:[{id:"minecraft:poison"}]}]')
+  const verdict = await waitForChat(bot, /^Test (passed|failed)/, 5000)
+  if (!verdict) {
+    fail(testName, 'No answer from the poisoned-collider check')
+    return
+  }
+  if (verdict.startsWith('Test passed')) {
+    fail(testName, `Ship colliders carry the poison effect (${verdict})`)
+    return
+  }
+
+  const scan = scanServerErrorsSince(logMarker)
+  if (scan.available && scan.errors.length > 0) {
+    fail(testName, `BlockShips errors logged during test: ${scan.errors.slice(0, 3).join(' | ')}`)
+    return
+  }
+
+  pass(`${testName} (max=${before.max}, harming II cost ${lost}, poison cost 0)`)
+}
+
+// CUSTOM_SHIP with its chest made a double chest. The halves are set explicitly (/setblock does not
+// connect neighbours); facing south, the RIGHT half sits west of the LEFT half.
+const DOUBLE_CHEST_SHIP = {
+  layers: CUSTOM_SHIP.layers.map((layer, y) => y === 1
+    ? [...layer.slice(0, 6), 'L R T']
+    : layer),
+  blocks: {
+    ...CUSTOM_SHIP.blocks,
+    'L': 'chest[facing=south,type=right]',
+    'R': 'chest[facing=south,type=left]'
+  }
+}
+const DOUBLE_CHEST_DIAMONDS = 10
+const DOUBLE_CHEST_EMERALDS = 7
+
+// Count items in an open container window, and report its size (54 = a double chest).
+async function readContainer(block) {
+  let window = null
+  try {
+    window = await bot.openContainer(block)
+    await sleep(200)
+    const counts = {}
+    for (const item of window.containerItems()) {
+      if (item) counts[item.name] = (counts[item.name] || 0) + item.count
+    }
+    return { slots: window.inventoryStart, counts }
+  } catch (e) {
+    log(`readContainer error: ${e.message}`)
+    return null
+  } finally {
+    if (window) {
+      try { await window.close() } catch (e2) {}
+    }
+  }
+}
+
+// #12: a double chest's two halves used to each carry all 54 slots, so every assemble/disassemble
+// minted a second copy of the cargo. Each half gets distinct cargo here, and the round trip must give
+// back exactly that across the restored chests, with nothing spilled.
+async function testDoubleChestCargo() {
+  const testName = 'double_chest'
+  say(`=== TEST: ${testName} ===`)
+
+  await cleanup(bot)
+  await teleportToRunway()
+  await clearInventory(bot)
+  const logMarker = markServerLog()
+
+  const buildResult = await buildCustomShipBlocks(DOUBLE_CHEST_SHIP)
+  if (!buildResult.success) {
+    fail(testName, buildResult.error)
+    return
+  }
+  await clearInventory(bot)
+
+  const leftPos = blockCharWorldPos(DOUBLE_CHEST_SHIP, 'L', RUNWAY_X, 101, RUNWAY_Z - 1)
+  const rightPos = blockCharWorldPos(DOUBLE_CHEST_SHIP, 'R', RUNWAY_X, 101, RUNWAY_Z - 1)
+  bot.chat(`/item replace block ${leftPos.x} ${leftPos.y} ${leftPos.z} container.0 with minecraft:diamond ${DOUBLE_CHEST_DIAMONDS}`)
+  await sleep(200)
+  bot.chat(`/item replace block ${rightPos.x} ${rightPos.y} ${rightPos.z} container.0 with minecraft:emerald ${DOUBLE_CHEST_EMERALDS}`)
+  await sleep(500)
+
+  bot.chat(`/tp @s ${leftPos.x + 0.5} ${leftPos.y + 1} ${leftPos.z + 0.5}`)
+  await sleep(400)
+  const chestBlock = bot.blockAt(new Vec3(leftPos.x, leftPos.y, leftPos.z))
+  const preloaded = chestBlock && chestBlock.name === 'chest' ? await readContainer(chestBlock) : null
+  if (!preloaded) {
+    fail(testName, `No chest to preload at ${leftPos.x},${leftPos.y},${leftPos.z}`)
+    return
+  }
+  if (preloaded.slots !== 54) {
+    fail(testName, `The two chests did not form a double chest (window has ${preloaded.slots} slots) — fix the halves in DOUBLE_CHEST_SHIP`)
+    return
+  }
+  if (preloaded.counts.diamond !== DOUBLE_CHEST_DIAMONDS || preloaded.counts.emerald !== DOUBLE_CHEST_EMERALDS) {
+    fail(testName, `Preload failed: ${JSON.stringify(preloaded.counts)}`)
+    return
+  }
+  await teleportToRunway()
+
+  say('Assembling double-chest ship...')
+  try {
+    const menuPromise = clickWheelMenu(bot, log, 'assemble')
+    await bot.activateBlock(buildResult.wheelBlock)
+    if (!await menuPromise) {
+      fail(testName, 'Assembly menu interaction failed')
+      return
+    }
+  } catch (e) {
+    fail(testName, `Assembly failed: ${e.message}`)
+    return
+  }
+  const shulkers = await waitForShulkers(bot, 50, 20, 500, 10)
+  if (shulkers.length < 10) {
+    fail(testName, `Assembly incomplete: ${shulkers.length} shulkers`)
+    return
+  }
+  const shipPos = getShipEntityPos(shulkers[0])
+
+  say('Disassembling...')
+  if (!await disassembleViaWheelMenu(bot, log)) {
+    fail(testName, 'Could not disassemble via the wheel menu')
+    return
+  }
+  let remaining = shulkers.length
+  for (let attempt = 0; attempt < 20 && remaining > 0; attempt++) {
+    await sleep(500)
+    remaining = findShulkers(bot, 60).length
+  }
+  if (remaining !== 0) {
+    fail(testName, `Disassembly did not complete: ${remaining} shulkers remain`)
+    return
+  }
+
+  const strayItems = Object.values(bot.entities).filter(e =>
+    (e.name === 'item' || e.objectType === 'Item') && e.position && e.position.distanceTo(shipPos) < 12)
+  if (strayItems.length > 0) {
+    fail(testName, `${strayItems.length} stray dropped item(s) near the ship after disassembly`)
+    return
+  }
+
+  // Assembly splits a double chest into two single ones (that split is the #12 fix), so the cargo comes
+  // back across two chests: total it over every chest the hull restored.
+  const chests = []
+  const c = { x: Math.round(shipPos.x), y: Math.round(shipPos.y), z: Math.round(shipPos.z) }
+  for (let dx = -5; dx <= 5; dx++) {
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dz = -5; dz <= 5; dz++) {
+        const b = bot.blockAt(new Vec3(c.x + dx, c.y + dy, c.z + dz))
+        if (b && b.name === 'chest') chests.push(b)
+      }
+    }
+  }
+  if (chests.length === 0) {
+    fail(testName, 'No restored chest found after disassembly')
+    return
+  }
+  const after = { counts: {} }
+  for (const chest of chests) {
+    const p = chest.position
+    bot.chat(`/tp @s ${p.x + 0.5} ${p.y + 1} ${p.z + 0.5}`)
+    await sleep(500)
+    const contents = await readContainer(chest)
+    if (!contents) {
+      fail(testName, `Could not open the restored chest at ${p.x},${p.y},${p.z}`)
+      return
+    }
+    // A double chest shows both halves from either one: if the halves came back joined, that one
+    // read is the whole cargo.
+    if (contents.slots === 54) {
+      after.counts = contents.counts
+      break
+    }
+    for (const [name, n] of Object.entries(contents.counts)) after.counts[name] = (after.counts[name] || 0) + n
+  }
+  log(`  restored chests: ${chests.length}, cargo ${JSON.stringify(after.counts)}`)
+  if (after.counts.diamond !== DOUBLE_CHEST_DIAMONDS || after.counts.emerald !== DOUBLE_CHEST_EMERALDS) {
+    fail(testName, `Cargo changed in the round trip: expected ${DOUBLE_CHEST_DIAMONDS} diamond + ` +
+      `${DOUBLE_CHEST_EMERALDS} emerald, got ${JSON.stringify(after.counts)}`)
+    return
+  }
+
+  const scan = scanServerErrorsSince(logMarker)
+  if (scan.available && scan.errors.length > 0) {
+    fail(testName, `BlockShips errors logged during test: ${scan.errors.slice(0, 3).join(' | ')}`)
+    return
+  }
+
+  pass(`${testName} (diamond=${after.counts.diamond}, emerald=${after.counts.emerald})`)
+}
+
+// CUSTOM_SHIP with a cannon on its starboard side: a dispenser facing east with obsidian behind it.
+const CANNON_SHIP = {
+  layers: CUSTOM_SHIP.layers.map((layer, y) => y === 1
+    ? [layer[0], layer[1], '- O D', ...layer.slice(3)]
+    : layer),
+  blocks: {
+    ...CUSTOM_SHIP.blocks,
+    'O': 'obsidian',
+    'D': 'dispenser[facing=east]'
+  }
+}
+
+// #15 / #22 / #43: with cannons.tnt-enabled off (the default), TNT used to be thrown out of the cannon as
+// a dropped item with no word of why, which read as "TNT cannons are broken". It must now stay loaded and
+// say why, and other ammo in the same dispenser must still fire.
+async function testCannonTntDisabled() {
+  const testName = 'cannon_tnt_disabled'
+  say(`=== TEST: ${testName} ===`)
+
+  await cleanup(bot)
+  await teleportToRunway()
+  await clearInventory(bot)
+  const logMarker = markServerLog()
+
+  const buildResult = await buildCustomShipBlocks(CANNON_SHIP)
+  if (!buildResult.success) {
+    fail(testName, buildResult.error)
+    return
+  }
+  await clearInventory(bot)
+  const dispPos = blockCharWorldPos(CANNON_SHIP, 'D', RUNWAY_X, 101, RUNWAY_Z - 1)
+  bot.chat(`/item replace block ${dispPos.x} ${dispPos.y} ${dispPos.z} container.0 with minecraft:tnt 2`)
+  await sleep(500)
+
+  say('Assembling cannon ship...')
+  try {
+    const menuPromise = clickWheelMenu(bot, log, 'assemble')
+    await bot.activateBlock(buildResult.wheelBlock)
+    if (!await menuPromise) {
+      fail(testName, 'Assembly menu interaction failed')
+      return
+    }
+  } catch (e) {
+    fail(testName, `Assembly failed: ${e.message}`)
+    return
+  }
+  const shulkers = await waitForShulkers(bot, 50, 20, 500, 10)
+  if (shulkers.length < 10) {
+    fail(testName, `Assembly incomplete: ${shulkers.length} shulkers`)
+    return
+  }
+  const shipPos = getShipEntityPos(shulkers[0])
+
+  say('Firing a TNT-only cannon...')
+  // Building over the previous test's hull knocks loose whatever hung on it; clear that first.
+  bot.chat('/kill @e[type=minecraft:item]')
+  await sleep(300)
+  clearChat(bot)
+  if (!await wheelMenuViaShulker(bot, log, 'fire')) {
+    fail(testName, 'Could not open the wheel menu to fire')
+    return
+  }
+  const notice = await waitForChat(bot, /TNT cannons are turned off/, 5000)
+  if (!notice) {
+    fail(testName, 'Firing a TNT-only cannon with TNT disabled said nothing')
+    return
+  }
+  await sleep(500)
+  clearChat(bot)
+  bot.chat('/execute if entity @e[distance=..40,type=minecraft:item,nbt={Item:{id:"minecraft:tnt"}}]')
+  const droppedVerdict = await waitForChat(bot, /^Test (passed|failed)/, 5000)
+  clearChat(bot)
+  bot.chat('/execute if entity @e[distance=..40,type=minecraft:tnt]')
+  const primedVerdict = await waitForChat(bot, /^Test (passed|failed)/, 5000)
+  if (!droppedVerdict || !primedVerdict) {
+    fail(testName, 'No answer from the TNT-in-world checks')
+    return
+  }
+  if (droppedVerdict.startsWith('Test passed') || primedVerdict.startsWith('Test passed')) {
+    fail(testName, `Firing with TNT disabled still put TNT in the world (dropped: ${droppedVerdict}; primed: ${primedVerdict})`)
+    return
+  }
+
+  // Disassemble: the TNT must still be in the dispenser.
+  if (!await disassembleViaWheelMenu(bot, log)) {
+    fail(testName, 'Could not disassemble via the wheel menu')
+    return
+  }
+  let remaining = shulkers.length
+  for (let attempt = 0; attempt < 20 && remaining > 0; attempt++) {
+    await sleep(500)
+    remaining = findShulkers(bot, 60).length
+  }
+  if (remaining !== 0) {
+    fail(testName, `Disassembly did not complete: ${remaining} shulkers remain`)
+    return
+  }
+  const dispenser = await findNearbyBlock(bot, shipPos, 'dispenser', 8)
+  if (!dispenser) {
+    fail(testName, 'Restored dispenser not found')
+    return
+  }
+  const dp = dispenser.position
+  bot.chat(`/tp @s ${dp.x + 0.5} ${dp.y + 1} ${dp.z + 0.5}`)
+  await sleep(500)
+  const contents = await readContainer(dispenser)
+  if (!contents || contents.counts.tnt !== 2) {
+    fail(testName, `TNT was used up with TNT disabled: dispenser holds ${JSON.stringify(contents && contents.counts)}`)
+    return
+  }
+
+  const scan = scanServerErrorsSince(logMarker)
+  if (scan.available && scan.errors.length > 0) {
+    fail(testName, `BlockShips errors logged during test: ${scan.errors.slice(0, 3).join(' | ')}`)
+    return
+  }
+
+  pass(`${testName} (TNT kept: ${contents.counts.tnt})`)
+}
+
+// Disconnect and reconnect the bot, keeping the global `bot` and its chat capture working.
+async function reconnectBot() {
+  const old = bot
+  await new Promise((resolve) => {
+    old.once('end', resolve)
+    old.quit()
+  })
+  await sleep(2000)
+  bot = createBot()
+  await new Promise((resolve) => setupBotEvents(bot, log, resolve))
+  bot.chat('/gamemode creative')
+  await sleep(500)
+  bot.creative.startFlying()
+  await sleep(500)
+}
+
+// #46: after the player disconnected (or the server restarted), the ship still looked assembled but its
+// wheel menu never opened, so it could be neither steered from the menu nor disassembled. Assemble, log
+// out and back in, then the menu must open from the ship and disassemble must put the wheel back.
+async function testWheelAfterRelog() {
+  const testName = 'wheel_after_relog'
+  say(`=== TEST: ${testName} ===`)
+
+  await cleanup(bot)
+  await teleportToRunway()
+  await clearInventory(bot)
+  const logMarker = markServerLog()
+
+  const shulkers = await buildAndAssemble(testName, CUSTOM_SHIP)
+  if (!shulkers) return
+  const shipPos = getShipEntityPos(shulkers[0])
+
+  say('Logging out and back in...')
+  await reconnectBot()
+  await teleportToRunway()
+  const back = await waitForShulkers(bot, 50, 20, 500, 10)
+  if (back.length < 10) {
+    fail(testName, `Ship not visible after reconnecting (${back.length} shulkers)`)
+    return
+  }
+
+  const health = await readShipHealth(bot, log)
+  if (!health) {
+    fail(testName, 'Wheel menu did not open from the ship after reconnecting (#46)')
+    return
+  }
+
+  if (!await disassembleViaWheelMenu(bot, log)) {
+    fail(testName, 'Could not disassemble via the wheel menu after reconnecting (#46)')
+    return
+  }
+  let remaining = back.length
+  for (let attempt = 0; attempt < 20 && remaining > 0; attempt++) {
+    await sleep(500)
+    remaining = findShulkers(bot, 60).length
+  }
+  if (remaining !== 0) {
+    fail(testName, `Disassembly did not complete after reconnecting: ${remaining} shulkers remain`)
+    return
+  }
+  const wheel = await findNearbyBlock(bot, shipPos, 'player_head', 8)
+    || await findNearbyBlock(bot, shipPos, 'player_wall_head', 8)
+  if (!wheel) {
+    fail(testName, 'No ship wheel in the world after disassembling')
+    return
+  }
+
+  const scan = scanServerErrorsSince(logMarker)
+  if (scan.available && scan.errors.length > 0) {
+    fail(testName, `BlockShips errors logged during test: ${scan.errors.slice(0, 3).join(' | ')}`)
+    return
+  }
+
+  pass(`${testName} (health ${health.hp}/${health.max} after reconnect)`)
+}
+
+// =============================================================================
 // Test Registry and Interactive Mode
 // =============================================================================
 
@@ -889,6 +1392,10 @@ const TESTS = {
   custom_ship: { name: 'Custom Ship', fn: testCustomShip },
   custom_airship: { name: 'Custom Airship', fn: testCustomAirship },
   weird_ship: { name: 'Weird Blocks Ship', fn: testWeirdBlocksShip },
+  ship_damage: { name: 'Ship Damage Counted Per Ship', fn: testShipDamage },
+  double_chest: { name: 'Double Chest Cargo Round Trip', fn: testDoubleChestCargo },
+  wheel_after_relog: { name: 'Wheel Menu After Relog', fn: testWheelAfterRelog },
+  cannon_tnt_disabled: { name: 'Cannon Keeps TNT When Disabled', fn: testCannonTntDisabled },
   // manual: skipped by runAllTests (and therefore by CI's test:all) — the deliberate negative waits
   // don't fit the suite's hard timeout. Run by name: `.testbot wheel_reserved` or --only=wheel_
   wheel_reserved: { name: 'Wheel Dock Reserved', fn: testWheelCellReserved, manual: true },
@@ -1061,11 +1568,11 @@ async function main() {
 bot = createBot()
 setupBotEvents(bot, log, main)
 
-// Timeout after 5 minutes in normal mode, no timeout in interactive
+// Timeout after 10 minutes in normal mode, no timeout in interactive
 if (!INTERACTIVE) {
   setTimeout(() => {
-    log('Test timeout reached (5 minutes)')
+    log('Test timeout reached (10 minutes)')
     log('BlockShips test suite FAILED (timeout)')
     process.exit(1)
-  }, 300000)
+  }, 600000)
 }

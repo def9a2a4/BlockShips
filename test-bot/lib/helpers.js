@@ -894,7 +894,7 @@ function getMenuTitle(window) {
 }
 
 async function clickWheelMenu(bot, log, action) {
-  const slots = { detect: 10, lock: 13, assemble: 14, disassemble: 16 }
+  const slots = { detect: 10, fire: 12, lock: 13, assemble: 14, disassemble: 16 }
   const slot = slots[action]
 
   if (slot === undefined) {
@@ -948,9 +948,14 @@ async function clickWheelMenu(bot, log, action) {
 // (DisplayShip.handleShulkerInteraction). Sneaking also prevents accidentally mounting a seat.
 // Returns true if the disassemble menu action was clicked.
 async function disassembleViaWheelMenu(bot, log, maxTries = 6) {
+  return wheelMenuViaShulker(bot, log, 'disassemble', maxTries)
+}
+
+// Same route for any wheel-menu action on an ASSEMBLED ship (detect, fire, disassemble, ...).
+async function wheelMenuViaShulker(bot, log, action, maxTries = 6) {
   const shulkers = findShulkers(bot, 40)
   if (shulkers.length === 0) {
-    if (log) log('  disassembleViaWheelMenu: no ship shulkers nearby')
+    if (log) log(`  wheelMenuViaShulker(${action}): no ship shulkers nearby`)
     return false
   }
 
@@ -961,17 +966,28 @@ async function disassembleViaWheelMenu(bot, log, maxTries = 6) {
       const seat = shulkers[i]
       try { await bot.lookAt(seat.position.offset(0, 0.5, 0)) } catch (e) {}
       // clickWheelMenu registers its own windowOpen listener, so start it BEFORE interacting.
-      const menuPromise = clickWheelMenu(bot, log, 'disassemble')
+      const menuPromise = clickWheelMenu(bot, log, action)
       await sleep(100)
       try { await bot.useOn(seat) } catch (e) {}
       if (await menuPromise) return true
-      if (log) log(`  disassembleViaWheelMenu: shulker ${i + 1} did not open the wheel menu`)
+      if (log) log(`  wheelMenuViaShulker(${action}): shulker ${i + 1} did not open the wheel menu`)
     }
     return false
   } finally {
     bot.setControlState('sneak', false)
     await sleep(100)
   }
+}
+
+// An assembled ship's HP, read from the "Health: X / Y" line the wheel menu's Detect prints.
+// Returns { hp, max } or null if the menu or the line never came.
+async function readShipHealth(bot, log) {
+  clearChat(bot)
+  if (!await wheelMenuViaShulker(bot, log, 'detect')) return null
+  const line = await waitForChat(bot, /^Health: \d+ \/ \d+$/, 5000)
+  if (!line) return null
+  const m = line.match(/^Health: (\d+) \/ (\d+)$/)
+  return { hp: Number(m[1]), max: Number(m[2]) }
 }
 
 // =============================================================================
@@ -1092,6 +1108,8 @@ module.exports = {
   getMenuTitle,
   clickWheelMenu,
   disassembleViaWheelMenu,
+  wheelMenuViaShulker,
+  readShipHealth,
 
   clearChat,
   getChat,

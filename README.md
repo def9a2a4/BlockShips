@@ -124,7 +124,7 @@ Commands marked † must be run by a player, not from the console.
 
 ## Requirements
 
-- **Paper 1.21.9 or newer**, or a Paper fork. Development and CI run on **1.21.11**, and CI also covers **26.1.2** and **26.2**, on both Paper and Purpur — those are the versions actually tested. 1.21.9 and 1.21.10 should work but are not covered by automated tests.
+- **Paper 1.21.9 or newer**, or a Paper fork. Development and CI run on **1.21.11**, and CI also covers **26.1.2**, **26.2** and **26.3**, on both Paper and Purpur — those are the versions actually tested. 1.21.9 and 1.21.10 should work but are not covered by automated tests.
 - **Java 21 or newer.** Note that Minecraft 26.x servers themselves require Java 25 — that is a requirement of the server jar, not of BlockShips.
 - **Spigot and Folia are not supported.**
 
@@ -136,7 +136,7 @@ Install only `defCoreLib-<version>.jar`. If you also drop in the `-plain` jar, P
 
 ## Recommended
 
-These are DefCoreLib companion plugins. Everything they unlock already lives inside DefCoreLib — these jars switch on its **crafting recipes**. Without them the blocks still exist and still work if you already have some (from an older world, creative, or `/defcorelib give`); they just can't be crafted in survival, and **nothing is printed in your server log to tell you so**.
+These are DefCoreLib companion plugins. Everything they unlock already lives inside DefCoreLib — these jars switch on its **crafting recipes**. Without them the blocks still exist and still work if you already have some (from an older world, creative, or `/defcorelib give`); they just can't be crafted in survival. BlockShips logs a warning at startup naming any companion that is missing and what it costs you.
 
 - **[Mechanism](https://modrinth.com/plugin/mechanism)** — the recipes for propellers, thrusters, fans and reaction wheels, and for the **Glue Brush** (brush + slimeball) that attaches blocks a ship couldn't otherwise carry. Jar is `Mechanism-<version>.jar`; it appears in `/plugins` as **`mech`**.
 - **[BetterBanners](https://modrinth.com/plugin/betterbanners)** — large and huge banners, the two best sails (20 and 50 sail points, against 7 for a plain banner). Jar is `BetterBanners-<version>.jar`; it appears in `/plugins` as **`bbanners`**.
@@ -164,6 +164,7 @@ Lives at `plugins/BlockShips/config.yml` and is read from disk normally — edit
 - Buoyancy values (density, strength)
 - Collision settings (mass, response)
 - Cannons (cooldown, whether TNT can be fired)
+- Ship damage (counted once per ship or once per block, explosion and potion handling) and health regen
 - Crafting recipes
 
 ## blocks.yml

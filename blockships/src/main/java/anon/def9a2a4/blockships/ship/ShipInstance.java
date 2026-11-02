@@ -20,12 +20,13 @@ import java.util.*;
 
 public class ShipInstance {
     // Global physics config (loaded once from physics section)
-    private static double MOVEMENT_THRESHOLD = 0.01;
-    private static double ROTATION_THRESHOLD = 0.01;
-    private static int IDLE_TICKS_BEFORE_STOP = 40;
-    private static int IDLE_CHECK_INTERVAL = 20;
+    // Defaults here and in loadGlobalPhysicsConfig match the shipped config.yml.
+    private static double MOVEMENT_THRESHOLD = 0.001;
+    private static double ROTATION_THRESHOLD = 0.001;
+    private static int IDLE_TICKS_BEFORE_STOP = 10;
+    private static int IDLE_CHECK_INTERVAL = 10;
     /** Fallback radius for {@code carryRidersUp} when the collision radius has not been computed yet. */
-    private static float PLAYER_PROXIMITY_RADIUS = 10.0f;
+    private static float PLAYER_PROXIMITY_RADIUS = 2.0f;
     private static boolean TNT_ENABLED = false;
     private static int TNT_FUSE_TICKS = 80;
     private static boolean POSITION_SYNC_ENABLED = true;
@@ -37,16 +38,20 @@ public class ShipInstance {
      */
     public static void loadGlobalPhysicsConfig(JavaPlugin plugin) {
         var cfg = plugin.getConfig();
-        MOVEMENT_THRESHOLD = cfg.getDouble("physics.movement-threshold", 0.01);
-        ROTATION_THRESHOLD = cfg.getDouble("physics.rotation-threshold", 0.01);
-        IDLE_TICKS_BEFORE_STOP = cfg.getInt("physics.idle-ticks-before-stop", 40);
-        IDLE_CHECK_INTERVAL = cfg.getInt("physics.idle-check-interval", 20);
-        PLAYER_PROXIMITY_RADIUS = (float) cfg.getDouble("physics.player-proximity-radius", 10.0);
+        MOVEMENT_THRESHOLD = cfg.getDouble("physics.movement-threshold", 0.001);
+        ROTATION_THRESHOLD = cfg.getDouble("physics.rotation-threshold", 0.001);
+        IDLE_TICKS_BEFORE_STOP = cfg.getInt("physics.idle-ticks-before-stop", 10);
+        IDLE_CHECK_INTERVAL = cfg.getInt("physics.idle-check-interval", 10);
+        PLAYER_PROXIMITY_RADIUS = (float) cfg.getDouble("physics.player-proximity-radius", 2.0);
         TNT_ENABLED = cfg.getBoolean("cannons.tnt-enabled", false);
         TNT_FUSE_TICKS = cfg.getInt("cannons.tnt-fuse-ticks", 80);
         POSITION_SYNC_ENABLED = cfg.getBoolean("physics.position-sync-enabled", true);
         double threshold = cfg.getDouble("physics.position-sync-threshold", 0.02);
         POSITION_SYNC_THRESHOLD_SQ = threshold * threshold;
+        ShipDamageSettings.load(cfg, plugin.getLogger());
+        plugin.getLogger().info("Cannons: TNT " + (TNT_ENABLED
+            ? "enabled (fuse " + TNT_FUSE_TICKS + " ticks)"
+            : "disabled — TNT stays in the dispenser (set cannons.tnt-enabled: true in config.yml to allow it)"));
     }
 
     /**
@@ -122,13 +127,14 @@ public class ShipInstance {
     // Driver and player tracking (public for delegates)
     public boolean hasDriver = false;
 
-    // Input state tracking (set by ShipSteeringListener, read by ShipPhysics)
+    // Input state tracking (set by PaperInputListener on the main thread, read by ShipPhysics). The
+    // ProtocolLib ShipSteeringListener also writes these, from netty, but only registers below 1.21.2.
     public boolean isForwardPressed = false;
     public boolean isBackwardPressed = false;
     public boolean isLeftPressed = false;
     public boolean isRightPressed = false;
 
-    // Vertical input state for airships (set by ShipSteeringListener, read by ShipPhysics)
+    // Vertical input state for airships (set by PaperInputListener, read by ShipPhysics)
     public boolean isSpacePressed = false;
     public boolean isSprintPressed = false;
 
@@ -555,6 +561,8 @@ public class ShipInstance {
                             destroyAndDropItem();
                             return;  // Stop processing this tick
                         }
+                        tickDamage();
+                        if (dying) return;
                     }
                 }
             }
@@ -756,7 +764,7 @@ public class ShipInstance {
 
         hasDriver = true;
 
-        // NOTE: Actual WASD input detection is handled by ShipSteeringListener (ProtocolLib)
+        // NOTE: Actual WASD input detection is handled by PaperInputListener (PlayerInputEvent)
         // This method just displays current speed to the player
 
         // Only update action bar if speed changed significantly (optimization)
@@ -839,7 +847,7 @@ public class ShipInstance {
         }
     }
 
-    // Set input state from ShipSteeringListener
+    // Set input state from PaperInputListener
     public void setInputState(boolean forward, boolean backward, boolean left, boolean right) {
         this.isForwardPressed = forward;
         this.isBackwardPressed = backward;
@@ -847,7 +855,7 @@ public class ShipInstance {
         this.isRightPressed = right;
     }
 
-    // Set vertical input state from ShipSteeringListener (for airships)
+    // Set vertical input state from PaperInputListener (for airships)
     public void setVerticalInputState(boolean space, boolean sprint) {
         this.isSpacePressed = space;
         this.isSprintPressed = sprint;
@@ -1289,6 +1297,77 @@ public class ShipInstance {
         syncSeatShulkerHealth(vehicle.getHealth());
     }
 
+    // ===== Damage =====
+    // Collider hits are counted by DisplayShip.onShulkerDamage through damageAggregator; everything that
+    // takes HP off the ship goes through damage(). Poison and wither live here, once per ship, instead of
+    // as an effect ticking separately on every collider shulker.
+
+    public final ShipDamageAggregator damageAggregator = new ShipDamageAggregator();
+    private boolean dying;
+    private int poisonTicksLeft, poisonInterval = 25;
+    private int witherTicksLeft, witherInterval = 40;
+
+    /** True from the hit that took the ship to 0 HP until it is destroyed on the next tick. */
+    public boolean isDying() {
+        return dying;
+    }
+
+    /**
+     * Takes {@code amount} off the ship's HP and returns what is left. At 0 the ship is destroyed on the
+     * next tick, not inside this call: the killing hit usually arrives in the middle of an explosion that is
+     * still walking its entity list, and the colliders it has yet to reach are about to be removed.
+     */
+    public double damage(double amount) {
+        if (dying || !vehicle.isValid()) return 0;
+        double health = vehicle.getHealth();
+        if (!(amount > 0)) return health;
+        double newHealth = health - amount;
+        if (newHealth > 0) {
+            vehicle.setHealth(newHealth);
+            syncSeatShulkerHealth(newHealth);
+            return newHealth;
+        }
+        dying = true;
+        syncSeatShulkerHealth(0);
+        try {
+            org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
+                if (vehicle.isValid()) destroyAndDropItem();
+            });
+        } catch (IllegalStateException | org.bukkit.plugin.IllegalPluginAccessException disabled) {
+            destroyAndDropItem();
+        }
+        return 0;
+    }
+
+    /** Poisons the ship (vanilla timing: 1 HP every {@code 25 >> amplifier} ticks, never below 1 HP). */
+    public void applyPoison(int amplifier, int durationTicks) {
+        int interval = java.lang.Math.max(1, 25 >> java.lang.Math.max(0, amplifier));
+        if (poisonTicksLeft <= 0 || interval < poisonInterval) poisonInterval = interval;
+        poisonTicksLeft = java.lang.Math.max(poisonTicksLeft, durationTicks);
+    }
+
+    /** Withers the ship (vanilla timing: 1 HP every {@code 40 >> amplifier} ticks; can sink it). */
+    public void applyWither(int amplifier, int durationTicks) {
+        int interval = java.lang.Math.max(1, 40 >> java.lang.Math.max(0, amplifier));
+        if (witherTicksLeft <= 0 || interval < witherInterval) witherInterval = interval;
+        witherTicksLeft = java.lang.Math.max(witherTicksLeft, durationTicks);
+    }
+
+    private void tickDamage() {
+        damageAggregator.prune(org.bukkit.Bukkit.getCurrentTick());
+        if (poisonTicksLeft > 0) {
+            if (poisonTicksLeft % poisonInterval == 0) {
+                double health = vehicle.getHealth();
+                if (health > 1) damage(java.lang.Math.min(1, health - 1));
+            }
+            poisonTicksLeft--;
+        }
+        if (witherTicksLeft > 0) {
+            if (witherTicksLeft % witherInterval == 0) damage(1);
+            witherTicksLeft--;
+        }
+    }
+
     public void syncSeatShulkerHealth(double currentHealth) {
         double maxHealth = model.maxHealth;
         double shulkerMaxHealth;
@@ -1544,17 +1623,35 @@ public class ShipInstance {
     /** Default cannon cooldown in milliseconds */
     private static final long DEFAULT_CANNON_COOLDOWN_MS = 1000;
 
+    /** What one cannon did when asked to fire. */
+    public enum FireResult { FIRED, COOLDOWN, EMPTY, TNT_DISABLED }
+
+    private static final java.util.Random CANNON_RANDOM = new java.util.Random();
+
     /**
-     * Fires a single cannon, consuming an item from the dispenser inventory.
-     * @param cannon The cannon to fire
-     * @return true if cannon fired successfully
+     * Which dispenser slot a cannon fires: a random one among those holding usable ammo, as a vanilla
+     * dispenser picks. Returns -1 when none is usable.
      */
-    public boolean fireCannon(ShipModel.CannonInfo cannon) {
+    static int pickAmmoSlot(int size, java.util.function.IntPredicate usable, java.util.random.RandomGenerator rng) {
+        int chosen = -1, seen = 0;
+        for (int i = 0; i < size; i++) {
+            if (!usable.test(i)) continue;
+            seen++;
+            if (rng.nextInt(seen) == 0) chosen = i;   // reservoir pick: each usable slot equally likely
+        }
+        return chosen;
+    }
+
+    /**
+     * Fires a single cannon, consuming an item from the dispenser inventory. TNT is skipped while
+     * {@code cannons.tnt-enabled} is off: it stays loaded, and any other ammo in the dispenser fires.
+     */
+    public FireResult fireCannon(ShipModel.CannonInfo cannon) {
         // Check cooldown
         long now = System.currentTimeMillis();
         long cooldownMs = plugin.getConfig().getLong("cannons.cooldown-ms", DEFAULT_CANNON_COOLDOWN_MS);
         if (now - cannon.lastFireTime < cooldownMs) {
-            return false;
+            return FireResult.COOLDOWN;
         }
 
         // Get dispenser inventory (the ammo). The dispenser's captured inventory rides on the mechanism, keyed
@@ -1562,22 +1659,18 @@ public class ShipInstance {
         // to the placed dispenser on disassemble.
         Inventory inv = mechanism.getStorage(cannon.dispenserBlockIndex);
         if (inv == null || inv.isEmpty()) {
-            return false;
+            return FireResult.EMPTY;
         }
 
-        // Find first non-null item to fire
-        ItemStack projectile = null;
-        int projectileSlot = -1;
-        for (int i = 0; i < inv.getSize(); i++) {
+        int projectileSlot = pickAmmoSlot(inv.getSize(), i -> {
             ItemStack item = inv.getItem(i);
-            if (item != null && item.getType() != Material.AIR) {
-                projectile = item;
-                projectileSlot = i;
-                break;
-            }
+            return item != null && item.getType() != Material.AIR && (TNT_ENABLED || item.getType() != Material.TNT);
+        }, CANNON_RANDOM);
+        if (projectileSlot < 0) {
+            // Not empty, so everything left in it is TNT.
+            return FireResult.TNT_DISABLED;
         }
-
-        if (projectile == null) return false;
+        ItemStack projectile = inv.getItem(projectileSlot);
 
         // Transform fire direction by ship's current rotation
         Vector3f worldDirection = transformLocalDirectionToWorld(cannon.localFacing);
@@ -1602,36 +1695,40 @@ public class ShipInstance {
         // Update cooldown
         cannon.lastFireTime = now;
 
-        return true;
+        return FireResult.FIRED;
     }
 
     /**
      * Fires all cannons associated with an obsidian block.
      * @param obsidianBlockIndex The block index of the clicked obsidian
+     * @param player who fired, told when nothing fired because TNT is disabled; may be null
      * @return Number of cannons that fired
      */
-    public int fireCannonsByObsidian(int obsidianBlockIndex) {
-        int fired = 0;
-        for (ShipModel.CannonInfo cannon : model.cannons) {
-            if (cannon.obsidianBlockIndex == obsidianBlockIndex) {
-                if (fireCannon(cannon)) {
-                    fired++;
-                }
-            }
-        }
-        return fired;
+    public int fireCannonsByObsidian(int obsidianBlockIndex, @org.jetbrains.annotations.Nullable Player player) {
+        return fireCannons(c -> c.obsidianBlockIndex == obsidianBlockIndex, player);
     }
 
     /**
      * Fires all cannons on the ship.
+     * @param player who fired, told when nothing fired because TNT is disabled; may be null
      * @return Number of cannons that fired
      */
-    public int fireAllCannons() {
+    public int fireAllCannons(@org.jetbrains.annotations.Nullable Player player) {
+        return fireCannons(c -> true, player);
+    }
+
+    private int fireCannons(java.util.function.Predicate<ShipModel.CannonInfo> which, Player player) {
         int fired = 0;
+        boolean tntBlocked = false;
         for (ShipModel.CannonInfo cannon : model.cannons) {
-            if (fireCannon(cannon)) {
-                fired++;
-            }
+            if (!which.test(cannon)) continue;
+            FireResult r = fireCannon(cannon);
+            if (r == FireResult.FIRED) fired++;
+            else if (r == FireResult.TNT_DISABLED) tntBlocked = true;
+        }
+        if (fired == 0 && tntBlocked && player != null) {
+            player.sendMessage("§eThat cannon is loaded with TNT, but TNT cannons are turned off on this server"
+                + " (cannons.tnt-enabled in config.yml).");
         }
         return fired;
     }
@@ -1733,15 +1830,11 @@ public class ShipInstance {
                 });
                 break;
             case TNT:
-                if (TNT_ENABLED) {
-                    world.spawn(spawnLoc, TNTPrimed.class, tnt -> {
-                        tnt.setFuseTicks(TNT_FUSE_TICKS);
-                        tnt.setVelocity(velocity);
-                    });
-                } else {
-                    Item droppedTnt = world.dropItem(spawnLoc, new ItemStack(type, 1));
-                    droppedTnt.setVelocity(velocity.multiply(0.5));
-                }
+                // Only reached with cannons.tnt-enabled on: fireCannon never picks TNT otherwise.
+                world.spawn(spawnLoc, TNTPrimed.class, tnt -> {
+                    tnt.setFuseTicks(TNT_FUSE_TICKS);
+                    tnt.setVelocity(velocity);
+                });
                 break;
             default:
                 // Drop as item for unsupported types

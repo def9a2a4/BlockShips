@@ -240,7 +240,7 @@ public class ShipConfig {
             .waterScanBelow(cfg.getInt(p + "controls.water-scan-below", 10))
             // Weight-based buoyancy (from custom-ships section)
             .airDensity((float) cfg.getDouble("custom-ships.buoyancy.air-density", 0.0))
-            .waterDensity((float) cfg.getDouble("custom-ships.buoyancy.water-density", 2.5))
+            .waterDensity((float) cfg.getDouble("custom-ships.buoyancy.water-density", 3.0))
             // Airship controls (custom ships read from custom-ships.airship-controls, prefab from ship config)
             .liftAcceleration((float) cfg.getDouble(
                 "custom".equals(shipType)
@@ -276,12 +276,12 @@ public class ShipConfig {
             .terrainSpeedMultiplier((float) cfg.getDouble(p + "collision.terrain-speed-multiplier", 10.0))
             .collisionDetectionRadius((float) cfg.getDouble(p + "collision.detection-radius", -1.0))
             // Entity masses (global)
-            .boatMass((float) cfg.getDouble("entity-masses.boat", 20.0))
-            .mobSmallMass((float) cfg.getDouble("entity-masses.mob-small", 10.0))
-            .mobMediumMass((float) cfg.getDouble("entity-masses.mob-medium", 50.0))
-            .mobLargeMass((float) cfg.getDouble("entity-masses.mob-large", 200.0))
+            .boatMass((float) cfg.getDouble("entity-masses.boat", 10.0))
+            .mobSmallMass((float) cfg.getDouble("entity-masses.mob-small", 5.0))
+            .mobMediumMass((float) cfg.getDouble("entity-masses.mob-medium", 10.0))
+            .mobLargeMass((float) cfg.getDouble("entity-masses.mob-large", 20.0))
             // Custom ship offsets (only used for custom ships, but loaded for all)
-            .customCollisionOffset(ShipModel.readVector3fFromConfig(cfg, "custom-ships.collision-offset", new Vector3f(0, 0, 0)))
+            .customCollisionOffset(ShipModel.readVector3fFromConfig(cfg, "custom-ships.collision-offset", new Vector3f(0.5f, 0, 0.5f)))
             // Movement sound settings (per-ship with fallback to global)
             .soundMinSpeed((float) cfg.getDouble(p + "movement-sounds.min-speed", cfg.getDouble("sounds.min-speed", 0.1)))
             .airshipSoundMinSpeed((float) cfg.getDouble(p + "movement-sounds.airship-min-speed", cfg.getDouble("sounds.airship-min-speed", 0.45)))
@@ -297,7 +297,7 @@ public class ShipConfig {
             .assemblyNudgeHeight((float) cfg.getDouble("custom-ships.assembly-nudge-height", 0.2))
             .destroyOnDeath("destroy".equalsIgnoreCase(cfg.getString("custom-ships.destruction-mode", "disassemble")))
             // Ship stats (power-to-mass ratio system)
-            .statsEnabled(cfg.getBoolean("custom-ships.stats.enabled", false))
+            .statsEnabled(cfg.getBoolean("custom-ships.stats.enabled", true))
             .basePower(cfg.getInt("custom-ships.stats.base-power", 2))
             .woolPower(cfg.getInt("custom-ships.stats.wool-power", 3))
             .bannerPower(cfg.getInt("custom-ships.stats.banner-power", 7))
@@ -373,14 +373,14 @@ public class ShipConfig {
         int waterScanAbove = 5;
         int waterScanBelow = 10;
         float airDensity = 0.0f;
-        float waterDensity = 2.5f;
+        float waterDensity = 3.0f;
         float liftAcceleration = 0.05f;
         float descendAcceleration = 0.05f;
         float maxVerticalSpeed = 0.3f;
         float verticalDrag = 0.9f;
         float verticalForwardNudge = 0.011f;
         // Ship stats defaults
-        boolean statsEnabled = false;
+        boolean statsEnabled = true;
         int basePower = 2;
         int woolPower = 3;
         int bannerPower = 7;
@@ -420,11 +420,11 @@ public class ShipConfig {
         float collisionForceDecay = 0.5f;
         float terrainSpeedMultiplier = 10.0f;
         float collisionDetectionRadius = -1.0f;
-        float boatMass = 20.0f;
-        float mobSmallMass = 10.0f;
-        float mobMediumMass = 50.0f;
-        float mobLargeMass = 200.0f;
-        Vector3f customCollisionOffset = new Vector3f(0, 0, 0);
+        float boatMass = 10.0f;
+        float mobSmallMass = 5.0f;
+        float mobMediumMass = 10.0f;
+        float mobLargeMass = 20.0f;
+        Vector3f customCollisionOffset = new Vector3f(0.5f, 0, 0.5f);
         float soundMinSpeed = 0.1f;
         float airshipSoundMinSpeed = 0.45f;
         int soundIntervalTicks = 20;

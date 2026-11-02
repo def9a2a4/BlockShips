@@ -1,5 +1,14 @@
 # v0.0.18 - propulsion and flight
 
+> **Upgrading from 0.0.17: install [DefCoreLib](https://modrinth.com/plugin/defcorelib) first.**
+> BlockShips now has a hard dependency on it and will not load without it, which also raises
+> the minimum server to Paper 1.21.9. Existing ships carry over. Docked ships need nothing,
+> and a ship left out at sea is converted the first time its chunk loads. Install
+> [Mechanism](https://modrinth.com/plugin/mechanism) and
+> [BetterBanners](https://modrinth.com/plugin/betterbanners) too if you want propulsion, the
+> Glue Brush and the top two sail tiers to be craftable. The server log now says so at startup
+> when either is missing.
+
 - **Ships can be propelled.** Fans, propellers, thrusters and reaction wheels from
   Mechanism now drive a ship. **Which way you mount one decides what it does:** facing
   fore or aft adds speed, sideways adds turning, up or down adds lift. Rotation power is
@@ -118,7 +127,7 @@ Data loss, fixed:
 - **A disassembled ship could come back from the dead** — a queued write landing after the
   deletion resurrected the record, and the wheel then sat on "still loading" forever.
 - **A wheel the server could not identify vanished** instead of dropping — a `/clone`d copy, a
-  wheel whose registration never landed, or a record quarantined at load. Breaking any of those
+  wheel whose registration never landed, or one whose ship file could not be read. Breaking any of those
   deleted the block and dropped nothing.
 - **Landing on an occupied anchor cell dropped a generic wheel item**, losing the ship's id,
   glue and lock along with it. It now falls back to the protected-anchor path.
@@ -134,6 +143,11 @@ Other people's builds, protected:
 - **A menu left open after its wheel was destroyed** could flood-fill a stranger's build,
   overwrite their glue or spawn a marker in their base. Menus are keyed by wheel now.
 - **A docked wheel pressed against your hull** is no longer swallowed into your ship.
+  It is left out of your ship and stays where it is, record and all — whether you assemble
+  straight away or lock first.
+- **A copied wheel can no longer take over a ship.** A wheel duplicated with `/clone` or a
+  structure block used to pull the original's ship onto itself the moment a mover touched it,
+  handing the copier the menu.
 - **The wheel is no longer drill-removable.**
 - **Off-hand placement no longer plants an untracked wheel head** when your main hand is
   empty or holding a sword.
@@ -147,6 +161,15 @@ Also:
 - `wheels adopt` carries a locked structure across, refuses to adopt a block of the wrong
   type, names the record it collided with, and no longer turns away a wheel that kept its
   DefCoreLib mark but lost its id — which is the one case adopt exists for.
+
+### One broken file no longer takes the plugin down
+
+- **A ship save file that cannot be read** is now reported once, at SEVERE, with what to do
+  about it: restore it from a backup, repair it, or move it aside. Nothing is renamed or
+  deleted, nothing that would destroy the ship acts on it, and its wheel reads "still
+  loading" until the file is fixed.
+- **A broken prefab ship file** is skipped with a SEVERE instead of stopping the plugin from
+  enabling, or emptying the prefab list on `/blockships reload`.
 
 ### Others
 

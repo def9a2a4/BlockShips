@@ -1,6 +1,8 @@
 ---
-status: planned
+status: superseded
+version: v0.0.18
 issue: 21
+note: not built as designed. v0.0.18 instead leaves a neighbour's live-recorded wheel out of the ship (excludeForeignWheels) rather than refusing assembly
 ---
 
 # Plan: Disallow Multiple Ship's Wheels on a Ship

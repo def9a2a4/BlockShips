@@ -2310,6 +2310,15 @@ public class ShipWheelManager {
         // Link the wheel to the ship
         wheelData.setAssembledShipUUID(ship.id);
         ship.wheelData = wheelData;
+        // HP carried over from the last disassemble, as an absolute value capped at the new max so blocks
+        // added while docked cannot mint HP. Consumed either way; the saveAll below persists the clear.
+        double storedHealth = wheelData.getStoredHealth();
+        wheelData.setStoredHealth(-1);
+        if (storedHealth > 0 && preserveHealthOnDisassemble()) {
+            double hp = java.lang.Math.min(storedHealth, model.maxHealth);
+            ship.vehicle.setHealth(hp);
+            ship.syncSeatShulkerHealth(hp);
+        }
         // Track W (W5): persist the wheel↔ship link immediately (every other mutating path saveAll()s). Without
         // it, a crash between assembly and a clean onDisable loses the link while ship metadata persists, leaving
         // a live recovered ship with no wheel (the reverse orphan).
@@ -2376,6 +2385,15 @@ public class ShipWheelManager {
     }
 
     /**
+     * {@code custom-ships.health.preserve-on-disassemble}: a ship keeps its HP across a disassemble instead of
+     * coming back at full health. The HP is kept on the wheel's record, so breaking the docked wheel and
+     * placing it again still resets it.
+     */
+    private boolean preserveHealthOnDisassemble() {
+        return plugin.getConfig().getBoolean("custom-ships.health.preserve-on-disassemble", false);
+    }
+
+    /**
      * Disassembles a ship back into blocks.
      *
      * @param player The player disassembling the ship
@@ -2413,6 +2431,12 @@ public class ShipWheelManager {
             default -> { /* LOADED — proceed */ }
         }
         ShipInstance ship = wr.ship();
+
+        // Remember the ship's HP for its next assembly (experimental, off by default). Always overwritten, so
+        // a value left by an earlier refused disassemble never outlives the ship: a ship disassembling
+        // because it sank stores nothing. Persisted by the saveAll at the end.
+        wheelData.setStoredHealth(preserveHealthOnDisassemble() && !ship.isDying() && ship.vehicle.isValid()
+            ? ship.vehicle.getHealth() : -1);
 
         // Get the ship's model
         ShipModel model = ship.sourceModel;

@@ -926,9 +926,8 @@ public class BlockStructureScanner {
 
         // Calculate health from positive block weights (heavier blocks = more health)
         // Blocks with negative/zero weight don't reduce health, just contribute nothing
-        double maxHealth = Math.min(1024.0, Math.max(1.0, totalMass));
-        // TODO: healthRegenPerSecond may be modified in the future by properties of the ship
-        double healthRegenPerSecond = 1.0;
+        double maxHealth = ShipModel.customShipMaxHealth(totalMass);
+        double healthRegenPerSecond = ShipModel.customShipHealthRegen(plugin);
 
         // Calculate center of volume (only from blocks with weight)
         Vector3f centerOfVolume = weightedBlockCount > 0
@@ -944,7 +943,7 @@ public class BlockStructureScanner {
         if (weightedBlockCount > 0) {
             float meanDensity = (float) totalWeight / weightedBlockCount;
             float airDensity = (float) plugin.getConfig().getDouble("custom-ships.buoyancy.air-density", 0.0);
-            float waterDensity = (float) plugin.getConfig().getDouble("custom-ships.buoyancy.water-density", 2.5);
+            float waterDensity = (float) plugin.getConfig().getDouble("custom-ships.buoyancy.water-density", 3.0);
 
             float t = (meanDensity - airDensity) / (waterDensity - airDensity);
             float referenceY = minY;

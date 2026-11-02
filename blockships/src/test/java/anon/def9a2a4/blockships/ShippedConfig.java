@@ -33,6 +33,11 @@ public final class ShippedConfig {
         return ShipConfig.load(pluginServing(yaml()), "custom");
     }
 
+    /** A {@link ShipConfig} for {@code shipType} read from {@code config}, e.g. an empty one to see the fallbacks. */
+    public static ShipConfig loadFrom(YamlConfiguration config, String shipType) {
+        return ShipConfig.load(pluginServing(config), shipType);
+    }
+
     /** The parsed {@code config.yml}, for tests that want to read a key directly. */
     public static YamlConfiguration yaml() {
         try (InputStream in = ShippedConfig.class.getResourceAsStream("/config.yml")) {

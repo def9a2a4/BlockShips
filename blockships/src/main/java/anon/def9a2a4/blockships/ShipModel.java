@@ -638,6 +638,34 @@ public final class ShipModel {
         }
     }
 
+    /** Regen for a custom (block-assembled) ship, in HP per second, when config.yml does not say. */
+    public static final double CUSTOM_SHIP_HEALTH_REGEN_PER_SECOND = 1.0;
+
+    /** Regen for a custom ship from {@code custom-ships.health.regen-per-second}; read fresh, never saved. */
+    public static double customShipHealthRegen(org.bukkit.plugin.Plugin plugin) {
+        if (plugin == null) return CUSTOM_SHIP_HEALTH_REGEN_PER_SECOND;
+        return java.lang.Math.max(0, plugin.getConfig().getDouble("custom-ships.health.regen-per-second",
+            CUSTOM_SHIP_HEALTH_REGEN_PER_SECOND));
+    }
+
+    /**
+     * Max health for a custom (block-assembled) ship: its mass (sum of positive block weights), at least 1
+     * and capped at 1024, vanilla's ceiling for the max_health attribute. The one formula the scanner, the
+     * wheel menu and a ship recovered from disk all use.
+     */
+    public static double customShipMaxHealth(int mass) {
+        return java.lang.Math.min(1024.0, java.lang.Math.max(1.0, mass));
+    }
+
+    /**
+     * The max health a custom ship's sidecar records. Saves from before {@code max_health} was persisted
+     * carry only the mass, so it is derived the same way the scanner does. (This used to be hardcoded to 40,
+     * which capped every custom ship at 40 HP after a restart or chunk reload.)
+     */
+    static double savedMaxHealth(Map<String, Object> map, int mass) {
+        return map.get("max_health") instanceof Number n ? n.doubleValue() : customShipMaxHealth(mass);
+    }
+
     // ===== Serialization for custom ship persistence =====
 
     /**
@@ -652,6 +680,7 @@ public final class ShipModel {
         map.put("assembly_yaw", assemblyYaw);
         map.put("total_weight", totalWeight);
         map.put("mass", mass);
+        map.put("max_health", maxHealth);
         map.put("block_count", blockCount);
         map.put("min_y", minY);
         map.put("max_y", maxY);
@@ -818,12 +847,12 @@ public final class ShipModel {
         Vector3f collisionOffset = new Vector3f(0, 0, 0);
         Matrix3f rotationTransform = new Matrix3f();  // Identity
         float waterFloatOffset = 0f;
-        double maxHealth = 40.0;
-        double healthRegenPerSecond = 2.0;
 
         // Ship stats
         int mass = map.containsKey("mass") ? ((Number) map.get("mass")).intValue()
             : map.containsKey("total_positive_weight") ? ((Number) map.get("total_positive_weight")).intValue() : 0;
+
+        double maxHealth = savedMaxHealth(map, mass);
         int woolCount = map.containsKey("wool_count") ? ((Number) map.get("wool_count")).intValue() : 0;
         int bannerCount = map.containsKey("banner_count") ? ((Number) map.get("banner_count")).intValue() : 0;
         int largeBannerCount = map.containsKey("large_banner_count")
@@ -855,6 +884,7 @@ public final class ShipModel {
         // Load wool/banner power from config for sail power calculation
         org.bukkit.plugin.Plugin plugin = org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
         ShipConfig config = (plugin != null) ? ShipConfig.load(plugin, "custom") : null;
+        double healthRegenPerSecond = customShipHealthRegen(plugin);
         int woolPower = config != null ? config.woolPower : 3;
         int bannerPower = config != null ? config.bannerPower : 7;
         int largeBannerPower = config != null ? config.largeBannerPower : 20;

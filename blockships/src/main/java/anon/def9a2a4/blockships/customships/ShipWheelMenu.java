@@ -3,6 +3,7 @@ package anon.def9a2a4.blockships.customships;
 import anon.def9a2a4.blockships.BlockShipsPlugin;
 import anon.def9a2a4.blockships.HelpBookContent;
 import anon.def9a2a4.blockships.ShipConfig;
+import anon.def9a2a4.blockships.ShipModel;
 import anon.def9a2a4.blockships.ShipRegistry;
 import anon.def9a2a4.blockships.ShipStats;
 import anon.def9a2a4.blockships.ShipThrust;
@@ -550,7 +551,7 @@ public class ShipWheelMenu {
             maxHealth = (int) wheelData.getLastMaxHealth();
         } else {
             int shipMass = wheelData.getLastDetectedPositiveWeight();
-            maxHealth = (int) Math.min(1024.0, Math.max(1, shipMass));
+            maxHealth = (int) ShipModel.customShipMaxHealth(shipMass);
         }
 
         // Ship stats - use live ShipInstance data when assembled
