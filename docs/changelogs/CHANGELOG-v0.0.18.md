@@ -58,7 +58,7 @@
   drives on land with the normal Ship's Wheel. A wheel takes power through the block it hangs on,
   so run a shaft or engine along the axle to it. Powered wheels push it along. Unpowered ones
   still roll, so a sail cart works. It hops up steps instead of tilting. A small wheel climbs 1
-  block, a large one 1.5 (fences and walls), a huge one 2.5, and the smallest wheel aboard sets
+  block, a large one 1.5 (fences and walls), a huge one 2, and the smallest wheel aboard sets
   the limit. Detect tells you it's a land vehicle, which wheel limits its climb, and which wheels
   are mounted the wrong way.
 

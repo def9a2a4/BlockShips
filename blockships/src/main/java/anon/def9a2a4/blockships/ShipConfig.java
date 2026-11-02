@@ -321,13 +321,13 @@ public class ShipConfig {
             .baseTurn(cfg.getInt("custom-ships.stats.base-turn", 2))
             .sailTurnFactor((float) cfg.getDouble("custom-ships.stats.sail-turn-factor", 0.5))
             .thrustSpoolTicks(cfg.getInt("custom-ships.stats.thrust-spool-ticks", 40))
-            .landGroundDrag((float) cfg.getDouble("custom-ships.land.ground-drag", 0.9))
+            .landGroundDrag((float) cfg.getDouble("custom-ships.land.ground-drag", 0.95))
             .landStepUpSpeed((float) cfg.getDouble("custom-ships.land.step-up-speed", 0.35))
             .landSpeedMultiplier((float) cfg.getDouble("custom-ships.land.speed-multiplier", 0.7))
-            .landGroundTurnFactor((float) cfg.getDouble("custom-ships.land.ground-turn-factor", 0.5))
+            .landGroundTurnFactor((float) cfg.getDouble("custom-ships.land.ground-turn-factor", 1.0))
             .landStepHeightWheel((float) cfg.getDouble("custom-ships.land.step-height.wheel", 1.0))
             .landStepHeightLargeWheel((float) cfg.getDouble("custom-ships.land.step-height.large-wheel", 1.5))
-            .landStepHeightHugeWheel((float) cfg.getDouble("custom-ships.land.step-height.huge-wheel", 2.5))
+            .landStepHeightHugeWheel((float) cfg.getDouble("custom-ships.land.step-height.huge-wheel", 2.0))
             .maxSinkSpeed((float) cfg.getDouble("custom-ships.stats.max-sink-speed", 0.5))
             .sinkSpeedExponent((float) cfg.getDouble("custom-ships.stats.sink-speed-exponent", 0.7))
             .liftHoldSinkFactor((float) cfg.getDouble("custom-ships.stats.lift-hold-sink-factor", 0.35))
@@ -422,13 +422,13 @@ public class ShipConfig {
         int baseTurn = 2;
         float sailTurnFactor = 0.5f;
         int thrustSpoolTicks = 40;
-        float landGroundDrag = 0.9f;
+        float landGroundDrag = 0.95f;
         float landStepUpSpeed = 0.35f;
         float landSpeedMultiplier = 0.7f;
-        float landGroundTurnFactor = 0.5f;
+        float landGroundTurnFactor = 1.0f;
         float landStepHeightWheel = 1.0f;
         float landStepHeightLargeWheel = 1.5f;
-        float landStepHeightHugeWheel = 2.5f;
+        float landStepHeightHugeWheel = 2.0f;
         float maxSinkSpeed = 0.5f;
         float sinkSpeedExponent = 0.7f;
         float liftHoldSinkFactor = 0.35f;

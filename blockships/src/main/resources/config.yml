@@ -240,20 +240,20 @@ custom-ships:
   # the hull. Wheels must hang on the hull's left or right side so the axle runs across it.
   land:
     # Coasting drag multiplier per tick while rolling on the ground (no throttle). Lower = stops sooner.
-    ground-drag: 0.9
+    ground-drag: 0.95
     # Fastest the hull rises while climbing a step, in blocks per tick. The vehicle eases up the step
     # instead of jumping, so it never leaves the ground mid-climb.
     step-up-speed: 0.35
     # Top speed on land as a fraction of the normal stat, so cars don't outrun chunk loading.
     speed-multiplier: 0.7
     # How much ground thrust helps turning (scaled by speed, with a floor so a stopped car can still turn).
-    ground-turn-factor: 0.5
+    ground-turn-factor: 1.0
     # Tallest step each wheel size can climb, in blocks, measured against block collision height (a fence
     # or wall is 1.5). A vehicle with mixed wheels uses its smallest wheel's height.
     step-height:
       wheel: 1.0
       large-wheel: 1.5
-      huge-wheel: 2.5
+      huge-wheel: 2.0
 
   # Airship controls (for custom ships lighter than air)
   # Ships with density < air-density automatically become airships

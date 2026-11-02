@@ -197,6 +197,8 @@ async function sail() {
   const before = await waitForShulkers(bot, 30, 20, 500, 10)
   if (before.length < 10) return fail('sail_setup', 'ship did not assemble')
   const start = centroid(before)
+  bot.creative.stopFlying()                        // else the forward input flies the bot, not the ship
+  await sleep(1000)
   if (!await mountShip(bot, log)) return fail('sail_setup', 'could not mount')
   await steerShip(bot, 1, 0, false, 8000)
   await sleep(2000)
@@ -229,6 +231,8 @@ async function verifySail() {
 }
 
 async function disassembleViaWheelMenuNear() {
+  bot.creative.stopFlying()
+  await sleep(1000)
   if (!await mountShip(bot, log)) return false
   await sleep(500)
   const ok = await disassembleViaWheelMenu(bot, log)

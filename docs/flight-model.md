@@ -154,9 +154,9 @@ on a boat's gunwale above its keel, or an airship's gear above its gondola stay 
 
 | wheel | diameter | tyre below its block | thrust | power | step height |
 |---|---|---|---|---|---|
-| wheel | 1 | 0 | 20 | 3 | 1 |
-| large wheel | 2 | 0.5 | 64 | 6 | 1.5 |
-| huge wheel | 3 | 1 | 160 | 12 | 2.5 |
+| wheel | 1 | 0 | 20 | 2 | 1 |
+| large wheel | 2 | 0.5 | 64 | 5 | 1.5 |
+| huge wheel | 3 | 1 | 160 | 10 | 2 |
 
 **Ground thrust** joins the forward and turning terms only while the wheels touch the ground, so a
 wheeled boat or flier gains nothing from them elsewhere. Wheel thrust per unit of power beats the
