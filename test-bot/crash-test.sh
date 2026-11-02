@@ -3,7 +3,7 @@
 # sailed off with no world-save event since its launch; boots it again after each and checks the ship came back
 # right. See crash-test.js.
 #   test-bot/crash-test.sh [DEFCORELIB_JAR]     (Paper 1.21.11, Java 21; uses test-server/, port 25565)
-#   ONLY=sail          run only the sailing case
+#   ONLY=sail|drift    run only that case
 #   RUNTIME_JAR=path   run the server on this DefCoreLib jar instead (e.g. an older one, to see a case fail)
 set -e
 cd "$(dirname "$0")/.."
@@ -59,7 +59,16 @@ if [ -n "$RUNTIME_JAR" ]; then rm -f test-server/plugins/defCoreLib-*.jar; cp "$
 
 FAILED=0
 start; stop                                # writes the default configs
-if [ "$ONLY" != sail ]; then
+if [ "$ONLY" = drift ]; then
+autosave 72000
+start
+phase drift || FAILED=1
+crash
+start
+phase verify-drift || FAILED=1
+stop
+fi
+if [ -z "$ONLY" ]; then
 autosave 72000
 start
 phase dock || FAILED=1
@@ -83,6 +92,7 @@ phase verify-relaunch || FAILED=1
 stop
 fi
 
+if [ -z "$ONLY" ] || [ "$ONLY" = sail ]; then
 autosave 40                                # chunks write themselves every 2 s; still no world-save event
 start
 phase sail || FAILED=1
@@ -90,6 +100,7 @@ crash
 start
 phase verify-sail || FAILED=1
 stop
+fi
 
 grep -E "PASS|FAIL" test-bot/crash-test-results.all || true
 echo "crash test rc=$FAILED"

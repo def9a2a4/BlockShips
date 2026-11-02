@@ -248,11 +248,23 @@ async function driftDock() {
   await sleep(1000)
   if (!await mountShip(bot, log)) return fail('drift_setup', 'could not mount')
   await steerShip(bot, 1, 0, false, 6000)
-  await sleep(2000)
-  if (!await disassembleViaWheelMenu(bot, log)) return fail('drift_setup', 'could not dock')
-  await sleep(1000)
+  await sleep(4000)
+  await customDismount(bot, log)
+  await sleep(12000)                               // let it coast to a stop: the bot can't follow a moving ship
   const p = bot.entity.position.clone()
-  writeState({ ...readState(), drift: { ...ship, dockedNear: { x: p.x, y: p.y, z: p.z } } })
+  // The client's shulkers are still at the launch spot (see sail); come back from out of range to see them.
+  await tp(Math.round(p.x) + 300, 150, Math.round(p.z))
+  await sleep(2000)
+  await tp(Math.round(p.x), 106, Math.round(p.z) + 3)
+  await sleep(2000)
+  const here = findShulkers(bot, 40)
+  if (here.length < 10) return fail('drift_setup', `only ${here.length} shulkers near the bot after sailing`)
+  const c = centroid(here)                         // it coasted on after the bot got off
+  await tp(Math.round(c.x), 106, Math.round(c.z) + 3)
+  await sleep(2000)
+  if (!await disassembleViaWheelMenuNear()) return fail('drift_setup', 'could not dock')
+  const d = bot.entity.position.clone()
+  writeState({ ...readState(), drift: { ...ship, dockedNear: { x: d.x, y: d.y, z: d.z } } })
   pass('drift_setup (sailed off, docked; killing before the dock reaches disk)')
 }
 
