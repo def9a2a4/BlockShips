@@ -312,7 +312,7 @@ the next time they load, and then regenerate up to it.
   damaged ship heals it to full. HP does not regenerate while docked, and the HP is kept on the wheel,
   so breaking a docked wheel and placing it again still resets it.
 
-### TNT cannons ([#15](https://github.com/def9a2a4/BlockShips/issues/15), [#22](https://github.com/def9a2a4/BlockShips/issues/22), [#43](https://github.com/def9a2a4/BlockShips/issues/43))
+### TNT cannons ([#15](https://github.com/def9a2a4/BlockShips/issues/15), [#43](https://github.com/def9a2a4/BlockShips/issues/43))
 
 TNT cannons are off by default (`cannons.tnt-enabled: false`). Before this version, a TNT-loaded cannon on
 such a server threw its TNT out as a dropped item and gave no reason, which looked exactly like broken
