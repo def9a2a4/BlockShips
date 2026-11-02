@@ -2012,7 +2012,7 @@ public class ShipWheelManager {
     private boolean neverLaunched(ShipWheelData wheel) {
         UUID uuid = wheel.getAssembledShipUUID();
         Location cell = wheel.getBlockLocation();
-        if (uuid == null || !cell.getChunk().isEntitiesLoaded() || hasLiveMechanism(uuid)) return false;
+        if (uuid == null || !isCellObservable(cell) || !cell.getChunk().isEntitiesLoaded() || hasLiveMechanism(uuid)) return false;
         try {
             if (anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry().isRecoveryPending(uuid)) return false;
         } catch (Throwable t) {

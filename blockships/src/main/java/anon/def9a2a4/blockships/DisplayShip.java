@@ -443,8 +443,8 @@ public class DisplayShip implements Listener {
             shipWorldData.holdUntilMigrated(shipId);
             runAfterWorldSaved(world, () -> {
                 shipWorldData.releaseMigrationHold(shipId);
-                ShipInstance live = ShipRegistry.byId(shipId);
-                if (live != null) shipWorldData.saveShipMetadata(live);
+                ShipInstance current = ShipRegistry.byId(shipId);
+                if (current != null) shipWorldData.saveShipMetadata(current);
             });
             // AFTER successful migration (ordering is load-bearing). Scan the model footprint radius (≥64) so the reap
             // covers exactly what forceLoadFootprint force-loaded — a >64-block-radius ship no longer strands native
