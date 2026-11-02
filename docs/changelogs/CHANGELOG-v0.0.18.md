@@ -303,6 +303,9 @@ the next time they load, and then regenerate up to it.
 
 ### Ship health settings
 
+- `damage.multiplier` (default 1.0) scales all damage to ships, on top of the per-cause multipliers
+  ([#48](https://github.com/def9a2a4/BlockShips/issues/48)). Set 0.5 for ships that take half damage. This
+  is the way to make ships tougher: a ship's max health cannot go above 1024, Minecraft's limit.
 - `custom-ships.health.regen-per-second` (default 1.0) replaces a hardcoded value.
 - `custom-ships.health.preserve-on-disassemble` (**experimental**, off by default) makes a ship keep its
   HP when you take it apart and put it back together. Without it, disassembling and reassembling a

@@ -95,7 +95,9 @@ final class ShipPropulsionUse {
                     // get the same sign; only the radius differs. Off the ground, or a spare that never
                     // touches it, the wheel doesn't roll.
                     double deg = 0;
-                    if (grounded && ship.model.isGroundWheel(t.blockIndex())) {
+                    // Below the movement threshold is settling jitter, not rolling: hold the wheel still.
+                    if (grounded && ship.model.isGroundWheel(t.blockIndex())
+                            && Math.abs(ship.physics.currentSpeed) > ship.config.minMovementThreshold) {
                         double radius = Math.max(0.1, ShipThrust.wheelDiameter(t.typeId()) / 2.0);
                         deg = Math.toDegrees(ship.physics.currentSpeed / radius) * wheelSign;
                         deg = Math.max(-MAX_WHEEL_DEG_PER_TICK, Math.min(MAX_WHEEL_DEG_PER_TICK, deg));
