@@ -148,6 +148,9 @@ public class ShipPhysics {
         live = liveThrust();
     }
 
+    /** Ticks left in which the thrust spool jumps straight to its target (see {@link #liveThrust}). */
+    private int instantSpoolTicks = 40;
+
     /** Spooled thrust as of this tick's {@link #tickPropulsion}. */
     private anon.def9a2a4.blockships.ShipThrust.@org.jetbrains.annotations.Nullable Totals live;
 
@@ -178,7 +181,11 @@ public class ShipPhysics {
             thrustDirty = false;
         }
         int spoolTicks = Math.max(1, ship.config.thrustSpoolTicks);
-        float step = 1.0f / spoolTicks;
+        // Just assembled (or recovered): thrust is at its target at once, not spooling up from nothing, so a
+        // ship held up by its lift doesn't sag on assembly. Long enough for the engines' first tick to light
+        // them and the re-solve to land.
+        float step = instantSpoolTicks > 0 ? 1f : 1.0f / spoolTicks;
+        if (instantSpoolTicks > 0) instantSpoolTicks--;
         spooledAxial = approach(spooledAxial, targetThrust.axial(), step);
         spooledTurning = approach(spooledTurning, targetThrust.turning(), step);
         spooledVertical = approach(spooledVertical, targetThrust.vertical(), step);

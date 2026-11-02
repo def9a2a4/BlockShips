@@ -9,7 +9,7 @@ import anon.def9a2a4.blockships.ShipThrust;
  *
  * <p>defCoreLib spins a powered consumer whenever its network has power, so a parked ship with a running
  * engine used to sit there with every propeller turning. This drives each block's animation from use
- * instead: forward propellers with the throttle, side ones and reaction wheels with the steering, lift
+ * instead: forward propellers with the ship's speed, side ones and reaction wheels with the steering, lift
  * propellers with the climb, and wheels with the road speed. Visual only — thrust is unchanged.
  *
  * <p>The same use is reported to DefCoreLib as each block's demand, which is what its engines burn fuel
@@ -83,6 +83,12 @@ final class ShipPropulsionUse {
         float axial = axialUse(), turn = turnUse(), vertical = verticalUse();
         pushDemand(blocks, axial, turn, vertical);
         if (apiMissing) return;
+        // Forward propellers show the ship's motion, not the throttle: they wind down as it coasts, and turn
+        // backwards going astern. (Their fuel still follows the throttle, above.)
+        float top = Math.max(0.0001f, ship.physics.effectiveMaxSpeed());
+        float speed = ship.physics.currentSpeed;
+        float axialSpin = Math.abs(speed) <= ship.config.minMovementThreshold ? 0f
+            : Math.max(-1f, Math.min(1f, speed / top));
         double wheelSign = wheelSpinSign(ship.model.assemblyYaw);
         boolean grounded = ship.physics.isGrounded();
         try {
@@ -106,7 +112,7 @@ final class ShipPropulsionUse {
                     continue;
                 }
                 float target = switch (t.axis()) {
-                    case AXIAL -> axial;
+                    case AXIAL -> axialSpin;
                     case PERPENDICULAR, TURN_ONLY -> turn;
                     case VERTICAL -> vertical;
                     default -> 0f;
