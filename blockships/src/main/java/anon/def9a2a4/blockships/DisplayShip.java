@@ -146,6 +146,11 @@ public class DisplayShip implements Listener {
             public void run() {
                 // Snapshot ship state on main thread, then write async
                 for (ShipInstance ship : ShipRegistry.getAllShips()) {
+                    // Building the config deep-copies a custom ship's whole model on the main thread; skip
+                    // ships whose saved fields haven't changed since the last periodic save.
+                    int fp = ship.metadataFingerprint();
+                    if (fp == ship.lastPeriodicSaveFingerprint) continue;
+                    ship.lastPeriodicSaveFingerprint = fp;
                     shipWorldData.saveShipMetadataAsync(ship);
                 }
             }

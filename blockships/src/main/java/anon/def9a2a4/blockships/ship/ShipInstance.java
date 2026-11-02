@@ -83,6 +83,13 @@ public class ShipInstance {
     public final List<Shulker> seatShulkers = new ArrayList<>();  // Seat shulkers in order (index 0 = driver)
     private final Set<Integer> occupiedSeatIndices = new HashSet<>();  // Track which seats are occupied
     public Shulker leadableShulker;  // Designated lead attachment point (for prefab ships)
+    public int lastPeriodicSaveFingerprint;  // DisplayShip's 60 s saver skips a ship whose fingerprint is unchanged
+
+    /** Hash of what ShipWorldData.buildShipMetadataConfig writes that can change while the ship lives. */
+    public int metadataFingerprint() {
+        return java.util.Objects.hash(physics.currentYaw, System.identityHashCode(sourceModel), mechanism != null,
+                customization.getWoodType(), customization.getBalloonColor(), customization.getCustomBanner());
+    }
     public anon.def9a2a4.blockships.customships.ShipWheelData wheelData;  // Reference to wheel data (set during assembly)
 
     /**
@@ -558,7 +565,25 @@ public class ShipInstance {
         }
     }
 
+    /** A seat's chunk unloading and reloading brings its shulker back as a new entity object with the same
+     *  UUID; the old reference is dead, so boarding, seat clicks (indexOf) and driver detection miss it.
+     *  Swap in the live entity. One isValid() per seat per tick. */
+    private void refreshSeatRefs() {
+        for (int i = 0; i < seatShulkers.size(); i++) {
+            Shulker live = liveCopy(seatShulkers.get(i));
+            if (live != null) seatShulkers.set(i, live);
+        }
+        Shulker lead = liveCopy(leadableShulker);
+        if (lead != null) leadableShulker = lead;
+    }
+
+    private static Shulker liveCopy(Shulker s) {
+        if (s == null || s.isValid()) return null;
+        return org.bukkit.Bukkit.getEntity(s.getUniqueId()) instanceof Shulker live && live.isValid() ? live : null;
+    }
+
     void tick() {
+        refreshSeatRefs();
         // Health regeneration (20 ticks per second)
         // Wrapped in try-catch to prevent tick crash if attribute lookup fails
         try {
