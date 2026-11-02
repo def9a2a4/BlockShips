@@ -28,6 +28,7 @@ const {
   readShipHealth,
   findWheelBlock,
   markServerLog,
+  readServerLogSince,
   scanServerErrorsSince,
   createBot,
   setupBotEvents
@@ -1759,6 +1760,101 @@ async function testPoweredCart() {
   if (ok) pass(`${NAME} (travel=${travel.toFixed(1)}, coal used=${used}/${coalStart})`)
 }
 
+// A server's own config/blocks.yml: entries added at the end of a copy of the bundled file take effect on
+// /blockships reload (a block name beats the #tag that already covers it), a copy at the folder root is
+// warned about and not read, and an override that does not parse keeps the configuration already in force.
+async function testBlocksYml() {
+  const NAME = 'blocks_yml'
+  say(`=== TEST: ${NAME} ===`)
+  const pluginDir = path.join(path.dirname(process.env.MC_SERVER_LOG || path.join(__dirname, '..', 'test-server', 'server.log')),
+    'plugins', 'BlockShips')
+  const override = path.join(pluginDir, 'config', 'blocks.yml')
+  const rootCopy = path.join(pluginDir, 'blocks.yml')
+  if (!fs.existsSync(pluginDir)) return fail(NAME, `no plugin folder at ${pluginDir} (bot not on the local test server)`)
+  const bundled = fs.readFileSync(path.join(__dirname, '..', 'blockships', 'src', 'main', 'resources', 'blocks.yml'), 'utf8')
+
+  await cleanup(bot)
+  await teleportToRunway()
+  await clearInventory(bot)
+  const built = await buildCustomShipBlocks(CUSTOM_SHIP)
+  if (!built.success) return fail(NAME, built.error)
+  const table = blockCharWorldPos(CUSTOM_SHIP, 'T', RUNWAY_X, 101, RUNWAY_Z - 1)
+  bot.chat(`/setblock ${table.x} ${table.y + 1} ${table.z} minecraft:andesite`)
+  bot.chat(`/setblock ${table.x} ${table.y + 2} ${table.z} minecraft:mossy_stone_bricks`)
+  await sleep(500)
+
+  const detect = async () => {
+    clearChat(bot)
+    const menu = clickWheelMenu(bot, log, 'detect')
+    try { await bot.activateBlock(built.wheelBlock) } catch (e) {}
+    if (!await menu) return null
+    const blocks = await waitForChat(bot, /^Blocks: \d+/, 5000)
+    const weight = await waitForChat(bot, /^Total Weight: -?\d+/, 5000)
+    if (!blocks || !weight) return null
+    return { blocks: Number(blocks.match(/\d+/)[0]), weight: Number(weight.match(/-?\d+/)[0]) }
+  }
+  const reload = async () => {
+    const marker = markServerLog()
+    bot.chat('/blockships reload')
+    await sleep(2000)
+    return readServerLogSince(marker) || ''
+  }
+
+  try {
+    const base = await detect()
+    if (!base) return fail(NAME, 'detect printed no block count')
+
+    fs.mkdirSync(path.dirname(override), { recursive: true })
+    fs.writeFileSync(override, bundled + `
+andesite:
+  allowed: true
+  weight: 4
+  collider: true
+"#stone_bricks":
+  allowed: true
+  weight: 4
+  collider: true
+oak_planks:
+  allowed: true
+  weight: 5
+  collider: true
+`)
+    const logged = await reload()
+    if (!/Loaded block configuration for \d+ materials from your override/.test(logged)) {
+      return fail(NAME, 'reload did not report loading config/blocks.yml')
+    }
+    const edited = await detect()
+    // 21 planks go from the #planks weight (2) to 5; andesite and mossy stone bricks join at 4 each.
+    const want = { blocks: base.blocks + 2, weight: base.weight + 21 * 3 + 8 }
+    if (!edited || edited.blocks !== want.blocks || edited.weight !== want.weight) {
+      return fail(NAME, `with the override: ${JSON.stringify(edited)}, expected ${JSON.stringify(want)} (before: ${JSON.stringify(base)})`)
+    }
+
+    fs.writeFileSync(rootCopy, bundled)
+    if (!/at the plugin folder root/.test(await reload())) return fail(NAME, 'no warning about a blocks.yml at the folder root')
+    fs.unlinkSync(rootCopy)
+
+    fs.writeFileSync(override, 'andesite:\n  allowed: [true\n')
+    if (!/Keeping the block configuration already in force/.test(await reload())) {
+      return fail(NAME, 'a broken override did not keep the configuration in force')
+    }
+    const kept = await detect()
+    if (!kept || kept.blocks !== want.blocks) return fail(NAME, `after a broken override: ${JSON.stringify(kept)}, expected ${want.blocks} blocks`)
+
+    fs.unlinkSync(override)
+    await reload()
+    const back = await detect()
+    if (!back || back.blocks !== base.blocks || back.weight !== base.weight) {
+      return fail(NAME, `without the override: ${JSON.stringify(back)}, expected ${JSON.stringify(base)}`)
+    }
+    pass(`${NAME} (blocks ${base.blocks} -> ${edited.blocks}, weight ${base.weight} -> ${edited.weight})`)
+  } finally {
+    for (const f of [override, rootCopy]) try { fs.unlinkSync(f) } catch (e) {}
+    bot.chat('/blockships reload')
+    await sleep(1000)
+  }
+}
+
 const TESTS = {
   smallship: { name: 'Small Ship', fn: () => testShipControls('smallship') },
   bigship: { name: 'Big Ship', fn: () => testShipControls('bigship') },
@@ -1772,6 +1868,7 @@ const TESTS = {
   cannon_tnt_disabled: { name: 'Cannon Keeps TNT When Disabled', fn: testCannonTntDisabled },
   land_vehicle: { name: 'Land Vehicle Steps Up', fn: testLandVehicle },
   powered_cart: { name: 'Powered Cart Drives And Burns Only When Used', fn: testPoweredCart },
+  blocks_yml: { name: 'Server blocks.yml Override', fn: testBlocksYml },
   // manual: skipped by runAllTests (and therefore by CI's test:all) — the deliberate negative waits
   // don't fit the suite's hard timeout. Run by name: `.testbot wheel_reserved` or --only=wheel_
   wheel_reserved: { name: 'Wheel Dock Reserved', fn: testWheelCellReserved, manual: true },

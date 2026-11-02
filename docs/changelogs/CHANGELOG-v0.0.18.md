@@ -135,6 +135,11 @@ broken. The path change was documented but nothing on a running server pointed a
   from `config/`.
 - Warnings about files the plugin is not reading are no longer gated behind `warn-config-mismatch`.
   That flag suppresses staleness nagging; it should never hide a file whose edits are being ignored.
+- **An entry added at the end of your `blocks.yml` was ignored if an earlier one already covered that
+  block** — the first match in the file won, so `oak_planks:` after the bundled `"#planks":` did nothing.
+  Now the most specific entry wins (a block name over a `*wildcard` over a `#tag`), and between equally
+  specific ones the later. In the bundled file this fixes iron and copper doors and trapdoors, which
+  weighed 2 (the generic door entry) instead of their own 3.
 - README and the `config.yml` / `blocks.yml` headers now document the override path, including how to
   extract a copy from the jar, and that an override replaces rather than merges.
 
