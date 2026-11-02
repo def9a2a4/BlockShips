@@ -2878,13 +2878,18 @@ public class ShipWheelManager {
         // Nudge nearby players up to prevent clipping into placed blocks
         nudgeNearbyPlayersUp(shipLoc2, ship.config.assemblyNudgeHeight);
 
-        // Remove ship from per-world storage (delete the sidecar file) — once the world has saved the landed
-        // blocks, not now: a crash before that recovers the ship from its entities, which needs the sidecar. A
-        // failed delete then is logged SEVERE by removeShip; outcome.persistFailed only covers an unresolved world.
+        // Remove ship from per-world storage (delete the sidecar file). The ship is already gone from the world,
+        // so a failure here does not fail the disassembly; it is reported via outcome.persistFailed. Deleting it
+        // now is crash-safe: a crash before the landed blocks reach disk makes DefCoreLib land the ship again
+        // from its own file (marked landed), which needs nothing from this one.
         if (plugin instanceof BlockShipsPlugin bsp) {
             org.bukkit.World world = shipLoc.getWorld();
             if (world != null) {
-                bsp.getDisplayShip().removeShipAfterWorldSaved(world, ship.id);
+                if (!bsp.getDisplayShip().getShipWorldData().removeShip(world, ship.id)) {
+                    outcome.persistFailed = true;
+                    plugin.getLogger().severe("disassembleShip: persistence cleanup failed for ship "
+                        + ship.id + " (world=" + world.getName() + ")");
+                }
             } else {
                 // Can't resolve the world, so the per-world YAML sidecar can't be cleaned. Flag
                 // it as a persistence failure rather than skip silently - the ship is gone in-world but

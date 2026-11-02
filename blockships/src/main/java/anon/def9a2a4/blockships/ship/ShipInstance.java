@@ -1646,10 +1646,11 @@ public class ShipInstance {
         World world = (vehicle != null && vehicle.isValid()) ? vehicle.getLocation().getWorld() : null;
         destroy();  // Remove entities and unregister
         if (world != null && shipWorldData != null) {
-            // After the world saves (see DisplayShip.removeShipAfterWorldSaved): a crash before then brings the
-            // entities back, and recovery needs the sidecar to rebuild the ship rather than strand it.
-            if (plugin instanceof anon.def9a2a4.blockships.BlockShipsPlugin bsp) {
-                bsp.getDisplayShip().removeShipAfterWorldSaved(world, this.id);
+            // A prefab ship has no blocks, so after a crash DefCoreLib brings it back alive, and rebuilding it needs
+            // this file: keep it until the ship's chunk has surely been written. A custom one is landed or
+            // destroyed again by DefCoreLib instead and needs nothing from it.
+            if (!"custom".equals(shipType) && plugin instanceof anon.def9a2a4.blockships.BlockShipsPlugin bsp) {
+                bsp.getDisplayShip().removeShipLater(world, this.id);
             } else {
                 shipWorldData.removeShip(world, this.id);
             }

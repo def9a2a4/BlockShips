@@ -482,14 +482,32 @@ public class DisplayShip implements Listener {
             + ". Relaunch it from its wheel.");
     }
 
+    /** Prefab sidecars to delete once their ship's chunk has surely been written: id → [tick queued, saves seen]. */
+    private final Map<World, Map<UUID, long[]>> removeLater = new HashMap<>();
+
     /**
-     * Delete a ship's sidecar once the world has saved the ship's current state (see {@link #runAfterWorldSaved}).
-     * For a dock or destroy: DefCoreLib keeps the mechanism's own state file until the landed blocks are on disk,
-     * so a crash in between recovers the ship — and it can only be wrapped back into a ship while its sidecar
-     * still exists. Deleting the sidecar at once left that recovery a frozen, unlinked mechanism.
+     * Delete a prefab ship's sidecar once the chunk holding its entities has surely been written. Paper writes each
+     * chunk on its own timer and WorldSaveEvent writes none, so this waits for both enough time and enough
+     * autosaves, the same rule as DefCoreLib's state files; no save is forced. Until then a crash brings the
+     * ship back, and this file is what rebuilds it.
      */
-    public void removeShipAfterWorldSaved(World world, UUID shipId) {
-        runAfterWorldSaved(world, () -> shipWorldData.removeShip(world, shipId));
+    public void removeShipLater(World world, UUID shipId) {
+        removeLater.computeIfAbsent(world, w -> new HashMap<>()).put(shipId, new long[] {Bukkit.getCurrentTick(), 0});
+    }
+
+    @EventHandler
+    public void onWorldSave(org.bukkit.event.world.WorldSaveEvent event) {
+        Map<UUID, long[]> pending = removeLater.get(event.getWorld());
+        if (pending == null) return;
+        long now = Bukkit.getCurrentTick();
+        pending.entrySet().removeIf(e -> {
+            long[] d = e.getValue();
+            if (!event.getWorld().isAutoSave()) { d[0] = now; d[1] = 0; return false; }   // /save-off: nothing written
+            if (++d[1] < 3 || now - d[0] < 12_000) return false;
+            shipWorldData.removeShip(event.getWorld(), e.getKey());
+            return true;
+        });
+        if (pending.isEmpty()) removeLater.remove(event.getWorld());
     }
 
     /** Per world: upgrade work waiting for the world to be written. */
@@ -522,6 +540,8 @@ public class DisplayShip implements Listener {
     private void flushAfterSaveWork() {
         awaitingSave.values().forEach(l -> l.forEach(Runnable::run));
         awaitingSave.clear();
+        removeLater.forEach((w, ids) -> ids.keySet().forEach(id -> shipWorldData.removeShip(w, id)));
+        removeLater.clear();
     }
 
     private static boolean hasDelegatedEntity(org.bukkit.Chunk chunk, UUID shipId) {
