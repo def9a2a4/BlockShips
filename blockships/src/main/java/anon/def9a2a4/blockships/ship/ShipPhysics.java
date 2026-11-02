@@ -77,12 +77,8 @@ public class ShipPhysics {
     private boolean landActive = false;
     /** World Y the vehicle's bottom is being held at or raised to; NaN when there is none. */
     private double landSupportY = Double.NaN;
-    /** A rise ahead taller than the wheels can climb, as of the last tick. */
-    private boolean landBlockedAhead = false;
     /** Smallest step height over the ground wheels; computed once, NaN until then. */
     private float landStepHeight = Float.NaN;
-    private int blockedMessageCooldown = 0;
-    private boolean blockedNoticePending = false;
 
     /** Whether the flight branch drove the vertical physics last tick. */
     private boolean flying = false;
@@ -446,11 +442,17 @@ public class ShipPhysics {
         boolean throttling = ship.hasDriver && (ship.isForwardPressed || ship.isBackwardPressed);
 
         // Apply acceleration/deceleration based on input state
+        // Over the top speed (it just dropped: thrust lost, land mode, a stats change) the speed bleeds off
+        // by drag rather than snapping down to the new cap.
         if (throttling && ship.isForwardPressed) {
-            currentSpeed = Math.min(currentSpeed + effectiveAcceleration, effectiveMaxSpeed);
+            currentSpeed = currentSpeed > effectiveMaxSpeed
+                ? Math.max(effectiveMaxSpeed, currentSpeed * config.mountedDrag)
+                : Math.min(currentSpeed + effectiveAcceleration, effectiveMaxSpeed);
         } else if (throttling && ship.isBackwardPressed) {
             if (currentSpeed > 0) {
                 currentSpeed = Math.max(currentSpeed - config.activeDeceleration, 0.0f);
+            } else if (currentSpeed < -effectiveMaxSpeed) {
+                currentSpeed = Math.min(-effectiveMaxSpeed, currentSpeed * config.mountedDrag);
             } else {
                 currentSpeed = Math.max(currentSpeed - effectiveAcceleration, -effectiveMaxSpeed);
             }
@@ -511,7 +513,6 @@ public class ShipPhysics {
         boolean land = landCapable && !wantsFlight && !hullInWater(vehicleLoc);
         landActive = land;
         landSupportY = land && support.valid() ? support.targetY() : Double.NaN;
-        landBlockedAhead = land && support.blockedAhead();
         boolean flies = !land
             && (ship.isAirship || (isThrustLifted() && (liftRatio() >= 1f || !hullInWater(vehicleLoc))));
         flying = flies;
@@ -607,9 +608,8 @@ public class ShipPhysics {
      * @param valid        some sample found ground within reach (else: free fall)
      * @param targetY      world Y the vehicle's bottom should sit at — the highest climbable ground
      *                     under or just ahead of it
-     * @param blockedAhead a sample ahead hit a rise taller than the wheels can climb
      */
-    record Support(boolean valid, double targetY, boolean blockedAhead) {}
+    record Support(boolean valid, double targetY) {}
 
     /** How far below the bottom ground is looked for before the vehicle is treated as falling. */
     private static final int SUPPORT_SCAN_BELOW = 3;
@@ -640,7 +640,6 @@ public class ShipPhysics {
 
         World world = vehicleLoc.getWorld();
         double best = Double.NEGATIVE_INFINITY;
-        boolean blocked = false;
         float[] xz = model.supportSamplesXZ;
         for (int i = 0; i + 1 < xz.length; i += 2) {
             double wx = vehicleLoc.getX() + xz[i] * cos + xz[i + 1] * sin;
@@ -649,12 +648,11 @@ public class ShipPhysics {
             if (!Double.isNaN(top)) best = Math.max(best, top);
             if (probeAhead) {
                 double ahead = groundTop(world, wx + fx * dir * look, wz + fz * dir * look, bottom, step);
-                if (Double.isNaN(ahead)) blocked = true;
-                else best = Math.max(best, ahead);
+                if (!Double.isNaN(ahead)) best = Math.max(best, ahead);
             }
         }
         boolean valid = best > Double.NEGATIVE_INFINITY;
-        return new Support(valid, valid ? best : Double.NaN, blocked);
+        return new Support(valid, valid ? best : Double.NaN);
     }
 
     /**
@@ -701,10 +699,17 @@ public class ShipPhysics {
         return Double.NEGATIVE_INFINITY;
     }
 
-    /** Wheels in contact: bottom at (or a hair above) the supported height, latched over bumps. */
+    /**
+     * Wheels in contact: the ground is no further below than the wheels can step, latched over bumps.
+     * Stepping DOWN counts as contact, as stepping up does: a hull rolling down a slope drops a block at a
+     * time, each drop longer than the grace, and treating every one as airborne cut the ground thrust and
+     * took the top speed (and the speed with it) on every step. Only while already driving on land: a
+     * flier coming down still needs real contact before it counts as landed.
+     */
     private void updateGrounded(Location vehicleLoc, Support support) {
         double bottom = vehicleLoc.getY() + ship.model.landBottomY;
-        boolean contact = support.valid() && bottom <= support.targetY() + 0.1;
+        double reach = landActive ? Math.max(0.1, landStepHeight()) : 0.1;
+        boolean contact = support.valid() && bottom <= support.targetY() + reach;
         if (contact) {
             groundedGrace = GROUND_GRACE_TICKS;
         } else if (groundedGrace > 0) {
@@ -740,12 +745,6 @@ public class ShipPhysics {
             currentYVelocity = clampFallToGround(vehicleLoc, currentYVelocity);
         }
 
-        if (landBlockedAhead && ship.hasDriver && blockedMessageCooldown <= 0) {
-            blockedNoticePending = true;
-            blockedMessageCooldown = 60;
-        }
-        if (blockedMessageCooldown > 0) blockedMessageCooldown--;
-
         // Settle-to-rest, as on the flight path: the vertical move ending is the land path's trigger
         // for refreshCarrierTracking, or deck standers keep collision jitter after a step.
         if (Math.abs(currentYVelocity) < 0.001f) {
@@ -757,21 +756,6 @@ public class ShipPhysics {
         } else {
             wasVerticallyMoving = true;
         }
-    }
-
-    /**
-     * The "too steep" driver notice, at most once per few seconds. Returned to ShipInstance rather than
-     * sent from here because the speed bar owns the action bar; the two would overwrite each other.
-     */
-    public String takeBlockedNotice() {
-        if (!blockedNoticePending) return null;
-        blockedNoticePending = false;
-        return "§cToo steep — these wheels climb " + formatStep(landStepHeight())
-            + " block" + (landStepHeight() == 1f ? "" : "s") + ". Bigger wheels climb higher.";
-    }
-
-    private static String formatStep(float h) {
-        return h == Math.rint(h) ? String.valueOf((int) h) : String.valueOf(h);
     }
 
     /**

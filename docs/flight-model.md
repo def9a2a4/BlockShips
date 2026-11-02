@@ -172,8 +172,10 @@ ahead. It then eases the hull up onto the highest climbable surface it finds, at
 `step-up-speed` blocks per tick. The vehicle stays on the ground through the whole climb, so it
 keeps its wheel thrust.
 - Heights come from block **collision shapes**: a slab is half a step, a fence or wall 1.5.
-- A rise taller than the step height is a wall. Collision stops the vehicle, and the driver gets a
-  "too steep" notice.
+- A rise taller than the step height is a wall, and collision stops the vehicle. Each wheel's lore
+  says how high it climbs.
+- Stepping down a drop no taller than the step height keeps the wheels on the ground, so a vehicle
+  keeps its thrust and speed down a slope.
 - The step height is the **smallest** ground wheel's, so mixing sizes is limited by the small ones.
 - Off a ledge the vehicle falls under the usual gravity and terminal velocity.
 

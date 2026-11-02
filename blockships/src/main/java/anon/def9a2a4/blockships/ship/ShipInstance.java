@@ -831,14 +831,6 @@ public class ShipInstance {
         // throttle should read as full, not as a fraction of what a fully-rigged one could do.
         float topSpeed = java.lang.Math.max(0.0001f, physics.effectiveMaxSpeed());
         float speedPercent = physics.currentSpeed / topSpeed;  // -1.0 to 1.0
-        // A land vehicle stopped by a step it cannot climb: say why, in place of the speed bar. The bar
-        // redraws as soon as the speed changes again.
-        String blocked = physics.takeBlockedNotice();
-        if (blocked != null) {
-            player.sendActionBar(net.kyori.adventure.text.Component.text(blocked));
-            previousDisplayedSpeed = speedPercent;
-            return;
-        }
         if (java.lang.Math.abs(speedPercent - previousDisplayedSpeed) < SPEED_DISPLAY_THRESHOLD) {
             return;  // Speed hasn't changed enough, skip update
         }

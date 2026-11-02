@@ -62,10 +62,10 @@
   wheel, and four planks around a wheel make the next size up) on the left and
   right sides of a hull and it
   drives on land with the normal Ship's Wheel. A wheel takes power through the block it hangs on,
-  so run a shaft or engine along the axle to it. Powered wheels push it along. Unpowered ones
+  so run a shaft or engine along the axle to it (it draws power only while the vehicle is assembled). Powered wheels push it along. Unpowered ones
   still roll, so a sail cart works. It hops up steps instead of tilting. A small wheel climbs 1
-  block, a large one 1.5 (fences and walls), a huge one 2, and the smallest wheel aboard sets
-  the limit. Detect tells you it's a land vehicle, which wheel limits its climb, and which wheels
+  block, a large one 1.5 (fences and walls), a huge one 2 (each wheel's lore says), and the smallest
+  wheel aboard sets the limit. It keeps its speed rolling down a slope. Detect tells you it's a land vehicle, which wheel limits its climb, and which wheels
   are mounted the wrong way.
 
 - **Propellers spin when you use them.** Forward propellers follow the throttle, side ones and

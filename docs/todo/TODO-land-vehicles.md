@@ -21,7 +21,7 @@ survive corelib drops and legacy-skin matching.
 | Wheel blocks (octagon: 2 cubes + hub, 3 display entities), recipes, power, mass | defCoreLib `rotation-blocks.yml` (end of file), `rotation-config.yml`, `mass.yml`, `RotationBlocks.overlayPropulsionConsumers` |
 | `Axis.GROUND`; wheel classification (axle across the hull, else ignored) | `ShipThrust.classifyFacing` |
 | Ground wheels, `landBottomY`, support sample points | `ShipModel` constructor (derived, not persisted) |
-| Ground support, stepping, routing ahead of flight, drag, sound, "too steep" | `ShipPhysics.computeSupport` / `columnSupport` / `handleLandPhysics` |
+| Ground support, stepping, routing ahead of flight, drag, sound | `ShipPhysics.computeSupport` / `columnSupport` / `handleLandPhysics` |
 | Collision ignores blocks the vehicle is climbing onto | `ShipCollision.calculateTerrainCollisionForce` |
 | Ground thrust only while grounded; car-like turning | `ShipStats.withThrust(..., grounded)` |
 | Config | `custom-ships.land.*` in config.yml / `ShipConfig` |
