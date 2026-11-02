@@ -191,6 +191,21 @@ or download [`blocks.yml`](https://raw.githubusercontent.com/def9a2a4/BlockShips
 
 Your copy **replaces** the bundled one rather than merging with it, so start from the whole file and re-check it after each update — blocks added in later releases won't appear until you add them. The startup log tells you which copy is in force and warns when yours is missing entries the bundled default has.
 
+To allow more blocks, add entries at the end of your copy. A key is a block name, a `"*wildcard"` or a Minecraft `"#tag"`:
+
+```yaml
+andesite:
+  allowed: true
+  weight: 4
+  collider: true
+"#stone_bricks":   # stone bricks and their mossy, cracked and chiseled variants
+  allowed: true
+  weight: 4
+  collider: true
+```
+
+Where entries overlap, the most specific wins (a block name over a wildcard over a tag); between equally specific ones the later wins. Run `/blockships reload` to apply it; ships already assembled pick it up the next time they are docked and launched.
+
 Note that natural blocks (stone, dirt, ores) are excluded on purpose: assembly flood-fills through connected allowed blocks, so allowing them lets a docked ship swallow the terrain it is sitting on.
 
 

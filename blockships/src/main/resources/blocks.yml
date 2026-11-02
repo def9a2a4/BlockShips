@@ -6,6 +6,11 @@
 # A copy at the plugin folder root (plugins/BlockShips/blocks.yml) is NOT read.
 # Your copy REPLACES this one - the two are not merged, so start from the whole file.
 #
+# Keys: a block name (andesite), a "*wildcard" (*_door) or a Minecraft "#tag" (#stone_bricks); quote the
+# last two. Where entries overlap, the most specific wins: a block name over a wildcard, a narrower wildcard
+# (*copper_door) over a broader one (*_door), a wildcard over a tag. Between equally specific entries the
+# later one wins, so you can add your overrides at the end of the file.
+#
 # Collider format:
 #   collider: true                          # Default size (1.0), no offset
 #   collider: false                         # No collider

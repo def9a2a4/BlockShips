@@ -112,9 +112,16 @@ public class BlockConfigManager {
         return loadConfig();
     }
 
-    /** Runs every top-level entry of {@code src} through the block parser into {@code target}. */
+    /**
+     * Runs every top-level entry of {@code src} through the block parser into {@code target}. Where entries
+     * overlap, the most specific wins: an exact material over any {@code *wildcard}, a narrower wildcard
+     * ({@code *copper_door}) over a broader one ({@code *_door}), any wildcard over a {@code #tag}. Between equally
+     * specific entries the later one in the file wins, so an override appended to a copy of the file works.
+     */
     private void parseInto(FileConfiguration src, Map<Material, BlockProperties> target) {
-        for (String key : src.getKeys(false)) {
+        List<String> keys = new ArrayList<>(src.getKeys(false));
+        keys.sort(Comparator.comparingInt(BlockConfigManager::specificity));   // stable: file order within a tier
+        for (String key : keys) {
             ConfigurationSection blockConfig = src.getConfigurationSection(key);
             if (blockConfig == null) {
                 continue;
@@ -125,6 +132,12 @@ public class BlockConfigManager {
                 logger.warning("Failed to parse block config for '" + key + "': " + e.getMessage());
             }
         }
+    }
+
+    private static int specificity(String key) {
+        if (WildcardMatcher.isTag(key)) return 0;
+        if (WildcardMatcher.isWildcard(key)) return 1 + key.replace("*", "").length();
+        return Integer.MAX_VALUE;
     }
 
     private void parseBlockEntry(Map<Material, BlockProperties> target, String key, ConfigurationSection config) {
@@ -286,19 +299,19 @@ public class BlockConfigManager {
             // Minecraft tag reference
             Set<Material> materials = resolveTag(key.substring(1));
             for (Material material : materials) {
-                target.putIfAbsent(material, properties);
+                target.put(material, properties);
             }
         } else if (WildcardMatcher.isWildcard(key)) {
             // Wildcard pattern
             Set<Material> materials = WildcardMatcher.getMatchingMaterials(key);
             for (Material material : materials) {
-                target.putIfAbsent(material, properties);
+                target.put(material, properties);
             }
         } else {
             // Specific material
             try {
                 Material material = Material.valueOf(key.toUpperCase());
-                target.putIfAbsent(material, properties);
+                target.put(material, properties);
             } catch (IllegalArgumentException e) {
                 logger.warning("Unknown material: " + key);
             }
