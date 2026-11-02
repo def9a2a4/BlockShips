@@ -1646,22 +1646,32 @@ async function testPoweredCart() {
   await sleep(600)
   const engineBlock = bot.blockAt(at(LAND_X))
   if (!engineBlock || !engineBlock.name.includes('player') || !engineBlock.name.includes('head')) { fail(NAME, `No engine head at ${at(LAND_X)}`); return }
+  // Count what the engine holds by reopening it: the client's copy of a window lags its own clicks,
+  // and a cell reused from an earlier run can already hold coal.
+  const engineCoal = async (block) => {
+    const win = await bot.openBlock(block)
+    await sleep(500)
+    const n = win.containerItems().filter(it => it.name === 'coal').reduce((c, it) => c + it.count, 0)
+    bot.closeWindow(win)
+    await sleep(300)
+    return n
+  }
+  let coalStart
   try {
     const win = await bot.openBlock(engineBlock)
     await sleep(300)
-    log(`  engine window: type=${win.type} title=${JSON.stringify(win.title)} slots=${win.slots.length} inv=${win.inventoryStart}..${win.inventoryEnd}`)
-    log(`  coal in window: ${win.slots.map((it, i) => it && it.name === 'coal' ? i + 'x' + it.count : null).filter(Boolean).join(',')}`)
     // Shift-click the coal from the player half of the window into the engine's slots.
     for (let i = win.inventoryStart; i < win.inventoryEnd; i++) {
       const it = win.slots[i]
       if (it && it.name === 'coal') { await bot.clickWindow(i, 0, 1); await sleep(150) }
     }
-    await sleep(500)
-    log(`  after shift-click: ${win.slots.map((it, i) => it ? i + ':' + it.name + 'x' + it.count : null).filter(Boolean).join(',')}`)
-    const loaded = win.containerItems().filter(it => it.name === 'coal').reduce((n, it) => n + it.count, 0)
+    await sleep(300)
     bot.closeWindow(win)
-    if (loaded !== COAL) { fail(NAME, `Engine took ${loaded} of ${COAL} coal`); return }
+    await sleep(500)
+    coalStart = await engineCoal(engineBlock)
   } catch (e) { fail(NAME, `Could not fuel the engine: ${e.message}`); return }
+  if (coalStart < COAL) { fail(NAME, `Engine holds ${coalStart} coal after loading ${COAL}`); return }
+  log(`  engine loaded: ${coalStart} coal`)
 
   // Detect, then assemble.
   bot.chat(`/tp @s ${LAND_X} ${LAND_Y} ${LAND_Z + 4} 180 0`)
@@ -1714,17 +1724,12 @@ async function testPoweredCart() {
       bot.chat(`/tp @s ${LAND_X + 0.5} ${landedY + dy + 1} ${landedZ + dz - 1.5}`)
       await sleep(600)
       let n = -1
-      try {
-        const win = await bot.openBlock(b)
-        await sleep(300)
-        n = win.containerItems().filter(it => it.name === 'coal').reduce((c, it) => c + it.count, 0)
-        bot.closeWindow(win)
-      } catch (e) { /* not the engine (no storage): try the next cell */ }
+      try { n = await engineCoal(b) } catch (e) { /* not the engine (no storage): try the next cell */ }
       if (n >= 0) { coalLeft = n; break }
     }
     if (coalLeft >= 0) break
   }
-  const used = coalLeft >= 0 ? COAL - coalLeft : NaN
+  const used = coalLeft >= 0 ? coalStart - coalLeft : NaN
   log(`Powered cart: travel=${travel.toFixed(2)} rise=${rise.toFixed(2)} coalLeft=${coalLeft} used=${used}`)
 
   let ok = true
@@ -1742,7 +1747,7 @@ async function testPoweredCart() {
     fail(NAME, `Engine burned ${used} coal over a ${DRIVE_MS / 1000}s drive and a ${PARK_MS / 1000}s park (expected <= 2: parked engines should burn nothing)`)
     ok = false
   }
-  if (ok) pass(`${NAME} (travel=${travel.toFixed(1)}, coal used=${used}/${COAL})`)
+  if (ok) pass(`${NAME} (travel=${travel.toFixed(1)}, coal used=${used}/${coalStart})`)
 }
 
 const TESTS = {
