@@ -669,7 +669,7 @@ public class BlockStructureScanner {
             // synthesised "unknown material" entry weighs 0 while still counting toward the density
             // divisor — so gluing stone would push a ship toward the airship threshold instead of
             // sinking it. Unconfigured materials fall back to defCoreLib's mass table.
-            Integer resolvedWeight = configManager.resolveWeight(block.getType(), blockData);
+            Integer resolvedWeight = configManager.resolveWeight(block, blockData);
             if (resolvedWeight != null) {
                 int weight = resolvedWeight;
                 totalWeight += weight;

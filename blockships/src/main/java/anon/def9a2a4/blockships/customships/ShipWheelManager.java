@@ -3586,7 +3586,7 @@ public class ShipWheelManager {
             Block block = loc.getBlock();
             // Guarded: this used to unbox getWeight() with no hasWeight() check, unlike its two
             // siblings below — a block configured with an explicit `weight: null` NPE'd /detect.
-            Integer w = configManager.resolveWeight(block.getType(), block.getBlockData());
+            Integer w = configManager.resolveWeight(block, block.getBlockData());
             if (w != null) {
                 totalWeight += w;
             }
@@ -3604,7 +3604,7 @@ public class ShipWheelManager {
 
         for (Location loc : blocks) {
             Block block = loc.getBlock();
-            if (configManager.resolveWeight(block.getType(), block.getBlockData()) != null) {
+            if (configManager.resolveWeight(block, block.getBlockData()) != null) {
                 count++;
             }
         }
@@ -3622,7 +3622,7 @@ public class ShipWheelManager {
 
         for (Location loc : blocks) {
             Block block = loc.getBlock();
-            Integer w = configManager.resolveWeight(block.getType(), block.getBlockData());
+            Integer w = configManager.resolveWeight(block, block.getBlockData());
             if (w != null && w > 0) {
                 positiveWeight += w;
             }
@@ -3653,7 +3653,7 @@ public class ShipWheelManager {
             float bottom = BlockStructureScanner.bottomFaceY(block.getBlockData(), blockY);
             if (!Float.isNaN(bottom) && bottom < minY) minY = bottom;
 
-            if (configManager.resolveWeight(block.getType(), block.getBlockData()) != null) {
+            if (configManager.resolveWeight(block, block.getBlockData()) != null) {
                 weightedBlockCount++;
                 sumY += blockY;
             }

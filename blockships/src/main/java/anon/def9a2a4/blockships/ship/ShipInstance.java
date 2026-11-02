@@ -431,12 +431,7 @@ public class ShipInstance {
     private void landAfterVehicleLost(BlockShipsPlugin bsp) {
         if (task != null) task.cancel();
         if (idleCheckTask != null) idleCheckTask.cancel();
-        for (Shulker seat : seatShulkers) {
-            if (seat == null || !seat.isValid()) continue;
-            for (Entity passenger : seat.getPassengers()) {
-                if (passenger instanceof Player p) seat.removePassenger(p);
-            }
-        }
+        dismountSeatRiders();
         ShipRegistry.unregister(this);
         var wheels = bsp.getShipWheelManager();
         var wd = wheels.getWheelByShipUUID(id);
@@ -1069,13 +1064,37 @@ public class ShipInstance {
      * Gets the first available seat shulker (driver first, then others).
      * Returns null if all seats are occupied.
      */
+    /** A player sits on this seat, directly or on the cushion it carries. */
+    public static boolean seatOccupied(Shulker seat) {
+        for (Entity p : seat.getPassengers()) {
+            if (p instanceof Player) return true;
+            if (p.getPassengers().stream().anyMatch(r -> r instanceof Player)) return true;   // a carried cushion
+        }
+        return false;
+    }
+
+    /**
+     * Take every player off the seats, including those on a carried cushion, through removePassenger so the
+     * dismount handler puts them somewhere safe. Removing the entities instead drops them where they sat.
+     */
+    private void dismountSeatRiders() {
+        for (Shulker seat : seatShulkers) {
+            if (seat == null || !seat.isValid()) continue;
+            for (Entity passenger : new java.util.ArrayList<>(seat.getPassengers())) {
+                if (passenger instanceof Player p) seat.removePassenger(p);
+                else for (Entity r : new java.util.ArrayList<>(passenger.getPassengers())) {
+                    if (r instanceof Player p) passenger.removePassenger(p);
+                }
+            }
+        }
+    }
+
     public Shulker getFirstAvailableSeatShulker() {
         // Simple linear scan through seatShulkers list (index 0 = driver, then passengers)
         for (int i = 0; i < seatShulkers.size(); i++) {
             Shulker seat = seatShulkers.get(i);
             if (seat != null) {
-                boolean hasPlayer = seat.getPassengers().stream().anyMatch(p -> p instanceof Player);
-                if (!hasPlayer) {
+                if (!seatOccupied(seat)) {
                     return seat;
                 }
             }
@@ -1618,13 +1637,7 @@ public class ShipInstance {
         // fall-distance reset would be skipped. Explicitly removePassenger over seatShulkers first (fires
         // VehicleExitEvent), BEFORE tearing the mechanism down while the seats still exist and the ship is
         // still registered.
-        for (Shulker seat : seatShulkers) {
-            if (seat != null && seat.isValid()) {
-                for (Entity passenger : seat.getPassengers()) {
-                    if (passenger instanceof Player p) seat.removePassenger(p);
-                }
-            }
-        }
+        dismountSeatRiders();
         // defCoreLib owns the parent/displays/colliders — tear them down via the Mechanism (removes entities
         // WITHOUT restoring blocks). Idempotent if disassemble() already ran. The external vehicle is still
         // removed at the end.

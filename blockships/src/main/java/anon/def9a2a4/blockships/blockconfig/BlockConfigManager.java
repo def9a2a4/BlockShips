@@ -357,6 +357,27 @@ public class BlockConfigManager {
      * <p>Use this rather than {@code getProperties(...).getWeight()} anywhere weight feeds density,
      * mass or health.
      */
+    /**
+     * {@link #resolveWeight(Material, BlockData)} for a placed block, where a DefCoreLib block (a propeller,
+     * engine or wheel: all player heads) weighs what DefCoreLib's mass table gives its type. blocks.yml only knows
+     * them as player_head, weight 1, so a huge propeller lifting 250 added 1.
+     */
+    public Integer resolveWeight(org.bukkit.block.Block block, BlockData blockData) {
+        Material material = block.getType();
+        if (material == Material.PLAYER_HEAD || material == Material.PLAYER_WALL_HEAD) {
+            String typeId = anon.def9a2a4.blockships.ShipThrust.typeIdOf(block);
+            if (typeId != null) {
+                try {
+                    return (int) Math.round(anon.def9a2a4.corelib.CoreLibPlugin.getInstance()
+                        .getMechanismRegistry().massRegistry().get(material, typeId));
+                } catch (Throwable t) {
+                    // fall through to blocks.yml
+                }
+            }
+        }
+        return resolveWeight(material, blockData);
+    }
+
     public Integer resolveWeight(Material material, BlockData blockData) {
         if (isConfigured(material)) {
             BlockProperties props = getProperties(material, blockData);

@@ -1584,7 +1584,13 @@ public class DisplayShip implements Listener {
         // its vanilla seat.
         if (anon.def9a2a4.blockships.CushionSupport.isCarried(clicked) && clicked.getVehicle() instanceof Shulker seat) {
             UUID seatShip = ShipTags.extractShipId(seat.getScoreboardTags());
-            if (seatShip != null && ShipRegistry.byId(seatShip) != null) handleShulkerInteraction(e, seat);
+            if (seatShip != null && ShipRegistry.byId(seatShip) != null) {
+                // Always consumed: a path in handleShulkerInteraction that returns without cancelling (the wrench,
+                // a ship mid-teardown) would otherwise let vanilla seat the player on the cushion itself.
+                e.setCancelled(true);
+                handleShulkerInteraction(e, seat);
+                return;
+            }
         }
 
         // Also handle clicking on collision carriers (ArmorStand or Interaction with shulker passengers)
@@ -1799,7 +1805,7 @@ public class DisplayShip implements Listener {
         // Check if this shulker is marked as a seat
         if (seatIndex >= 0) {
             // Player clicked on a seat collider - mount directly to this shulker if not occupied
-            if (!shulker.getPassengers().stream().anyMatch(p -> p instanceof Player)) {
+            if (!ShipInstance.seatOccupied(shulker)) {
                 // Set camera distance before mounting
                 setCameraDistanceOnShulker(shulker, getCameraDistanceForShip(inst));
                 shulker.addPassenger(player);
