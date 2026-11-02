@@ -9,8 +9,8 @@
 >
 > **Install [DefCoreLib](https://modrinth.com/plugin/defcorelib) 0.5.0 first.**
 > BlockShips now has a hard dependency on it and will not load without it, which also raises
-> the minimum server to Paper 1.21.9. If DefCoreLib is missing or too old, BlockShips says so at
-> startup and turns itself off. Install
+> the minimum server to Paper 1.21.11. If DefCoreLib is too old, BlockShips says so at
+> startup and turns itself off (if it is missing, Paper refuses to load BlockShips). Install
 > [Mechanism](https://modrinth.com/plugin/mechanism) and
 > [BetterBanners](https://modrinth.com/plugin/betterbanners) too if you want propulsion, the
 > Glue Brush and the top two sail tiers to be craftable. The server log now says so at startup
@@ -68,9 +68,22 @@
   reaction wheels the steering, lift propellers the climb. A parked ship with a lit engine no
   longer sits there with everything turning. Wheels roll at road speed and backwards in reverse.
 
-- **Engines only burn fuel for power that's used.** A parked ship burns nothing, and half throttle
-  burns about half. Thrusters burn by their own use. Thruster exhaust and engine smoke now show on
-  ships under way, and go quiet when the engine is burning nothing. Needs the matching DefCoreLib.
+- **Engines only burn fuel for power that's used.** A parked or docked ship burns nothing, and half
+  throttle burns about half. Thrusters burn by their own use. Thruster exhaust and engine smoke now
+  show on ships under way, and go quiet when the engine is burning nothing. The action bar shows how
+  long your fuel lasts at the current burn ("fuel 2m10s"), turning yellow under two minutes and red
+  under thirty seconds. An engine's empty bucket stays in the engine instead of falling overboard.
+
+- **Propulsion has weight.** Propellers, thrusters, wheels, engines and windmills used to weigh 1,
+  the same as a plank; they now weigh what DefCoreLib gives them (a huge propeller 10, an engine 8,
+  a huge windmill 15). Ships carrying them sit lower and lift less than before, so a flier that was
+  just barely airborne may need more lift.
+
+- **Windmills aboard a ship give half their power, rounded down.** A small windmill gives nothing
+  aboard; it used to round up to its full power, so a deck of small windmills ran a ship for free.
+
+- **Only the wheels that touch the ground drive a land vehicle.** A spare wheel on a cabin wall
+  added full thrust, and a wheel mounted the wrong way burned fuel the whole time.
 
 - **Re-craft your Captain's Manual.** The book has six new sections covering sails,
   propulsion, mounting, heavy flight, gluing and locking, plus a rewritten Weight &
@@ -174,8 +187,12 @@ Data loss, fixed:
 
 Other people's builds, protected:
 
-- **GriefPrevention and Towny are honoured** on right-click, and WorldGuard on align,
-  disassemble, force-disassemble, lock and fire.
+- **Every protection plugin is asked before a ship is assembled**, for each block it would take:
+  GriefPrevention, Towny, Lands and the rest, not only WorldGuard. A wheel placed beside a claim
+  used to carry the claimed wall off. WorldGuard is also checked on align, disassemble,
+  force-disassemble, lock and fire.
+- **Arrows, tridents and fireballs respect protection plugins.** A hit another plugin cancelled
+  still damaged the ship; melee and explosions already respected it.
 - **A menu left open after its wheel was destroyed** could flood-fill a stranger's build,
   overwrite their glue or spawn a marker in their base. Menus are keyed by wheel now.
 - **A docked wheel pressed against your hull** is no longer swallowed into your ship.
@@ -213,13 +230,20 @@ Also:
   - A ship that was sailing comes back where its entities were last written. Before, a ship
     more than about 16 blocks from its last saved spot never came back, and its wheel read
     "still loading" forever.
-  - A ship docked or sunk just before the crash is docked or sunk again, instead of coming
-    back as a ship that can't be steered or docked. Blocks that did reach disk are left alone,
-    so nothing is duplicated.
+  - A ship docked or sunk just before the crash is docked or sunk again, at exactly the spot it
+    docked, instead of coming back as a ship that can't be steered or docked. Blocks that did
+    reach disk are left alone, so a dock that was half written is finished, not duplicated. A
+    ship docked and launched again before the crash is docked again only if the launch never
+    reached disk.
   - A ship launched just before the crash is still standing at its dock, and its wheel works
-    again instead of reading "still loading".
-  - Cargo is saved with the world rather than every time a chest closes, so a crash no longer
-    duplicates what was put in or taken out since.
+    again instead of reading "still loading". Only if every block of it is still there: a launch
+    that partly reached disk leaves the wheel for an admin rather than throwing the rest away.
+  - A ship that comes back as two copies (it crossed a chunk border between that chunk's saves)
+    keeps one; the other, which used to stand there frozen with invisible hitboxes, is removed.
+    Hitboxes that didn't come back are recreated, instead of leaving holes in the deck.
+  - Cargo is saved with the world rather than every time a chest closes (except when a player
+    logs out with one open, when their inventory is saved too), so a crash no longer duplicates
+    what was put in or taken out since.
 - **The upgrade from 0.0.17 survives a crash during it.** Docking a ship that was at sea, and
   converting a prefab ship, now wait until the world is written before the old copy is thrown
   away, and the ship's engine fuel is kept until then.

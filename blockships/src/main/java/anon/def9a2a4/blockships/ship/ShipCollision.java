@@ -145,7 +145,7 @@ public class ShipCollision {
                 ship.physics.currentSpeed += alignment * speedChange;
 
                 // Clamp speed to max
-                ship.physics.currentSpeed = Math.max(-config.maxSpeed, Math.min(ship.physics.currentSpeed, config.maxSpeed));
+                ship.physics.currentSpeed = Math.max(-ship.physics.effectiveMaxSpeed(), Math.min(ship.physics.currentSpeed, ship.physics.effectiveMaxSpeed()));
 
                 // Also apply direct positional push for immediate response
                 Location vehicleLoc = ship.vehicle.getLocation();
@@ -171,7 +171,7 @@ public class ShipCollision {
             } else if (Math.abs(forwardComponent) > 0.001f) {
                 // Force is pushing in same direction as movement - add to speed
                 ship.physics.currentSpeed += forwardComponent * config.collisionResponseStrength * 0.3f;
-                ship.physics.currentSpeed = Math.max(-config.maxSpeed, Math.min(ship.physics.currentSpeed, config.maxSpeed));
+                ship.physics.currentSpeed = Math.max(-ship.physics.effectiveMaxSpeed(), Math.min(ship.physics.currentSpeed, ship.physics.effectiveMaxSpeed()));
             }
 
             // Apply lateral force as position offset (sliding along obstacles)

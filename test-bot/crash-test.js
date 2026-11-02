@@ -235,6 +235,88 @@ async function verifySail() {
   pass('sail_docks')
 }
 
+// Sail away from where the ship was last written, dock, crash. The record must land it where it docked, not where
+// its entities on disk are (where it launched).
+const DRIFT = { x: 1120, z: 0 }
+async function driftDock() {
+  await basin(DRIFT.x, DRIFT.z, SAIL_LENGTH)
+  const ship = await build(DRIFT, 'diamond', 9)
+  if (!await useWheel(ship.wheel, 'assemble')) return fail('drift_setup', 'assemble menu did not open')
+  if ((await waitForShulkers(bot, 30, 20, 500, 10)).length < 10) return fail('drift_setup', 'ship did not assemble')
+  await saveAll()                                  // the launched ship, at the launch spot, is on disk
+  bot.creative.stopFlying()
+  await sleep(1000)
+  if (!await mountShip(bot, log)) return fail('drift_setup', 'could not mount')
+  await steerShip(bot, 1, 0, false, 6000)
+  await sleep(2000)
+  if (!await disassembleViaWheelMenu(bot, log)) return fail('drift_setup', 'could not dock')
+  await sleep(1000)
+  const p = bot.entity.position.clone()
+  writeState({ ...readState(), drift: { ...ship, dockedNear: { x: p.x, y: p.y, z: p.z } } })
+  pass('drift_setup (sailed off, docked; killing before the dock reaches disk)')
+}
+
+async function verifyDriftDock() {
+  const s = readState().drift
+  await tp(Math.round(s.dockedNear.x), 106, Math.round(s.dockedNear.z) + 3)
+  await sleep(4000)
+  const chest = findNear({ x: Math.round(s.dockedNear.x), y: 101, z: Math.round(s.dockedNear.z) }, n => n === 'chest', 8)
+  if (!chest) return fail('drift_docked_where_it_docked', 'no chest where the ship docked')
+  const c = await countChestItem(chest, s.item)
+  if (c.error || c.count !== s.n) return fail('drift_docked_where_it_docked', c.error || `${c.count} ${s.item}, expected ${s.n}`)
+  pass(`drift_docked_where_it_docked (${c.count} ${s.item})`)
+  await tp(s.wheel.x, 106, s.wheel.z + 3)
+  await sleep(3000)
+  const atLaunch = findNear(s.chest, n => n === 'chest', 3)
+  atLaunch ? fail('drift_no_copy_at_launch', `a chest at the launch spot ${atLaunch}`) : pass('drift_no_copy_at_launch')
+  if (!await waitForNoShulkers()) return fail('drift_no_ghost', `${findShulkers(bot, 30).length} shulkers at the launch spot`)
+  pass('drift_no_ghost')
+}
+
+// Dock and launch again, then crash. 'redock': nothing reached disk after the first launch, so the dock is
+// redone and the wheel works. 'relaunch': the relaunch was saved, so the ship comes back at sea and the dock is
+// not landed a second time.
+const REDOCK = { x: 1160, z: 0 }
+const RELAUNCH = { x: 1200, z: 0 }
+async function dockAndRelaunch(at, item, n, saveRelaunch, key) {
+  await basin(at.x, at.z)
+  const ship = await build(at, item, n)
+  if (!await useWheel(ship.wheel, 'assemble')) return fail(`${key}_setup`, 'assemble menu did not open')
+  if ((await waitForShulkers(bot, 30, 20, 500, 10)).length < 10) return fail(`${key}_setup`, 'ship did not assemble')
+  await saveAll()
+  if (!await disassembleViaWheelMenu(bot, log) || !await waitForNoShulkers()) return fail(`${key}_setup`, 'could not dock')
+  if (!await relocate(ship)) return fail(`${key}_setup`, 'no wheel after docking')
+  if (!await useWheel(ship.wheel, 'assemble')) return fail(`${key}_setup`, 'relaunch menu did not open')
+  if ((await waitForShulkers(bot, 30, 20, 500, 10)).length < 10) return fail(`${key}_setup`, 'did not relaunch')
+  if (saveRelaunch) await saveAll()
+  writeState({ ...readState(), [key]: ship })
+  pass(`${key}_setup`)
+}
+const redock = () => dockAndRelaunch(REDOCK, 'emerald', 4, false, 'redock')
+const relaunch = () => dockAndRelaunch(RELAUNCH, 'gold_ingot', 3, true, 'relaunch')
+
+async function verifyRedock() {
+  const ship = readState().redock
+  await tp(ship.wheel.x, 105, ship.wheel.z + 3)
+  await sleep(4000)
+  await checkDocked('redock_docked_again', ship)
+  if (!await useWheel(ship.wheel, 'assemble')) return fail('redock_wheel_works', 'wheel menu did not open')
+  if ((await waitForShulkers(bot, 30, 20, 500, 10)).length < 10) return fail('redock_wheel_works', 'wheel did not assemble')
+  if (!await disassembleViaWheelMenu(bot, log)) return fail('redock_wheel_works', 'could not dock again')
+  await checkDocked('redock_wheel_works', ship)
+}
+
+async function verifyRelaunch() {
+  const ship = readState().relaunch
+  await tp(ship.wheel.x, 105, ship.wheel.z + 3)
+  await sleep(4000)
+  const here = await waitForShulkers(bot, 30, 20, 500, 10)
+  if (here.length < 10) return fail('relaunch_ship_back', `${here.length} shulkers; the relaunched ship should be at sea`)
+  pass('relaunch_ship_back')
+  const chest = findNear(ship.chest, n => n === 'chest', 2)
+  chest ? fail('relaunch_no_second_hull', `a chest standing at the dock ${chest}`) : pass('relaunch_no_second_hull')
+}
+
 async function disassembleViaWheelMenuNear() {
   bot.creative.stopFlying()
   await sleep(1000)
@@ -250,7 +332,11 @@ async function main() {
   bot.chat('/gamemode creative')
   await sleep(500)
   bot.creative.startFlying()
-  const phases = { dock, 'verify-dock': verifyDock, launch, 'verify-launch': verifyLaunch, sail, 'verify-sail': verifySail }
+  const phases = {
+    dock, 'verify-dock': verifyDock, launch, 'verify-launch': verifyLaunch, sail, 'verify-sail': verifySail,
+    drift: driftDock, 'verify-drift': verifyDriftDock, redock, 'verify-redock': verifyRedock,
+    relaunch, 'verify-relaunch': verifyRelaunch
+  }
   try {
     if (!phases[PHASE]) throw new Error('usage: node crash-test.js ' + Object.keys(phases).join('|'))
     await phases[PHASE]()

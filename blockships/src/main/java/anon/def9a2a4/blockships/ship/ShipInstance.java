@@ -867,6 +867,26 @@ public class ShipInstance {
                     anon.def9a2a4.blockships.ShipStats.sinkBlocksPerSecond(config, lift)));
             }
         }
+        appendFuel(bar);
+    }
+
+    /**
+     * "fuel 2m10s": how long the first engine to run dry lasts at its current burn. Running dry at altitude is how
+     * a flier fails, and the help book tells pilots to watch their fuel; this is where they watch it. Nothing when
+     * no engine is aboard or none is burning.
+     */
+    private void appendFuel(StringBuilder bar) {
+        if (mechanism == null) return;
+        double secs;
+        try {
+            secs = anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry().fuelSecondsLeft(mechanism);
+        } catch (Throwable t) {
+            return;   // an older DefCoreLib
+        }
+        if (secs < 0 || Double.isInfinite(secs)) return;
+        long s = (long) secs;
+        String color = s < 30 ? "§c" : s < 120 ? "§e" : "§a";
+        bar.append("  §7fuel ").append(color).append(s >= 60 ? (s / 60) + "m" + (s % 60) + "s" : s + "s");
     }
 
     // Set input state from PaperInputListener

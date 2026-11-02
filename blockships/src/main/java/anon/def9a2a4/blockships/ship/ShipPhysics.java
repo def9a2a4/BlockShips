@@ -147,7 +147,13 @@ public class ShipPhysics {
         // computed its stats once, at assembly, with currentSpeed == 0 — and a hull carrying two
         // hundred points of canvas turned exactly like a bare one at every speed, for the whole voyage.
         statsComputed = false;
+        // The spool advances here, once per tick. computeEffectiveStats can run more than once a tick (a readout,
+        // then the physics after a re-solve cleared the stats), and advancing it there spooled at double rate.
+        live = liveThrust();
     }
+
+    /** Spooled thrust as of this tick's {@link #tickPropulsion}. */
+    private anon.def9a2a4.blockships.ShipThrust.@org.jetbrains.annotations.Nullable Totals live;
 
     /** How much lift the ship is currently producing, relative to its weight. 1.0 = neutral. */
     public float liftRatio() {
@@ -289,9 +295,7 @@ public class ShipPhysics {
         // fast the ship is already moving, and effectiveMaxSpeed is only assigned below.
         float prevTop = Math.max(0.0001f, effectiveMaxSpeed > 0 ? effectiveMaxSpeed : config.maxSpeed);
         float speedFrac = Math.abs(currentSpeed) / prevTop;
-        // Call liveThrust() EXACTLY ONCE per computeEffectiveStats: it is not a getter, it advances the
-        // spool ramp by one step each time. A second call here would spool at double rate.
-        anon.def9a2a4.blockships.ShipThrust.Totals live = liveThrust();
+        if (live == null) live = liveThrust();   // before the first tick
         anon.def9a2a4.blockships.ShipStats stats =
             anon.def9a2a4.blockships.ShipStats.of(config, ship.model, live, speedFrac, grounded);
         float ratio = stats.forwardRatio;

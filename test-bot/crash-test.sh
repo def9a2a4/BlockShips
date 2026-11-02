@@ -70,6 +70,16 @@ phase launch || FAILED=1
 crash
 start
 phase verify-launch || FAILED=1
+phase drift || FAILED=1
+crash
+start
+phase verify-drift || FAILED=1
+phase relaunch || FAILED=1               # first: its save-all would write the redock case to disk too
+phase redock || FAILED=1
+crash
+start
+phase verify-redock || FAILED=1
+phase verify-relaunch || FAILED=1
 stop
 fi
 

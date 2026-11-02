@@ -2173,7 +2173,7 @@ public class DisplayShip implements Listener {
      * Arrows bounce off shulkers and fireballs do nothing by default,
      * so we manually apply damage here.
      */
-    @EventHandler
+    @EventHandler(ignoreCancelled = true)   // a protection plugin that cancels the hit has the last word, as for melee
     public void onProjectileHitShip(ProjectileHitEvent e) {
         if (!(e.getHitEntity() instanceof Shulker shulker)) return;
 
