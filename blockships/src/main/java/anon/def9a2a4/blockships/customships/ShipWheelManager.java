@@ -2018,7 +2018,37 @@ public class ShipWheelManager {
         } catch (Throwable t) {
             return false;
         }
-        return ownedBlock(wheel) != null;
+        if (ownedBlock(wheel) == null) return false;
+        return hullStillDocked(wheel, uuid);
+    }
+
+    /**
+     * Every block of the ship stands where it was built. The wheel alone is not enough: a ship spans chunks, each
+     * written on its own timer, so a crash can leave the wheel's chunk from before the launch and another chunk
+     * from after it (aired out). Treating that as never launched would discard the only record of the blocks
+     * that left. True when the model can't be read: the wheel check above is then all there is.
+     */
+    private boolean hullStillDocked(ShipWheelData wheel, UUID shipId) {
+        if (!(plugin instanceof BlockShipsPlugin bsp) || bsp.getDisplayShip() == null) return true;
+        Location cell = wheel.getBlockLocation();
+        World world = liveWorld(cell);
+        if (world == null) return true;
+        var load = bsp.getDisplayShip().getShipWorldData().loadShipMetadataChecked(world, shipId);
+        if (load.status() != anon.def9a2a4.blockships.ShipWorldData.LoadStatus.OK || load.state().modelData == null) return true;
+        ShipModel model;
+        try {
+            model = ShipModel.fromMap(load.state().modelData);
+        } catch (Exception e) {
+            return true;
+        }
+        for (ShipModel.ModelPart part : model.parts) {
+            if (part.block == null) continue;
+            org.joml.Vector3f t = part.local.getTranslation(new org.joml.Vector3f());
+            int x = cell.getBlockX() + Math.round(t.x), y = cell.getBlockY() + Math.round(t.y), z = cell.getBlockZ() + Math.round(t.z);
+            if (!world.isChunkLoaded(x >> 4, z >> 4)) return false;   // can't tell yet
+            if (world.getBlockAt(x, y, z).getType() != part.block.getMaterial()) return false;
+        }
+        return true;
     }
 
     /** True if this id has a persisted ship sidecar on disk (any world). Mirrors {@code collectPersistedShipIds}. */
