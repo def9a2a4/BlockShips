@@ -20,6 +20,11 @@
 REPO_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 DEFCORELIB_DIR ?= $(REPO_ROOT)/../defCoreLib
 
+# BlockShips errors in server.log, minus the ones a bot test provokes on purpose (blocks_yml feeds a
+# broken config/blocks.yml override and expects BlockShips to refuse it).
+SERVER_ERRORS = grep -E "ERROR.*BlockShips|BlockShips.*(Exception|Throwable)|\[BlockShips\].*(failed to restore|skipping)|at anon\.def9a2a4\.blockships" server.log 2>/dev/null \
+	| grep -vE "config/blocks.yml could not be parsed|Falling back to the bundled blocks.yml|Keeping the block configuration already in force"
+
 # An explicit DEFCORELIB_JAR (command line or environment) short-circuits the sibling entirely —
 # that is what lets CI run with no defCoreLib checkout next to the repo.
 ifeq ($(strip $(DEFCORELIB_JAR)),)
@@ -294,9 +299,9 @@ test-server-startup-only:
 	rm -f server_input; \
 	rm -f errors.log; \
 	FAILED=0; \
-	if grep -qE "ERROR.*BlockShips|BlockShips.*(Exception|Throwable)|\[BlockShips\].*(failed to restore|skipping)|at anon\.def9a2a4\.blockships" server.log 2>/dev/null; then \
+	if $(SERVER_ERRORS) | grep -q .; then \
 		echo "=== SERVER ERRORS ===" | tee -a errors.log; \
-		grep -E "ERROR.*BlockShips|BlockShips.*(Exception|Throwable)|\[BlockShips\].*(failed to restore|skipping)|at anon\.def9a2a4\.blockships" server.log | tee -a errors.log; \
+		$(SERVER_ERRORS) | tee -a errors.log; \
 		FAILED=1; \
 	fi; \
 	if [ $$FAILED -eq 1 ]; then \
@@ -389,10 +394,10 @@ test-server-ci:
 		echo "Bot tests failed (exit code $$BOT_EXIT)" | tee -a errors.log; \
 		FAILED=1; \
 	fi; \
-	if grep -qE "ERROR.*BlockShips|BlockShips.*(Exception|Throwable)|\[BlockShips\].*(failed to restore|skipping)|at anon\.def9a2a4\.blockships" server.log 2>/dev/null; then \
+	if $(SERVER_ERRORS) | grep -q .; then \
 		echo "" | tee -a errors.log; \
 		echo "=== SERVER ERRORS ===" | tee -a errors.log; \
-		grep -E "ERROR.*BlockShips|BlockShips.*(Exception|Throwable)|\[BlockShips\].*(failed to restore|skipping)|at anon\.def9a2a4\.blockships" server.log | tee -a errors.log; \
+		$(SERVER_ERRORS) | tee -a errors.log; \
 		FAILED=1; \
 	fi; \
 	if [ $$FAILED -eq 1 ]; then \
