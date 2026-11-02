@@ -166,7 +166,19 @@ public class ShipWorldData {
      * Saves ship metadata to per-world storage.
      * Does NOT include position - that comes from the recovered vehicle entity.
      */
+    /**
+     * 0.0.17 prefab ships just migrated whose sidecar must stay as 0.0.17 wrote it until the world is on disk:
+     * it is what a crash before then needs to migrate the ship again (cargo included), and any save of the new
+     * ship would replace it and mark it migrated.
+     */
+    private final Set<UUID> heldUntilMigrated = ConcurrentHashMap.newKeySet();
+
+    public void holdUntilMigrated(UUID shipId) { heldUntilMigrated.add(shipId); }
+
+    public void releaseMigrationHold(UUID shipId) { heldUntilMigrated.remove(shipId); }
+
     public void saveShipMetadata(ShipInstance ship) {
+        if (heldUntilMigrated.contains(ship.id)) return;
         World world = ship.vehicle.getLocation().getWorld();
         if (world == null) return;
 
@@ -194,6 +206,7 @@ public class ShipWorldData {
      * then writes YAML to disk on the IO executor thread.
      */
     public void saveShipMetadataAsync(ShipInstance ship) {
+        if (heldUntilMigrated.contains(ship.id)) return;
         World world = ship.vehicle.getLocation().getWorld();
         if (world == null) return;
 

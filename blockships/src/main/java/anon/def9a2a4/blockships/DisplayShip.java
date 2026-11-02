@@ -440,7 +440,12 @@ public class DisplayShip implements Listener {
             scheduleWheelRelink(ship, shipId);
             // Re-persist as delegated (writes the migrated marker) once the new entities are on disk. A chunk unload
             // before then writes it anyway, together with the entities.
-            runAfterWorldSaved(world, () -> { if (ShipRegistry.byId(shipId) == ship) shipWorldData.saveShipMetadata(ship); });
+            shipWorldData.holdUntilMigrated(shipId);
+            runAfterWorldSaved(world, () -> {
+                shipWorldData.releaseMigrationHold(shipId);
+                ShipInstance live = ShipRegistry.byId(shipId);
+                if (live != null) shipWorldData.saveShipMetadata(live);
+            });
             // AFTER successful migration (ordering is load-bearing). Scan the model footprint radius (≥64) so the reap
             // covers exactly what forceLoadFootprint force-loaded — a >64-block-radius ship no longer strands native
             // entities in its outer chunks for the straggler sweep to mop up later.
@@ -466,7 +471,10 @@ public class DisplayShip implements Listener {
         int dropped = ((BlockShipsPlugin) plugin).getShipWheelManager()
             .landNativeShip(shipId, at, yaw, model, ShipInstance.decodeCargo(state));
         reapNativeEntities(shipId, root, Math.max(footprintRadius(model), 64));
-        runAfterWorldSaved(world, () -> shipWorldData.removeShip(world, shipId));
+        runAfterWorldSaved(world, () -> {
+            ((BlockShipsPlugin) plugin).getShipWheelManager().finishNativeDock(shipId);
+            shipWorldData.removeShip(world, shipId);
+        });
         migrationFailureLogged.remove(shipId);
         plugin.getLogger().info("Docked 0.0.17 ship " + shipId + " where it stood at " + at.getBlockX() + ","
             + at.getBlockY() + "," + at.getBlockZ() + " in " + world.getName() + " for the upgrade"
@@ -484,43 +492,35 @@ public class DisplayShip implements Listener {
         runAfterWorldSaved(world, () -> shipWorldData.removeShip(world, shipId));
     }
 
-    /** Per world: work waiting for the next save, and work whose world has been saved once since. */
-    private final Map<String, List<Runnable>> awaitingSave = new HashMap<>();
-    private final Map<String, List<Runnable>> savedOnce = new HashMap<>();
+    /** Per world: upgrade work waiting for the world to be written. */
+    private final Map<World, List<Runnable>> awaitingSave = new HashMap<>();
 
     /**
-     * Runs {@code work} once the world's entities as they are now have reached disk. An upgrade migration replaces
-     * a 0.0.17 ship's entities with blocks or a new mechanism; the record that says "done" (sidecar deleted, or
-     * marked migrated) must not get to disk first, or a crash brings back the old entities with a record that
-     * says to reap them, and the ship is gone.
+     * Runs {@code work} once the world as it is now is on disk. An upgrade migration replaces a 0.0.17 ship's
+     * entities with blocks or a new mechanism; the record that says "done" (sidecar deleted, or marked migrated)
+     * must not get to disk first, or a crash brings back the old entities with a record that says to reap them,
+     * and the ship is gone.
      *
-     * <p>WorldSaveEvent fires before the chunks are written and Paper writes them asynchronously, so the work runs
-     * at the second save after it was queued. Both saves are requested here, five seconds apart, instead of
-     * waiting for autosaves.
+     * <p>Paper writes each chunk on its own timer and WorldSaveEvent writes nothing, so the only way to know is
+     * {@code save(true)}: it writes every chunk and waits for the disk. That costs a full save, once per tick that
+     * queued any work, and only on the upgrade.
      */
     private void runAfterWorldSaved(World world, Runnable work) {
-        boolean idle = !awaitingSave.containsKey(world.getName());
-        awaitingSave.computeIfAbsent(world.getName(), k -> new ArrayList<>()).add(work);
-        if (idle) Bukkit.getScheduler().runTask(plugin, () -> world.save());
-    }
-
-    @EventHandler
-    public void onWorldSave(org.bukkit.event.world.WorldSaveEvent event) {
-        World world = event.getWorld();
-        List<Runnable> due = savedOnce.remove(world.getName());
-        List<Runnable> next = awaitingSave.remove(world.getName());
-        if (next != null) {
-            savedOnce.put(world.getName(), next);
-            Bukkit.getScheduler().runTaskLater(plugin, () -> world.save(), 100);
-        }
-        if (due != null) due.forEach(Runnable::run);
+        boolean idle = awaitingSave.isEmpty();
+        awaitingSave.computeIfAbsent(world, k -> new ArrayList<>()).add(work);
+        if (idle) Bukkit.getScheduler().runTask(plugin, () -> {
+            Map<World, List<Runnable>> due = new HashMap<>(awaitingSave);
+            awaitingSave.clear();
+            due.forEach((w, l) -> {
+                w.save(true);
+                l.forEach(Runnable::run);
+            });
+        });
     }
 
     /** Shutdown: the server saves every world after plugins disable, so everything queued can run now. */
     private void flushAfterSaveWork() {
-        savedOnce.values().forEach(l -> l.forEach(Runnable::run));
         awaitingSave.values().forEach(l -> l.forEach(Runnable::run));
-        savedOnce.clear();
         awaitingSave.clear();
     }
 

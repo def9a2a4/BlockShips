@@ -1976,6 +1976,7 @@ public class ShipWheelManager {
         // ship. This does NOT strand a genuinely-dead ship: every death routes through ShipInstance.destroy()
         // (W2) which nulls the link → NOT_ASSEMBLED above → this branch is unreached; and removeShip prunes the
         // persisted set. (Same source classifyWheels uses, so the two authorities agree.)
+        if (chunkLoaded && neverLaunched(wheel)) return new WheelResolution(WheelState.ORPHAN, null);
         if (!chunkLoaded || hasLiveMechanism(uuid) || isPersistedShip(uuid)) {
             return new WheelResolution(WheelState.UNLOADED_RECOVERABLE, null);
         }
@@ -2001,6 +2002,23 @@ public class ShipWheelManager {
             }
             return true;
         }
+    }
+
+    /**
+     * The wheel is linked to a ship but its own stamped head still stands at the dock, and nothing of that ship
+     * is live or loading: the server stopped right after the launch, before the world was written, so the ship
+     * never left. Assembling aires the dock out, so this cannot be a ship that sailed away.
+     */
+    private boolean neverLaunched(ShipWheelData wheel) {
+        UUID uuid = wheel.getAssembledShipUUID();
+        Location cell = wheel.getBlockLocation();
+        if (uuid == null || !cell.getChunk().isEntitiesLoaded() || hasLiveMechanism(uuid)) return false;
+        try {
+            if (anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry().isRecoveryPending(uuid)) return false;
+        } catch (Throwable t) {
+            return false;
+        }
+        return ownedBlock(wheel) != null;
     }
 
     /** True if this id has a persisted ship sidecar on disk (any world). Mirrors {@code collectPersistedShipIds}. */
@@ -2050,12 +2068,21 @@ public class ShipWheelManager {
             }
         }
 
+        boolean neverLeft = neverLaunched(wheel);
         wheel.setAssembledShipUUID(null);
         saveAll();
 
         Location near = wheel.getBlockLocation();
         World nearWorld = liveWorld(near);
         if (nearWorld == null) return;
+        if (neverLeft && plugin instanceof BlockShipsPlugin bsp2) {
+            // Its save files describe a ship that never reached disk. Kept, any of its entities that did reach
+            // disk would come back as a second ship beside the dock.
+            bsp2.getDisplayShip().getShipWorldData().removeShip(nearWorld, uuid);
+            anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry().discardPersistedState(nearWorld, uuid);
+            plugin.getLogger().info("Wheel " + wheel.getWheelId() + "'s ship " + uuid + " never left its dock (the server "
+                + "stopped right after it launched); the wheel is free again.");
+        }
         String rootTag = anon.def9a2a4.blockships.ShipTags.shipRootTag(uuid);
         // Bounded, not world.getEntities(): several of this method's call sites are player-interactive
         // (assemble, disassemble, lock, unlock, detect, align), and an unbounded whole-world entity walk on
@@ -2154,13 +2181,25 @@ public class ShipWheelManager {
         if (wheel != null) {
             Location cell = shipLoc.getBlock().getLocation();
             relocate(wheel, cell, BlockStructureScanner.rotateBlockFace(wheel.getFacing(), yaw - model.assemblyYaw));
-            wheel.setAssembledShipUUID(null);
-            wheel.clearLegacyEngines();
             // An unstamped 0.0.17 head is accepted here; the legacy adoption stamps it on first right-click.
             verifyWheelLanded(wheel, cell, false);
+            // Still linked, fuel still on the record: see finishNativeDock.
             saveAll();
         }
         return dropped;
+    }
+
+    /**
+     * The second half of {@link #landNativeShip}, once the landed blocks are on disk. Unlinking the wheel and
+     * dropping its 0.0.17 engine fuel any earlier meant a crash before the world was written docked the ship
+     * again on the next boot without finding its wheel, and lost the fuel.
+     */
+    public void finishNativeDock(UUID shipId) {
+        ShipWheelData wheel = getWheelByShipUUID(shipId);
+        if (wheel == null) return;
+        wheel.setAssembledShipUUID(null);
+        wheel.clearLegacyEngines();
+        saveAll();
     }
 
     /**
