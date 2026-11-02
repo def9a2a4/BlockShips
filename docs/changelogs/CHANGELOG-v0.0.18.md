@@ -68,9 +68,12 @@
   wheel aboard sets the limit. It keeps its speed rolling down a slope. Detect tells you it's a land vehicle, which wheel limits its climb, and which wheels
   are mounted the wrong way.
 
-- **Propellers spin when you use them.** Forward propellers follow the throttle, side ones and
-  reaction wheels the steering, lift propellers the climb. A parked ship with a lit engine no
-  longer sits there with everything turning. Wheels roll at road speed and backwards in reverse.
+- **Propellers spin when you use them.** Forward propellers follow the ship's speed (backwards
+  going astern), side ones and reaction wheels the steering, lift propellers the climb. Only an
+  assembled, powered ship spins them: a placed propeller draws no power and stays still, and a
+  parked ship with a lit engine no longer sits there with everything turning. Wheels roll at road
+  speed and backwards in reverse. Thruster flames follow the nozzle at speed, and a lift-held ship
+  holds its height from the moment it's assembled.
 
 - **Engines only burn fuel for power that's used.** A parked or docked ship burns nothing, and half
   throttle burns about half. Thrusters burn by their own use. Thruster exhaust and engine smoke now
