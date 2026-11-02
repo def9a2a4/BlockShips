@@ -1,5 +1,6 @@
 package anon.def9a2a4.blockships.customships;
 
+import anon.def9a2a4.blockships.util.DebugLog;
 import anon.def9a2a4.blockships.BlockShipsPlugin;
 import anon.def9a2a4.blockships.ShipConfig;
 import anon.def9a2a4.blockships.ShipCustomization;
@@ -303,7 +304,8 @@ public class ShipWheelManager {
         wheelList.addAll(unresolvedRows);
 
         if (!writeWheelRows(wheelsFile, wheelList, plugin.getLogger())) return false;
-        plugin.getLogger().info("Saved " + wheelList.size() + " ship wheels to " + WHEELS_FILE);
+        // saveAll runs on nearly every wheel action; only the shutdown save is worth a line by default.
+        DebugLog.log("Saved " + wheelList.size() + " ship wheels to " + WHEELS_FILE);
         return true;
     }
 
@@ -1503,7 +1505,7 @@ public class ShipWheelManager {
                     // getBlock(), so nothing here force-loads the old dock's chunk (this runs for every
                     // block of every structure on every mover stroke) or throws on an unloaded world.
                     relocate(w, block.getLocation(), landedFacing);
-                    plugin.getLogger().info("Ship wheel " + w.getWheelId() + " moved " + locationKey(old)
+                    DebugLog.log("Ship wheel " + w.getWheelId() + " moved " + locationKey(old)
                         + " → " + locationKey(block.getLocation())
                         + " (carried by a mechanism); its record now follows the block.");
                     markDirty();   // NOT saveAll() — see the class note above

@@ -1,5 +1,6 @@
 package anon.def9a2a4.blockships;
 
+import anon.def9a2a4.blockships.util.DebugLog;
 import org.bukkit.*;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.Recipe;
@@ -62,7 +63,7 @@ public class ItemUtil {
         }
 
         if (!registeredNames.isEmpty()) {
-            plugin.getLogger().info("Registered recipes: " + String.join(", ", registeredNames));
+            DebugLog.log("Registered recipes: " + String.join(", ", registeredNames));
         }
     }
 

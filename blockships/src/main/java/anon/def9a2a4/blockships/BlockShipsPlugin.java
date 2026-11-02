@@ -1,5 +1,6 @@
 package anon.def9a2a4.blockships;
 
+import anon.def9a2a4.blockships.util.DebugLog;
 import anon.def9a2a4.blockships.blockconfig.BlockConfigManager;
 import anon.def9a2a4.blockships.customships.ShipWheelData;
 import anon.def9a2a4.blockships.customships.ShipWheelManager;
@@ -58,6 +59,7 @@ public class BlockShipsPlugin extends JavaPlugin {
         new Metrics(this, pluginId);
 
         saveDefaultConfig();
+        DebugLog.setEnabled(getConfig().getBoolean("debug", false));
         ConfigResources.resetReporting();
 
         // Did config.yml actually parse? Bukkit answers a YAML error with an empty config backed by jar
@@ -88,7 +90,7 @@ public class BlockShipsPlugin extends JavaPlugin {
         if (anon.def9a2a4.blockships.util.ServerVersion.isAtLeast(1, 21, 2) && hasPaperInputEvent()) {
             paperInputListener = new PaperInputListener(this);
             getServer().getPluginManager().registerEvents(paperInputListener, this);
-            getLogger().info("Using Paper PlayerInputEvent for ship controls (ProtocolLib not required)");
+            DebugLog.log("Using Paper PlayerInputEvent for ship controls (ProtocolLib not required)");
         } else if (Bukkit.getPluginManager().getPlugin("ProtocolLib") != null) {
             steeringListener = new ShipSteeringListener(this);
         } else {
@@ -150,13 +152,16 @@ public class BlockShipsPlugin extends JavaPlugin {
         specialDrownedListener = new SpecialDrownedListener(this);
         if (specialDrownedListener.isEnabled()) {
             Bukkit.getPluginManager().registerEvents(specialDrownedListener, this);
-            getLogger().info("Special drowned spawning enabled.");
+            DebugLog.log("Special drowned spawning enabled.");
         }
 
         // Last, so every content file (blocks, items, prefab models) has been resolved by now.
         getLogger().info(ConfigResources.describeSources());
 
-        getLogger().info("BlockShips enabled.");
+        getLogger().info("BlockShips enabled: " + BlockConfigManager.getInstance().materialCount()
+            + " block types, " + displayShip.prefabShipCount() + " prefab ships, "
+            + shipWheelManager.getWheels().size() + " ship wheels"
+            + (DebugLog.enabled() ? "; debug logging ON" : "") + ".");
     }
 
     @Override
@@ -165,13 +170,12 @@ public class BlockShipsPlugin extends JavaPlugin {
         ShipCollisionCoordinator.shutdown();
 
         // Save ship wheels before shutdown
-        if (shipWheelManager != null) {
-            shipWheelManager.saveAll();
+        if (shipWheelManager != null && shipWheelManager.saveAll()) {
+            getLogger().info("Saved " + shipWheelManager.getWheels().size() + " ship wheels.");
         }
         if (displayShip != null) {
             displayShip.shutdown();
         }
-        getLogger().info("BlockShips disabled.");
     }
 
     public DisplayShip getDisplayShip() {
@@ -263,6 +267,7 @@ public class BlockShipsPlugin extends JavaPlugin {
         }
         if (sender.hasPermission("blockships.reload")) {
             sender.sendMessage("§e/blockships reload §7- Reload the plugin configuration");
+            sender.sendMessage("§e/blockships debug [on|off] §7- Show or set verbose [debug] logging");
         }
         if (sender.hasPermission("blockships.give")) {
             sender.sendMessage("§e/blockships give <item> §7- Give yourself a ship wheel or ship kit §8(players only)");
@@ -568,7 +573,7 @@ public class BlockShipsPlugin extends JavaPlugin {
             if (!enabled) {
                 getLogger().info("WorldGuard integration disabled (plugins.worldguard.enabled: false).");
             } else {
-                getLogger().info("WorldGuard not installed; region protection integration inactive.");
+                DebugLog.log("WorldGuard not installed; region protection integration inactive.");
             }
         }
     }
@@ -636,12 +641,33 @@ public class BlockShipsPlugin extends JavaPlugin {
                 return true;
             }
 
+            if (args[0].equalsIgnoreCase("debug")) {
+                if (!sender.hasPermission("blockships.reload")) {
+                    sender.sendMessage("§cYou don't have permission to change debug logging.");
+                    return true;
+                }
+                if (args.length >= 2) {
+                    String arg = args[1].toLowerCase(java.util.Locale.ROOT);
+                    if (!arg.equals("on") && !arg.equals("off")) {
+                        sender.sendMessage("§cUsage: /blockships debug [on|off]");
+                        return true;
+                    }
+                    DebugLog.setEnabled(arg.equals("on"));
+                    getConfig().set("debug", DebugLog.enabled());
+                    saveConfig();
+                }
+                sender.sendMessage("§7Debug logging " + (DebugLog.enabled() ? "§aON" : "§cOFF")
+                    + "§7 - [debug] lines go to logs/latest.log");
+                return true;
+            }
+
             if (args[0].equalsIgnoreCase("reload")) {
                 if (!sender.hasPermission("blockships.reload")) {
                     sender.sendMessage("§cYou don't have permission to reload this plugin.");
                     return true;
                 }
                 reloadConfig();
+                DebugLog.setEnabled(getConfig().getBoolean("debug", false));
                 ConfigResources.resetReporting();
                 // An unparseable config.yml leaves getConfig() serving jar defaults, so every reload
                 // below would silently apply the wrong values. Check before, and tell the sender.
@@ -1643,7 +1669,10 @@ public class BlockShipsPlugin extends JavaPlugin {
                 subcommands.add("highlightseats");
                 subcommands.add("highlightcolliders");
             }
-            if (sender.hasPermission("blockships.reload")) subcommands.add("reload");
+            if (sender.hasPermission("blockships.reload")) {
+                subcommands.add("reload");
+                subcommands.add("debug");
+            }
             if (sender.hasPermission("blockships.give")) {
                 subcommands.add("give");
                 subcommands.add("spawndrowned");
@@ -1664,7 +1693,11 @@ public class BlockShipsPlugin extends JavaPlugin {
         } else if (args.length == 2) {
             String subcommand = args[0].toLowerCase();
 
-            if (subcommand.equals("give") && sender.hasPermission("blockships.give")) {
+            if (subcommand.equals("debug") && sender.hasPermission("blockships.reload")) {
+                for (String opt : List.of("on", "off")) {
+                    if (opt.startsWith(args[1].toLowerCase())) completions.add(opt);
+                }
+            } else if (subcommand.equals("give") && sender.hasPermission("blockships.give")) {
                 for (String type : getGiveableItemNames()) {
                     if (type.toLowerCase().startsWith(args[1].toLowerCase())) {
                         completions.add(type);

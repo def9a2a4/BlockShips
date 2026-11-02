@@ -25,7 +25,7 @@ public class SteerPacketCompat {
         if (!logged) {
             logged = true;
             if (available) {
-                LOGGER.info("[SteerPacketCompat] Sprint available in STEER_VEHICLE packet (1.21.2+)");
+                DebugLog.log("[SteerPacketCompat] Sprint available in STEER_VEHICLE packet (1.21.2+)");
             } else {
                 LOGGER.info("[SteerPacketCompat] Sprint NOT in packet - using S+Space for airship descent");
             }

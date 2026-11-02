@@ -1,5 +1,6 @@
 package anon.def9a2a4.blockships;
 
+import anon.def9a2a4.blockships.util.DebugLog;
 import anon.def9a2a4.blockships.customships.ShipWheelData;
 import anon.def9a2a4.blockships.customships.ShipWheelManager;
 import anon.def9a2a4.blockships.customships.ShipWheelMenu;
@@ -207,7 +208,7 @@ public class DisplayShip implements Listener {
         shipModels.putAll(fresh);
 
         if (!loadedShips.isEmpty()) {
-            plugin.getLogger().info("Loaded prefab ships: " + String.join(", ", loadedShips));
+            DebugLog.log("Loaded prefab ships: " + String.join(", ", loadedShips));
         }
 
         // Set default model to first ship type (for backwards compatibility)
@@ -779,7 +780,7 @@ public class DisplayShip implements Listener {
         ship.applyInitialDrivenPose(); // render the saved heading on frame 1 (no one-tick yaw flash)
         ShipRegistry.register(ship);
         scheduleWheelRelink(ship, mechId);
-        plugin.getLogger().info("Recovered delegated " + ("custom".equals(state.shipType) ? "custom" : "prefab")
+        DebugLog.log("Recovered delegated " + ("custom".equals(state.shipType) ? "custom" : "prefab")
             + " ship " + mechId);
     }
 
@@ -864,6 +865,10 @@ public class DisplayShip implements Listener {
     /**
      * Create a ship kit for a specific ship type with custom banner and wood type.
      */
+    public int prefabShipCount() {
+        return shipModels.size();
+    }
+
     public static ItemStack createShipKit(ItemStack banner, String woodType, String shipType) {
         return createShipKit(shipType, banner, woodType, Bukkit.getPluginManager().getPlugin("BlockShips"));
     }

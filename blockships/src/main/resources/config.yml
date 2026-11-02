@@ -10,6 +10,11 @@ config-version: 2
 # - those mean your edits are being ignored, which you always want to hear about.
 warn-config-mismatch: true
 
+# Verbose logging for troubleshooting. When true, BlockShips writes extra "[debug]" lines (wheel saves,
+# ship recovery on chunk load, version probes, ...) to logs/latest.log - turn it on, reproduce the
+# problem, and share that file. Also toggled live with /blockships debug on|off, which saves it here.
+debug: false
+
 # ---------------------------------------------------------------------------
 # Customizing blocks.yml, items.yml and the prefab ship models
 #

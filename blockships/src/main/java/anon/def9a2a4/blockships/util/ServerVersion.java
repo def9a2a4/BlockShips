@@ -27,7 +27,7 @@ public class ServerVersion {
         initialized = true;
 
         String bukkitVersion = Bukkit.getBukkitVersion();
-        LOGGER.info("[ServerVersion] Parsing version: " + bukkitVersion);
+        DebugLog.log("[ServerVersion] Parsing version: " + bukkitVersion);
 
         try {
             // Take leading numeric dot-separated segments; stop at the first non-numeric one.
@@ -46,7 +46,7 @@ public class ServerVersion {
             minor = nums[1];
             patch = nums[2];
             versionNumber = major * 10000 + minor * 100 + patch;
-            LOGGER.info("[ServerVersion] Detected version: " + major + "." + minor + "." + patch);
+            DebugLog.log("[ServerVersion] Detected version: " + major + "." + minor + "." + patch);
         } catch (Exception e) {
             LOGGER.severe("[ServerVersion] Could not parse version '" + bukkitVersion + "': " + e.getMessage() + " - defaulting to 1.21.11");
             major = 1;

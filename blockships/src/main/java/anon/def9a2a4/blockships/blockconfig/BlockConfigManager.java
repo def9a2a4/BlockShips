@@ -1,5 +1,6 @@
 package anon.def9a2a4.blockships.blockconfig;
 
+import anon.def9a2a4.blockships.util.DebugLog;
 import anon.def9a2a4.blockships.BlockShipsPlugin;
 import anon.def9a2a4.blockships.ConfigResources;
 import anon.def9a2a4.blockships.ShipModel;
@@ -37,6 +38,10 @@ public class BlockConfigManager {
         if (instance == null) {
             instance = new BlockConfigManager(plugin);
         }
+    }
+
+    public int materialCount() {
+        return blockPropertiesCache.size();
     }
 
     public static BlockConfigManager getInstance() {
@@ -100,7 +105,7 @@ public class BlockConfigManager {
 
         blockPropertiesCache.clear();
         blockPropertiesCache.putAll(parsed);
-        logger.info("Loaded block configuration for " + blockPropertiesCache.size()
+        DebugLog.log("Loaded block configuration for " + blockPropertiesCache.size()
             + " materials from " + loaded.describeSource());
         return loaded;
     }

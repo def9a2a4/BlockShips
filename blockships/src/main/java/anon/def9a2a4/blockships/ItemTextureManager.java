@@ -1,5 +1,6 @@
 package anon.def9a2a4.blockships;
 
+import anon.def9a2a4.blockships.util.DebugLog;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -66,7 +67,7 @@ public class ItemTextureManager {
                 }
             }
 
-            plugin.getLogger().info("Loaded texture sets: " + String.join(", ", loadedSets));
+            DebugLog.log("Loaded texture sets: " + String.join(", ", loadedSets));
 
         } catch (Exception e) {
             plugin.getLogger().log(Level.SEVERE, "Failed to load " + ITEMS_FILE, e);

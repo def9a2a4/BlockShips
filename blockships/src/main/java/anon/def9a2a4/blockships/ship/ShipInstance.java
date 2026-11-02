@@ -1,5 +1,6 @@
 package anon.def9a2a4.blockships.ship;
 
+import anon.def9a2a4.blockships.util.DebugLog;
 import anon.def9a2a4.blockships.*;
 import anon.def9a2a4.blockships.customships.ShipWheelData;
 import anon.def9a2a4.blockships.customships.ShipWheelManager;
@@ -750,7 +751,7 @@ public class ShipInstance {
                 vec3Constructor = vec3Class.getConstructor(double.class, double.class, double.class);
                 posRotConstructor = pmrClass.getConstructor(vec3Class, vec3Class, float.class, float.class);
                 positionSyncAvailable = true;
-                plugin.getLogger().info("[PositionSync] Vehicle position sync enabled");
+                DebugLog.log("[PositionSync] Vehicle position sync enabled");
             } catch (Exception | NoClassDefFoundError e) {
                 positionSyncAvailable = false;
                 plugin.getLogger().warning("[PositionSync] Vehicle position sync unavailable: " + e.getMessage());
