@@ -34,8 +34,13 @@ survive corelib drops and legacy-skin matching.
 
 - Unit: `LandVehicleTest`, `ship/LandSupportTest` (BlockShips); `EngineBurnTest`,
   `DisplayAnimationSpinTest` (defCoreLib).
-- Bot: `test-bot.js` `land_vehicle` (`node test-bot.js --only=land_vehicle`). A sail cart with four
-  wheels on dry ground drives onto a 1-block plateau.
+- Bot (`node test-bot.js --only=land_vehicle,powered_cart`):
+  - `land_vehicle`: a sail cart with four unpowered wheels climbs a 1-block plateau and stops at a 3-high
+    wall.
+  - `powered_cart`: a sail-less cart with a wheel - shaft - engine - shaft - wheel front axle drives over
+    8 blocks in 4 s (base power alone manages about 3), climbs the step, then parks for 45 s with the
+    engine lit. Its coal must not drop by more than 2. Verified to discriminate: with `burn-on-load: false`
+    the same run used 5 coal and failed; with it on, 0.
 
 ## Known limitations
 
@@ -52,8 +57,11 @@ survive corelib drops and legacy-skin matching.
 
 ## Still to do
 
-- In-game pass: the bot test, plus manual checks of powered wheels (engine and shaft), large/huge wheels
-  on fences and 2-block rises, landing gear on an airship, a boat with gunwale wheels, and fuel
-  counters on a parked ship.
+- In-game pass by hand: large/huge wheels on fences and 2-block rises, landing gear on an airship, a
+  boat with gunwale wheels, and the spin and exhaust visuals.
+- `rotation-config.yml` is read from the DefCoreLib jar only, so servers can't switch burn-on-load off
+  or retune it. Making that file overridable is a DefCoreLib change.
+- Coal left in an engine's storage survives the engine being replaced by `/fill`. A later engine on
+  the same cell starts with it (seen in the bot runs).
 - A proper wheel head texture (the item currently uses `@chainwheel`).
 - Balance pass on wheel thrust, power, step heights and `burn-multiplier`.

@@ -144,7 +144,9 @@ airship without them.
 A ship drives on land when it has **wheels on the ground** (`mech:wheel`, `mech:large_wheel`,
 `mech:huge_wheel`). There is no separate steering item; the normal Ship's Wheel steers.
 
-**Mounting.** A wheel hangs on a wall, so its facing is its axle. It drives only with the axle
+**Mounting.** A wheel hangs on a wall, so its facing is its axle. It is a rotation consumer powered
+through the block it hangs on, which has to carry power along the same axle (a shaft, an engine or a
+gearbox lined up with it). It drives only with the axle
 **across** the hull, which means on the left or right side. A wheel on the bow or stern face would
 roll sideways, so it is ignored, and detect says so. A wheel counts as *on the ground* only if its
 tyre reaches within 0.25 of the vehicle's lowest point. That way a spare tyre on a cabin wall, wheels
@@ -184,7 +186,8 @@ An airship with landing gear taxis on its wheels and takes off with Space.
 
 ## Fuel: engines burn for what is used
 
-With DefCoreLib's `engines.burn-on-load` (on by default), an engine burns fuel for the share of its
+With DefCoreLib's `engines.burn-on-load` (on by default; it lives in the rotation-config.yml bundled in
+DefCoreLib's jar, which servers can't override yet), an engine burns fuel for the share of its
 output that is actually used, not for what it could supply.
 - An engine with fuel stays running, so the network stays powered, but burns nothing while every
   machine on it is idle.
@@ -212,8 +215,9 @@ output that is actually used, not for what it could supply.
    *consumer*, so this needs a power source — a windmill or an engine — on the same rotation network.
    (Not a water wheel: it supplies power in the static world but only *transmits* aboard a moving
    mechanism, so a ship built on one never spins up.) Takes off, and stops climbing the moment power drops.
-6. **A rover:** wheels on both sides of a hull on dry ground, powered through the rotation network the
-   same way a wall propeller is. Climbs steps its smallest wheels can take; a sail cart does the same
+6. **A rover:** wheels on both sides of a hull on dry ground. A wheel takes power through the block it
+   hangs on, along its axle: the test bot's cart runs wheel - shaft - engine - shaft - wheel across its
+   front row, all east-west. Climbs steps its smallest wheels can take; a sail cart does the same
    unpowered.
 
 ## Where this lives in the code

@@ -55,7 +55,8 @@
 
 - **Land vehicles** ([#10](https://github.com/def9a2a4/BlockShips/issues/10)). Hang wheels
   (DefCoreLib's wheel, large wheel and huge wheel) on the left and right sides of a hull and it
-  drives on land with the normal Ship's Wheel. Powered wheels push it along. Unpowered ones
+  drives on land with the normal Ship's Wheel. A wheel takes power through the block it hangs on,
+  so run a shaft or engine along the axle to it. Powered wheels push it along. Unpowered ones
   still roll, so a sail cart works. It hops up steps instead of tilting. A small wheel climbs 1
   block, a large one 1.5 (fences and walls), a huge one 2.5, and the smallest wheel aboard sets
   the limit. Detect tells you it's a land vehicle, which wheel limits its climb, and which wheels
@@ -68,7 +69,6 @@
 - **Engines only burn fuel for power that's used.** A parked ship burns nothing, and half throttle
   burns about half. Thrusters burn by their own use. Thruster exhaust and engine smoke now show on
   ships under way, and go quiet when the engine is burning nothing. Needs the matching DefCoreLib.
-  Set `engines.burn-on-load: false` in DefCoreLib's rotation-config.yml for the old fixed burn.
 
 - **Re-craft your Captain's Manual.** The book has six new sections covering sails,
   propulsion, mounting, heavy flight, gluing and locking, plus a rewritten Weight &
