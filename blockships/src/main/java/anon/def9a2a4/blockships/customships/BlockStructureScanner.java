@@ -1115,8 +1115,11 @@ public class BlockStructureScanner {
             );
 
             // A cell in a protected region takes precedence over terrain classification: on force it
-            // drops as items rather than being placed or destroyed.
-            if (wgOn && wg.isBuildDenied(blockLoc, player, failClosedOnWgError)) {
+            // drops as items rather than being placed or destroyed. Claim plugins count too (landing only:
+            // assembly, the failClosed caller, probes its own cells right after).
+            if ((wgOn && wg.isBuildDenied(blockLoc, player, failClosedOnWgError))
+                    || (player != null && !failClosedOnWgError && !anon.def9a2a4.corelib.BuildProbe.mayBuild(
+                        player, blockLoc.getBlock(), new org.bukkit.inventory.ItemStack(Material.PLAYER_HEAD)))) {
                 protectedCount++;
                 continue;
             }

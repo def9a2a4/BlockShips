@@ -2274,12 +2274,10 @@ public class ShipWheelManager {
     public void prepareRedoneLanding(anon.def9a2a4.corelib.Mechanism mechanism) {
         mechanism.setDropItemHook(ShipWheelManager::landingDrop);
         mechanism.setCellPlacePolicy((target, block) -> {
-            if (block != null && block.blockData != null) {
-                Material m = block.blockData.getMaterial();
-                if ((m == Material.PLAYER_HEAD || m == Material.PLAYER_WALL_HEAD)
-                        && byCachedCell(target.getLocation()) == null) {
-                    return anon.def9a2a4.corelib.Mechanism.PlaceDecision.SKIP;
-                }
+            // Only the WHEEL: engines, propellers and other custom heads have no wheel record and must land.
+            if (block != null && ShipWheelBlockType.isWheelTypeId(block.customTypeId)
+                    && byCachedCell(target.getLocation()) == null) {
+                return anon.def9a2a4.corelib.Mechanism.PlaceDecision.SKIP;
             }
             return anon.def9a2a4.corelib.Mechanism.PlaceDecision.PLACE;
         });
@@ -2752,8 +2750,10 @@ public class ShipWheelManager {
         // world as region-free so blocks (and the wheel anchor) are placed normally instead of dropped.
         boolean wgOn = anon.def9a2a4.blockships.integration.WorldGuardHook.get().mightRestrict(newWheelLocation.getWorld())
             && !(player == null && anon.def9a2a4.blockships.integration.WorldGuardHook.get().systemPathPlacesInRegions());
-        boolean anchorProtected = wgOn && force
-            && anon.def9a2a4.blockships.integration.WorldGuardHook.get().isBuildDenied(newWheelLocation, player);
+        boolean anchorProtected = force
+            && ((wgOn && anon.def9a2a4.blockships.integration.WorldGuardHook.get().isBuildDenied(newWheelLocation, player))
+                || (player != null && !anon.def9a2a4.corelib.BuildProbe.mayBuild(
+                        player, newWheelLocation.getBlock(), new org.bukkit.inventory.ItemStack(Material.PLAYER_HEAD))));
 
         // Is something already standing on the cell the wheel is about to land in?
         //
@@ -2834,9 +2834,12 @@ public class ShipWheelManager {
                         ? anon.def9a2a4.corelib.Mechanism.PlaceDecision.SKIP
                         : anon.def9a2a4.corelib.Mechanism.PlaceDecision.PLACE;
                 }
-                if (fForce && fWgOn) {
-                    boolean denied = anon.def9a2a4.blockships.integration.WorldGuardHook.get()
-                        .isBuildDenied(target.getLocation(), fPlayer);
+                if (fForce && (fWgOn || fPlayer != null)) {
+                    // Claim plugins (GriefPrevention, Towny, ...) are asked the way assembly asks them.
+                    boolean denied = (fWgOn && anon.def9a2a4.blockships.integration.WorldGuardHook.get()
+                            .isBuildDenied(target.getLocation(), fPlayer))
+                        || (fPlayer != null && !anon.def9a2a4.corelib.BuildProbe.mayBuild(
+                            fPlayer, target, new org.bukkit.inventory.ItemStack(Material.PLAYER_HEAD)));
                     // F6: a 2-cell block (bed/door) must share ONE fate across both cells, or a WG border running
                     // between them places one half and drops the other — and the DropItemHook then suppresses the
                     // second half's drop, LOSING it. If EITHER cell is denied, DROP both (the hook drops exactly one
@@ -2856,7 +2859,7 @@ public class ShipWheelManager {
                             partner = target.getRelative(
                                 bed.getPart() == org.bukkit.block.data.type.Bed.Part.FOOT ? f : f.getOppositeFace());
                         }
-                        if (partner != null && anon.def9a2a4.blockships.integration.WorldGuardHook.get()
+                        if (partner != null && fWgOn && anon.def9a2a4.blockships.integration.WorldGuardHook.get()
                                 .isBuildDenied(partner.getLocation(), fPlayer)) {
                             denied = true;
                         }

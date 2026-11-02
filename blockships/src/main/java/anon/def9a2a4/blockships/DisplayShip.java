@@ -1153,12 +1153,22 @@ public class DisplayShip implements Listener {
         }
         if (wheel == null) return;
         int before = countWheels(grid);
+        // Most this event can have crafted: one, or for a shift-click the smallest ingredient stack. Without the
+        // cap, two clicks in one tick each saw both crafts' wheels gone and refunded double.
+        int crafted = 1;
+        if (event.isShiftClick()) {
+            crafted = Integer.MAX_VALUE;
+            for (ItemStack item : grid.getMatrix()) {
+                if (item != null && !item.getType().isAir()) crafted = Math.min(crafted, item.getAmount());
+            }
+        }
+        final int maxCrafted = crafted;
         ItemStack template = wheel;
         org.bukkit.entity.HumanEntity crafter = event.getWhoClicked();
         Bukkit.getScheduler().runTask(plugin, () -> {
             // Closed in the same tick: the grid went back to the player, so its count says nothing. One craft.
             boolean open = crafter.getOpenInventory().getTopInventory() == grid;
-            int used = open ? before - countWheels(grid) : 1;
+            int used = open ? Math.min(before - countWheels(grid), maxCrafted) : 1;
             if (used <= 0) return;
             ItemStack back = template.clone();
             back.setAmount(used);
@@ -1191,6 +1201,12 @@ public class DisplayShip implements Listener {
         // Set spawn location to face player's direction (yaw only, not pitch)
         spawnAt.setYaw(p.getLocation().getYaw());
         spawnAt.setPitch(0);  // Always spawn level
+
+        if (!anon.def9a2a4.corelib.BuildProbe.mayBuild(p, spawnAt.getBlock(), new ItemStack(Material.PLAYER_HEAD))) {
+            p.sendMessage(net.kyori.adventure.text.Component.text("You can't build here.",
+                    net.kyori.adventure.text.format.NamedTextColor.RED));
+            return;
+        }
 
         // Extract ship type, banner data, wood type, and balloon color from ship kit
         String shipType = null;
@@ -1265,7 +1281,7 @@ public class DisplayShip implements Listener {
         // Consume one kit
         if (p.getGameMode() != GameMode.CREATIVE) {
             hand.setAmount(hand.getAmount() - 1);
-            p.getInventory().setItemInMainHand(hand);
+            p.getInventory().setItem(e.getHand(), hand);  // the hand that used it: an off-hand kit isn't the main hand
         }
     }
 
@@ -1765,7 +1781,11 @@ public class DisplayShip implements Listener {
             cannonObsidianIndex = mci;
         }
         if (cannonObsidianIndex >= 0) {
-            inst.fireCannonsByObsidian(cannonObsidianIndex, player);
+            // Firing acts on the world: inside a claim it takes build rights, like the Fire Cannons menu item.
+            if (anon.def9a2a4.corelib.BuildProbe.mayBuild(
+                    player, e.getRightClicked().getLocation().getBlock(), new ItemStack(Material.PLAYER_HEAD))) {
+                inst.fireCannonsByObsidian(cannonObsidianIndex, player);
+            }
             e.setCancelled(true);
             return;
         }
