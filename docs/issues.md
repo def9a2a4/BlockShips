@@ -415,10 +415,10 @@ The server is currently still in development/testing and is not yet monetized. T
 
 ## #38 — Advertise your servers and creations here!
 
-- **State:** open
+- **State:** closed
 - **Labels:** documentation, help wanted, more-info-needed
 - **Link:** https://github.com/def9a2a4/BlockShips/issues/38
-- **Comments:** 2
+- **Comments:** 3
 
 Please feel free to use this thread to advertise your server running BlockShips, or post the creations you or your players have made -- I am myself curious to see what people have built, and how players use the plugin! I may also add your server to the readme/docs under a list of servers, if you wish.
 
@@ -432,6 +432,10 @@ Please feel free to use this thread to advertise your server running BlockShips,
 **The-Nyla** (2026-07-22T23:45:30Z):
 
 > Not currently running a public server, mostly doing testing/development on a private server for now, but will absolutely advertise here once I do, also might be nice to have a discord for your plugins for people to discuss/showcase stuff. (also side note, your plugins, especially pipes, mechanism, and blockships, are incredibly impressive and very fun to play around with)
+
+**def9a2a4** (2026-11-02T16:58:30Z):
+
+> @The-Nyla , @zaidec, I have gone ahead and created a discord server for my plugins: https://def9a2a4.github.io/discord.html
 
 ---
 
