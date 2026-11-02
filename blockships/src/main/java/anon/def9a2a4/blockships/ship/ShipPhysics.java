@@ -666,6 +666,7 @@ public class ShipPhysics {
      */
     private static double groundTop(World world, double wx, double wz, double bottom, float step) {
         int bx = (int) Math.floor(wx), bz = (int) Math.floor(wz);
+        if (!world.isChunkLoaded(bx >> 4, bz >> 4)) return Double.NaN;  // unloaded: a wall, never a sync load
         return columnSupport(y -> collisionTop(world.getBlockAt(bx, y, bz)), bottom, step);
     }
 

@@ -110,6 +110,8 @@ public class ShipInstance {
     float spawnYaw;  // Track spawn yaw for display rotation delta calculation
     private float metadataYaw = Float.NaN;  // Yaw from per-world metadata (for chunk recovery)
     private int ticksSinceLastMovement = 0;
+    /** Last tick's pose equalled the one before it (see the repositionDriven skip in tick). */
+    private boolean stillLastTick = false;
     private boolean taskStopped = false;
     private boolean firstTick = true; // Force first tick to update positions
 
@@ -640,7 +642,12 @@ public class ShipInstance {
                 }
             }
 
-            mechanism.repositionDriven(physics.currentYaw - spawnYaw);
+            // A parked ship: skip the per-tick re-pose (a rotate() over every display and collider) once the
+            // pose has held for a tick. The first still tick still runs it, so its zero velocity hint goes out.
+            boolean still = previousVehicleLocation != null && cachedVehicleLoc.equals(previousVehicleLocation)
+                && physics.currentYaw == previousYaw;
+            if (!still || !stillLastTick) mechanism.repositionDriven(physics.currentYaw - spawnYaw);
+            stillLastTick = still;
 
             // Smoothness (native parity): repositionDriven sets only the vehicle's setVelocity dead-reckoning
             // hint, so the vehicle is tracker-updated every ~3 ticks and rubber-bands against the mechanism's

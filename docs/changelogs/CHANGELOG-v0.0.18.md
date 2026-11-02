@@ -20,6 +20,10 @@
 > it touches, so ships take far less from explosions and splash potions, and poison no longer hurts
 > them by default. Set `damage.mode: per-block` for the old behaviour. The server log says so at
 > startup until `damage.mode` is set in config.yml.
+>
+> **DefCoreLib blocks now weigh their own mass.** Engines, windmills, propellers and wheels count at
+> the mass DefCoreLib gives them instead of 1, so a boat carrying them sits lower and a flier lifts
+> less than before.
 
 - **Ships can be propelled.** Fans, propellers, thrusters and reaction wheels from
   Mechanism now drive a ship. **Which way you mount one decides what it does:** facing
@@ -336,3 +340,18 @@ cannons.
 - **The `special-drowned.drop-chance` comment was wrong.** 1.0 means the wheel drops every time *a player*
   kills one. Above 1.0 it drops however it dies, mob farms included. A `spawn-chance` outside 0–1 is now
   clamped.
+- **A crash-redone dock kept only the wheel.** Engines, propellers and other custom heads on the
+  hull were dropped when DefCoreLib re-landed a ship after a crash; now only a wheel that was
+  already returned as an item is skipped.
+- **Claims are checked on more actions.** Placing a ship wheel, spawning a prefab ship from a kit,
+  firing a cannon by clicking it, and landing or force-landing a ship now ask every protection plugin,
+  not only WorldGuard. A claimed cell counts like a WorldGuard-protected one: landing refuses, and
+  force-landing drops that block as an item.
+- **A ship kit used from the off hand** is consumed from the off hand, instead of the main-hand item.
+- **Several Captain's Manual crafts in one tick** no longer refund extra wheels.
+- **A 0.0.17 ship whose save file is missing keeps its root.** Its loose parts are cleared as before,
+  but the root is kept (invulnerable) and the log warns once with where it is, so restoring the file
+  still converts it.
+- **The parts of a 0.0.17 ship that could not be converted** can no longer be killed for shulker shells.
+- **Parked ships cost less.** A ship at rest no longer re-poses every block and hitbox every tick.
+- **A ship sailing toward unloaded terrain** treats it as solid instead of loading chunks to check it.

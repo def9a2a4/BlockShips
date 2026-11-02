@@ -5,7 +5,6 @@ import anon.def9a2a4.blockships.util.TeleportCompat;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
-import org.bukkit.block.Block;
 import org.joml.Vector3f;
 
 /**
@@ -247,12 +246,12 @@ public class ShipCollision {
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
                 for (int z = minZ; z <= maxZ; z++) {
-                    Block block = world.getBlockAt(x, y, z);
-
-                    // Skip non-solid blocks
-                    Material type = block.getType();
-                    if (!type.isSolid() || type == Material.WATER) {
-                        continue;
+                    // Skip non-solid blocks. An unloaded chunk counts as solid: never sync-load it, never sail in.
+                    if (world.isChunkLoaded(x >> 4, z >> 4)) {
+                        Material type = world.getBlockAt(x, y, z).getType();
+                        if (!type.isSolid() || type == Material.WATER) {
+                            continue;
+                        }
                     }
 
                     if (skipSteps && y + 1 <= stepTop + 0.01) continue;
