@@ -313,6 +313,9 @@ damage:
   # per-block: every collider a hit reaches counts in full — how ships used to take damage,
   #            which lets one TNT or splash potion sink a large ship
   mode: per-ship
+  # Multiplier on all damage to ships, on top of the ones below. 0.5 makes every ship take half damage -
+  # the way to make ships tougher, since a ship's max health cannot go above 1024 (Minecraft's limit)
+  multiplier: 1.0
   # Multiplier on explosion damage to ships (TNT, creepers, beds, cannons)
   explosion-multiplier: 1.0
   # Splash and lingering Instant Damage potions hurt ships

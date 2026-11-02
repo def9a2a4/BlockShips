@@ -439,9 +439,10 @@ public class ShipPhysics {
         Location vehicleLoc = ship.vehicle.getLocation();
         ShipConfig config = ship.config;
 
-        // Only a real driver produces thrust. Without this, an input flag left stuck true after a
-        // seat loss that skipped VehicleExitEvent (death while seated, forced cross-world teleport)
-        // would drive the ship forever unmanned.
+        // Only a real driver produces thrust. hasDriver is re-derived every tick from who actually rides
+        // seat 0 (ShipInstance.handleSteeringInput, which also drops the inputs when the helm empties or
+        // changes hands), so an input flag left stuck true by a seat loss that skipped the dismount handler
+        // cannot drive the ship unmanned.
         boolean throttling = ship.hasDriver && (ship.isForwardPressed || ship.isBackwardPressed);
 
         // Apply acceleration/deceleration based on input state

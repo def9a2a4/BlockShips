@@ -15,6 +15,8 @@ public final class ShipDamageSettings {
 
     /** 0 = per-ship (a hit counts once, at its largest collider share), 1 = per-block (every collider counts). */
     public static double spread = 0;
+    /** On all damage to a ship, on top of the per-cause multipliers. */
+    public static double multiplier = 1.0;
     public static double explosionMultiplier = 1.0;
     public static boolean potions = true;
     public static boolean poison = false;
@@ -30,6 +32,7 @@ public final class ShipDamageSettings {
                 yield 0;
             }
         };
+        multiplier = java.lang.Math.max(0, cfg.getDouble("damage.multiplier", 1.0));
         explosionMultiplier = java.lang.Math.max(0, cfg.getDouble("damage.explosion-multiplier", 1.0));
         potions = cfg.getBoolean("damage.potions", true);
         poison = cfg.getBoolean("damage.poison", false);

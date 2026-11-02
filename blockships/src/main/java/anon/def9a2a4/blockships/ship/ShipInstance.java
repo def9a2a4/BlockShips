@@ -81,7 +81,11 @@ public class ShipInstance {
     public final ShipCustomization customization;  // Ship customization data (banner, wood type, colors, textures)
 
     public final List<Shulker> seatShulkers = new ArrayList<>();  // Seat shulkers in order (index 0 = driver)
-    private final Set<Integer> occupiedSeatIndices = new HashSet<>();  // Track which seats are occupied
+    /** Set first thing when the ship starts going away (destroy, landing, vehicle lost): a rider taken off a seat
+     *  from here on only frees it — no snap of the hull to the fine grid, no momentum handed to the rider. */
+    public volatile boolean tearingDown = false;
+    /** The player on the driver seat as of the last tick, so a change of driver clears the old one's inputs. */
+    private UUID lastDriverId;
     public Shulker leadableShulker;  // Designated lead attachment point (for prefab ships)
     public int lastPeriodicSaveFingerprint;  // DisplayShip's 60 s saver skips a ship whose fingerprint is unchanged
 
@@ -438,6 +442,7 @@ public class ShipInstance {
      * the way an orphan is landed.
      */
     private void landAfterVehicleLost(BlockShipsPlugin bsp) {
+        tearingDown = true;
         if (task != null) task.cancel();
         if (idleCheckTask != null) idleCheckTask.cancel();
         dismountSeatRiders();
@@ -789,19 +794,26 @@ public class ShipInstance {
         // Get driver seat shulker (index 0)
         Shulker driverShulker = seatShulkers.isEmpty() ? null : seatShulkers.get(0);
 
-        if (driverShulker == null) {
-            hasDriver = false;
-            return;
-        }
-
-        // Get the player riding the driver shulker
+        // Get the player riding the driver shulker. A dead one is no driver.
         Player player = null;
-        for (Entity passenger : driverShulker.getPassengers()) {
-            if (passenger instanceof Player p) {
-                player = p;
-                break;
+        if (driverShulker != null) {
+            for (Entity passenger : driverShulker.getPassengers()) {
+                if (passenger instanceof Player p) {
+                    player = p;
+                    break;
+                }
             }
         }
+        if (player != null && player.isDead()) player = null;
+
+        // Inputs belong to the player who sent them. With nobody at the helm, or a different player there than
+        // last tick, drop them — otherwise a dismount that skipped freeSeat leaves a ghost throttle for whoever
+        // boards next (PlayerInputEvent only fires on a change, so the new driver would never overwrite it).
+        UUID driverId = player != null ? player.getUniqueId() : null;
+        if (player == null || (lastDriverId != null && !lastDriverId.equals(driverId))) {
+            clearInputs();
+        }
+        lastDriverId = driverId;
 
         if (player == null) {
             hasDriver = false;
@@ -1158,7 +1170,6 @@ public class ShipInstance {
      * Marks a seat as occupied.
      */
     public void occupySeat(int seatIndex) {
-        occupiedSeatIndices.add(seatIndex);
         if (seatIndex == driverSeatIndex) {
             hasDriver = true;
         }
@@ -1222,8 +1233,8 @@ public class ShipInstance {
 
     /**
      * Dismounts a player from a ship if they are riding a ship shulker.
-     * Calls removePassenger which triggers VehicleExitEvent - the DisplayShip
-     * event handler handles safe-position teleport, seat freeing, and velocity transfer.
+     * Calls removePassenger, which fires EntityDismountEvent synchronously — DisplayShip.onSeatDismount frees
+     * the seat, puts the player somewhere safe, and hands over the ship's momentum.
      * @param player The player to dismount
      * @return true if the player was dismounted from a ship, false otherwise
      */
@@ -1243,8 +1254,8 @@ public class ShipInstance {
             return false;
         }
 
-        // Remove passenger (triggers VehicleExitEvent synchronously, which handles
-        // safe-position teleport and seat freeing via DisplayShip.onPlayerExitVehicle)
+        // Remove passenger (fires EntityDismountEvent synchronously; DisplayShip.onSeatDismount frees the seat
+        // and handles the safe position and momentum)
         shulker.removePassenger(player);
 
         return true;
@@ -1252,8 +1263,8 @@ public class ShipInstance {
 
     /**
      * Dismounts a player from any ship, with fallback scan if getVehicle() fails.
-     * Used during disconnect when Bukkit may have already cleared the vehicle reference.
-     * Bypasses VehicleExitEvent to avoid teleport/velocity logic on a disconnecting player.
+     * Used during disconnect when Bukkit may have already cleared the vehicle reference. The fallback frees the
+     * seat itself as well: if the vehicle link is already half-gone the dismount event may not identify the seat.
      */
     public static boolean dismountPlayerFromAnyShip(Player player) {
         // Fast path: vehicle reference is still valid
@@ -1278,21 +1289,70 @@ public class ShipInstance {
      * Marks a seat as free.
      */
     public void freeSeat(int seatIndex) {
-        occupiedSeatIndices.remove(seatIndex);
         if (seatIndex == driverSeatIndex) {
             hasDriver = false;
             // Clear all input state when driver exits
-            isForwardPressed = false;
-            isBackwardPressed = false;
-            isLeftPressed = false;
-            isRightPressed = false;
-            isSpacePressed = false;
-            isSprintPressed = false;
+            clearInputs();
+            lastDriverId = null;
+            if (tearingDown) return;   // the hull is going away: nothing to settle
             // Kill vertical velocity on driver exit - buoyancy deadzone (0.1 blocks)
             // will catch whatever offset remains without producing jitter
             physics.currentYVelocity = 0.0f;
             // Snap position and rotation to reduce floating-point jitter
             physics.snapToFineGrid();
+        }
+    }
+
+    /** Release every steering input (a driver leaving, or a different player at the helm). */
+    private void clearInputs() {
+        isForwardPressed = false;
+        isBackwardPressed = false;
+        isLeftPressed = false;
+        isRightPressed = false;
+        isSpacePressed = false;
+        isSprintPressed = false;
+    }
+
+    /**
+     * Sets the camera_distance attribute on a seat shulker, for third-person camera positioning while riding.
+     * Only effective on Minecraft 1.21.6+, where this attribute exists.
+     *
+     * @param distance the camera distance (4-32, default 4)
+     */
+    public static void setCameraDistance(Shulker shulker, float distance) {
+        org.bukkit.attribute.Attribute cameraDistAttr = anon.def9a2a4.blockships.util.AttributeCompat.getCameraDistance();
+        if (cameraDistAttr != null) {
+            try {
+                org.bukkit.attribute.AttributeInstance attr = shulker.getAttribute(cameraDistAttr);
+                if (attr != null) {
+                    attr.setBaseValue(distance);
+                }
+            } catch (Exception e) {
+                // Silently ignore - attribute may not be applicable on this server version
+            }
+        }
+    }
+
+    /**
+     * The camera distance riders of this ship get: the config value for a prefab; for a custom ship, its wheel's
+     * setting, or one derived from the block count when unset (or the wheel is not linked yet).
+     */
+    public float cameraDistance() {
+        if ("custom".equals(shipType)) {
+            ShipWheelData wd = resolveWheelData();
+            if (wd != null && wd.getCameraDistance() >= 0) {
+                return wd.getCameraDistance();
+            }
+            return ShipWheelData.calculateDefaultCameraDistance(model.blockCount);
+        }
+        return config.cameraDistance;
+    }
+
+    /** Apply {@link #cameraDistance()} to every seat, so a player who boards any way gets the ship's camera. */
+    public void applyCameraDistance() {
+        float d = cameraDistance();
+        for (Shulker seat : seatShulkers) {
+            if (seat != null && seat.isValid()) setCameraDistance(seat, d);
         }
     }
 
@@ -1331,6 +1391,7 @@ public class ShipInstance {
      * riding their seat, so defCoreLib lands them seated on it. Seats without a cushion are left alone.
      */
     public void reseatRidersOnCushions() {
+        tearingDown = true;   // only called from the landing teardown
         for (Shulker seat : seatShulkers) {
             if (seat != null && seat.isValid()) anon.def9a2a4.blockships.CushionSupport.moveSeatRiderOntoCushion(seat);
         }
@@ -1437,6 +1498,7 @@ public class ShipInstance {
     public double damage(double amount) {
         if (dying || !vehicle.isValid()) return 0;
         double health = vehicle.getHealth();
+        amount *= ShipDamageSettings.multiplier;
         if (!(amount > 0)) return health;
         double newHealth = health - amount;
         if (newHealth > 0) {
@@ -1670,6 +1732,7 @@ public class ShipInstance {
     }
 
     public void destroy() {
+        tearingDown = true;
         // Track W (W2): clear the originating wheel's assembled-link so no wheel is left "confused" (believing a
         // now-dead ship is still assembled → Assemble refuses). This is the central self-heal covering EVERY
         // destroy() caller (out-of-band vehicle death, the destroyAndDropItem fallback, etc.). Equality-guarded:
@@ -1685,10 +1748,10 @@ public class ShipInstance {
         if (task != null) task.cancel();
         if (idleCheckTask != null) idleCheckTask.cancel();
         // Safe-dismount: mechanism.destroy() below removes the seat shulkers via Entity.remove(), which ejects
-        // any seated player IN PLACE without firing VehicleExitEvent — so the safe-position teleport +
-        // fall-distance reset would be skipped. Explicitly removePassenger over seatShulkers first (fires
-        // VehicleExitEvent), BEFORE tearing the mechanism down while the seats still exist and the ship is
-        // still registered.
+        // any seated player in place, with no safe-position teleport or fall-distance reset. Explicitly
+        // removePassenger over seatShulkers first (fires EntityDismountEvent → DisplayShip.onSeatDismount, which
+        // frees the seat and puts the player on top of the hull), BEFORE tearing the mechanism down while the
+        // seats still exist and the ship is still registered.
         dismountSeatRiders();
         // defCoreLib owns the parent/displays/colliders — tear them down via the Mechanism (removes entities
         // WITHOUT restoring blocks). Idempotent if disassemble() already ran. The external vehicle is still

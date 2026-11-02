@@ -3309,30 +3309,26 @@ public class ShipWheelManager {
             return false;
         }
 
-        // Categorize blocks into regular blocks and seat blocks
-        // Driver seat is always behind the wheel, all detected seat blocks are passenger seats
-        BlockConfigManager configManager = BlockConfigManager.getInstance();
+        // Categorize blocks into the driver seat, passenger seats and the rest — by the same rules assembly uses
+        // (BlockStructureScanner.resolveSeats), so cushion seats count and a seat block behind the wheel is the
+        // driver, not also a passenger.
         Set<Location> regularBlocks = new HashSet<>();
         Set<Location> seatBlocks = new HashSet<>();
-
-        // Calculate driver seat position (behind the wheel based on facing direction)
-        Location driverSeat = wheelLoc.clone();
         BlockFace facing = wheelData.getFacing();
-        // Move one block behind the wheel (opposite of facing direction)
-        driverSeat.add(facing.getOppositeFace().getModX(), 0, facing.getOppositeFace().getModZ());
+        List<Block> scanBlocks = new ArrayList<>(shipBlocks.size());
+        for (Location loc : shipBlocks) scanBlocks.add(loc.getBlock());
+        BlockStructureScanner.SeatLayout seatLayout = BlockStructureScanner.resolveSeats(scanBlocks, wheelLoc, facing);
+        Location driverSeat = scanBlocks.get(seatLayout.driverIdx()).getLocation();
+        Set<Integer> passengerIdx = new HashSet<>(seatLayout.passengerIdx());
+        for (int i = 0; i < scanBlocks.size(); i++) {
+            if (i == seatLayout.driverIdx()) continue;
+            (passengerIdx.contains(i) ? seatBlocks : regularBlocks).add(scanBlocks.get(i).getLocation());
+        }
 
         int woolCount = 0;
         int bannerCount = 0;
         for (Location loc : shipBlocks) {
             Block block = loc.getBlock();
-            BlockProperties props = configManager.getProperties(block.getType(), block.getBlockData());
-
-            if (props.isSeat()) {
-                // All detected seat blocks are passenger seats
-                seatBlocks.add(loc);
-            } else {
-                regularBlocks.add(loc);
-            }
 
             // Count sail blocks for ship stats
             Material blockMaterial = block.getType();
@@ -3346,7 +3342,7 @@ public class ShipWheelManager {
         // Calculate total weight and counts
         int totalWeight = calculateTotalWeight(shipBlocks);
         int blockCount = shipBlocks.size();
-        int seatCount = seatBlocks.size() + 1;  // driverSeat is built unconditionally above
+        int seatCount = seatBlocks.size() + 1;  // the driver seat always resolves (at worst the wheel's own cell)
 
         // Calculate density to determine if this is an airship
         int weightedBlockCount = countWeightedBlocks(shipBlocks);
@@ -3388,10 +3384,13 @@ public class ShipWheelManager {
             player.sendMessage("§b✦ This ship is lighter than air - it will fly as an AIRSHIP!");
             player.sendMessage("§7  Controls: Space to ascend, Sprint to descend");
         }
-        // No "0 seats" arm here, unlike the assembled branch: driverSeat above is built unconditionally,
+        // No "0 seats" arm here, unlike the assembled branch: resolveSeats always yields a driver seat,
         // so seatCount is always at least 1 on this path.
         player.sendMessage("§7Seats: §f" + seatCount + " §7(" + plural(1, "driver", "drivers")
             + " + " + plural(seatBlocks.size(), "passenger", "passengers") + ")");
+        if (seatLayout.cushionsUnreadable()) {
+            player.sendMessage("§8  (cushions still loading — seat count may be low)");
+        }
         // Ship stats
         if (config.statsEnabled) {
             // One world scan feeds both the speed figure and the summary below — hoisted out of the

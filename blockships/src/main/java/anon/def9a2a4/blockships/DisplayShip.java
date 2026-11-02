@@ -20,6 +20,7 @@ import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
+import org.bukkit.event.entity.EntityDismountEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.entity.Projectile;
 import org.bukkit.event.inventory.InventoryClickEvent;
@@ -31,10 +32,10 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerKickEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
 import org.bukkit.advancement.Advancement;
 import org.bukkit.advancement.AdvancementProgress;
-import org.bukkit.event.vehicle.VehicleExitEvent;
 import org.bukkit.event.world.ChunkUnloadEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.*;
@@ -72,6 +73,9 @@ public class DisplayShip implements Listener {
     private ItemFactory itemFactory;
     private final List<NamespacedKey> registeredRecipes = new ArrayList<>();
     private final Map<UUID, Long> lastShulkerInteraction = new HashMap<>();  // Cooldown for preventing double-entry
+    /** Where a player just taken off a seat should land, for the DISMOUNT teleport that follows in the same call
+     *  stack (see onSeatDismount). Entries live one tick at most. */
+    private final Map<UUID, Location> pendingDismount = new HashMap<>();
     private final Set<UUID> shipsBeingRecovered = Collections.synchronizedSet(new HashSet<>());  // Prevent concurrent recovery
     private final Set<Long> chunksBeingRecovered = ConcurrentHashMap.newKeySet();  // Track chunks with pending async recovery
     private final Map<UUID, java.util.logging.Level> migrationFailureLogged = new ConcurrentHashMap<>();  // Per-ship highest migration-failure level already logged (so a stuck ship logs once, not every chunk load)
@@ -1946,65 +1950,79 @@ public class DisplayShip implements Listener {
         return null;
     }
 
-    @EventHandler
-    public void onPlayerExitVehicle(VehicleExitEvent e) {
-        // Check if player is exiting a ship seat shulker
-        if (!(e.getExited() instanceof Player)) return;
-        if (!(e.getVehicle() instanceof Shulker shulker)) return;
+    /**
+     * A player left a ship seat — sneaking, a seat swap, quitting, dying, a teleport, or the ship tearing down.
+     * EntityDismountEvent, not VehicleExitEvent: a Shulker is not a {@code Vehicle}, so VehicleExitEvent never
+     * fires for a seat. Runs synchronously inside removePassenger/stopRiding, while the colliders are still live.
+     * Never cancels.
+     *
+     * <ul>
+     *   <li>Momentum is read BEFORE freeSeat, which zeroes the vertical velocity and snaps the hull.</li>
+     *   <li>The safe spot (on top of the hull) is computed now and applied by {@link #onDismountTeleport}, which
+     *       replaces the destination of the vanilla dismount teleport that follows in the same call — one
+     *       teleport, no hop.</li>
+     *   <li>Next tick the ship's motion is handed to the player, if they are still near where they got off.</li>
+     * </ul>
+     * A cushion rider is not seen here (a cushion is not a Shulker), and a ship that is tearing down only frees
+     * the seat: no hull snap, no momentum.
+     */
+    @EventHandler(priority = org.bukkit.event.EventPriority.MONITOR, ignoreCancelled = true)
+    public void onSeatDismount(EntityDismountEvent e) {
+        if (!(e.getEntity() instanceof Player player)) return;
+        if (!(e.getDismounted() instanceof Shulker seat)) return;
+        Set<String> tags = seat.getScoreboardTags();
+        UUID shipId = ShipTags.extractShipId(tags);
+        if (shipId == null) return;
+        ShipInstance inst = ShipRegistry.byId(shipId);
+        if (inst == null) return;
+        // Delegated seats carry corelib:mech:{id}:{i}:seat, not shipseat:{i}: recover the index from seatShulkers.
+        int seatIndex = ShipTags.extractSeatIndex(tags);
+        if (seatIndex < 0) seatIndex = inst.seatShulkers.indexOf(seat);
+        if (seatIndex < 0) return;
 
-        // Parse tags: displayship:{uuid} and shipseat:{index}
-        // Tag creation: ShipInstance constructor (lines 285-297)
-        Set<String> exitTags = shulker.getScoreboardTags();
-        UUID shipId = ShipTags.extractShipId(exitTags);
-        int seatIndex = ShipTags.extractSeatIndex(exitTags);
+        boolean tearingDown = inst.tearingDown;
+        float speed = inst.physics.currentSpeed;
+        // Momentum handed to the player, not a launch: the downward component is capped. A ship can descend
+        // far faster than is safe to inherit right after setFallDistance(0) restarts the damage clock.
+        float yVel = Math.max(inst.physics.currentYVelocity, -DISMOUNT_MAX_DOWNWARD_VELOCITY);
+        float yawRad = (float) Math.toRadians(-inst.physics.currentYaw);
 
-        if (shipId != null) {
-            ShipInstance inst = ShipRegistry.byId(shipId);
-            // Delegated seats carry corelib:mech:{id}:{i}:seat, not shipseat:{i}, so extractSeatIndex is -1.
-            // Recover the seat index from the populated seatShulkers list (mirrors the mount-side M4 fallback)
-            // so a dismount actually frees the seat — otherwise occupiedSeatIndices/hasDriver stay set and a
-            // phantom driver keeps the delegated ship moving after the rider leaves.
-            if (seatIndex < 0 && inst != null && inst.mechanism != null) {
-                seatIndex = inst.seatShulkers.indexOf(shulker);
-            }
-            if (inst != null && seatIndex >= 0) {
-                inst.freeSeat(seatIndex);
-                // Speed persists - don't reset currentSpeed
+        inst.freeSeat(seatIndex);   // clears the helm's inputs; skips the hull snap while tearing down
+        if (player.isDead()) return;
 
-                Player player = (Player) e.getExited();
+        UUID pid = player.getUniqueId();
+        Location safe = inst.calculateSafeDismountPosition(player, seat);
+        pendingDismount.put(pid, safe);
+        if (!plugin.isEnabled()) return;
 
-                // Teleport player to safe position above collision shulkers
-                Location safePos = inst.calculateSafeDismountPosition(player, shulker);
-                player.teleport(safePos);
-                player.setFallDistance(0);
-                float currentSpeed = inst.physics.currentSpeed;
-                // Momentum handed to the player, not a launch. The point of carrying velocity over is a
-                // smooth hop-off, so the downward component is capped: a ship can now descend several
-                // times faster than it ever could before, and passing that straight to a dismounting
-                // rider — right after setFallDistance(0), so the damage clock restarts from full height
-                // — turns stepping off a descending deck into a reliable death. The DRIVER escapes this
-                // by accident (freeSeat() zeroes the velocity before this reads it); passengers do not.
-                float currentYVelocity = Math.max(inst.physics.currentYVelocity, -DISMOUNT_MAX_DOWNWARD_VELOCITY);
+        boolean moving = !tearingDown && (Math.abs(speed) > 0.01 || Math.abs(yVel) > 0.01);
+        double vx = Math.sin(yawRad) * speed;
+        double vz = Math.cos(yawRad) * speed;
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            pendingDismount.remove(pid, safe);   // the teleport never came (cancelled, or none on this path)
+            if (!moving) return;
+            if (!player.isOnline() || player.isDead() || player.isInsideVehicle()) return;
+            Location now = player.getLocation();
+            if (now.getWorld() != safe.getWorld() || now.distanceSquared(safe) > 9.0) return;   // teleported away
+            player.setVelocity(new org.bukkit.util.Vector(vx, yVel, vz));
+        });
+    }
 
-                float yawRad = (float) Math.toRadians(-inst.physics.currentYaw);
-                double forwardX = Math.sin(yawRad) * currentSpeed;
-                double forwardZ = Math.cos(yawRad) * currentSpeed;
-                boolean shipIsMoving = Math.abs(currentSpeed) > 0.01 || Math.abs(currentYVelocity) > 0.01;
-
-                if (shipIsMoving) {
-                    new BukkitRunnable() {
-                        @Override
-                        public void run() {
-                            player.setVelocity(new org.bukkit.util.Vector(
-                                forwardX,
-                                currentYVelocity,
-                                forwardZ
-                            ));
-                        }
-                    }.runTaskLater(plugin, 1L);
-                }
-            }
+    /** The vanilla dismount teleport for a player just taken off a seat: land them on the safe spot instead. */
+    @EventHandler(priority = org.bukkit.event.EventPriority.HIGH, ignoreCancelled = true)
+    public void onDismountTeleport(PlayerTeleportEvent e) {
+        if (e.getCause() != PlayerTeleportEvent.TeleportCause.DISMOUNT) return;
+        if (pendingDismount.isEmpty()) return;
+        Location safe = pendingDismount.remove(e.getPlayer().getUniqueId());
+        if (safe == null) return;
+        Location to = safe.clone();
+        Location vanilla = e.getTo();
+        if (vanilla != null) {
+            to.setYaw(vanilla.getYaw());
+            to.setPitch(vanilla.getPitch());
         }
+        e.setTo(to);
+        e.getPlayer().setFallDistance(0);
     }
 
     /**
