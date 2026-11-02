@@ -12,6 +12,10 @@ docs/assets/dev/
 test-bot/test-results.txt
 test-bot/upgrade-test-results.txt
 test-bot/.upgrade-state.json
+test-bot/crash-test-results.txt
+test-bot/crash-test-results.all
+test-bot/.crash-state.json
+test-bot/crash-server.log
 test-bot/chunk-test-results.txt
 
 # Compiled class file

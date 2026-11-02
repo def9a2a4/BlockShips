@@ -205,16 +205,22 @@ Also:
   This is the likely cause of [#46](https://github.com/def9a2a4/BlockShips/issues/46).
 - **`/kill @e[type=!player]` or a lag-clear plugin deleted every loaded custom ship**, blocks
   and all. A ship whose vehicle is removed that way now puts its blocks back where it was.
-- **`forceclearwheel` on a ship that was only parked out of range** left a ship that came back
-  with no wheel and could never be docked. It now refuses, and says where the ship is. Players
-  see the same: "parked out of range, last seen at x, y, z" instead of "still loading".
-- **Ships are saved with the world.** DefCoreLib now saves every ship at each autosave, so after
-  a crash a ship's position and cargo roll back to the same moment as the players' inventories.
-  An airship that had climbed or sunk since its last save could fail to come back at all, and
-  chest edits saved on close were out of step with players, which duplicated items.
-- **A crash in the minutes after the upgrade could lose a prefab ship**, and docking a 0.0.17
-  ship at sea relied on a save that had not reached disk yet. Both now wait until the world has
-  been written.
+- **A server crash no longer strands ships.** Minecraft writes each chunk to disk on its own
+  timer, so after a crash the world, the ships and the plugins' files can be from different
+  moments. Recovery now sorts that out:
+  - A ship that was sailing comes back where its entities were last written. Before, a ship
+    more than about 16 blocks from its last saved spot never came back, and its wheel read
+    "still loading" forever.
+  - A ship docked or sunk just before the crash is docked or sunk again, instead of coming
+    back as a ship that can't be steered or docked. Blocks that did reach disk are left alone,
+    so nothing is duplicated.
+  - A ship launched just before the crash is still standing at its dock, and its wheel works
+    again instead of reading "still loading".
+  - Cargo is saved with the world rather than every time a chest closes, so a crash no longer
+    duplicates what was put in or taken out since.
+- **The upgrade from 0.0.17 survives a crash during it.** Docking a ship that was at sea, and
+  converting a prefab ship, now wait until the world is written before the old copy is thrown
+  away, and the ship's engine fuel is kept until then.
 - **A 0.0.17 ship docked with its wheel cell blocked** dropped a plain player head. It now drops
   a ship wheel.
 - **Crafting a Captain's Manual could cost you your ship wheel** when your inventory was full,
