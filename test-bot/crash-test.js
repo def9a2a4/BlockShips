@@ -198,10 +198,12 @@ async function sail() {
   if (before.length < 10) return fail('sail_setup', 'ship did not assemble')
   const start = centroid(before)
   if (!await mountShip(bot, log)) return fail('sail_setup', 'could not mount')
-  await steerShip(bot, 1, 0, false, 25000)
+  await steerShip(bot, 1, 0, false, 8000)
   await sleep(2000)
   await customDismount(bot, log)
   await sleep(1000)
+  const p = bot.entity.position
+  await tp(Math.round(p.x), 106, Math.round(p.z) + 3)
   const after = findShulkers(bot, 40)
   if (after.length < 10) return fail('sail_setup', `only ${after.length} shulkers near the bot after sailing`)
   const end = centroid(after)

@@ -14,7 +14,7 @@ make clean-test-server
 make test-server-download-all MINECRAFT_VERSION=$V ${1:+DEFCORELIB_JAR=$1}
 make test-server-setup MINECRAFT_VERSION=$V ${1:+DEFCORELIB_JAR=$1}
 echo $V > test-bot/.mc-version
-rm -f test-bot/.crash-state.json
+rm -f test-bot/.crash-state.json test-bot/crash-server.log
 : > test-bot/crash-test-results.all
 
 PID=
@@ -22,7 +22,7 @@ start() {
     cd "$REPO/test-server"
     rm -f server_input; mkfifo server_input
     exec 3<>server_input
-    "$JAVA" -Xmx2G -jar server.jar nogui < server_input >> server.log 2>&1 &
+    "$JAVA" -Xmx2G -jar server.jar nogui < server_input > server.log 2>&1 &
     PID=$!
     for _ in $(seq 1 300); do grep -q "Done.*For help" server.log && break; sleep 1; done
     echo "op TestBot" >&3; sleep 2
@@ -33,10 +33,12 @@ stop() {
     for _ in $(seq 1 60); do kill -0 $PID 2>/dev/null || break; sleep 1; done
     kill $PID 2>/dev/null || true
     exec 3>&-; rm -f test-server/server_input
+    cat test-server/server.log >> test-bot/crash-server.log
 }
 crash() {
     kill -9 $PID; wait $PID 2>/dev/null || true
     exec 3>&-; rm -f test-server/server_input
+    cat test-server/server.log >> test-bot/crash-server.log
 }
 phase() {
     local rc=0
@@ -73,7 +75,6 @@ start
 phase verify-sail || FAILED=1
 stop
 
-cp test-server/server.log test-bot/crash-server.log
 grep -E "PASS|FAIL" test-bot/crash-test-results.all || true
 echo "crash test rc=$FAILED"
 exit $FAILED
