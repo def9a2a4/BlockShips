@@ -97,6 +97,8 @@
 - [x] config failures are loud and non-destructive; startup/reload say which copy of each file is in force. see https://github.com/def9a2a4/BlockShips/issues/43
 - [x] docked vs assembled readouts agree (sails, max health, waterline). see https://github.com/def9a2a4/BlockShips/issues/18
 - [x] skull/banner transform deduplicated — docs/todo/done/TODO-refactor-display-code.md
+- [x] ship damage counted once per hit (`damage.mode`), poison/wither once per ship, recovered ships no longer capped at 40 HP. see https://github.com/def9a2a4/BlockShips/issues/47
+- [x] TNT stays in a cannon while `cannons.tnt-enabled` is off, with a message; cannons fire a random loaded slot. see https://github.com/def9a2a4/BlockShips/issues/43
 
 ## v0.0.17
 
