@@ -254,6 +254,9 @@ public class ShipWheelManager {
         return saveAll();
     }
 
+    /** Set when ship_wheels.yml failed to parse at load; saveAll then refuses to overwrite it. */
+    private boolean wheelsFileUnreadable;
+
     public boolean saveAll() {
         // While batching this reports success it cannot know about — the write happens at endBatch. That
         // is fine for fire-and-forget callers, but a caller whose FAILURE ROLLBACK keys on this return
@@ -262,6 +265,13 @@ public class ShipWheelManager {
         if (batching) {
             batchDirty = true;
             return true;
+        }
+        if (wheelsFileUnreadable) {
+            // loadAll could not parse the file, so what is in memory is not what is on disk. Writing it would
+            // replace every record the server has with whatever little was loaded.
+            plugin.getLogger().severe(WHEELS_FILE + " could not be read at startup; NOT saving wheel changes over it."
+                + " Fix or restore the file and restart.");
+            return false;
         }
         File wheelsFile = new File(plugin.getDataFolder(), WHEELS_FILE);
 
@@ -340,6 +350,7 @@ public class ShipWheelManager {
      * Loads all ship wheels from ship_wheels.yml.
      */
     public void loadAll() {
+        wheelsFileUnreadable = false;
         File wheelsFile = new File(plugin.getDataFolder(), WHEELS_FILE);
 
         // Sweep a temp file left by a crash between saveAll's write and its rename. The rename is what
@@ -353,11 +364,22 @@ public class ShipWheelManager {
             return;  // No wheels to load
         }
 
-        org.bukkit.configuration.file.YamlConfiguration config;
+        // load(), not loadConfiguration(): that one swallows a parse error and hands back an EMPTY config, which
+        // read as "no wheels" and was then saved over the real file, losing every record.
+        org.bukkit.configuration.file.YamlConfiguration config = new org.bukkit.configuration.file.YamlConfiguration();
         try {
-            config = org.bukkit.configuration.file.YamlConfiguration.loadConfiguration(wheelsFile);
+            config.load(wheelsFile);
         } catch (Exception e) {
-            plugin.getLogger().severe("Failed to load ship wheels file: " + e.getMessage());
+            wheelsFileUnreadable = true;
+            File copy = new File(plugin.getDataFolder(), WHEELS_FILE + ".unreadable-" + System.currentTimeMillis());
+            try {
+                java.nio.file.Files.copy(wheelsFile.toPath(), copy.toPath());
+            } catch (java.io.IOException copyFailed) {
+                plugin.getLogger().severe("Could not copy " + WHEELS_FILE + " aside: " + copyFailed);
+            }
+            plugin.getLogger().severe("Could not read " + WHEELS_FILE + " (" + e.getMessage() + "). No ship wheels are"
+                + " loaded and wheel changes will NOT be saved until it is fixed — saving now would erase every"
+                + " record. A copy is at " + copy.getName() + ". Fix the file, or restore it from a backup, and restart.");
             return;
         }
 
@@ -2060,6 +2082,64 @@ public class ShipWheelManager {
             if (d <= bestSq) { bestSq = d; best = w; }
         }
         return best;
+    }
+
+    /**
+     * The upgrade's docking of a 0.0.17 native custom ship that was out at sea: puts its blocks back where it
+     * stands and moves its wheel record onto the landed wheel. The caller removes the native entities and the
+     * sidecar. {@code cargo} is the ship's live container contents (block index -> slots), which supersede the
+     * assembly-time snapshot in the model; the wheel's 0.0.17 engine fuel goes back into its furnaces.
+     *
+     * @return parts that could not be placed and were dropped as items instead
+     */
+    public int landNativeShip(UUID shipId, Location rootLoc, float yaw, ShipModel model,
+                              Map<Integer, ItemStack[]> cargo) {
+        ShipWheelData wheel = getWheelByShipUUID(shipId);
+        cargo = new HashMap<>(cargo);
+        if (wheel != null && wheel.getLegacyEngines() != null) {
+            for (Object row : wheel.getLegacyEngines()) {
+                if (!(row instanceof Map<?, ?> engine) || !(engine.get("block_index") instanceof Number idx)
+                        || !(engine.get("fuel_slots") instanceof List<?> slots)) continue;
+                ItemStack[] fuel = new ItemStack[slots.size()];
+                for (int i = 0; i < fuel.length; i++) {
+                    String b64 = String.valueOf(slots.get(i));
+                    if (!b64.isEmpty()) fuel[i] = ItemStack.deserializeBytes(Base64.getDecoder().decode(b64));
+                }
+                cargo.put(idx.intValue(), fuel);
+            }
+        }
+        for (Map.Entry<Integer, ItemStack[]> e : cargo.entrySet()) {
+            if (e.getKey() < 0 || e.getKey() >= model.parts.size() || e.getValue() == null) continue;
+            List<Map<String, Object>> items = new ArrayList<>();
+            ItemStack[] slots = e.getValue();
+            for (int slot = 0; slot < slots.length; slot++) {
+                if (slots[slot] != null && !slots[slot].getType().isAir()) {
+                    items.add(new HashMap<>(Map.of("slot", slot, "item", slots[slot].serializeAsBytes())));
+                }
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> raw = (Map<String, Object>) model.parts.get(e.getKey()).rawYaml;
+            raw.put("container_items", items);
+        }
+
+        Location shipLoc = new Location(rootLoc.getWorld(),
+            Math.round(rootLoc.getX()), Math.round(rootLoc.getY()), Math.round(rootLoc.getZ()));
+        // A head already on the wheel cell: an earlier docking's blocks reached disk but so did the native
+        // entities (a crash between the two saves). Placing again would duplicate the hull and its cargo.
+        Material atWheel = shipLoc.getBlock().getType();
+        boolean alreadyDocked = atWheel == Material.PLAYER_HEAD || atWheel == Material.PLAYER_WALL_HEAD;
+        int dropped = alreadyDocked ? 0 : NativeShipLanding.place(shipLoc, model, yaw);
+
+        if (wheel != null) {
+            Location cell = shipLoc.getBlock().getLocation();
+            relocate(wheel, cell, BlockStructureScanner.rotateBlockFace(wheel.getFacing(), yaw - model.assemblyYaw));
+            wheel.setAssembledShipUUID(null);
+            wheel.clearLegacyEngines();
+            // An unstamped 0.0.17 head is accepted here; the legacy adoption stamps it on first right-click.
+            verifyWheelLanded(wheel, cell, false);
+            saveAll();
+        }
+        return dropped;
     }
 
     /**

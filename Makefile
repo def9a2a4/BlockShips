@@ -27,8 +27,8 @@ DEFCORELIB_BUILD_DEP   := defcorelib-build
 GRADLE_DEFCORELIB_ARGS  = -PdefCoreLibDir=$(DEFCORELIB_DIR)
 # Recursive `=`, NOT `:=` — the wildcard has to run after defcorelib-build has produced the jar.
 # shadow jar only, never the `-plain` thin jar (Paper: "Ambiguous plugin name 'DefCoreLib'").
-DEFCORELIB_JAR          = $(firstword $(filter-out %-plain.jar,\
-	$(wildcard $(DEFCORELIB_DIR)/bin/defCoreLib-*.jar)))
+# Highest version: bin/ can hold older jars too, and the alphabetical first one was 0.4.0.
+DEFCORELIB_JAR          = $(shell ls $(DEFCORELIB_DIR)/bin/defCoreLib-*.jar 2>/dev/null | grep -v -- '-plain' | sort -V | tail -1)
 else
 DEFCORELIB_BUILD_DEP   :=
 GRADLE_DEFCORELIB_ARGS  = -PdefCoreLibJar=$(DEFCORELIB_JAR)

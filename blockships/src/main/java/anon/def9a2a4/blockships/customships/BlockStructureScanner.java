@@ -1271,7 +1271,7 @@ public class BlockStructureScanner {
      * world instead of silently destroying them. Slot index is read via Number to tolerate a
      * Long/Double from a migrated/hand-edited model.
      */
-    private static org.bukkit.inventory.ItemStack[] deserializeInventory(java.util.List<Map<String, Object>> itemsData, int inventorySize,
+    static org.bukkit.inventory.ItemStack[] deserializeInventory(java.util.List<Map<String, Object>> itemsData, int inventorySize,
                                                                          java.util.List<org.bukkit.inventory.ItemStack> overflowOut) {
         org.bukkit.inventory.ItemStack[] items = new org.bukkit.inventory.ItemStack[inventorySize];
 

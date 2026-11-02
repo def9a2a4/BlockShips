@@ -645,7 +645,13 @@ public class ShipInstance {
                 // so no bloat. Cheap: only fires on a chunk-boundary crossing.
                 anon.def9a2a4.corelib.MechanismRegistry mr =
                     anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry();
-                if (mr != null) mr.persist(mechanism);
+                try {
+                    if (mr != null) mr.persist(mechanism);
+                } catch (java.io.UncheckedIOException e) {
+                    // The previous state file is untouched, so the ship still recovers, just from where it was
+                    // last saved. Say so: a full disk or a permission problem is the admin's to fix.
+                    plugin.getLogger().warning("Could not save ship " + id + " on chunk crossing: " + e.getMessage());
+                }
             }
             // Settle-time collider re-sync (native parity): on the first idle tick after movement,
             // re-track the mechanism's collider carriers so clients discard accumulated tracker drift
@@ -1274,7 +1280,9 @@ public class ShipInstance {
                 }
                 cargo.put(entry.getKey(), items);
             } catch (Exception e) {
-                // Skip a corrupt block's cargo rather than abort the whole migration.
+                // Skip a corrupt block's cargo rather than abort the whole migration, but say so: it is gone.
+                org.bukkit.Bukkit.getLogger().warning("[BlockShips] ship " + state.id + ": could not read the cargo of"
+                    + " block " + entry.getKey() + " (" + e + "); that container comes back empty");
             }
         }
         return cargo;

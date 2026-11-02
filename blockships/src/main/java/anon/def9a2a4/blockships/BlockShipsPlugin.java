@@ -41,6 +41,13 @@ public class BlockShipsPlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
+        String coreLibProblem = coreLibProblem();
+        if (coreLibProblem != null) {
+            getLogger().severe("BlockShips needs DefCoreLib " + REQUIRED_CORELIB + " or newer: " + coreLibProblem
+                + ". Install it from https://modrinth.com/plugin/defcorelib and restart. BlockShips is disabled.");
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
         int pluginId = 28443;
         new Metrics(this, pluginId);
 
@@ -125,6 +132,13 @@ public class BlockShipsPlugin extends JavaPlugin {
         // Runs AFTER forceRecoverDelegatedShips so corelib has already recovered delegated ships (byId set) before
         // the migration idempotency probe — shrinks the crash-mid-migration re-spawn window (#3).
         displayShip.migrateLoadedChunks();
+        // Counted at boot, before any of them docks, so the number is "still at sea when this server upgraded".
+        int nativeShips = displayShip.getShipWorldData().nativeShipCount();
+        if (nativeShips > 0) {
+            getLogger().warning(nativeShips + " ship(s) from BlockShips 0.0.17 or earlier were not docked before"
+                + " this upgrade. When its area next loads, a built ship is docked where it stands, as blocks (one in"
+                + " the air stays there, hanging), and players relaunch it from its wheel; a kit ship carries on as it was.");
+        }
 
         // Initialize special drowned listener (spawns drowned holding ship wheels)
         specialDrownedListener = new SpecialDrownedListener(this);
@@ -160,6 +174,26 @@ public class BlockShipsPlugin extends JavaPlugin {
 
     public ShipWheelManager getShipWheelManager() {
         return shipWheelManager;
+    }
+
+    private static final String REQUIRED_CORELIB = "0.5.0";
+
+    /**
+     * Why the installed DefCoreLib can't run BlockShips, or null if it can. plugin.yml's depend only checks
+     * that some DefCoreLib is there; an older one leaves BlockShips enabled but half-wired (a listener whose
+     * event class is missing loses ALL its handlers). Every dev build since 09-01 also calls itself 0.5.0, so
+     * the version string can't tell; probe the newest API BlockShips calls instead.
+     */
+    private static String coreLibProblem() {
+        try {
+            if (anon.def9a2a4.corelib.CoreLibPlugin.getInstance() == null) return "DefCoreLib did not enable";
+            Class.forName("anon.def9a2a4.corelib.MechanismRotationSolvedEvent");
+            Class.forName("anon.def9a2a4.corelib.MechanismRegistry")
+                .getMethod("landingSolidWouldWin", org.bukkit.Material.class);
+            return null;
+        } catch (ReflectiveOperationException | LinkageError e) {
+            return "the installed version is too old (missing " + e.getMessage() + ")";
+        }
     }
 
     private boolean hasPaperInputEvent() {

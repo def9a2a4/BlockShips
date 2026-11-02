@@ -10,6 +10,8 @@ docs/assets/dev/
 .download-cache/
 .temp/
 test-bot/test-results.txt
+test-bot/upgrade-test-results.txt
+test-bot/.upgrade-state.json
 test-bot/chunk-test-results.txt
 
 # Compiled class file

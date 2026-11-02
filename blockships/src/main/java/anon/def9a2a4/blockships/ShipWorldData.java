@@ -74,10 +74,8 @@ public class ShipWorldData {
         File[] worldDirs = worldsFolder.listFiles(File::isDirectory);
         if (worldDirs == null) return;
         for (File worldDir : worldDirs) {
-            // One-time cleanup: the legacy chunk-index file is no longer written or read. Delete it best-effort so
-            // upgraded data folders self-tidy on first run of this build.
-            File legacyChunks = new File(worldDir, "chunks.yml");
-            if (legacyChunks.exists()) legacyChunks.delete();
+            // The legacy chunk index (chunks.yml, 0.0.17 and earlier) is no longer read or written, but it is left on
+            // disk: it is the only record of where unmigrated native ships are, and 0.0.17 needs it after a rollback.
 
             File shipsDir = new File(worldDir, "ships");
             File[] all = shipsDir.listFiles();
@@ -99,10 +97,24 @@ public class ShipWorldData {
                 try {
                     persistedShipIds.add(UUID.fromString(name.substring(0, name.length() - 4)));
                 } catch (IllegalArgumentException ignored) {
-                    // stray non-UUID filename — skip
+                    continue;   // stray non-UUID filename — skip
+                }
+                try {
+                    if (!MIGRATED_LINE.matcher(Files.readString(f.toPath())).find()) nativeShipCount++;
+                } catch (IOException | java.io.UncheckedIOException e) {
+                    // unreadable: the three-state loader reports it when the ship's chunk loads
                 }
             }
         }
+    }
+
+    /** Sidecars found at boot that are still 0.0.17 native ships (no migrated marker), i.e. not yet converted. */
+    private int nativeShipCount;
+    private static final java.util.regex.Pattern MIGRATED_LINE =
+        java.util.regex.Pattern.compile("(?m)^migrated: true$");
+
+    public int nativeShipCount() {
+        return nativeShipCount;
     }
 
     /** Distinguishes concurrent temp files. See {@link #writeConfigAtomic}. */

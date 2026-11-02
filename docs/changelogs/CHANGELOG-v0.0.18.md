@@ -1,9 +1,16 @@
 # v0.0.18 - propulsion and flight
 
-> **Upgrading from 0.0.17: install [DefCoreLib](https://modrinth.com/plugin/defcorelib) first.**
+> **⚠ Before upgrading: have your players dock every ship, and back up your world and the whole
+> `plugins` folder.** Docked ships carry over untouched. A ship still out at sea when the server
+> upgrades is docked for it, as blocks, where it stands, the first time its area loads, and has to
+> be relaunched from its wheel. A ship in the air is left hanging there as blocks. Engine fuel in a
+> ship at sea goes back into its furnaces. The server log says how many ships were left out at sea.
+> There is no going back to 0.0.17 once ships have been relaunched on 0.0.18.
+>
+> **Install [DefCoreLib](https://modrinth.com/plugin/defcorelib) 0.5.0 first.**
 > BlockShips now has a hard dependency on it and will not load without it, which also raises
-> the minimum server to Paper 1.21.9. Existing ships carry over. Docked ships need nothing,
-> and a ship left out at sea is converted the first time its chunk loads. Install
+> the minimum server to Paper 1.21.9. If DefCoreLib is missing or too old, BlockShips says so at
+> startup and turns itself off. Install
 > [Mechanism](https://modrinth.com/plugin/mechanism) and
 > [BetterBanners](https://modrinth.com/plugin/betterbanners) too if you want propulsion, the
 > Glue Brush and the top two sail tiers to be craftable. The server log now says so at startup

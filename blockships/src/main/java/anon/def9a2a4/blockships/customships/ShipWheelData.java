@@ -81,7 +81,10 @@ public class ShipWheelData {
     // Camera distance setting (persisted per-ship)
     // -1 means "not set, use calculated default based on block count"
     private float cameraDistance = -1;
-    private double storedHealth = -1;  // HP carried across a disassemble (custom-ships.health.preserve-on-disassemble); -1 = none
+    private double storedHealth = -1;
+    // 0.0.16/0.0.17 kept an at-sea ship's engine fuel here, not in the furnace. Carried verbatim until that ship
+    // is docked by the upgrade (DisplayShip.landNativeShip), which puts it back in the furnaces.
+    private List<?> legacyEngines;  // HP carried across a disassemble (custom-ships.health.preserve-on-disassemble); -1 = none
 
     // When true, this wheel's ship is "locked": membership is frozen to its glue offsets (stored on the wheel
     // skull by defCoreLib) and the natural allow-list flood fill is disabled, so docking it next to a pile of
@@ -358,6 +361,15 @@ public class ShipWheelData {
      * HP the ship had when it was last disassembled, to restore on its next assembly, or -1 for none. Only
      * written while {@code custom-ships.health.preserve-on-disassemble} is on.
      */
+    /** The raw 0.0.17 {@code engines} rows (block_index, fuel_slots) still owed to a native ship, or null. */
+    public List<?> getLegacyEngines() {
+        return legacyEngines;
+    }
+
+    public void clearLegacyEngines() {
+        legacyEngines = null;
+    }
+
     public double getStoredHealth() {
         return storedHealth;
     }
@@ -478,6 +490,9 @@ public class ShipWheelData {
         if (storedHealth >= 0) {
             map.put("stored_health", storedHealth);
         }
+        if (legacyEngines != null) {
+            map.put("engines", legacyEngines);
+        }
         if (naturalFrozen) {
             map.put("locked", true);
         }
@@ -531,6 +546,9 @@ public class ShipWheelData {
         }
         if (map.get("stored_health") instanceof Number storedHealth) {
             data.setStoredHealth(storedHealth.doubleValue());
+        }
+        if (map.get("engines") instanceof List<?> engines && !engines.isEmpty()) {
+            data.legacyEngines = engines;
         }
 
         // Lock flag. New format is a plain boolean — the frozen cells live in the wheel's glue store, not here.

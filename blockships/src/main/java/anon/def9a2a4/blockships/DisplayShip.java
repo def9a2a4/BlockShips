@@ -35,7 +35,6 @@ import org.bukkit.event.player.PlayerToggleSneakEvent;
 import org.bukkit.advancement.Advancement;
 import org.bukkit.advancement.AdvancementProgress;
 import org.bukkit.event.vehicle.VehicleExitEvent;
-import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.event.world.ChunkUnloadEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.*;
@@ -120,6 +119,7 @@ public class DisplayShip implements Listener {
     public void migrateLoadedChunks() {
         for (World world : Bukkit.getWorlds()) {
             for (org.bukkit.Chunk chunk : world.getLoadedChunks()) {
+                if (!chunk.isEntitiesLoaded()) continue;   // onChunkEntitiesLoad handles it when they arrive
                 // Defense in depth: this runs during onEnable, and reapStragglerEntities used to be able to
                 // throw (NPE on a torn sidecar) — which aborted the loop for every remaining chunk AND every
                 // remaining world, leaving the plugin half-enabled. The 3-state loader is the real fix; this
@@ -209,6 +209,8 @@ public class DisplayShip implements Listener {
 
 
     public void shutdown() {
+        // The server saves every world after plugins disable, so docked native ships can drop their sidecars now.
+        flushDockedSidecars(false);
         // Save all ships to per-world storage - entities persist via Minecraft
         shipWorldData.saveAll();
         // Shutdown async I/O executor
@@ -263,8 +265,10 @@ public class DisplayShip implements Listener {
      * Also handles incremental recovery for ships that span multiple chunks.
      * File I/O is performed asynchronously to avoid blocking the main thread.
      */
+    // EntitiesLoadEvent, not ChunkLoadEvent: Paper loads a chunk's entities after the chunk, so at ChunkLoadEvent
+    // the native ship entities this looks for are not there yet and nothing ever migrated or got reaped.
     @EventHandler
-    public void onChunkLoad(ChunkLoadEvent event) {
+    public void onChunkEntitiesLoad(org.bukkit.event.world.EntitiesLoadEvent event) {
         org.bukkit.Chunk chunk = event.getChunk();
         World world = event.getWorld();
 
@@ -401,6 +405,14 @@ public class DisplayShip implements Listener {
         ShipModel model = loadModelForState(state, shipId);
         if (model == null) return;   // loadModelForState logged the reason once (via the dedupe key)
         java.util.List<long[]> forced = forceLoadFootprint(world, root.getLocation(), model);
+        if ("custom".equals(state.shipType)) {
+            try {
+                dockNativeShip(world, shipId, root, state, model);
+            } finally {
+                releaseFootprint(world, forced);
+            }
+            return;
+        }
         try {
             Location pose = root.getLocation().clone();
             if (!Float.isNaN(state.yaw)) pose.setYaw(state.yaw);
@@ -429,6 +441,50 @@ public class DisplayShip implements Listener {
         } finally {
             releaseFootprint(world, forced);
         }
+    }
+
+    /**
+     * The upgrade path for a 0.0.17 custom ship that was out at sea: dock it where it stands (blocks, cargo,
+     * wheel) instead of converting it to a live mechanism. A converted custom ship had no world blocks behind
+     * it, so its first real dock placed nothing and dropped its cargo into the sea. The player relaunches it
+     * from the wheel. Prefab ships still convert: they have no blocks to place either way.
+     */
+    private void dockNativeShip(World world, UUID shipId, ArmorStand root, ShipPersistence.ShipState state, ShipModel model) {
+        float yaw = Float.isNaN(state.yaw) ? model.assemblyYaw : state.yaw;
+        yaw = Math.floorMod(Math.round(yaw / 90f), 4) * 90f;
+        Location at = root.getLocation();
+        int dropped = ((BlockShipsPlugin) plugin).getShipWheelManager()
+            .landNativeShip(shipId, at, yaw, model, ShipInstance.decodeCargo(state));
+        reapNativeEntities(shipId, root, Math.max(footprintRadius(model), 64));
+        deleteSidecarAfterWorldSave(world, shipId);
+        migrationFailureLogged.remove(shipId);
+        plugin.getLogger().info("Docked 0.0.17 ship " + shipId + " where it stood at " + at.getBlockX() + ","
+            + at.getBlockY() + "," + at.getBlockZ() + " in " + world.getName() + " for the upgrade"
+            + (dropped > 0 ? "; " + dropped + " block(s) had something in the way and were dropped as items" : "")
+            + ". Relaunch it from its wheel.");
+    }
+
+    /** Docked native ships whose sidecar is deleted once their world has been saved. */
+    private final Map<World, Set<UUID>> dockedAwaitingSave = new HashMap<>();
+
+    /**
+     * The sidecar goes only after a world save. Deleting it first, then crashing before the world saved, would
+     * bring back the native entities without their blocks, and with no sidecar the straggler sweep reaps them:
+     * the ship gone. Kept, the next boot docks it again; landNativeShip sees its wheel already on the cell
+     * when the blocks did reach disk, and does not place them twice.
+     */
+    private void deleteSidecarAfterWorldSave(World world, UUID shipId) {
+        boolean first = dockedAwaitingSave.isEmpty();
+        dockedAwaitingSave.computeIfAbsent(world, w -> new HashSet<>()).add(shipId);
+        if (first) Bukkit.getScheduler().runTask(plugin, () -> flushDockedSidecars(true));
+    }
+
+    private void flushDockedSidecars(boolean saveWorld) {
+        for (Map.Entry<World, Set<UUID>> e : dockedAwaitingSave.entrySet()) {
+            if (saveWorld) e.getKey().save();
+            for (UUID id : e.getValue()) shipWorldData.removeShip(e.getKey(), id);
+        }
+        dockedAwaitingSave.clear();
     }
 
     /** Interaction fallback: a player clicked a ship collider whose ship isn't registered. The player is here, so
@@ -1206,8 +1262,16 @@ public class DisplayShip implements Listener {
                 for (java.util.Map.Entry<Integer, org.bukkit.inventory.ItemStack[]> e : cargo.entrySet()) {
                     org.bukkit.inventory.Inventory inv = mechanism.getStorage(e.getKey());
                     org.bukkit.inventory.ItemStack[] items = e.getValue();
-                    if (inv != null && items != null) {
-                        inv.setContents(java.util.Arrays.copyOf(items, inv.getSize()));
+                    if (items == null) continue;
+                    if (inv == null || items.length > inv.getSize()) {
+                        plugin.getLogger().warning("ship " + id + ": block " + e.getKey() + "'s cargo does not fit"
+                            + " (" + items.length + " slots, " + (inv == null ? "no container" : inv.getSize() + " slots")
+                            + "); the extra is dropped at the ship");
+                    }
+                    if (inv != null) inv.setContents(java.util.Arrays.copyOf(items, inv.getSize()));
+                    int from = inv == null ? 0 : inv.getSize();
+                    for (int s = from; s < items.length; s++) {
+                        if (items[s] != null) vehicle.getWorld().dropItemNaturally(vehicle.getLocation(), items[s]);
                     }
                 }
             }
@@ -1612,6 +1676,7 @@ public class DisplayShip implements Listener {
         if (mci >= 0) {
             Inventory storage = inst.mechanism.getStorage(mci);
             if (storage != null) {
+                openShipStorage.put(storage, inst.id);
                 player.openInventory(storage);
                 e.setCancelled(true);
                 return;
@@ -2736,6 +2801,27 @@ public class DisplayShip implements Listener {
             case HELP, INFO, DETECT, HIGHLIGHT_SEATS,
                  CAMERA_DISTANCE_DECREASE, CAMERA_DISTANCE_INCREASE, ASSEMBLE, NONE -> false;
         };
+    }
+
+    /** Ship storage inventories that have been opened, and their ship, so a close can save the cargo. */
+    private final Map<Inventory, UUID> openShipStorage = new WeakHashMap<>();
+
+    /**
+     * Saves a ship's cargo when a player closes one of its containers. Cargo otherwise reaches disk only at
+     * assembly, chunk crossings and shutdown, so after a crash a parked ship's chests came back as they were
+     * long before: items taken out since were duplicated, items put in were lost.
+     */
+    @EventHandler
+    public void onShipStorageClose(InventoryCloseEvent event) {
+        UUID shipId = openShipStorage.get(event.getInventory());
+        if (shipId == null) return;
+        ShipInstance ship = ShipRegistry.byId(shipId);
+        if (ship == null || ship.mechanism == null) return;
+        try {
+            anon.def9a2a4.corelib.CoreLibPlugin.getInstance().getMechanismRegistry().persist(ship.mechanism);
+        } catch (java.io.UncheckedIOException e) {
+            plugin.getLogger().warning("Could not save ship " + shipId + "'s cargo: " + e.getMessage());
+        }
     }
 
     /**
