@@ -1062,14 +1062,6 @@ public class BlockShipsPlugin extends JavaPlugin {
                     sendForceClearLiveRefusal(sender, fcId);
                     return true;
                 }
-                // A ship parked in an unloaded chunk also reads "still loading". Clearing its wheel then leaves a
-                // ship that comes back with no wheel and can never be docked.
-                org.bukkit.Location parked = shipWheelManager.parkedOutOfRange(target);
-                if (parked != null) {
-                    sender.sendMessage("§cThat ship is not stuck, it is parked out of range at " + fmt(parked)
-                        + ". Go there (or teleport) so it loads. Force-clear only if it still won't load once you're there.");
-                    return true;
-                }
                 // ID-derived token rather than the literal "confirm", matching wheels adopt/purge: a stale or
                 // mistyped confirmation then cannot land on a wheel the admin never looked at.
                 String fcToken = fcId.toString().substring(0, 8);

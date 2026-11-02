@@ -1855,7 +1855,7 @@ public class ShipWheelManager {
             }
             case REFUSE_STILL_LOADING -> {
                 // A detect on an unloaded chunk reads air and would freeze a one-block ship.
-                if (player != null) player.sendMessage(stillLoadingMessage(wheelData));
+                if (player != null) player.sendMessage("§eShip is still loading — try again in a moment.");
                 return null;
             }
             case REFUSE_SAILING -> {
@@ -2003,31 +2003,6 @@ public class ShipWheelManager {
         }
     }
 
-    /**
-     * Where this wheel's ship was last saved, if that spot is not loaded now: the ship is parked out of range,
-     * not stuck. Null when it can't be told (no sidecar, unreadable, or the spot is loaded).
-     */
-    public @Nullable Location parkedOutOfRange(ShipWheelData wheel) {
-        UUID id = wheel.getAssembledShipUUID();
-        if (id == null || !(plugin instanceof BlockShipsPlugin bsp) || bsp.getDisplayShip() == null) return null;
-        World world = liveWorld(wheel.getBlockLocation());
-        if (world == null) return null;
-        var load = bsp.getDisplayShip().getShipWorldData().loadShipMetadataChecked(world, id);
-        if (load.status() != anon.def9a2a4.blockships.ShipWorldData.LoadStatus.OK) return null;
-        var st = load.state();
-        World named = st.worldName != null ? org.bukkit.Bukkit.getWorld(st.worldName) : null;
-        World shipWorld = named != null ? named : world;
-        Location at = new Location(shipWorld, st.x, st.y, st.z);
-        return shipWorld.isChunkLoaded(at.getBlockX() >> 4, at.getBlockZ() >> 4) ? null : at;
-    }
-
-    private String stillLoadingMessage(ShipWheelData wheel) {
-        Location at = parkedOutOfRange(wheel);
-        if (at == null) return "§eShip is still loading — try again in a moment.";
-        return "§eThis wheel's ship is parked out of range, last seen at " + at.getBlockX() + ", " + at.getBlockY()
-            + ", " + at.getBlockZ() + ". Go there to bring it back.";
-    }
-
     /** True if this id has a persisted ship sidecar on disk (any world). Mirrors {@code collectPersistedShipIds}. */
     private boolean isPersistedShip(UUID id) {
         if (!(plugin instanceof BlockShipsPlugin bsp)) return false;
@@ -2105,7 +2080,7 @@ public class ShipWheelManager {
      * @return false (and nothing changed) when the wheel's ship is live
      */
     public boolean forceClearWheelLink(ShipWheelData wheel) {
-        if (!forceClearAllowed(resolveWheelState(wheel).state()) || parkedOutOfRange(wheel) != null) return false;
+        if (!forceClearAllowed(resolveWheelState(wheel).state())) return false;
         reconcileOrphan(wheel);
         return true;
     }
@@ -2261,7 +2236,7 @@ public class ShipWheelManager {
             return false;
         }
         if (wr.state() == WheelState.UNLOADED_RECOVERABLE) {
-            player.sendMessage(stillLoadingMessage(wheelData));
+            player.sendMessage("§eShip is still loading — try again in a moment.");
             return false;
         }
         if (wr.state() == WheelState.ORPHAN) {
@@ -2499,7 +2474,7 @@ public class ShipWheelManager {
         WheelResolution wr = resolveWheelState(wheelData);
         switch (wr.state()) {
             case NOT_ASSEMBLED -> { player.sendMessage("§cNo ship to align! Assemble a ship first."); return false; }
-            case UNLOADED_RECOVERABLE -> { player.sendMessage(stillLoadingMessage(wheelData)); return false; }
+            case UNLOADED_RECOVERABLE -> { player.sendMessage("§eShip is still loading — try again in a moment."); return false; }
             case ORPHAN -> {
                 reconcileOrphan(wheelData);
                 player.sendMessage("§cThat ship was lost — the wheel has been reset. You can assemble again.");
@@ -2572,7 +2547,7 @@ public class ShipWheelManager {
         WheelResolution wr = resolveWheelState(wheelData);
         switch (wr.state()) {
             case NOT_ASSEMBLED -> { if (player != null) player.sendMessage("§cNo ship to disassemble!"); return false; }
-            case UNLOADED_RECOVERABLE -> { if (player != null) player.sendMessage(stillLoadingMessage(wheelData)); return false; }
+            case UNLOADED_RECOVERABLE -> { if (player != null) player.sendMessage("§eShip is still loading — try again in a moment."); return false; }
             case ORPHAN -> {
                 reconcileOrphan(wheelData);
                 if (player != null) player.sendMessage("§cThat ship was lost — the wheel has been reset.");
