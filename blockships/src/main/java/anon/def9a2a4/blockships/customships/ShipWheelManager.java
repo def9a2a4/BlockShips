@@ -2568,6 +2568,7 @@ public class ShipWheelManager {
         // Link the wheel to the ship
         wheelData.setAssembledShipUUID(ship.id);
         ship.wheelData = wheelData;
+        ship.applyCameraDistance();   // now that the wheel is linked, its camera setting applies
         // HP carried over from the last disassemble, as an absolute value capped at the new max so blocks
         // added while docked cannot mint HP. Consumed either way; the saveAll below persists the clear.
         double storedHealth = wheelData.getStoredHealth();

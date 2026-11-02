@@ -549,8 +549,10 @@ async function customDismount(bot, log, originalStartPos = null) {
     )
   }
 
-  // Clear any stale input state on the server after dismount.
-  // bot.dismount() on 1.21.3+ sends { jump: true } which sets isSpacePressed on airships.
+  // Reset the bot's own input state after a dismount, so the next packet it sends starts from all-released.
+  // This does NOT clear anything on the server: once the bot is off the seat, PaperInputListener ignores its
+  // input. The plugin drops the helm's inputs itself when the driver leaves (DisplayShip.onSeatDismount), and
+  // again whenever the helm is empty or changes hands (ShipInstance.handleSteeringInput).
   const clearShipInput = () => {
     if (bot.supportFeature('newPlayerInputPacket')) {
       bot._client.write('player_input', {

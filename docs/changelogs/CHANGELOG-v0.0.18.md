@@ -321,6 +321,19 @@ cannons.
 - **A cannon fires a random loaded slot**, as a vanilla dispenser does. It used to always fire the first
   one, so fire charges in front of TNT meant only fire charges ever fired.
 
+### Getting on and off
+
+- **Getting off a seat is handled again.** It never was on the current engine: you now step off onto
+  the deck instead of into it, carry the ship's momentum when you hop off a moving one, and the helm
+  lets go of the controls. Before, a driver who got off holding forward left the throttle stuck, and
+  the next player to board drove off without pressing anything.
+- **A cushion on a chest, crafting table, cannon or fence is a seat.** Clicking it used to open the
+  block or fire the cannon instead. Sneak-click it to open the ship menu.
+- **Your camera distance applies however you board**, including sitting on a cushion before assembly
+  and after a restart.
+- **Detect counts cushion seats**, and no longer counts the seat behind the wheel twice, so the docked
+  seat count matches the one the ship gets.
+
 ### Others
 
 - **Assembled `/detect` now reports seats**, which only the docked readout did.

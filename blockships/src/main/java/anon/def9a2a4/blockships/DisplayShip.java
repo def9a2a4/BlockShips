@@ -795,6 +795,8 @@ public class DisplayShip implements Listener {
                 if (ShipRegistry.byId(id) != ship) return; // ship replaced/removed meanwhile
                 ship.resolveWheelData();
                 ship.physics.recomputeStats();
+                // A custom ship's camera is its wheel's setting; until the wheel resolves, leave the seats alone.
+                if (ship.wheelData != null || !"custom".equals(ship.shipType)) ship.applyCameraDistance();
             }
         }.runTask(plugin);
     }
@@ -1381,6 +1383,7 @@ public class DisplayShip implements Listener {
                 : reg.assembleFromParts(type, specs, vehicle, rideOffset);
             ship = new ShipInstance(plugin, shipType, model, pose, customization, vehicle, mechanism);
             ship.adoptMechanismSeats();
+            ship.applyCameraDistance();
             // Leadable: wire the single leadable shulker from its model-part collider (convenience; the
             // interaction handler's per-collider model-part fallback covers the general case).
             for (int i = 0; i < model.parts.size(); i++) {
@@ -1617,18 +1620,18 @@ public class DisplayShip implements Listener {
             handleShulkerInteraction(e, shulker);
         }
 
-        // A 26.3 cushion carried on a ship seat: route the click to the seat's shulker. Left to vanilla, the player
+        // A 26.3 cushion carried on a ship seat: seat the player on the seat's shulker. Left to vanilla, the player
         // would sit on the cushion itself, outside the seat code (no steering, no occupancy). Only for a REGISTERED
-        // ship: every mechanism collider carries a corelib:mech id that extractShipId reads as a ship id, and
-        // handleShulkerInteraction consumes the click for an unknown one — so a cushion on a door or hoist keeps
-        // its vanilla seat.
+        // ship: every mechanism collider carries a corelib:mech id that extractShipId reads as a ship id — so a
+        // cushion on a door or hoist keeps its vanilla seat.
         if (anon.def9a2a4.blockships.CushionSupport.isCarried(clicked) && clicked.getVehicle() instanceof Shulker seat) {
             UUID seatShip = ShipTags.extractShipId(seat.getScoreboardTags());
-            if (seatShip != null && ShipRegistry.byId(seatShip) != null) {
-                // Always consumed: a path in handleShulkerInteraction that returns without cancelling (the wrench,
-                // a ship mid-teardown) would otherwise let vanilla seat the player on the cushion itself.
+            ShipInstance seatInst = seatShip != null ? ShipRegistry.byId(seatShip) : null;
+            if (seatInst != null) {
+                // Always consumed: a path that returns without cancelling (the wrench, a ship mid-teardown) would
+                // otherwise let vanilla seat the player on the cushion itself.
                 e.setCancelled(true);
-                handleShulkerInteraction(e, seat);
+                handleCushionClick(e, seat, seatInst);
                 return;
             }
         }
@@ -1644,22 +1647,81 @@ public class DisplayShip implements Listener {
         }
     }
 
+    /**
+     * Cooldown against double-mounting: a riding player's click within 500 ms of their last mount is consumed
+     * (cancelled) and ignored. Past the cooldown the click goes through; the timestamp is updated only after a
+     * successful mount. Returns true when the click was swallowed.
+     */
+    private boolean inMountCooldown(PlayerInteractEntityEvent e, Player player) {
+        if (!player.isInsideVehicle()) return false;
+        Long lastClick = lastShulkerInteraction.get(player.getUniqueId());
+        if (lastClick != null && (System.currentTimeMillis() - lastClick) < 500) {
+            e.setCancelled(true);
+            return true;
+        }
+        return false;
+    }
+
+    /** Seat the player on {@code seat} (seat index {@code seatIndex}) unless someone already sits there. */
+    private void mountSeat(Player player, ShipInstance inst, Shulker seat, int seatIndex) {
+        if (ShipInstance.seatOccupied(seat)) return;
+        ShipInstance.setCameraDistance(seat, inst.cameraDistance());
+        seat.addPassenger(player);
+        inst.occupySeat(seatIndex);
+        recordShulkerInteraction(player.getUniqueId());
+    }
+
+    /** Seat the player on the ship's first free seat (the driver's first), if any. */
+    private void mountFirstAvailableSeat(Player player, ShipInstance inst) {
+        Shulker availableSeatShulker = inst.getFirstAvailableSeatShulker();
+        if (availableSeatShulker == null) return;
+        ShipInstance.setCameraDistance(availableSeatShulker, inst.cameraDistance());
+        availableSeatShulker.addPassenger(player);
+        // Mark seat as occupied (extract seat index from shulker tags; delegated ships resolve via the
+        // populated seatShulkers list since their seats carry corelib tags, not shipseat:{seatIdx}).
+        int idx = ShipTags.extractSeatIndex(availableSeatShulker.getScoreboardTags());
+        if (idx < 0) idx = inst.seatShulkers.indexOf(availableSeatShulker);
+        if (idx >= 0) {
+            inst.occupySeat(idx);
+        }
+        recordShulkerInteraction(player.getUniqueId());
+    }
+
+    /**
+     * A click on a 26.3 cushion carried on a ship seat. It is a seat first: unlike a click on the block itself,
+     * the block's own use (wheel menu, lead post, cannon trigger, crafting table, chest) does not apply — a cushion
+     * on a chest is sat on, not opened. Tool readouts (ship wheel, echo shard, wrench) still answer, and sneaking
+     * opens the ship menu as anywhere else on the hull. The caller has already consumed the click.
+     */
+    private void handleCushionClick(PlayerInteractEntityEvent e, Shulker seat, ShipInstance inst) {
+        Player player = e.getPlayer();
+        ItemStack hand = player.getInventory().getItemInMainHand();
+        if (isShipWheel(hand) || hand.getType() == Material.ECHO_SHARD
+                || "mech:wrench".equals(anon.def9a2a4.corelib.CustomBlockRegistry.getItemTypeId(hand))) {
+            handleShulkerInteraction(e, seat);
+            return;
+        }
+        if (inMountCooldown(e, player)) return;
+        if (!inst.vehicle.isValid()) return;
+        if (player.isSneaking()) {
+            // As on the hull: no wheel (a prefab) means sneaking just boards.
+            ShipWheelData wheelData = ((BlockShipsPlugin) plugin).getShipWheelManager().getWheelByShipUUID(inst.id);
+            if (wheelData != null) {
+                ShipWheelMenu.openMenu(player, wheelData);
+                return;
+            }
+        }
+        int idx = inst.seatShulkers.indexOf(seat);
+        if (idx < 0) idx = ShipTags.extractSeatIndex(seat.getScoreboardTags());
+        if (idx >= 0) mountSeat(player, inst, seat, idx);
+        else mountFirstAvailableSeat(player, inst);
+    }
+
     private void handleShulkerInteraction(PlayerInteractEntityEvent e, Shulker shulker) {
         Player player = e.getPlayer();
 
         // Cooldown system: prevent double-mounting but allow interactions after delay
-        if (player.isInsideVehicle()) {
-            UUID playerId = player.getUniqueId();
-            long now = System.currentTimeMillis();
-            Long lastClick = lastShulkerInteraction.get(playerId);
-
-            if (lastClick != null && (now - lastClick) < 500) {
-                // Within cooldown - block to prevent double-entry
-                e.setCancelled(true);
-                return;
-            }
-            // Past cooldown - allow interaction (timestamp updated after successful action)
-        }
+        if (inMountCooldown(e, player)) return;
 
         // Parse shulker tags: displayship:{uuid}, shipseat:{seatIndex}, shipwheel:{location}, interact:{blockIndex}
         // Tag creation: ShipInstance constructor (collision boxes and seats)
@@ -1846,40 +1908,15 @@ public class DisplayShip implements Listener {
             }
         }
 
-        // Check if this shulker is marked as a seat
+        // Check if this shulker is marked as a seat: mount directly to it (an occupied seat does nothing)
         if (seatIndex >= 0) {
-            // Player clicked on a seat collider - mount directly to this shulker if not occupied
-            if (!ShipInstance.seatOccupied(shulker)) {
-                // Set camera distance before mounting
-                setCameraDistanceOnShulker(shulker, getCameraDistanceForShip(inst));
-                shulker.addPassenger(player);
-                inst.occupySeat(seatIndex);
-                // Update timestamp after successful mount
-                recordShulkerInteraction(player.getUniqueId());
-                e.setCancelled(true);
-                return;
-            }
-            // Seat is occupied - do nothing
+            mountSeat(player, inst, shulker, seatIndex);
             e.setCancelled(true);
             return;
         }
 
         // Player clicked on a non-seat collider - mount to first available seat shulker
-        Shulker availableSeatShulker = inst.getFirstAvailableSeatShulker();
-        if (availableSeatShulker != null) {
-            // Set camera distance before mounting
-            setCameraDistanceOnShulker(availableSeatShulker, getCameraDistanceForShip(inst));
-            availableSeatShulker.addPassenger(player);
-            // Mark seat as occupied (extract seat index from shulker tags; delegated ships resolve via the
-            // populated seatShulkers list since their seats carry corelib tags, not shipseat:{seatIdx}).
-            int idx = ShipTags.extractSeatIndex(availableSeatShulker.getScoreboardTags());
-            if (idx < 0) idx = inst.seatShulkers.indexOf(availableSeatShulker);
-            if (idx >= 0) {
-                inst.occupySeat(idx);
-            }
-            // Update timestamp after successful mount
-            recordShulkerInteraction(player.getUniqueId());
-        }
+        mountFirstAvailableSeat(player, inst);
         e.setCancelled(true);
     }
 
@@ -3039,56 +3076,12 @@ public class DisplayShip implements Listener {
         // Update all seat shulkers immediately (so change takes effect if player is riding)
         for (Shulker shulker : ship.seatShulkers) {
             if (shulker != null && shulker.isValid()) {
-                setCameraDistanceOnShulker(shulker, newValue);
+                ShipInstance.setCameraDistance(shulker, newValue);
             }
         }
 
         // Update menu items in place (no close/reopen)
         ShipWheelMenu.updateCameraItems(inventory, wheelData, ship);
-    }
-
-    /**
-     * Sets the camera_distance attribute on a shulker for third-person camera positioning.
-     * Only effective on Minecraft 1.21.6+ where this attribute exists.
-     *
-     * @param shulker The shulker to set the attribute on
-     * @param distance The camera distance (4-32, default 4)
-     */
-    private void setCameraDistanceOnShulker(Shulker shulker, float distance) {
-        org.bukkit.attribute.Attribute cameraDistAttr = AttributeCompat.getCameraDistance();
-        if (cameraDistAttr != null) {
-            try {
-                org.bukkit.attribute.AttributeInstance attr = shulker.getAttribute(cameraDistAttr);
-                if (attr != null) {
-                    attr.setBaseValue(distance);
-                }
-            } catch (Exception e) {
-                // Silently ignore - attribute may not be applicable on this server version
-            }
-        }
-    }
-
-    /**
-     * Gets the appropriate camera distance for a ship instance.
-     * For prefab ships, returns the config value.
-     * For custom ships, returns the wheel data value or calculates from block count.
-     *
-     * @param inst The ship instance
-     * @return The camera distance to use
-     */
-    private float getCameraDistanceForShip(ShipInstance inst) {
-        if ("custom".equals(inst.shipType)) {
-            // For custom ships, check wheel data for per-ship setting
-            ShipWheelManager manager = ((BlockShipsPlugin) plugin).getShipWheelManager();
-            ShipWheelData wheelData = manager.getWheelByShipUUID(inst.id);
-            if (wheelData != null && wheelData.getCameraDistance() >= 0) {
-                return wheelData.getCameraDistance();
-            } else {
-                return ShipWheelData.calculateDefaultCameraDistance(inst.model.blockCount);
-            }
-        }
-        // For prefab ships, use config value
-        return inst.config.cameraDistance;
     }
 
     /**

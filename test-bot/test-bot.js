@@ -291,6 +291,85 @@ async function testShipControls(shipType) {
   }
 }
 
+/** Mean position of the ship's colliders (their carriers), or null when none are in view. */
+function shipColliderCentre(maxDist = 30) {
+  const shulkers = findShulkers(bot, maxDist)
+  if (shulkers.length === 0) return null
+  let x = 0, y = 0, z = 0
+  for (const sh of shulkers) {
+    const p = getShipEntityPos(sh)
+    x += p.x; y += p.y; z += p.z
+  }
+  return new Vec3(x / shulkers.length, y / shulkers.length, z / shulkers.length)
+}
+
+/**
+ * A driver who gets off while holding W must not leave the throttle on for the next one. steerShip never
+ * releases its keys, and the shift dismount packet is consumed as a dismount (the forward=false it carries is
+ * never applied), so the server's forward flag is still set when the bot gets off — the exact ghost-throttle
+ * setup. After the ship coasts to a stop, the bot boards again and sends NO input: the ship must stay put.
+ */
+async function testGhostThrottle() {
+  const testName = 'Ghost Throttle'
+  say(`=== TEST: ${testName} ===`)
+
+  await cleanup(bot)
+  await teleportToRunway()
+  await clearInventory(bot)
+
+  bot.chat('/blockships give smallship')
+  await sleep(1500)
+  const shipItem = bot.inventory.items().find(i => i.name === 'player_head')
+  if (!shipItem) { fail(testName, 'Could not get ship item'); return }
+  await bot.equip(shipItem, 'hand')
+  await sleep(500)
+  const water = await waitForWater(bot, bot.entity.position)
+  if (!water) { fail(testName, 'No water found'); return }
+  try { await bot.activateBlock(water) } catch (e) {}
+  await sleep(3000)
+  await clearInventory(bot)
+
+  say('Mounting ship...')
+  if (!await mountShip(bot, log)) { fail(testName, 'Could not mount ship'); return }
+
+  log('Steering forward 3s (keys left held)...')
+  await steerShip(bot, 1.0, 0, false, 3000)
+
+  // Raw shift only — not customDismount, whose clearShipInput would send a forward=false after the fact.
+  log('Dismounting with raw shift...')
+  if (bot.supportFeature('newPlayerInputPacket')) {
+    bot._client.write('player_input', { inputs: { forward: true, shift: true } })
+  } else {
+    bot._client.write('steer_vehicle', { sideways: 0, forward: 1, jump: 0, unmount: 1 })
+  }
+  const start = Date.now()
+  while (bot.vehicle && Date.now() - start < 3000) await sleep(50)
+  if (bot.vehicle) {
+    await customDismount(bot, log)
+    fail(testName, 'Raw shift did not dismount; the setup is not the ghost-throttle case')
+    return
+  }
+
+  log('Waiting for the ship to coast to a stop...')
+  await sleep(8000)
+
+  say('Re-mounting, sending no input...')
+  if (!await mountShip(bot, log)) { fail(testName, 'Could not re-mount ship'); return }
+  await sleep(500)
+  const before = shipColliderCentre()
+  await sleep(3000)
+  const after = shipColliderCentre()
+  await customDismount(bot, log)
+
+  if (!before || !after) { fail(testName, 'Could not see the ship colliders'); return }
+  const moved = Math.hypot(after.x - before.x, after.z - before.z)
+  if (moved >= 1.0) {
+    fail(testName, `Ship moved ${moved.toFixed(2)} blocks with nobody pressing anything — ghost throttle`)
+    return
+  }
+  pass(`${testName} (idle drift ${moved.toFixed(2)} blocks)`)
+}
+
 async function buildCustomShipBlocks(config) {
   return await buildCustomShipWithWheel(bot, config, RUNWAY_X, 101, RUNWAY_Z - 1)
 }
@@ -1869,6 +1948,7 @@ const TESTS = {
   land_vehicle: { name: 'Land Vehicle Steps Up', fn: testLandVehicle },
   powered_cart: { name: 'Powered Cart Drives And Burns Only When Used', fn: testPoweredCart },
   blocks_yml: { name: 'Server blocks.yml Override', fn: testBlocksYml },
+  ghost_throttle: { name: 'No Ghost Throttle After Dismount', fn: testGhostThrottle },
   // manual: skipped by runAllTests (and therefore by CI's test:all) — the deliberate negative waits
   // don't fit the suite's hard timeout. Run by name: `.testbot wheel_reserved` or --only=wheel_
   wheel_reserved: { name: 'Wheel Dock Reserved', fn: testWheelCellReserved, manual: true },
