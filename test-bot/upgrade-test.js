@@ -49,6 +49,28 @@ async function waterBasin(cx, cz) {
   await sleep(2000)
 }
 
+// A ship docks where it stands, and a ship settles into the water once launched, so its blocks come back a
+// little off from where they were built. Find them nearby instead of at fixed cells.
+function findNear(pos, match, r = 4) {
+  for (let d = 0; d <= r; d++) {
+    for (let dx = -d; dx <= d; dx++) for (let dy = -d; dy <= d; dy++) for (let dz = -d; dz <= d; dz++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz)) !== d) continue
+      const b = bot.blockAt(new Vec3(pos.x + dx, pos.y + dy, pos.z + dz))
+      if (b && match(b.name)) return b.position
+    }
+  }
+  return null
+}
+
+async function relocate(ship) {
+  await tp(ship.wheel.x, 105, ship.wheel.z + 2)
+  const wheel = findNear(ship.wheel, n => n.includes('player') && n.includes('head'))
+  const chest = findNear(ship.chest, n => n === 'chest')
+  if (wheel) ship.wheel = wheel
+  if (chest) ship.chest = chest
+  return wheel && chest
+}
+
 async function countChestItem(pos, item) {
   bot.chat(`/tp @s ${pos.x + 0.5} ${pos.y + 1} ${pos.z + 0.5}`)
   await sleep(800)
@@ -93,8 +115,8 @@ async function setup() {
 
   const ships = {}
   for (const [name, at, item, n] of [['atSea', AT_SEA, 'diamond', DIAMONDS], ['docked', DOCKED, 'emerald', EMERALDS]]) {
-    // Off to the side, so the bot is never standing in the cell the wheel goes into.
-    await tp(at.x, 105, at.z + 5)
+    // Beside the wheel cell (never in it) and within reach of it.
+    await tp(at.x, 104, at.z + 2)
     await waterBasin(at.x, at.z)
     await clearInventory(bot)
     const built = await buildCustomShipWithWheel(bot, CUSTOM_SHIP, at.x, BUILD_Y, at.z)
@@ -146,6 +168,10 @@ async function verify() {
   }
 
   for (const [name, ship] of Object.entries(ships)) {
+    if (!await relocate(ship)) {
+      fail(`${name}_cargo_after_upgrade`, `no wheel or chest within 4 blocks of where the ship was`)
+      continue
+    }
     const before = await countChestItem(ship.chest, ship.item)
     if (before.error || before.count !== ship.n) {
       fail(`${name}_cargo_after_upgrade`, before.error || `${before.count} ${ship.item}, expected ${ship.n}`)
@@ -165,6 +191,10 @@ async function verify() {
     }
     if (!await disassembleViaWheelMenu(bot, log) || !await waitForNoShulkers()) {
       fail(`${name}_redock`, 'could not dock it again')
+      continue
+    }
+    if (!await relocate(ship)) {
+      fail(`${name}_relaunch`, 'no wheel or chest near the ship after docking it again')
       continue
     }
     const after = await countChestItem(ship.chest, ship.item)
