@@ -53,6 +53,15 @@ public final class CushionSupport {
         return out;
     }
 
+    /** True when this server has cushions (26.3+) and defCoreLib supports them. */
+    public static boolean available() {
+        try {
+            return anon.def9a2a4.corelib.CushionSeats.available();
+        } catch (LinkageError ignored) {
+            return false;
+        }
+    }
+
     /** True for a cushion defCoreLib is carrying on a mechanism collider. */
     public static boolean isCarried(Entity e) {
         try {

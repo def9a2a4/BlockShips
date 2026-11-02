@@ -563,6 +563,94 @@ public class BlockStructureScanner {
     }
 
     /**
+     * The block data a captured cell is stored with: a double chest forced to single (GitHub #12 — each half
+     * keeps only its own slots) and waterlogging cleared (whether a landed block is waterlogged is decided fresh
+     * from the destination cell by the delegated landing seams, never inherited from assembly). A clone; the
+     * world block is untouched.
+     */
+    private static BlockData captureData(Block block) {
+        BlockData blockData = block.getBlockData();
+        if (blockData instanceof org.bukkit.block.data.type.Chest chestData
+                && chestData.getType() != org.bukkit.block.data.type.Chest.Type.SINGLE) {
+            chestData.setType(org.bukkit.block.data.type.Chest.Type.SINGLE);
+        }
+        if (blockData instanceof org.bukkit.block.data.Waterlogged w && w.isWaterlogged()) {
+            w.setWaterlogged(false);
+        }
+        return blockData;
+    }
+
+    /**
+     * Which of a structure's blocks are seats, by index into {@code blocks}.
+     *
+     * @param driverIdx the driver's block
+     * @param passengerIdx passenger seat blocks, in order (never containing the driver; no duplicates)
+     * @param cushionsUnreadable the cushions over these blocks could not be read (their entities are still loading),
+     *        so cushion seats may be missing
+     */
+    public record SeatLayout(int driverIdx, List<Integer> passengerIdx, boolean cushionsUnreadable) {}
+
+    /**
+     * The seat rules, shared by assembly ({@link #captureCells}) and the docked preview
+     * ({@code ShipWheelManager.detectShip}) so the seat count shown docked is the count the ship gets.
+     * <ul>
+     *   <li>Driver: the block behind the wheel, else the one under that, else the wheel's own cell. A 26.3 cushion
+     *       sitting in the cell behind the wheel (at wheel height) makes its carrier block the driver seat.</li>
+     *   <li>Passengers: every {@code isSeat} block in {@code blocks} order, then every cushion's carrier block.</li>
+     *   <li>One seat per block, the driver first.</li>
+     * </ul>
+     */
+    public static SeatLayout resolveSeats(List<Block> blocks, Location wheel, BlockFace facing) {
+        BlockConfigManager configManager = BlockConfigManager.getInstance();
+        BlockFace opposite = facing.getOppositeFace();
+        int wx = wheel.getBlockX(), wy = wheel.getBlockY(), wz = wheel.getBlockZ();
+
+        Map<String, Integer> positionToBlockIndex = new HashMap<>();
+        List<Integer> seatBlocks = new ArrayList<>();
+        for (int i = 0; i < blocks.size(); i++) {
+            Block b = blocks.get(i);
+            positionToBlockIndex.put((b.getX() - wx) + "," + (b.getY() - wy) + "," + (b.getZ() - wz), i);
+            BlockData data = captureData(b);
+            if (configManager.getProperties(b.getType(), data).isSeat()) seatBlocks.add(i);
+        }
+
+        // Fallback is the wheel's own cell — looked up, not assumed to be index 0 (blocks can come in any order).
+        Integer driver = positionToBlockIndex.get(opposite.getModX() + ",0," + opposite.getModZ());
+        if (driver == null) driver = positionToBlockIndex.get(opposite.getModX() + ",-1," + opposite.getModZ());
+        if (driver == null) driver = positionToBlockIndex.get("0,0,0");
+        if (driver == null) driver = 0;
+
+        // Cushions rest on a block; the seat is the block whose collider carries the cushion — the cushion's own
+        // block, or the one under it when that has no collider (a carpet, a pressure plate). Covers a passable
+        // block between the wheel and a cushion behind it, which the position rule above cannot.
+        List<anon.def9a2a4.blockships.CushionSupport.CushionSeat> cushions =
+            anon.def9a2a4.blockships.CushionSupport.cushionSeats(blocks);
+        for (anon.def9a2a4.blockships.CushionSupport.CushionSeat c : cushions) {
+            Block cell = c.cell();
+            if (cell.getX() - wx == opposite.getModX() && cell.getY() == wy && cell.getZ() - wz == opposite.getModZ()) {
+                driver = c.seatIdx();
+            }
+            seatBlocks.add(c.seatIdx());
+        }
+
+        LinkedHashSet<Integer> passengers = new LinkedHashSet<>(seatBlocks);
+        passengers.remove(driver);
+        return new SeatLayout(driver, new ArrayList<>(passengers), cushionsUnreadable(blocks));
+    }
+
+    /** Cushions exist on this server but the entities over {@code blocks} are not loaded yet. */
+    private static boolean cushionsUnreadable(List<Block> blocks) {
+        if (blocks.isEmpty() || !anon.def9a2a4.blockships.CushionSupport.available()) return false;
+        org.bukkit.util.BoundingBox box = null;
+        for (Block b : blocks) {
+            org.bukkit.util.BoundingBox bb = org.bukkit.util.BoundingBox.of(b);
+            if (box == null) box = bb; else box.union(bb);
+        }
+        box.expand(0, 0, 0, 0, 1, 0);   // a cushion on a full block sits in the cell above it
+        return !entitiesLoadedOver(blocks.get(0).getWorld(), box);
+    }
+
+    /**
      * Capture an explicit list of world cells into a {@link ShipModel} plus its parity-ordered block
      * list. Extracted from {@link #scanStructure} so the frozen-set path ({@link #scanFrozen}) shares
      * it verbatim rather than reimplementing it — block-index parity, seats, cannons, storage, sign
@@ -588,9 +676,6 @@ public class BlockStructureScanner {
 
         int blockIndex = 0;
         Location wheelOrigin = wheelLocation.clone();
-
-        // Map relative positions to block indices (for finding driver seat block)
-        Map<String, Integer> positionToBlockIndex = new HashMap<>();
 
         // Track weight and center of volume (only for blocks with weight)
         int totalWeight = 0;
@@ -625,23 +710,7 @@ public class BlockStructureScanner {
         // Process each detected block
         for (Location blockLoc : shipBlocks) {
             Block block = blockLoc.getBlock();
-            BlockData blockData = block.getBlockData();
-
-            // Force double chests to single to prevent item duplication (GitHub #12)
-            // and display issues. Each half keeps only its own inventory slots.
-            if (blockData instanceof org.bukkit.block.data.type.Chest) {
-                org.bukkit.block.data.type.Chest chestData = (org.bukkit.block.data.type.Chest) blockData;
-                if (chestData.getType() != org.bukkit.block.data.type.Chest.Type.SINGLE) {
-                    chestData.setType(org.bukkit.block.data.type.Chest.Type.SINGLE);
-                }
-            }
-
-            // Clear waterlogged state so the stored model never carries water. Whether a
-            // re-placed block ends up waterlogged is decided fresh from the destination cell at
-            // disassembly time (by the delegated landing seams), never inherited from assembly.
-            if (blockData instanceof org.bukkit.block.data.Waterlogged w && w.isWaterlogged()) {
-                w.setWaterlogged(false);
-            }
+            BlockData blockData = captureData(block);
 
             // Get block properties from config
             BlockProperties props = configManager.getProperties(block.getType(), blockData);
@@ -704,10 +773,6 @@ public class BlockStructureScanner {
                     }
                 }
             }
-
-            // Store position to block index mapping (for finding driver seat block)
-            String posKey = (int)dx + "," + (int)dy + "," + (int)dz;
-            positionToBlockIndex.put(posKey, blockIndex);
 
             // Create transformation matrix for this block (translation only - for collision/disassembly)
             Matrix4f transform = new Matrix4f()
@@ -800,12 +865,7 @@ public class BlockStructureScanner {
                 rawYaml.put("sign_data", signData);
             }
 
-            // Check if this block is a seat (all detected seats are passenger seats)
-            // Driver seat is always at the wheel location (added after scanning)
-            if (props.isSeat()) {
-                Vector3f seatOffset = new Vector3f((float) dx, (float) dy, (float) dz);
-                seats.add(new ShipModel.SeatInfo(seatOffset, blockIndex, false));
-            }
+            // Seats (driver + passengers) are resolved after the loop by resolveSeats, shared with the docked preview.
 
             // Check if this block is an interaction block (crafting table, anvil, etc.)
             if (props.isInteraction()) {
@@ -905,51 +965,18 @@ public class BlockStructureScanner {
             return null;
         }
 
-        // Driver seat is always behind the wheel, inserted at index 0
-        // Any detected seat blocks become passenger seats (already added above)
-        // Find the block index for driver seat:
-        // 1. Check block behind the wheel
-        // 2. Check block under that
-        // 3. Fallback to wheel block (index 0)
+        // Seats: driver at index 0 (offset always the cell behind the wheel, as before), then passengers in the
+        // order resolveSeats gives them — seat blocks in scan order, then cushion carriers. One seat per block.
         BlockFace opposite = facing.getOppositeFace();
-
-        String behindKey = opposite.getModX() + ",0," + opposite.getModZ();
-        String underKey = opposite.getModX() + ",-1," + opposite.getModZ();
-
-        int driverBlockIndex = 0; // fallback to wheel block
-        if (positionToBlockIndex.containsKey(behindKey)) {
-            driverBlockIndex = positionToBlockIndex.get(behindKey);
-        } else if (positionToBlockIndex.containsKey(underKey)) {
-            driverBlockIndex = positionToBlockIndex.get(underKey);
-        }
-
-        // 26.3 cushions (entities resting on a block; none on older servers): the block a cushion rests on is a
-        // passenger seat, and a cushion SITTING in the cell behind the wheel makes its block the driver seat.
-        // The rule above already lands there when that block is behind or under the wheel; this covers a
-        // passable scanned block in the way (a pressure plate, a carpet the cushion sits on).
-        // The seat is the block whose collider carries the cushion — the cushion's own block, or the one under it
-        // when that has no collider (a carpet, a pressure plate): its shulker is what the player rides.
-        for (anon.def9a2a4.blockships.CushionSupport.CushionSeat c
-                : anon.def9a2a4.blockships.CushionSupport.cushionSeats(orderedBlocks)) {
-            Block cell = c.cell();
-            if (cell.getX() - wheelOrigin.getBlockX() == opposite.getModX()
-                    && cell.getY() == wheelOrigin.getBlockY()
-                    && cell.getZ() - wheelOrigin.getBlockZ() == opposite.getModZ()) {
-                driverBlockIndex = c.seatIdx();
-            }
-            Block seatBlock = orderedBlocks.get(c.seatIdx());
+        SeatLayout seatLayout = resolveSeats(orderedBlocks, wheelOrigin, facing);
+        seats.add(new ShipModel.SeatInfo(new Vector3f(opposite.getModX(), 0, opposite.getModZ()),
+            seatLayout.driverIdx(), true));
+        for (int pi : seatLayout.passengerIdx()) {
+            Block seatBlock = orderedBlocks.get(pi);
             seats.add(new ShipModel.SeatInfo(new Vector3f(
-                (float) (seatBlock.getX() - wheelOrigin.getBlockX()), (float) (seatBlock.getY() - wheelOrigin.getBlockY()),
-                (float) (seatBlock.getZ() - wheelOrigin.getBlockZ())), c.seatIdx(), false));
+                (float) (seatBlock.getX() - wheelOrigin.getX()), (float) (seatBlock.getY() - wheelOrigin.getY()),
+                (float) (seatBlock.getZ() - wheelOrigin.getZ())), pi, false));
         }
-
-        Vector3f driverSeatOffset = new Vector3f(opposite.getModX(), 0, opposite.getModZ());
-        seats.add(0, new ShipModel.SeatInfo(driverSeatOffset, driverBlockIndex, true));
-        // One seat per block: a stair/carpet/cushion block behind the wheel is BOTH a passenger seat (found above)
-        // and the driver seat, and they share one shulker — a duplicate inflates the menu's seat count and
-        // double-books occupancy. Keep the first (the driver at index 0).
-        java.util.Set<Integer> seatBlocks = new java.util.HashSet<>();
-        seats.removeIf(si -> !seatBlocks.add(si.blockIndex));
 
         // Create ShipModel with default settings
         // Calculate assembly yaw for disassembly rotation tracking
