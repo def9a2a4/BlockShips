@@ -522,9 +522,14 @@ public class BlockStructureScanner {
      * sneak adjacent slime/honey into a locked ship) plus the wheel itself. Cells that are now air are dropped
      * (the ship comes back smaller); nothing new can ever be added, which is the whole point.
      *
+     * @param preCapture the same membership hook as {@link #scanStructure(Location, BlockFace, java.util.function.Consumer)}'s,
+     *        run at the same point (after the cell set is resolved, before the world snapshot). The frozen set is
+     *        NOT immutable after the lock — glue can still be added and a wheel can be placed into a glued cell
+     *        that was air — so the assembly path needs its foreign-wheel exclusion here too.
      * @return null when the wheel cell itself is gone, nothing survives, or the set exceeds the limit
      */
-    public static ScanResult scanFrozen(Location wheelLocation, BlockFace facing) {
+    public static ScanResult scanFrozen(Location wheelLocation, BlockFace facing,
+                                        java.util.function.Consumer<Set<Location>> preCapture) {
         Block wheelBlock = wheelLocation.getBlock();
         if (wheelBlock.getType().isAir()) {
             return null;   // no wheel, no ship — the offsets are relative to it
@@ -545,6 +550,12 @@ public class BlockStructureScanner {
         if (plugin != null) {
             int maxShipSize = plugin.getConfig().getInt("custom-ships.max-ship-size", 1000);
             if (cells.size() > maxShipSize) {
+                return null;
+            }
+        }
+        if (preCapture != null) {
+            preCapture.accept(cells);
+            if (cells.isEmpty()) {
                 return null;
             }
         }

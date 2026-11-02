@@ -227,6 +227,14 @@ public class BlockShipsPlugin extends JavaPlugin {
         sender.sendMessage("§7Found a bug? Report it at: §b" + ISSUES_URL);
     }
 
+    /** forceclearwheel's refusal for a LOADED ship, shared by the preview and the confirm-time re-check. */
+    private void sendForceClearLiveRefusal(CommandSender sender, java.util.UUID wheelId) {
+        sender.sendMessage("§cWheel §f" + wheelId + "§c's ship is live (LOADED) — refusing to force-clear it. "
+            + "That would land the hull wherever it is, eject its riders and delete its save.");
+        sender.sendMessage("§7Disassemble it from its ship wheel menu instead, or as a last resort land every "
+            + "active ship with §e/blockships forcedisassembleall confirm§7.");
+    }
+
     /**
      * Collects the UUIDs of all persisted ships (loaded + unloaded) from
      * {@link ShipWorldData}'s persisted-id set (scanned from ships/*.yml sidecars across every world on
@@ -985,6 +993,7 @@ public class BlockShipsPlugin extends JavaPlugin {
                 // different wheel than the one they were shown.
                 if (args.length < 2) {
                     sender.sendMessage("§cUsage: §e/blockships forceclearwheel <wheelId> <first8>");
+                    sender.sendMessage("§7For a wheel stuck 'loading' by a ship that can't come back; refuses a live ship.");
                     sender.sendMessage("§7Find the id with §e/blockships wheels list§7 — broken records sort first.");
                     if (sender instanceof org.bukkit.entity.Player p) {
                         ShipWheelData near = shipWheelManager.getNearestWheel(p.getLocation(), 32.0);
@@ -1008,18 +1017,30 @@ public class BlockShipsPlugin extends JavaPlugin {
                     sender.sendMessage("§cNo record with id " + fcId + ".");
                     return true;
                 }
+                // A LOADED ship is live — possibly sailing with riders aboard — and force-clearing it would land
+                // the hull wherever it is and delete its sidecar. Refused before a token is ever issued;
+                // forceClearWheelLink re-checks at confirm time in case the ship rebound in between.
+                ShipWheelManager.WheelState fcState = shipWheelManager.resolveWheelState(target).state();
+                if (!ShipWheelManager.forceClearAllowed(fcState)) {
+                    sendForceClearLiveRefusal(sender, fcId);
+                    return true;
+                }
                 // ID-derived token rather than the literal "confirm", matching wheels adopt/purge: a stale or
                 // mistyped confirmation then cannot land on a wheel the admin never looked at.
                 String fcToken = fcId.toString().substring(0, 8);
                 if (args.length < 3 || !args[2].equalsIgnoreCase(fcToken)) {
                     sender.sendMessage("§eWheel §f" + fcId + " §7at " + fmt(target.getBlockLocation())
-                        + " §7[" + shipWheelManager.resolveWheelState(target).state() + "]");
+                        + " §7[" + fcState + "]");
                     sender.sendMessage("§c§l⚠ §cForce-clear bypasses the recoverable check: it UNLINKS the wheel and "
-                        + "reaps its orphan root vehicle. Use ONLY for a wheel stuck 'loading' by an unrecoverable ship.");
+                        + "reaps its orphan root vehicle. Use ONLY for a wheel stuck 'loading' by an unrecoverable ship"
+                        + " — never for a live one (refused).");
                     sender.sendMessage("§7Confirm: §e/blockships forceclearwheel " + fcId + " " + fcToken);
                     return true;
                 }
-                shipWheelManager.forceClearWheelLink(target);
+                if (!shipWheelManager.forceClearWheelLink(target)) {
+                    sendForceClearLiveRefusal(sender, fcId);
+                    return true;
+                }
                 getLogger().info(sender.getName() + " force-cleared wheel " + fcId + " at "
                     + fmt(target.getBlockLocation()));
                 sender.sendMessage("§aWheel force-cleared. You can now re-assemble.");

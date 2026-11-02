@@ -283,6 +283,21 @@ class DecisionTableTest {
     }
 
     /**
+     * forceclearwheel routes through disassembleOrphan, which lands the hull wherever it is and deletes the
+     * sidecar — on a LOADED ship that is a live, possibly crewed ship destroyed mid-voyage. Every other row
+     * must stay allowed: UNLOADED_RECOVERABLE (stuck "loading") is the very state the command exists for.
+     */
+    @Test
+    void forceClearRefusesOnlyALiveShip() {
+        assertFalse(ShipWheelManager.forceClearAllowed(WheelState.LOADED),
+            "a registered, ticking ship must never be force-cleared");
+        assertTrue(ShipWheelManager.forceClearAllowed(WheelState.UNLOADED_RECOVERABLE),
+            "the stuck-'loading' wheel is what the escape hatch is for");
+        assertTrue(ShipWheelManager.forceClearAllowed(WheelState.ORPHAN));
+        assertTrue(ShipWheelManager.forceClearAllowed(WheelState.NOT_ASSEMBLED));
+    }
+
+    /**
      * A dock is reserved exactly while its ship is out. The false rows matter as much as the true ones: a
      * docked or orphaned resident is a stale record that merely believes the cell is its own, and if those
      * reserved, one stale record would make a cell permanently unbuildable — the downstream warn-don't-reap

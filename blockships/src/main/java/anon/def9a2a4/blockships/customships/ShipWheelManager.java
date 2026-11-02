@@ -1269,9 +1269,10 @@ public class ShipWheelManager {
     /**
      * The foreign-wheel exclusion: another ship's wheel caught in a flood fill — parked, orphaned, or a
      * stamped copy — is dropped from the membership set and LEFT WHERE IT STANDS. Runs at BOTH sites where fill membership is committed — as
-     * {@code scanStructure}'s preCapture hook on the unlocked assembly path, and in {@code toggleLock}'s
-     * freeze tail before the glue write (the locked assembly path rebuilds from glue via
-     * {@code scanFrozen}, so whatever the freeze admitted would be absorbed forever after).
+     * {@code scanStructure}'s / {@code scanFrozen}'s preCapture hook on both assembly paths, and in
+     * {@code toggleLock}'s freeze tail before the glue write (so the frozen glue never records the head in
+     * the first place — though the frozen set stays mutable after the lock, which is why the locked
+     * assembly path sweeps as well).
      *
      * <p>Absorption used to carry the head into the mechanism as an ordinary block — decided policy — but
      * the LEFTOVER IDENTITY made that untenable: on the absorber's next landing the head lands inside
@@ -1694,6 +1695,20 @@ public class ShipWheelManager {
     }
 
     /**
+     * The pure head of {@link #forceClearWheelLink}: may the admin escape hatch run against a record in this
+     * state?
+     *
+     * <p>Everything but {@code LOADED}. A LOADED ship is registered and ticking — possibly sailing with
+     * riders aboard — and the force-clear routes through {@code disassembleOrphan}, which lands the hull
+     * wherever it happens to be, ejects the riders and deletes the sidecar. That is not a repair, it is a
+     * live ship destroyed mid-voyage. {@code UNLOADED_RECOVERABLE} must stay allowed: a wheel stuck
+     * "loading" by a ship that can never rebind is the one state this command exists for.
+     */
+    public static boolean forceClearAllowed(WheelState state) {
+        return state != WheelState.LOADED;
+    }
+
+    /**
      * The pure head of {@code verifyWheelLanded}: is the block at the wheel's landing cell an acceptable
      * landing for this wheel (record kept), or must the record be dropped so it cannot strand?
      *
@@ -1831,9 +1846,9 @@ public class ShipWheelManager {
         }
         Set<Location> members = scan.getBlocks();
         // The freeze is where membership is DECIDED, so the foreign-wheel exclusion must run here too:
-        // without it, a foreign parked wheel caught in this fill is frozen into glue, and the locked
-        // assembly path (scanFrozen, no preCapture hook) would absorb it on every assembly — the exact
-        // chain the assembly-time sweep exists to break, reopened by clicking Lock first. Same guards,
+        // without it, a foreign parked wheel caught in this fill is frozen into glue, where every locked
+        // assembly (scanFrozen) would have to exclude it again and every lock-time membership count would
+        // include it. The assembly-time sweep still runs on the locked path too. Same guards,
         // same live set (excluded heads never enter the glue). Runs before the cap check so the cap counts
         // real membership — and because the sweep is non-destructive, a lock refused by that cap leaves
         // the neighbour's wheel exactly as it found it.
@@ -2016,9 +2031,16 @@ public class ShipWheelManager {
      * bypassing the recoverability check. For a wheel stuck {@code UNLOADED_RECOVERABLE} by a ship that can never
      * rebind (e.g. a missing sidecar / model-deserialize failure in reconstructDelegatedShip). Admin-gated by the
      * command; players cannot reach it (the menu defers on UNLOADED_RECOVERABLE).
+     *
+     * <p>Refuses a LOADED (live) ship — see {@link #forceClearAllowed}. Re-resolved here rather than trusted
+     * from the caller's preview, because the ship can rebind between the preview and the confirm.
+     *
+     * @return false (and nothing changed) when the wheel's ship is live
      */
-    public void forceClearWheelLink(ShipWheelData wheel) {
+    public boolean forceClearWheelLink(ShipWheelData wheel) {
+        if (!forceClearAllowed(resolveWheelState(wheel).state())) return false;
         reconcileOrphan(wheel);
+        return true;
     }
 
     /** The nearest placed wheel to {@code loc} within {@code radius} blocks (same world), or null. */
@@ -2154,19 +2176,21 @@ public class ShipWheelManager {
         // (still in the world — air-out is deferred), so the delegated assembler gets block-index parity.
         //
         // A LOCKED wheel skips the flood fill entirely and rebuilds from its frozen cell set, so blocks
-        // stacked against the docked hull are never absorbed — and no sweep is needed here: the frozen
-        // set was already swept when toggleLock froze it, so no foreign wheel can be in it. (Glue frozen
-        // BEFORE the sweep existed may still carry one — absorbed until the owner unlocks and re-locks;
-        // same one-shot legacy exposure as the assembly-path data note.) Both
-        // paths funnel into the same captureCells(), so the two ScanResults are structurally identical.
+        // stacked against the docked hull are never absorbed. Both paths funnel into the same
+        // captureCells(), so the two ScanResults are structurally identical.
         //
-        // The unlocked path's preCapture hook is the foreign-wheel exclusion: it runs between the flood
-        // fill and the world snapshot, the only point where a cell can be dropped without leaving its
-        // head inside the captured model or breaking block-index parity. It is non-destructive, so the
-        // refusals below it — the banner re-read, the per-cell WorldGuard gate, mechanism rollback — can
-        // all abort this assembly without having changed anything about the neighbour's wheel.
+        // The foreign-wheel exclusion runs on BOTH paths, as the preCapture hook: between cell-set
+        // resolution and the world snapshot, the only point where a cell can be dropped without leaving its
+        // head inside the captured model or breaking block-index parity. toggleLock's sweep is NOT enough
+        // for the locked path — the frozen set stays mutable after the lock: the glue brush can add a
+        // neighbour's wheel head to it (corelib's glue never refuses another anchor's head), and a wheel can
+        // be placed into a glued cell that was air at freeze time. The hook is non-destructive — the cell
+        // only leaves this scan's membership, never the glue offsets — so the refusals below it (the banner
+        // re-read, the per-cell WorldGuard gate, mechanism rollback) can all abort this assembly without
+        // having changed anything about the neighbour's wheel.
         BlockStructureScanner.ScanResult scan = wheelData.isLocked()
-            ? BlockStructureScanner.scanFrozen(wheelLoc, wheelData.getFacing())
+            ? BlockStructureScanner.scanFrozen(wheelLoc, wheelData.getFacing(),
+                cells -> excludeForeignWheels(wheelData, player, cells))
             : BlockStructureScanner.scanStructure(wheelLoc, wheelData.getFacing(),
                 cells -> excludeForeignWheels(wheelData, player, cells));
         if (scan == null || scan.model().parts.isEmpty()) {
