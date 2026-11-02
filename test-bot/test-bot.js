@@ -1698,6 +1698,10 @@ async function testPoweredCart() {
   const DRIVE_MS = 4000
   say('Driving the powered cart...')
   await steerShip(bot, 1.0, 0, false, DRIVE_MS)
+  // Keep the throttle open against the end wall: the wheels are still being used, so the engine must
+  // burn. Travel can't show that (an unpowered cart rolls to the wall too); the coal count can.
+  const PUSH_MS = 16000
+  await steerShip(bot, 1.0, 0, false, PUSH_MS)
   await sleep(1500)
   try { await customDismount(bot, log, bot.entity.position.clone()) } catch (e) { log(`Dismount: ${e.message}`) }
   await sleep(800)
@@ -1741,10 +1745,15 @@ async function testPoweredCart() {
   if (coalLeft < 0) {
     fail(NAME, `Could not find the landed engine near z=${landedZ}, y=${landedY} to read its fuel`)
     ok = false
+  } else if (used < 1) {
+    // Two wheels drawing 4 of the engine's 10 power for ~20 s is about 8 burn units: the first one
+    // pulls a coal. None used means the drive axle was never charged (free power).
+    fail(NAME, `Engine burned no coal over a ${(DRIVE_MS + PUSH_MS) / 1000}s drive (expected >= 1: used wheels must cost fuel)`)
+    ok = false
   } else if (used > 2) {
     // One coal can go to the static network before assembly and one to the drive; the fixed burn
     // over ~55 s of running would have used 4 or more.
-    fail(NAME, `Engine burned ${used} coal over a ${DRIVE_MS / 1000}s drive and a ${PARK_MS / 1000}s park (expected <= 2: parked engines should burn nothing)`)
+    fail(NAME, `Engine burned ${used} coal over a ${(DRIVE_MS + PUSH_MS) / 1000}s drive and a ${PARK_MS / 1000}s park (expected <= 2: parked engines should burn nothing)`)
     ok = false
   }
   if (ok) pass(`${NAME} (travel=${travel.toFixed(1)}, coal used=${used}/${coalStart})`)
