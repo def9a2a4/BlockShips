@@ -1410,12 +1410,8 @@ function shipColliderStats() {
   return { minY, meanZ: sumZ / shulkers.length, count: shulkers.length }
 }
 
-async function testLandVehicle() {
-  const NAME = 'Land Vehicle Steps Up'
-  say(`=== TEST: ${NAME} ===`)
-  await cleanup(bot)
-  await clearInventory(bot)
-
+/** Stone floor, a one-block plateau from STEP_Z, and a 3-high wall at WALL_Z. Rebuilt every test. */
+async function setupLandCourse() {
   const x1 = LAND_X - 6, x2 = LAND_X + 6
   bot.chat(`/forceload add ${x1 - 2} 10 ${x2 + 2} -45`)
   await sleep(1000)
@@ -1427,6 +1423,51 @@ async function testLandVehicle() {
   await sleep(200)
   bot.chat(`/fill ${x1} ${LAND_Y + 1} ${WALL_Z} ${x2} ${LAND_Y + 3} ${WALL_Z} minecraft:stone`)
   await sleep(200)
+}
+
+/** Give the bot one DefCoreLib block type (inventory cleared first: every custom block is a player_head). */
+async function giveCoreLibItem(id, count = 1) {
+  await clearInventory(bot)
+  bot.chat(`/defcorelib give ${id} ${count}`)
+  for (let i = 0; i < 10; i++) {
+    await sleep(200)
+    const item = bot.inventory.items().find(it => it.name === 'player_head')
+    if (item) return item
+  }
+  return null
+}
+
+/** Place a DefCoreLib block against `ref`'s `face`, standing at `stand`. Returns an error string or null. */
+async function placeCoreLibBlock(id, ref, face, stand) {
+  const item = await giveCoreLibItem(id)
+  if (!item) return `no ${id} item from /defcorelib give`
+  bot.chat(`/tp @s ${stand.x} ${stand.y} ${stand.z}`)
+  await sleep(600)
+  await bot.equip(item, 'hand')
+  const refBlock = bot.blockAt(ref)
+  if (!refBlock || refBlock.name === 'air') return `nothing to place ${id} against at ${ref}`
+  // Sneak: right-clicking a DefCoreLib block (the engine) opens its GUI instead of placing against it.
+  bot.setControlState('sneak', true)
+  try {
+    await sleep(150)
+    await bot.lookAt(ref.offset(0.5 + face.x * 0.5, 0.5 + face.y * 0.5, 0.5 + face.z * 0.5))
+    await bot.placeBlock(refBlock, face)
+  } catch (e) {
+    return `placing ${id} against ${ref} failed: ${e.message}`
+  } finally {
+    bot.setControlState('sneak', false)
+  }
+  await sleep(300)
+  return null
+}
+
+async function testLandVehicle() {
+  const NAME = 'Land Vehicle Steps Up'
+  say(`=== TEST: ${NAME} ===`)
+  await cleanup(bot)
+  await clearInventory(bot)
+
+  await setupLandCourse()
 
   // South of the hull, so the floating Ship's Wheel is placed looking north (the ship's heading).
   bot.chat(`/tp @s ${LAND_X} ${LAND_Y} ${LAND_Z + 4} 180 0`)
@@ -1523,6 +1564,187 @@ async function testLandVehicle() {
   if (ok) pass(`${NAME} (rise=${rise.toFixed(2)}, travel=${(-travel).toFixed(1)})`)
 }
 
+// A sail-less cart with a real drive axle across its front row, all running east-west:
+//   west wheel - shaft - engine - shaft - east wheel
+// Power travels along the axle, so each front wheel is powered through the shaft it hangs on. The back
+// wheels hang on planks and only roll. Without sails, base power alone crawls at ~1 block/s, so real
+// speed has to come from the wheels; and the engine's coal shows whether it burned only while driving.
+const POWERED_CART = {
+  layers: [
+    ["P P P",
+     "- - -",
+     "P P P",
+     "P P P",
+     "P P P",
+     "P P P",
+     "P P P"],
+    ["- - -",
+     "- - -",
+     "- - -",
+     "- W -",
+     "- - -",
+     "- - -",
+     "- - -"]
+  ],
+  blocks: { 'P': 'oak_planks', 'W': 'wheel' }
+}
+
+async function testPoweredCart() {
+  const NAME = 'Powered Cart Drives And Burns Only When Used'
+  say(`=== TEST: ${NAME} ===`)
+  await cleanup(bot)
+  await clearInventory(bot)
+  await setupLandCourse()
+
+  bot.chat(`/tp @s ${LAND_X} ${LAND_Y} ${LAND_Z + 4} 180 0`)
+  await sleep(800)
+  const build = await buildCustomShipWithWheel(bot, POWERED_CART, LAND_X, LAND_Y, LAND_Z)
+  if (!build.success) { fail(NAME, build.error); return }
+  bot.chat(`/fill ${LAND_X - 2} ${LAND_Y - 1} ${LAND_Z - 4} ${LAND_X + 2} ${LAND_Y - 1} ${LAND_Z + 4} minecraft:stone`)
+  await sleep(300)
+
+  // The axle, placed west to east so every click lands on an east face (east/west click = x axle).
+  // A temporary stone where the west wheel goes gives the first shaft something to be placed against.
+  const AZ = LAND_Z - 2, Y = LAND_Y
+  const at = (x) => new Vec3(x, Y, AZ)
+  const east = new Vec3(1, 0, 0), west = new Vec3(-1, 0, 0)
+  const standN = (x) => new Vec3(x + 0.5, Y + 1, AZ - 2 + 0.5)  // just north of the hull, above the floor
+  bot.chat(`/setblock ${LAND_X - 2} ${Y} ${AZ} minecraft:stone`)
+  await sleep(300)
+  const steps = [
+    ['mech:shaft', at(LAND_X - 2), east, standN(LAND_X - 1)],
+    ['mech:engine', at(LAND_X - 1), east, standN(LAND_X)],
+    ['mech:shaft', at(LAND_X), east, standN(LAND_X + 1)],
+    ['mech:wheel', at(LAND_X + 1), east, standN(LAND_X + 2)],
+  ]
+  for (const [id, ref, face, stand] of steps) {
+    const err = await placeCoreLibBlock(id, ref, face, stand)
+    if (err) { fail(NAME, err); return }
+  }
+  bot.chat(`/setblock ${LAND_X - 2} ${Y} ${AZ} minecraft:air`)
+  await sleep(300)
+  let err = await placeCoreLibBlock('mech:wheel', at(LAND_X - 1), west, standN(LAND_X - 2))
+  if (err) { fail(NAME, err); return }
+  // Back wheels on the planks: they roll but aren't on the network.
+  for (const [x, face, standX] of [[LAND_X + 1, east, LAND_X + 3], [LAND_X - 1, west, LAND_X - 3]]) {
+    err = await placeCoreLibBlock('mech:wheel', new Vec3(x, Y, LAND_Z + 2), face, new Vec3(standX + 0.5, Y, LAND_Z + 2.5))
+    if (err) { fail(NAME, err); return }
+  }
+
+  for (let x = LAND_X - 3; x <= LAND_X + 3; x++) {
+    const b = bot.blockAt(at(x))
+    log(`  axle row ${x},${Y},${AZ}: ${b ? b.name : 'unloaded'}`)
+  }
+
+  // Fuel: six coal into the engine's slot. Loaded last, just before assembly, so the engine has had
+  // as little time as possible to burn on the static network first.
+  const COAL = 6
+  await clearInventory(bot)
+  bot.chat(`/give @s minecraft:coal ${COAL}`)
+  await sleep(800)
+  bot.chat(`/tp @s ${LAND_X + 0.5} ${Y + 1} ${AZ - 1.5}`)
+  await sleep(600)
+  const engineBlock = bot.blockAt(at(LAND_X))
+  if (!engineBlock || !engineBlock.name.includes('player') || !engineBlock.name.includes('head')) { fail(NAME, `No engine head at ${at(LAND_X)}`); return }
+  try {
+    const win = await bot.openBlock(engineBlock)
+    await sleep(300)
+    log(`  engine window: type=${win.type} title=${JSON.stringify(win.title)} slots=${win.slots.length} inv=${win.inventoryStart}..${win.inventoryEnd}`)
+    log(`  coal in window: ${win.slots.map((it, i) => it && it.name === 'coal' ? i + 'x' + it.count : null).filter(Boolean).join(',')}`)
+    // Shift-click the coal from the player half of the window into the engine's slots.
+    for (let i = win.inventoryStart; i < win.inventoryEnd; i++) {
+      const it = win.slots[i]
+      if (it && it.name === 'coal') { await bot.clickWindow(i, 0, 1); await sleep(150) }
+    }
+    await sleep(500)
+    log(`  after shift-click: ${win.slots.map((it, i) => it ? i + ':' + it.name + 'x' + it.count : null).filter(Boolean).join(',')}`)
+    const loaded = win.containerItems().filter(it => it.name === 'coal').reduce((n, it) => n + it.count, 0)
+    bot.closeWindow(win)
+    if (loaded !== COAL) { fail(NAME, `Engine took ${loaded} of ${COAL} coal`); return }
+  } catch (e) { fail(NAME, `Could not fuel the engine: ${e.message}`); return }
+
+  // Detect, then assemble.
+  bot.chat(`/tp @s ${LAND_X} ${LAND_Y} ${LAND_Z + 4} 180 0`)
+  await sleep(600)
+  clearChat(bot)
+  const landMsg = waitForChat(bot, /LAND VEHICLE/, 6000)
+  try {
+    const menuPromise = clickWheelMenu(bot, log, 'detect')
+    await bot.activateBlock(build.wheelBlock)
+    await menuPromise
+  } catch (e) { /* reported below */ }
+  if (!await landMsg) { fail(NAME, 'Detect did not report a LAND VEHICLE'); return }
+  try {
+    const menuPromise = clickWheelMenu(bot, log, 'assemble')
+    await bot.activateBlock(build.wheelBlock)
+    if (!await menuPromise) { fail(NAME, 'Assembly menu interaction failed'); return }
+  } catch (e) { fail(NAME, `Assembly failed: ${e.message}`); return }
+  await sleep(3000)
+
+  const before = shipColliderStats()
+  if (!before) { fail(NAME, 'No ship colliders after assembly'); return }
+  if (!await mountShip(bot, log)) { fail(NAME, 'Could not mount the cart'); return }
+
+  const DRIVE_MS = 4000
+  say('Driving the powered cart...')
+  await steerShip(bot, 1.0, 0, false, DRIVE_MS)
+  await sleep(1500)
+  try { await customDismount(bot, log, bot.entity.position.clone()) } catch (e) { log(`Dismount: ${e.message}`) }
+  await sleep(800)
+  const after = shipColliderStats()
+  if (!after) { fail(NAME, 'Lost track of the cart after driving'); return }
+  const travel = -(after.meanZ - before.meanZ)
+  const rise = after.minY - before.minY
+
+  // Parked, engine still lit. With burn-on-load this costs nothing; the old fixed burn would eat
+  // about a coal every 16 s of it.
+  const PARK_MS = 45000
+  say(`Parked for ${PARK_MS / 1000}s with the engine lit...`)
+  await sleep(PARK_MS)
+
+  if (!await disassembleViaWheelMenu(bot, log)) { fail(NAME, 'Could not dock the cart to read its fuel'); return }
+  await sleep(2000)
+  // The engine lands where the cart stopped: shifted north by the travel, up by the rise.
+  let coalLeft = -1
+  const landedZ = AZ - Math.round(travel), landedY = Y + Math.round(rise)
+  for (const dz of [0, -1, 1]) {
+    for (const dy of [0, 1, -1]) {
+      const b = bot.blockAt(new Vec3(LAND_X, landedY + dy, landedZ + dz))
+      if (!b || !b.name.includes('head')) continue
+      bot.chat(`/tp @s ${LAND_X + 0.5} ${landedY + dy + 1} ${landedZ + dz - 1.5}`)
+      await sleep(600)
+      let n = -1
+      try {
+        const win = await bot.openBlock(b)
+        await sleep(300)
+        n = win.containerItems().filter(it => it.name === 'coal').reduce((c, it) => c + it.count, 0)
+        bot.closeWindow(win)
+      } catch (e) { /* not the engine (no storage): try the next cell */ }
+      if (n >= 0) { coalLeft = n; break }
+    }
+    if (coalLeft >= 0) break
+  }
+  const used = coalLeft >= 0 ? COAL - coalLeft : NaN
+  log(`Powered cart: travel=${travel.toFixed(2)} rise=${rise.toFixed(2)} coalLeft=${coalLeft} used=${used}`)
+
+  let ok = true
+  // Base power alone crawls ~0.7 block/s on land: under 3 blocks in DRIVE_MS. Wheels do far better.
+  if (travel < 8) {
+    fail(NAME, `Powered wheels barely moved it: ${travel.toFixed(2)} blocks in ${DRIVE_MS / 1000}s (need >= 8)`)
+    ok = false
+  }
+  if (coalLeft < 0) {
+    fail(NAME, `Could not find the landed engine near z=${landedZ}, y=${landedY} to read its fuel`)
+    ok = false
+  } else if (used > 2) {
+    // One coal can go to the static network before assembly and one to the drive; the fixed burn
+    // over ~55 s of running would have used 4 or more.
+    fail(NAME, `Engine burned ${used} coal over a ${DRIVE_MS / 1000}s drive and a ${PARK_MS / 1000}s park (expected <= 2: parked engines should burn nothing)`)
+    ok = false
+  }
+  if (ok) pass(`${NAME} (travel=${travel.toFixed(1)}, coal used=${used}/${COAL})`)
+}
+
 const TESTS = {
   smallship: { name: 'Small Ship', fn: () => testShipControls('smallship') },
   bigship: { name: 'Big Ship', fn: () => testShipControls('bigship') },
@@ -1535,6 +1757,7 @@ const TESTS = {
   wheel_after_relog: { name: 'Wheel Menu After Relog', fn: testWheelAfterRelog },
   cannon_tnt_disabled: { name: 'Cannon Keeps TNT When Disabled', fn: testCannonTntDisabled },
   land_vehicle: { name: 'Land Vehicle Steps Up', fn: testLandVehicle },
+  powered_cart: { name: 'Powered Cart Drives And Burns Only When Used', fn: testPoweredCart },
   // manual: skipped by runAllTests (and therefore by CI's test:all) — the deliberate negative waits
   // don't fit the suite's hard timeout. Run by name: `.testbot wheel_reserved` or --only=wheel_
   wheel_reserved: { name: 'Wheel Dock Reserved', fn: testWheelCellReserved, manual: true },
