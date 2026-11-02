@@ -2047,7 +2047,11 @@ public class DisplayShip implements Listener {
             // Unregistered native ship: hitting it triggers migration to the delegated engine
             // (chunk-load only fires on the load transition), like the shulker-click hook.
             inst = attemptInteractionMigration(shipId, shulker);
-            if (inst == null) return;   // couldn't migrate — leave it native (as before)
+            if (inst == null) {
+                // Couldn't migrate — leave it native, but a stuck native part must not be killable for its shell.
+                if (!ShipTags.isCorelibTagged(shulker.getScoreboardTags())) e.setCancelled(true);
+                return;
+            }
         }
         if (!inst.vehicle.isValid()) return;
 
@@ -2196,7 +2200,8 @@ public class DisplayShip implements Listener {
         // extractShipId now resolves any corelib:mech: entity, including foreign mechanisms owned by sibling
         // plugins (pipes/railbound/etc.). Only suppress drops for a real BlockShips ship — matches every other
         // shulker handler's byId guard and keeps this from reaching into another plugin's entities.
-        if (ShipRegistry.byId(shipId) == null) return;
+        // A native (displayship:-only) part of an unregistered, stuck ship is ours too.
+        if (ShipRegistry.byId(shipId) == null && ShipTags.isCorelibTagged(shulker.getScoreboardTags())) return;
 
         // Clear all drops - ship colliders should never drop items
         e.getDrops().clear();

@@ -76,7 +76,6 @@ final class ShipPropulsionUse {
     /** Push this tick's spin and demand to every thrust block. Cheap: field writes in defCoreLib. */
     void tick() {
         if (ship.mechanism == null || ship.model == null) return;
-        if (ship.mechanism != zeroedFor) zeroUnlistedDemand();
         var blocks = ship.model.thrustBlocks;
         if (blocks.isEmpty()) return;
         if (shown == null || shown.length != blocks.size()) shown = new float[blocks.size()];
@@ -144,33 +143,6 @@ final class ShipPropulsionUse {
             }
         } catch (NoSuchMethodError | AbstractMethodError e) {
             demandApiMissing = true;  // older DefCoreLib: fixed burn
-        }
-    }
-
-    /** The mechanism whose unlisted blocks were last zeroed (a new one after reassembly or recovery). */
-    private anon.def9a2a4.corelib.Mechanism zeroedFor;
-
-    /**
-     * Zero the demand of every wheel, propeller or other demand-billed block aboard that is NOT a thrust
-     * block (a wheel on the bow or stern face, say): it does nothing, and defCoreLib bills an unreported
-     * block at full load. Once per mechanism; thrust blocks are then set every tick by pushDemand.
-     */
-    private void zeroUnlistedDemand() {
-        zeroedFor = ship.mechanism;
-        if (demandApiMissing) return;
-        java.util.Set<Integer> listed = new java.util.HashSet<>();
-        for (ShipModel.ThrustBlock t : ship.model.thrustBlocks) listed.add(t.blockIndex());
-        try {
-            int n = ship.mechanism.blockCount();
-            for (int i = 0; i < n; i++) {
-                if (listed.contains(i)) continue;
-                String type = ship.mechanism.getBlock(i).customTypeId;
-                if (type != null && ShipThrust.isThrustBlock(ShipThrust.canonicalTypeId(type))) {
-                    ship.mechanism.setBlockDemand(i, 0);
-                }
-            }
-        } catch (NoSuchMethodError | AbstractMethodError e) {
-            demandApiMissing = true;
         }
     }
 
