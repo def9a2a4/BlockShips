@@ -299,8 +299,11 @@ public class DisplayShip implements Listener {
      *  whose sidecar is absent (orphan) or migrated (delegated). Never touches a delegated
      *  ship's entities (corelib-tagged) or a ship still pending migration (sidecar present + not migrated). Runs on
      *  every chunk-load + at enable, permanently, so multi-chunk reap-fail leftovers get swept when their chunk loads. */
+    private static final Set<String> WARNED_SIDECARLESS_ROOTS = new HashSet<>();
+
     private void reapStragglerEntities(World world, org.bukkit.Chunk chunk) {
         Map<UUID, Boolean> reapDecision = new HashMap<>();
+        Set<UUID> absent = new HashSet<>();
         for (Entity e : new java.util.ArrayList<>(java.util.Arrays.asList(chunk.getEntities()))) {
             Set<String> tags = e.getScoreboardTags();
             if (ShipTags.isCorelibTagged(tags)) continue;      // delegated — owned by defCoreLib
@@ -318,13 +321,25 @@ public class DisplayShip implements Listener {
                 // per sidecar with the operator playbook.
                 ShipWorldData.MetadataLoad load = shipWorldData.loadShipMetadataChecked(world, shipId);
                 reap = switch (load.status()) {
-                    case ABSENT -> true;                        // no sidecar — orphan
+                    case ABSENT -> { absent.add(shipId); yield true; }  // no sidecar — orphan (root kept, below)
                     case OK -> load.state().migrated;           // already-delegated straggler
                     case CORRUPT, TRANSIENT -> false;           // unreadable — never destructive
                 };
                 reapDecision.put(shipId, reap);
             }
             if (!reap) continue;                                // pending migration — leave for migrateNativeShip
+            if (absent.contains(shipId) && ShipTags.isRoot(tags)) {
+                // A sidecar-less ROOT may be an un-converted 0.0.17 ship whose sidecar went missing: never delete
+                // it silently. Keep it (protected) and tell the operator once.
+                e.setInvulnerable(true);
+                if (WARNED_SIDECARLESS_ROOTS.add(world.getName() + ":" + shipId)) {
+                    plugin.getLogger().warning("Ship " + shipId + " in " + world.getName() + " at "
+                        + e.getLocation().getBlockX() + "," + e.getLocation().getBlockY() + ","
+                        + e.getLocation().getBlockZ() + " has no ships/" + shipId + ".yml sidecar; its root was"
+                        + " kept (invulnerable) instead of reaped. Restore the sidecar to migrate it.");
+                }
+                continue;
+            }
             dropLeadsAndDetach(e);
             e.remove();
         }
@@ -1781,7 +1796,7 @@ public class DisplayShip implements Listener {
             cannonObsidianIndex = mci;
         }
         if (cannonObsidianIndex >= 0) {
-            // Firing acts on the world: inside a claim it takes build rights, like the Fire Cannons menu item.
+            // Firing acts on the world: inside a claim it takes build rights (the menu's Fire Cannons is region-gated).
             if (anon.def9a2a4.corelib.BuildProbe.mayBuild(
                     player, e.getRightClicked().getLocation().getBlock(), new ItemStack(Material.PLAYER_HEAD))) {
                 inst.fireCannonsByObsidian(cannonObsidianIndex, player);
@@ -2574,7 +2589,8 @@ public class DisplayShip implements Listener {
         // it natively. Deny planting a wheel in a protected region the player can't build in. Cancel the
         // event too, so vanilla doesn't fall back to placing the wheel item as a plain player head.
         anon.def9a2a4.blockships.integration.WorldGuardHook wg = anon.def9a2a4.blockships.integration.WorldGuardHook.get();
-        if (wg.mightRestrict(targetBlock.getWorld()) && wg.isBuildDenied(targetBlock.getLocation(), player)) {
+        if ((wg.mightRestrict(targetBlock.getWorld()) && wg.isBuildDenied(targetBlock.getLocation(), player))
+                || !anon.def9a2a4.corelib.BuildProbe.mayBuild(player, targetBlock, new ItemStack(Material.PLAYER_HEAD))) {
             player.sendMessage("§cYou can't place a ship wheel in this protected region.");
             event.setCancelled(true);
             return;
