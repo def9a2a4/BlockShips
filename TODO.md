@@ -17,6 +17,9 @@
 
 ## LONG TERM
 
+- [ ] Achievements, like Mechanism's (defCoreLib `mech/src/main/resources/mech_datapack`, `MechAdvancements.grant`): JSON advancements with `minecraft:impossible` criteria, granted from code (with ancestors). Ideas: first ship / airship / land vehicle, sail 1 km, altitude, each sail tier, first cannon hit, sink a ship, dock with cargo, first thruster/propeller/reaction wheel, a 1000-block ship.
+  - Registering the advancements: a datapack needs a `PluginBootstrap`, which only `paper-plugin.yml` plugins get, and BlockShips is a `plugin.yml` plugin. Options: (A) convert to `paper-plugin.yml` like mech — clean, but plugin.yml `commands:` aren't supported there, so `/blockships` must be re-registered via Paper's command API; (B) `Bukkit.getUnsafe().loadAdvancement(key, json)` in onEnable — ~30 lines, no command changes, but deprecated/unsafe and wiped by `/minecraft:reload` until restart (player progress persists either way). Lean: B first, A when the command code is next reworked.
+
 - [ ] Shelf contents don't show on a moving ship (glued or allow-listed): the BlockDisplay renders an empty shelf, the items are only kept in the block snapshot and come back on landing. Show them with ItemDisplays per slot (SimpleShips does this; see docs/todo/TODO-tileentities.md).
 
 - [ ] Beds and doors on landing. A bed or door that can't land (blocked cell, protected region) currently drops one item PER HALF (`ShipWheelManager.landingDrop`), so both halves refused is a one-item dupe. Paying one item per pair goes wrong when only one half is blocked: the other half lands alone and either vanishes (no bed loot from a lone foot) or pays a second item when it later breaks (a dupe). Proper fix: decide per pair — if either half is refused, refuse both and pay exactly one item.
