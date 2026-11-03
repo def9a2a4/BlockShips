@@ -22,8 +22,12 @@ final class ShipPropulsionUse {
 
     /** How fast a block's displayed use eases toward its target, per tick (full range in ~8 ticks). */
     private static final float EASE = 0.125f;
-    /** Wheels spinning faster than this alias at 20 updates a second; cap the displayed spin. */
-    private static final double MAX_WHEEL_DEG_PER_TICK = 40.0;
+    /**
+     * Displayed wheel spin cap. The tyre is an octagon, which looks the same every 45 degrees, so at 20
+     * updates a second anything near 22.5 degrees a tick strobes (and past it reads as turning backwards).
+     * Real rolling at driving speed is 30-60 degrees a tick on a small wheel; it shows at this instead.
+     */
+    private static final double MAX_WHEEL_DEG_PER_TICK = 15.0;
 
     private final ShipInstance ship;
     /** Displayed use per thrust block (index into model.thrustBlocks), eased toward the target. */
@@ -54,13 +58,14 @@ final class ShipPropulsionUse {
     /**
      * Lift use, 0..1. Climbing (Space) is full use for anything, a balloon or a ship lifting off the
      * ground included: its lift blocks add climb speed. Otherwise only a flier uses them: none on water,
-     * on the ground, or for a balloon, which floats on displacement. Holding altitude uses the share of
+     * on the ground, once landed, or for a balloon, which floats on displacement. A just-assembled flier
+     * has not landed, so it hovers. Holding altitude uses the share of
      * lift that carries the weight (1 / lift ratio); descending still holds some of it back.
      */
     float verticalUse() {
         ShipPhysics p = ship.physics;
         if (ship.hasDriver && ship.isSpacePressed) return 1f;
-        if (ship.isAirship || !p.isFlying() || p.isGrounded()) return 0f;
+        if (ship.isAirship || !p.isFlying() || p.isGrounded() || p.isLandedFlier()) return 0f;
         float lift = p.liftRatio();
         float hover = lift <= 0f ? 1f : Math.min(1f, 1f / lift);
         if (ship.hasDriver && ship.isSprintPressed) return hover * 0.5f;

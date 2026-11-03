@@ -32,7 +32,7 @@ public final class ConfigMigration {
     private ConfigMigration() {}
 
     /** Bump when adding a migration step below. */
-    private static final int CURRENT_VERSION = 2;
+    private static final int CURRENT_VERSION = 3;
 
     private static final String VERSION_KEY = "config-version";
 
@@ -84,6 +84,30 @@ public final class ConfigMigration {
                   + "shaped by sink-speed-exponent, which scales with missing lift rather than with lift "
                   + "— the two run in opposite directions, so the old value was not carried over.");
                 changed = true;
+            }
+        }
+
+        // v2 -> v3: the unmanned-drag / idle-drag pair (picked by player proximity) became one
+        // no-driver-drag. idle-drag is the value that was actually in force, so it carries over; without
+        // this an upgraded server falls back to the Java default (0.93) and every prefab coasts to a stop
+        // about 3.5x sooner than its shipped 0.98.
+        if (version < 3) {
+            org.bukkit.configuration.ConfigurationSection ships = cfg.getConfigurationSection("ships");
+            if (ships != null) {
+                for (String type : ships.getKeys(false)) {
+                    String base = "ships." + type + ".controls.";
+                    // contains(path, true): this file's own keys only. The jar copy hangs underneath as
+                    // defaults and has no-driver-drag everywhere, which would skip every carry-over.
+                    if (!cfg.contains(base + "idle-drag", true) && !cfg.contains(base + "unmanned-drag", true)) continue;
+                    if (cfg.contains(base + "idle-drag", true) && !cfg.contains(base + "no-driver-drag", true)) {
+                        cfg.set(base + "no-driver-drag", cfg.getDouble(base + "idle-drag"));
+                        plugin.getLogger().info("Config upgrade: " + base + "idle-drag carried over to "
+                            + base + "no-driver-drag.");
+                    }
+                    cfg.set(base + "idle-drag", null);
+                    cfg.set(base + "unmanned-drag", null);
+                    changed = true;
+                }
             }
         }
 

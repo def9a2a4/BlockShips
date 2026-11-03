@@ -2235,12 +2235,18 @@ public class ShipWheelManager {
     }
 
     /**
-     * What a landing drops for a block it can't place: one item for a two-cell block (bed, door), and the floor
-     * form of a wall-only block. The {@code DropItemHook} for every ship landing, including one redone after a
+     * What a landing drops for a block it can't place: nothing for a bed or door, one item for any other
+     * two-cell block, and the floor form of a wall-only block. The {@code DropItemHook} for every ship landing, including one redone after a
      * crash.
      */
     private static @Nullable ItemStack landingDrop(anon.def9a2a4.corelib.MechanismBlockData mb, @Nullable ItemStack defaultDrop) {
         org.bukkit.block.data.BlockData bd = mb.blockData;
+        // Beds and doors that can't land drop NOTHING, either half, for now. Paying one item per pair is
+        // wrong both ways when only one half is blocked (the other lands alone and later pays again, or is
+        // lost); see TODO.md "Beds and doors on landing".
+        if (bd instanceof org.bukkit.block.data.type.Bed || bd instanceof org.bukkit.block.data.type.Door) {
+            return null;
+        }
         if (bd instanceof org.bukkit.block.data.Bisected bis
                 && !(bd instanceof org.bukkit.block.data.type.Stairs)
                 && !(bd instanceof org.bukkit.block.data.type.TrapDoor)

@@ -71,7 +71,7 @@ class ConfigMigrationTest {
         assertEquals(0, cfg.getInt("config-version", 0),
             "getInt(path, def) reads the own map only - which is why an unparseable file reads as"
                 + " version 0 and used to be 'upgraded' and saved over");
-        assertEquals(2, cfg.getInt("config-version"),
+        assertEquals(3, cfg.getInt("config-version"),
             "...while the one-arg form does consult defaults, making the broken file look healthy");
         assertFalse(cfg.getBoolean("custom-ships.stats.enabled", false),
             "the migration's own probe reads false here, so it would rewrite the stub as 'changed'");
@@ -102,7 +102,7 @@ class ConfigMigrationTest {
         YamlConfiguration after = YamlConfiguration.loadConfiguration(file.toFile());
         assertTrue(after.getBoolean("cannons.tnt-enabled"), "user settings must survive the upgrade");
         assertEquals(500, after.getInt("cannons.cooldown-ms"));
-        assertEquals(2, after.getInt("config-version"));
+        assertEquals(3, after.getInt("config-version"));
         // v0->v1 flips this deliberately, even though the fixture wrote an explicit false: the old
         // shipped config extracted `enabled: false` into every server's file, so an explicit false is
         // indistinguishable from the untouched default — the migration's value-match probe is policy,
@@ -110,6 +110,36 @@ class ConfigMigrationTest {
         assertTrue(after.getBoolean("custom-ships.stats.enabled"));
         // v1->v2 drops this deliberately: the replacement exponent runs the opposite way.
         assertFalse(after.contains("custom-ships.stats.lift-falloff-exponent"));
+    }
+
+    @Test
+    void theOldIdleDragCarriesOverToNoDriverDrag() throws IOException {
+        Path file = dataFolder.resolve("config.yml");
+        Files.writeString(file, """
+            config-version: 2
+            ships:
+              smallship:
+                controls:
+                  unmanned-drag: 0.99
+                  idle-drag: 0.97
+              bigship:
+                controls:
+                  idle-drag: 0.96
+                  no-driver-drag: 0.9
+            """);
+
+        StubPlugin.Captured log = new StubPlugin.Captured();
+        ConfigValidator.MainConfigStatus status =
+            ConfigValidator.checkMainConfig(StubPlugin.serving(dataFolder.toFile(), log));
+        ConfigMigration.run(pluginOver(file, new AtomicInteger()), status);
+
+        YamlConfiguration after = YamlConfiguration.loadConfiguration(file.toFile());
+        assertEquals(0.97, after.getDouble("ships.smallship.controls.no-driver-drag"), 1e-9);
+        assertFalse(after.contains("ships.smallship.controls.idle-drag"));
+        assertFalse(after.contains("ships.smallship.controls.unmanned-drag"));
+        assertEquals(0.9, after.getDouble("ships.bigship.controls.no-driver-drag"), 1e-9,
+            "a no-driver-drag the admin already set wins");
+        assertFalse(after.contains("ships.bigship.controls.idle-drag"));
     }
 
     /**

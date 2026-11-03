@@ -93,6 +93,13 @@ public class BlockConfigManager {
                     + " defined a block. Each entry needs indented properties under it, e.g."
                     + " \"andesite:\" then \"  allowed: true\" on the next line.");
             }
+            // On a reload, the configuration already running is the better fallback (the same rule as a
+            // parse error above): the bundled file would re-permit whatever the admin had disallowed.
+            if (loaded.source() == ConfigResources.Source.OVERRIDE && !blockPropertiesCache.isEmpty()) {
+                logger.severe("config/blocks.yml defined no blocks; keeping the block configuration already in"
+                    + " force (" + blockPropertiesCache.size() + " materials). Fix the override and reload.");
+                return loaded;
+            }
             if (loaded.source() == ConfigResources.Source.OVERRIDE) {
                 logger.severe("config/blocks.yml defined no blocks; using the bundled default instead so"
                     + " ships can still pick blocks up. Fix the override and reload.");

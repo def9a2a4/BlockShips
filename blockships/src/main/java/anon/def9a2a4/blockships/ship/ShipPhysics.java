@@ -80,6 +80,10 @@ public class ShipPhysics {
     /** Smallest step height over the ground wheels; computed once, NaN until then. */
     private float landStepHeight = Float.NaN;
 
+    /** A flier resting where it came down: its lift isn't holding it up, so nothing burns for lift. */
+    private boolean landedFlier = false;
+    public boolean isLandedFlier() { return landedFlier; }
+
     /** Whether the flight branch drove the vertical physics last tick. */
     private boolean flying = false;
     public boolean isFlying() { return flying; }
@@ -515,8 +519,11 @@ public class ShipPhysics {
         boolean landCapable = isLandCapable();
         Support support = landCapable ? computeSupport(vehicleLoc) : null;
         if (landCapable) updateGrounded(vehicleLoc, support);
-        boolean wantsFlight = isThrustLifted() && liftRatio() >= 1f
-            && ((ship.hasDriver && ship.isSpacePressed) || !grounded);
+        // Off the ground a flier stays on the flight path whatever its lift, so a failing one glides down on
+        // the flight model's sink curve; the land branch's fall is full gravity. Taking off still needs
+        // lift >= 1 and Space.
+        boolean wantsFlight = isThrustLifted()
+            && (!grounded || (liftRatio() >= 1f && ship.hasDriver && ship.isSpacePressed));
         boolean land = landCapable && !wantsFlight && !hullInWater(vehicleLoc);
         landActive = land;
         landSupportY = land && support.valid() ? support.targetY() : Double.NaN;
@@ -1018,7 +1025,13 @@ public class ShipPhysics {
 
         // Land rather than pass through. Outside the gravity branch on purpose: a Sprint descent at
         // lift >= 1 produces no residual gravity at all and previously got no ground check whatsoever.
+        float fall = currentYVelocity;
         currentYVelocity = clampFallToGround(vehicleLoc, currentYVelocity);
+        // Landed: it came DOWN onto something. Set on the touchdown, cleared by any vertical motion
+        // after it (climbing off, or sliding off a ledge). Never set by assembly, so a freshly assembled
+        // flier counts as hovering even if it was built standing on the ground.
+        if (fall < 0f && currentYVelocity > fall) landedFlier = true;
+        else if (Math.abs(currentYVelocity) > 0.001f) landedFlier = false;
 
         // Settle-to-rest, and the vertical path's only trigger for refreshCarrierTracking — keep it that
         // way (ShipInstance fires it too, but only on the movement→idle transition, which a ship still

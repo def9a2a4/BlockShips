@@ -52,7 +52,8 @@ final class NativeShipLanding {
                         block.setType(Material.AIR, false);
                     } else {
                         boolean wheel = blockLoc.getBlock().equals(shipLoc.getBlock())
-                            && part.block.getMaterial().name().endsWith("PLAYER_HEAD");
+                            && (part.block.getMaterial() == Material.PLAYER_HEAD
+                                || part.block.getMaterial() == Material.PLAYER_WALL_HEAD);
                         dropPart(part, blockLoc, wheel ? wheelItem : null);
                         dropped++;
                         continue;
@@ -171,8 +172,10 @@ final class NativeShipLanding {
             }
             for (ItemStack item : all) at.getWorld().dropItemNaturally(at, item);
         }
-        Material m = part.block.getMaterial();
+        // The placement material, not the block's: a wall torch, wall sign or wall banner has no item of its
+        // own and used to vanish here.
+        Material m = part.block.getPlacementMaterial();
         if (asItem != null) at.getWorld().dropItemNaturally(at, asItem);
-        else if (m.isItem()) at.getWorld().dropItemNaturally(at, new ItemStack(m));
+        else if (m.isItem() && !m.isAir()) at.getWorld().dropItemNaturally(at, new ItemStack(m));
     }
 }

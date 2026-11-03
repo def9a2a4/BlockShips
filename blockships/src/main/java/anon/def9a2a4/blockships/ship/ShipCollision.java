@@ -236,9 +236,8 @@ public class ShipCollision {
 
         // A land vehicle climbing a step: the blocks it is rising onto overlap the hull for the few
         // ticks of the climb, and pushing back on them would stop it at the foot of every step. Skip
-        // exactly the blocks at or below the height the land physics accepted last tick (collision runs
-        // before physics, so last tick's is the current one). Anything taller — a wall, or a block the
-        // support samples missed — still collides.
+        // the blocks below the height the land physics accepted last tick (collision runs before physics,
+        // so last tick's is the current one). Anything from that height up still collides.
         double stepTop = ship.physics.isLandActive() ? ship.physics.landSupportY() : Double.NaN;
         boolean skipSteps = !Double.isNaN(stepTop);
 
@@ -254,7 +253,11 @@ public class ShipCollision {
                         }
                     }
 
-                    if (skipSteps && y + 1 <= stepTop + 0.01) continue;
+                    // Base below the supported height: the block the vehicle is standing on or stepping onto.
+                    // Not "top at or below it": a slab, carpet or snow layer has a cell top above its
+                    // collision top, so that test kept them as full cubes the hull sat half inside, and the
+                    // car stuttered over every slab road.
+                    if (skipSteps && y < stepTop - 0.01) continue;
 
                     // Resize reusable bounding box to current block position
                     blockBox.resize(x, y, z, x + 1, y + 1, z + 1);
