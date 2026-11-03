@@ -17,6 +17,8 @@
 
 ## LONG TERM
 
+- [ ] Shelf contents don't show on a moving ship (glued or allow-listed): the BlockDisplay renders an empty shelf, the items are only kept in the block snapshot and come back on landing. Show them with ItemDisplays per slot (SimpleShips does this; see docs/todo/TODO-tileentities.md).
+
 - [ ] Beds and doors on landing. A bed or door that can't land (blocked cell, protected region) currently drops one item PER HALF (`ShipWheelManager.landingDrop`), so both halves refused is a one-item dupe. Paying one item per pair goes wrong when only one half is blocked: the other half lands alone and either vanishes (no bed loot from a lone foot) or pays a second item when it later breaks (a dupe). Proper fix: decide per pair — if either half is refused, refuse both and pay exactly one item.
 
 - [ ] Re-enable bot tests for 26.x. Currently only server startup is tested there.
