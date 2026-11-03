@@ -17,6 +17,8 @@ make clean-test-server
 make test-server-download-all MINECRAFT_VERSION=$V ${1:+DEFCORELIB_JAR=$1}
 make test-server-setup MINECRAFT_VERSION=$V ${1:+DEFCORELIB_JAR=$1}
 echo $V > test-bot/.mc-version
+export MC_PORT=${MC_PORT:-25565}   # MC_PORT=25568 to run beside another server
+sed -i "s/^server-port=.*/server-port=$MC_PORT/" test-server/server.properties
 
 run_phase() {
     cd "$REPO/test-server"

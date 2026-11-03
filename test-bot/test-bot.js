@@ -1898,8 +1898,9 @@ oak_planks:
   weight: 5
   collider: true
 `)
-    const logged = await reload()
-    if (!/Loaded block configuration for \d+ materials from your override/.test(logged)) {
+    clearChat(bot)
+    await reload()
+    if (!await waitForChat(bot, /^Content files: from your config\/ overrides: .*blocks\.yml/, 5000)) {
       return fail(NAME, 'reload did not report loading config/blocks.yml')
     }
     const edited = await detect()

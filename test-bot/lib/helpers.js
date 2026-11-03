@@ -742,7 +742,7 @@ function findWheelBlock(bot, centerX, centerY, centerZ) {
   return null
 }
 
-async function placeWheelAtPosition(bot, wheelPos, maxRetries = 10, retryDelay = 200) {
+async function placeWheelAtPosition(bot, wheelPos, maxRetries = 50, retryDelay = 200) {
   const adjacentPositions = [
     { x: 0, y: -1, z: 0, face: new Vec3(0, 1, 0) },   // below
     { x: 0, y: 0, z: -1, face: new Vec3(0, 0, 1) },   // north
