@@ -2011,6 +2011,11 @@ async function testShelfOnShip() {
   if ((await waitForShulkers(bot, 50, 20, 500, 10)).length < 10) return fail(NAME, 'ship did not assemble')
   await sleep(1000)
   if (await check(`/execute if block ${at} minecraft:oak_shelf`)) return fail(NAME, 'the shelf stayed behind when the ship launched')
+  // Aboard, like a player docking: the wheel menu doesn't open from beside the hull.
+  bot.creative.stopFlying()
+  await sleep(500)
+  if (!await mountShip(bot, log)) return fail(NAME, 'could not board to dock')
+  await sleep(500)
   if (!await disassembleViaWheelMenu(bot, log)) return fail(NAME, 'could not dock')
   await sleep(2000)
   const shelf = bot.findBlock({ matching: b => b.name === 'oak_shelf', maxDistance: 16 })
