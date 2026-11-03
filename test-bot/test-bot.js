@@ -1952,6 +1952,39 @@ oak_planks:
   }
 }
 
+// A hull sitting in the sea leaves the sea behind when it launches, not a hull-shaped hole; above the water
+// line it leaves air.
+async function testLaunchLeavesSea() {
+  const NAME = 'launch_leaves_sea'
+  say(`=== TEST: ${NAME} ===`)
+  await cleanup(bot)
+  await teleportToRunway()
+  await clearInventory(bot)
+  const built = await buildCustomShipBlocks(CUSTOM_SHIP)
+  if (!built.success) return fail(NAME, built.error)
+  const x = RUNWAY_X, z = RUNWAY_Z - 1
+  // Raise the sea to the hull's bottom layer (y 101) around it; the hull's own cells are not air, so they stay.
+  bot.chat(`/fill ${x - 5} 100 ${z - 7} ${x + 5} 101 ${z + 7} minecraft:water replace air`)
+  await sleep(1000)
+  const plank = blockCharWorldPos(CUSTOM_SHIP, 'P', x, 101, z)
+  const wool = blockCharWorldPos(CUSTOM_SHIP, 'S', x, 101, z)
+  try {
+    const menu = clickWheelMenu(bot, log, 'assemble')
+    await bot.activateBlock(built.wheelBlock)
+    if (!await menu) return fail(NAME, 'assembly menu did not open')
+    if ((await waitForShulkers(bot, 50, 20, 500, 10)).length < 10) return fail(NAME, 'ship did not assemble')
+    await sleep(1000)
+    const below = bot.blockAt(new Vec3(plank.x, plank.y, plank.z))
+    const above = bot.blockAt(new Vec3(wool.x, wool.y, wool.z))
+    if (!below || below.name !== 'water') return fail(NAME, `the hull's bottom cell is ${below ? below.name : 'unknown'}, expected water`)
+    if (!above || above.name !== 'air') return fail(NAME, `a cell above the water line is ${above ? above.name : 'unknown'}, expected air`)
+    pass(NAME)
+  } finally {
+    bot.chat(`/fill ${x - 5} 100 ${z - 7} ${x + 5} 101 ${z + 7} minecraft:air replace water`)
+    await sleep(500)
+  }
+}
+
 const TESTS = {
   smallship: { name: 'Small Ship', fn: () => testShipControls('smallship') },
   bigship: { name: 'Big Ship', fn: () => testShipControls('bigship') },
@@ -1966,6 +1999,7 @@ const TESTS = {
   land_vehicle: { name: 'Land Vehicle Steps Up', fn: testLandVehicle },
   powered_cart: { name: 'Powered Cart Drives And Burns Only When Used', fn: testPoweredCart },
   blocks_yml: { name: 'Server blocks.yml Override', fn: testBlocksYml },
+  launch_leaves_sea: { name: 'Launch Leaves The Sea Behind', fn: testLaunchLeavesSea },
   ghost_throttle: { name: 'No Ghost Throttle After Dismount', fn: testGhostThrottle },
   // manual: skipped by runAllTests (and therefore by CI's test:all) — the deliberate negative waits
   // don't fit the suite's hard timeout. Run by name: `.testbot wheel_reserved` or --only=wheel_

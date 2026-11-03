@@ -2235,6 +2235,46 @@ public class ShipWheelManager {
     }
 
     /**
+     * The hull cells at or below the sea level beside the hull: the highest Y at which a hull block has water
+     * directly beside it (outside the hull) whose column runs down to below the hull or onto something that isn't
+     * the hull. That second test is what keeps a pool or fountain on the deck from counting as the sea. A hull
+     * with no water beside it (an airship, a dry dock) gets nothing. Unloaded neighbours are skipped, never loaded.
+     */
+    static List<Block> seaCellsLeftBehind(List<Block> hull) {
+        if (hull.isEmpty()) return List.of();
+        org.bukkit.World world = hull.get(0).getWorld();
+        Set<Long> cells = new HashSet<>(hull.size() * 2);
+        int minY = Integer.MAX_VALUE;
+        for (Block b : hull) {
+            cells.add(packCell(b.getX(), b.getY(), b.getZ()));
+            minY = Math.min(minY, b.getY());
+        }
+        int seaLevel = Integer.MIN_VALUE;
+        int[][] sides = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        for (Block b : hull) {
+            if (b.getY() <= seaLevel) continue;
+            for (int[] d : sides) {
+                int nx = b.getX() + d[0], nz = b.getZ() + d[1];
+                if (cells.contains(packCell(nx, b.getY(), nz)) || !world.isChunkLoaded(nx >> 4, nz >> 4)) continue;
+                int y = b.getY();
+                while (y > minY - 1 && world.getBlockAt(nx, y, nz).getType() == Material.WATER) y--;
+                if (y == b.getY()) continue;                                   // no water beside this block
+                if (y > minY - 1 && cells.contains(packCell(nx, y, nz))) continue; // water standing on the hull
+                seaLevel = b.getY();
+                break;
+            }
+        }
+        if (seaLevel == Integer.MIN_VALUE) return List.of();
+        List<Block> out = new ArrayList<>();
+        for (Block b : hull) if (b.getY() <= seaLevel) out.add(b);
+        return out;
+    }
+
+    private static long packCell(int x, int y, int z) {
+        return ((long) (x & 0x3FFFFFF) << 38) | ((long) (z & 0x3FFFFFF) << 12) | (y & 0xFFF);
+    }
+
+    /**
      * What a landing drops for a block it can't place: one item per half for a bed or door, one item for any
      * other two-cell block, and the floor form of a wall-only block. The {@code DropItemHook} for every ship landing, including one redone after a
      * crash.
@@ -2512,6 +2552,9 @@ public class ShipWheelManager {
             as.setRotation(0f, 0f);
         });
 
+        // Read while the hull is still standing: the cells it leaves below the sea level beside it.
+        List<Block> seaCells = seaCellsLeftBehind(scan.orderedBlocks());
+
         ShipInstance ship = null;
         anon.def9a2a4.corelib.Mechanism mechanism = null;
         try {
@@ -2559,6 +2602,11 @@ public class ShipWheelManager {
             return false;
         }
         // (No removeBlocks call — assembleMechanism already aired out the source blocks.)
+        // The sea closes over where the hull was, instead of leaving a hull-shaped hole. Physics on, so water
+        // also flows into any air the hull enclosed.
+        for (Block b : seaCells) {
+            if (b.getType() == Material.AIR) b.setType(Material.WATER, true);
+        }
 
         // Nudge nearby players up to prevent falling through during the 1-tick
         // window before collision shulkers are positioned
