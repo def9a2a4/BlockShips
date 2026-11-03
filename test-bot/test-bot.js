@@ -1994,6 +1994,7 @@ async function testShelfOnShip() {
   await clearInventory(bot)
   const built = await buildCustomShipBlocks(CUSTOM_SHIP)
   if (!built.success) return fail(NAME, built.error)
+  await clearInventory(bot)   // a spare wheel in hand turns every click on the ship into a placement
   const t = blockCharWorldPos(CUSTOM_SHIP, 'T', RUNWAY_X, 101, RUNWAY_Z - 1)
   const at = `${t.x} ${t.y + 1} ${t.z}`
   bot.chat(`/setblock ${at} minecraft:oak_shelf`)
