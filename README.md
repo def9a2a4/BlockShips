@@ -30,9 +30,10 @@ Ships can include:
 
 - **Functional blocks** - Crafting tables, anvils, enchanting tables work as normal. (furnaces/brewing stands don't fully yet work)
 - **Storage** - Chests, barrels, dispensers, etc remain accessible
-- **Seats** - bottom-half stairs become passenger seats you can sit on (wooden, copper and purpur; copper ones have to be straight). Wool carpets work too.
+- **Seats** - bottom-half stairs become passenger seats you can sit on (wooden, copper and purpur; copper ones have to be straight). Wool carpets work too, and on Minecraft 26.3 every cushion is a seat (one behind the wheel is the driver's seat).
 - **Lead points** - Anything leashed to a fence will stay tied to the ship. You can lead things to the ship while its moving. The Small Ship and Large Ship each have one lead point; the Small Airship has none.
 - **Cannons** - a dispenser with a block of obsidian behind it will shoot its contents. fire all through the ship menu, or right click on the obsidian to fire.
+- **Land vehicles** - hang DefCoreLib wheels on both sides of a hull and it drives on land with the same Ship's Wheel; powered wheels push it, unpowered ones roll.
 - **Health & damage** - Ships have health, take damage from collisions/attacks, and regenerate over time. When they run out of health, ships will attempt to place themselves back in the world.
 - **Sounds & effects** - Movement and damage come with visual effects and audio.
 - **Drowned Captain** - Rare drowned mobs spawn carrying ship wheels
@@ -124,13 +125,13 @@ Commands marked † must be run by a player, not from the console.
 
 ## Requirements
 
-- **Paper 1.21.9 or newer**, or a Paper fork. Development and CI run on **1.21.11**, and CI also covers **26.1.2**, **26.2** and **26.3**, on both Paper and Purpur — those are the versions actually tested. 1.21.9 and 1.21.10 should work but are not covered by automated tests.
+- **Paper 1.21.11 or newer**, or a Paper fork. Development and CI run on **1.21.11**, and CI also covers **26.1.2**, **26.2** and **26.3**, on both Paper and Purpur.
 - **Java 21 or newer.** Note that Minecraft 26.x servers themselves require Java 25 — that is a requirement of the server jar, not of BlockShips.
 - **Spigot and Folia are not supported.**
 
 ## Required
 
-**[DefCoreLib](https://modrinth.com/plugin/defcorelib) 0.5.0 or newer.** BlockShips declares a hard dependency on it and will not load without it. DefCoreLib is also what sets the 1.21.9 floor. There is no version check between the two, so install the DefCoreLib release published alongside this version of BlockShips.
+**[DefCoreLib](https://modrinth.com/plugin/defcorelib) 0.5.0 or newer.** BlockShips declares a hard dependency on it and will not load without it. DefCoreLib is also what sets the 1.21.11 floor. At startup BlockShips checks that the installed DefCoreLib is new enough, and disables itself with a message saying so if it isn't; install the DefCoreLib release published alongside this version of BlockShips.
 
 Install only `defCoreLib-<version>.jar`. If you also drop in the `-plain` jar, Paper reports "Ambiguous plugin name" and neither loads.
 
@@ -143,7 +144,8 @@ These are DefCoreLib companion plugins. Everything they unlock already lives ins
 
 ## Optional
 
-- **[WorldGuard](https://enginehub.org/worldguard)** — ships respect region build permissions; disassembly inside a region you can't build in drops blocks as items instead of placing them.
+- **Any protection or claim plugin** (WorldGuard, GriefPrevention, Towny, Lands, ...) — assembling a ship, placing a wheel, spawning a ship kit, firing cannons and projectiles hitting a ship all respect it: BlockShips asks the server whether you could build there, so no per-plugin support is needed.
+- **[WorldGuard](https://enginehub.org/worldguard)** — additionally, disassembly inside a region you can't build in drops blocks as items instead of placing them.
 - **[DynLight](https://github.com/def9a2a4/DynLight)** — light-emitting blocks on an assembled ship emit dynamic light.
 
 ## Install

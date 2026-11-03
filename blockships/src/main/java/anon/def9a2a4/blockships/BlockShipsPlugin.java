@@ -200,6 +200,8 @@ public class BlockShipsPlugin extends JavaPlugin {
         try {
             if (anon.def9a2a4.corelib.CoreLibPlugin.getInstance() == null) return "DefCoreLib did not enable";
             Class.forName("anon.def9a2a4.corelib.MechanismRotationSolvedEvent");
+            // DisplayShip listens for it; a build without it (some level-1 dev builds) drops every DisplayShip handler.
+            Class.forName("anon.def9a2a4.corelib.MechanismTeardownRedoEvent");
             Class<?> registry = Class.forName("anon.def9a2a4.corelib.MechanismRegistry");
             registry.getMethod("landingSolidWouldWin", org.bukkit.Material.class);
             // Ships are saved only at world saves and chunk unloads, by DefCoreLib; BlockShips no longer saves

@@ -67,6 +67,8 @@
   block, a large one 1.5 (fences and walls), a huge one 2 (each wheel's lore says), and the smallest
   wheel aboard sets the limit. It keeps its speed rolling down a slope. Detect tells you it's a land vehicle, which wheel limits its climb, and which wheels
   are mounted the wrong way.
+  Tuning is under `custom-ships.land` in config.yml: ground drag, step-up speed, land speed, turning and
+  the step height per wheel size.
 
 - **Propellers spin when you use them.** Forward propellers follow the ship's speed (backwards
   going astern), side ones and reaction wheels the steering, lift propellers the climb. Only an
@@ -340,7 +342,29 @@ cannons.
 - **Detect counts cushion seats**, and no longer counts the seat behind the wheel twice, so the docked
   seat count matches the one the ship gets.
 
+### Settings changed on upgrade
+
+The first start on 0.0.18 rewrites a few lines of config.yml, and logs each change:
+
+- **`custom-ships.stats.enabled` is turned on**, even where it said `false`. It shipped as `false` in
+  every older config.yml, so the literal can't tell an admin's choice from the old default. Sails, engines
+  and thrusters only count with stats on. Set it back to `false` afterwards if you really want it off.
+- **`custom-ships.stats.lift-falloff-exponent` is removed.** Descent now scales with how much lift is
+  missing (`sink-speed-exponent`), so the old value has no meaning.
+- **`unmanned-drag` and `idle-drag` become one `no-driver-drag`** per ship type, carrying over your
+  `idle-drag` (the one that was in force). An existing `no-driver-drag` wins. Without this, upgraded
+  servers fell back to a built-in default and ships coasted to a stop much sooner.
+- `fuel-burn-multiplier` and `vertical-engine-scale` are removed; nothing reads them.
+
 ### Others
+
+- **Quieter startup, and a debug switch.** Routine startup lines (block counts, version probes, wheel
+  saves, ship recovery) now only appear with `debug: true` in config.yml, or after
+  `/blockships debug on` (until restart). Turn it on, reproduce a problem, and share `logs/latest.log`.
+- **A bed or door that can't land drops an item for each half** that is blocked, instead of disappearing.
+  With both halves blocked you get two.
+- **Don't `/reload` or PlugMan BlockShips or DefCoreLib.** It was never supported. One more reason: a ship
+  docked just before a reload, followed by a crash before the world saves, can be lost.
 
 - **Assembled `/detect` now reports seats**, which only the docked readout did.
 - **Removed three dead stat helpers** that hardcoded turning and lift to zero. They are the

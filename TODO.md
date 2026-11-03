@@ -17,7 +17,7 @@
 
 ## LONG TERM
 
-- [ ] Beds and doors on landing. A bed or door that can't land (blocked cell, protected region) currently drops NOTHING, either half (`ShipWheelManager.landingDrop`). Paying one item per pair goes wrong when only one half is blocked: the other half lands alone and either vanishes (no bed loot from a lone foot) or pays a second item when it later breaks (a dupe). Proper fix: decide per pair — if either half is refused, refuse both and pay exactly one item.
+- [ ] Beds and doors on landing. A bed or door that can't land (blocked cell, protected region) currently drops one item PER HALF (`ShipWheelManager.landingDrop`), so both halves refused is a one-item dupe. Paying one item per pair goes wrong when only one half is blocked: the other half lands alone and either vanishes (no bed loot from a lone foot) or pays a second item when it later breaks (a dupe). Proper fix: decide per pair — if either half is refused, refuse both and pay exactly one item.
 
 - [ ] Re-enable bot tests for 26.x. Currently only server startup is tested there.
   - mineflayer 4.39 / minecraft-protocol 1.68 support 26.1, and 26.1.1/26.1.2 share its protocol (775), so bumping test-bot should unlock 26.1.2

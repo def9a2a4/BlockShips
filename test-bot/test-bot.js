@@ -344,10 +344,27 @@ async function testGhostThrottle() {
   }
   const start = Date.now()
   while (bot.vehicle && Date.now() - start < 3000) await sleep(50)
+  // bot.vehicle can stay set after a real dismount on 1.21.3+ (the mineflayer quirk customDismount works
+  // around too), so ask the server. "Not riding" means the raw shift worked and the ghost-throttle setup holds;
+  // anything else means the command just dismounted us, clearing the inputs, so the case was never set up.
   if (bot.vehicle) {
-    await customDismount(bot, log)
-    fail(testName, 'Raw shift did not dismount; the setup is not the ghost-throttle case')
-    return
+    // A fresh listener, not waitForChat: its buffer holds earlier tests' replies to this same command.
+    const reply = new Promise(resolve => {
+      const onMsg = (m) => {
+        const t = m.toString()
+        if (t !== 'You are not riding a ship.' && t !== 'Dismounted from ship.') return
+        bot.removeListener('message', onMsg)
+        resolve(t)
+      }
+      bot.on('message', onMsg)
+      setTimeout(() => { bot.removeListener('message', onMsg); resolve(null) }, 3000)
+    })
+    bot.chat('/blockships dismount')
+    const line = await reply
+    if (!line || !/not riding/i.test(line)) {
+      fail(testName, `Raw shift did not dismount; the setup is not the ghost-throttle case (${line || 'no reply'})`)
+      return
+    }
   }
 
   log('Waiting for the ship to coast to a stop...')
