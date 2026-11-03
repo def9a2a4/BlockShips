@@ -3,9 +3,8 @@
 > **⚠ Before upgrading: have your players dock every ship, and back up your world and the whole
 > `plugins` folder.** Docked ships carry over untouched. A ship still out at sea when the server
 > upgrades is docked for it, as blocks, where it stands, the first time its area loads, and has to
-> be relaunched from its wheel. A ship in the air is left hanging there as blocks. Engine fuel in a
-> ship at sea goes back into its furnaces. The server log says how many ships were left out at sea.
-> There is no going back to 0.0.17 once ships have been relaunched on 0.0.18.
+> be relaunched from its wheel. A ship in the air is left hanging there as blocks. The server log 
+> says how many ships were left out at sea. There is no going back to 0.0.17 once ships have been relaunched on 0.0.18.
 >
 > **Install [DefCoreLib](https://modrinth.com/plugin/defcorelib) 0.5.0 first.**
 > BlockShips now has a hard dependency on it and will not load without it, which also raises
@@ -89,10 +88,9 @@
   just barely airborne may need more lift.
 
 - **Windmills aboard a ship give half their power, rounded down.** A small windmill gives nothing
-  aboard; it used to round up to its full power, so a deck of small windmills ran a ship for free.
+  aboard.
 
-- **Only the wheels that touch the ground drive a land vehicle.** A spare wheel on a cabin wall
-  added full thrust, and a wheel mounted the wrong way burned fuel the whole time.
+- **Only the wheels that touch the ground drive a land vehicle.**
 
 - **Re-craft your Captain's Manual.** The book has six new sections covering sails,
   propulsion, mounting, heavy flight, gluing and locking, plus a rewritten Weight &

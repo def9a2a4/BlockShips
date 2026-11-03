@@ -1378,6 +1378,7 @@ public class DisplayShip implements Listener {
 
         anon.def9a2a4.corelib.Mechanism mechanism = null;
         ShipInstance ship = null;
+        java.util.List<org.bukkit.inventory.ItemStack> overflow = new java.util.ArrayList<>();
         try {
             String type = custom ? "blockship:custom" : "blockship:prefab";
             java.util.List<anon.def9a2a4.corelib.MechanismRegistry.PartSpec> specs =
@@ -1413,13 +1414,22 @@ public class DisplayShip implements Listener {
                     if (inv != null) inv.setContents(java.util.Arrays.copyOf(items, inv.getSize()));
                     int from = inv == null ? 0 : inv.getSize();
                     for (int s = from; s < items.length; s++) {
-                        if (items[s] != null) vehicle.getWorld().dropItemNaturally(vehicle.getLocation(), items[s]);
+                        if (items[s] != null) overflow.add(items[s]);
                     }
                 }
             }
             reg.persist(mechanism); // crash-safe: survives restart + chunk reload via the M5 path
             ship.applyInitialDrivenPose(); // render the heading on frame 1 (no one-tick yaw flash)
+            // Only now: a failed attempt keeps the native cargo for the retry, so dropping earlier paid it twice.
+            for (org.bukkit.inventory.ItemStack it : overflow) vehicle.getWorld().dropItemNaturally(vehicle.getLocation(), it);
         } catch (Throwable t) {
+            // The native ship keeps its cargo for the retry: empty what was loaded so destroy() doesn't drop a copy.
+            if (mechanism != null && cargo != null) {
+                for (Integer idx : cargo.keySet()) {
+                    try { org.bukkit.inventory.Inventory inv = mechanism.getStorage(idx); if (inv != null) inv.clear(); }
+                    catch (Throwable ignored) {}
+                }
+            }
             // Rollback. assembleFromParts BORROWS the vehicle (ownsVehicle=false), so mechanism.destroy() only
             // strips the vehicle's tag and leaves the ArmorStand alive — the final unconditional remove kills it.
             // If ship != null, ship.destroy() already removed the vehicle (isValid-guarded), so the trailing
@@ -2805,6 +2815,16 @@ public class DisplayShip implements Listener {
         event.setCancelled(true);
     }
 
+    /** A drag into the wheel menu would leave the items in a throwaway inventory, gone on close. */
+    @EventHandler
+    public void onShipWheelMenuDrag(org.bukkit.event.inventory.InventoryDragEvent event) {
+        if (!(event.getInventory().getHolder() instanceof ShipWheelMenu.ShipWheelMenuHolder)) return;
+        int top = event.getView().getTopInventory().getSize();
+        for (int raw : event.getRawSlots()) {
+            if (raw < top) { event.setCancelled(true); return; }
+        }
+    }
+
     /**
      * Event: Handle ship wheel menu clicks
      */
@@ -2885,6 +2905,8 @@ public class DisplayShip implements Listener {
                 }
                 break;
             case FORCE_DISASSEMBLE:
+                // The slot is empty unless the button is shown (after a refused disassemble): a click there must not force it.
+                if (!wheelData.canForceDisassemble()) return;
                 stateChanged = manager.disassembleShip(player, wheelData, true);
                 break;
             case INFO:
