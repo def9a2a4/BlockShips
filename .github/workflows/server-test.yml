@@ -30,16 +30,16 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ startsWith(matrix.minecraft, '26.') && '25' || '21' }}
 
-      # TODO: remove 26.x skip conditions once minecraft-protocol supports 26.x
-      # tracking: https://github.com/PrismarineJS/minecraft-data/pull/1184
+      # Mineflayer 4.39 speaks 1.21.11 and 26.1.x, so the bot runs there; 26.2+ get the startup test only
+      # (minecraft-data has no 26.2/26.3 yet). Same split as defCoreLib's server-test.yml.
       - name: Set up Node.js
-        if: ${{ !startsWith(matrix.minecraft, '26.') }}
+        if: ${{ matrix.minecraft == '1.21.11' || startsWith(matrix.minecraft, '26.1.') }}
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'   # mineflayer 4.39 declares engines.node >= 22
 
       - name: Install bot dependencies
-        if: ${{ !startsWith(matrix.minecraft, '26.') }}
+        if: ${{ matrix.minecraft == '1.21.11' || startsWith(matrix.minecraft, '26.1.') }}
         run: make test-bot-install
 
       - name: Download plugin JAR
@@ -73,11 +73,11 @@ jobs:
         run: make test-server-setup MINECRAFT_VERSION=${{ matrix.minecraft }}
 
       - name: Run test server with bot
-        if: ${{ !startsWith(matrix.minecraft, '26.') }}
+        if: ${{ matrix.minecraft == '1.21.11' || startsWith(matrix.minecraft, '26.1.') }}
         run: make test-server-ci MINECRAFT_VERSION=${{ matrix.minecraft }}
 
       - name: Server startup test (no bot)
-        if: ${{ startsWith(matrix.minecraft, '26.') }}
+        if: ${{ !(matrix.minecraft == '1.21.11' || startsWith(matrix.minecraft, '26.1.')) }}
         run: make test-server-startup-only MINECRAFT_VERSION=${{ matrix.minecraft }}
 
       - name: Check for errors

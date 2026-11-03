@@ -1985,6 +1985,43 @@ async function testLaunchLeavesSea() {
   }
 }
 
+// A shelf on the hull (allow-listed, no glue) sails with the ship and lands with its item.
+async function testShelfOnShip() {
+  const NAME = 'shelf_on_ship'
+  say(`=== TEST: ${NAME} ===`)
+  await cleanup(bot)
+  await teleportToRunway()
+  await clearInventory(bot)
+  const built = await buildCustomShipBlocks(CUSTOM_SHIP)
+  if (!built.success) return fail(NAME, built.error)
+  const t = blockCharWorldPos(CUSTOM_SHIP, 'T', RUNWAY_X, 101, RUNWAY_Z - 1)
+  const at = `${t.x} ${t.y + 1} ${t.z}`
+  bot.chat(`/setblock ${at} minecraft:oak_shelf`)
+  await sleep(300)
+  bot.chat(`/item replace block ${at} container.0 with minecraft:diamond 1`)
+  await sleep(500)
+  const check = async (cmd) => {
+    clearChat(bot)
+    bot.chat(cmd)
+    return /passed/.test(await waitForChat(bot, /^Test (passed|failed)/, 5000) || '')
+  }
+  const menu = clickWheelMenu(bot, log, 'assemble')
+  try { await bot.activateBlock(built.wheelBlock) } catch (e) {}
+  if (!await menu) return fail(NAME, 'assembly menu did not open')
+  if ((await waitForShulkers(bot, 50, 20, 500, 10)).length < 10) return fail(NAME, 'ship did not assemble')
+  await sleep(1000)
+  if (await check(`/execute if block ${at} minecraft:oak_shelf`)) return fail(NAME, 'the shelf stayed behind when the ship launched')
+  if (!await disassembleViaWheelMenu(bot, log)) return fail(NAME, 'could not dock')
+  await sleep(2000)
+  const shelf = bot.findBlock({ matching: b => b.name === 'oak_shelf', maxDistance: 16 })
+  if (!shelf) return fail(NAME, 'no shelf after docking')
+  const p = shelf.position
+  if (!await check(`/execute if block ${p.x} ${p.y} ${p.z} minecraft:oak_shelf{Items:[{id:"minecraft:diamond"}]}`)) {
+    return fail(NAME, 'the shelf came back without its diamond')
+  }
+  pass(NAME)
+}
+
 const TESTS = {
   smallship: { name: 'Small Ship', fn: () => testShipControls('smallship') },
   bigship: { name: 'Big Ship', fn: () => testShipControls('bigship') },
@@ -2000,6 +2037,7 @@ const TESTS = {
   powered_cart: { name: 'Powered Cart Drives And Burns Only When Used', fn: testPoweredCart },
   blocks_yml: { name: 'Server blocks.yml Override', fn: testBlocksYml },
   launch_leaves_sea: { name: 'Launch Leaves The Sea Behind', fn: testLaunchLeavesSea },
+  shelf_on_ship: { name: 'Shelf Sails And Lands With Its Item', fn: testShelfOnShip },
   ghost_throttle: { name: 'No Ghost Throttle After Dismount', fn: testGhostThrottle },
   // manual: skipped by runAllTests (and therefore by CI's test:all) — the deliberate negative waits
   // don't fit the suite's hard timeout. Run by name: `.testbot wheel_reserved` or --only=wheel_
