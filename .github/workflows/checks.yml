@@ -114,3 +114,7 @@ jobs:
   server-test:
     needs: build
     uses: ./.github/workflows/server-test.yml
+
+  crash-test:
+    needs: build
+    uses: ./.github/workflows/crash-test.yml
