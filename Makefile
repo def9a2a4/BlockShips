@@ -89,7 +89,7 @@ server-plugin-copy: defcorelib-jar
 
 .PHONY: server-start
 server-start:
-	cd server && java -Xmx2G -Xms2G -jar paper-1.21.11-55.jar nogui
+	cd server && java -Xmx2G -Xms2G -jar paper-26.3.jar nogui
 
 
 .PHONY: server-start-alt
