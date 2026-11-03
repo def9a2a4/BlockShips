@@ -39,7 +39,8 @@ async function tp(x, y, z) {
   bot.chat(`/tp @s ${x} ${y} ${z}`)
   await sleep(1500)
   // On a fresh world (CI) the chunks there are still generating; building before the client has them fails.
-  await Promise.race([bot.waitForChunksToLoad(), sleep(20000)])
+  // (Not waitForChunksToLoad: it rejects after 10 s.)
+  for (let i = 0; i < 60 && !bot.blockAt(new Vec3(x, y, z)); i++) await sleep(500)
 }
 
 async function waterBasin(cx, cz) {
