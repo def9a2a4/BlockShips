@@ -652,12 +652,12 @@ public class BlockShipsPlugin extends JavaPlugin {
                         sender.sendMessage("§cUsage: /blockships debug [on|off]");
                         return true;
                     }
+                    // Not saved: saveConfig would write the in-memory copy (defaults, if config.yml failed to
+                    // parse) over the admin's file. `debug: true` in config.yml keeps it on across restarts.
                     DebugLog.setEnabled(arg.equals("on"));
-                    getConfig().set("debug", DebugLog.enabled());
-                    saveConfig();
                 }
                 sender.sendMessage("§7Debug logging " + (DebugLog.enabled() ? "§aON" : "§cOFF")
-                    + "§7 - [debug] lines go to logs/latest.log");
+                    + "§7 until restart - [debug] lines go to logs/latest.log");
                 return true;
             }
 

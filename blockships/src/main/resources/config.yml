@@ -12,7 +12,7 @@ warn-config-mismatch: true
 
 # Verbose logging for troubleshooting. When true, BlockShips writes extra "[debug]" lines (wheel saves,
 # ship recovery on chunk load, version probes, ...) to logs/latest.log - turn it on, reproduce the
-# problem, and share that file. Also toggled live with /blockships debug on|off, which saves it here.
+# problem, and share that file. Also toggled live with /blockships debug on|off (until restart; that command doesn't change this file).
 debug: false
 
 # ---------------------------------------------------------------------------
