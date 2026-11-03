@@ -358,6 +358,10 @@ The first start on 0.0.18 rewrites a few lines of config.yml, and logs each chan
 
 ### Others
 
+- **A ship launched from the water leaves the sea behind.** The cells its hull leaves at or below the sea
+  level beside it fill with water, instead of leaving a hull-shaped hole in the sea. Only real water beside the
+  hull counts as the sea, so a pool on the deck changes nothing, and a hull with no water beside it leaves air.
+  Docking does not pump water out of a hull; rooms below the waterline still flood (#41).
 - **Quieter startup, and a debug switch.** Routine startup lines (block counts, version probes, wheel
   saves, ship recovery) now only appear with `debug: true` in config.yml, or after
   `/blockships debug on` (until restart). Turn it on, reproduce a problem, and share `logs/latest.log`.
