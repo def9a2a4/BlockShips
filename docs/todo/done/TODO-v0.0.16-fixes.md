@@ -1,3 +1,9 @@
+---
+status: done
+version: v0.0.16
+note: archived 2026-11-01. Everything here is fixed or obsolete (the blast-furnace engine is gone). The four live leftovers (I2, J1, M2/M3, N2) are tracked in TODO.md
+---
+
 # Fix audit findings — v0.0.16 release review (A–V)
 
 ## Context

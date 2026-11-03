@@ -39,6 +39,10 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
 
     // Force map: ship UUID -> accumulated ship-to-ship force for this tick
     private final Map<UUID, Vector3f> forceMap = new HashMap<>();
+    // Per-tick collider-box snapshot per ship: built at most ONCE per ship per tick (lazily, the first time
+    // it reaches narrow phase) instead of once per collision-pair. Reused table, cleared each run() — same
+    // lifecycle as forceMap. Safe because run() is one atomic main-thread pass that only READS boxes.
+    private final Map<ShipInstance, List<BoundingBox>> boxBuffers = new HashMap<>();
     // Pool of Vector3f to avoid allocating new ones each tick
     private final List<Vector3f> vectorPool = new ArrayList<>();
     private int vectorPoolIndex = 0;
@@ -98,6 +102,7 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
 
         // Reset force map and vector pool
         forceMap.clear();
+        boxBuffers.clear();
         vectorPoolIndex = 0;
 
         // Tick down sound cooldowns
@@ -157,10 +162,14 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
 
     private void checkPairBinned(ShipInstance shipA, ShipInstance shipB,
                                   Location locA, Location locB) {
-        List<CollisionBox> collidersA = shipA.colliders;
-        List<CollisionBox> collidersB = shipB.colliders;
-        int nA = collidersA.size();
-        int nB = collidersB.size();
+        // Engine-agnostic collider boxes (M3): native shulker boxes OR the delegated Mechanism read-API.
+        // Gather each ship's snapshot at most ONCE per tick (a ship in K pairs would otherwise rebuild K
+        // times); the reused map is cleared at the top of run(). List value preserves the random-access
+        // binning below.
+        List<BoundingBox> boxesA = boxBuffers.computeIfAbsent(shipA, ShipInstance::colliderBoxes);
+        List<BoundingBox> boxesB = boxBuffers.computeIfAbsent(shipB, ShipInstance::colliderBoxes);
+        int nA = boxesA.size();
+        int nB = boxesB.size();
         if (nA == 0 || nB == 0) return;
 
         // Compute sweep axis: unit vector from A to B
@@ -190,7 +199,7 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
 
         // Project ship A colliders
         for (int i = 0; i < nA; i++) {
-            BoundingBox bb = collidersA.get(i).entity.getBoundingBox();
+            BoundingBox bb = boxesA.get(i);
             float cx = (float) ((bb.getMinX() + bb.getMaxX()) * 0.5) - originX;
             float cy = (float) ((bb.getMinY() + bb.getMaxY()) * 0.5) - originY;
             float cz = (float) ((bb.getMinZ() + bb.getMaxZ()) * 0.5) - originZ;
@@ -202,7 +211,7 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
 
         // Project ship B colliders
         for (int i = 0; i < nB; i++) {
-            BoundingBox bb = collidersB.get(i).entity.getBoundingBox();
+            BoundingBox bb = boxesB.get(i);
             float cx = (float) ((bb.getMinX() + bb.getMaxX()) * 0.5) - originX;
             float cy = (float) ((bb.getMinY() + bb.getMaxY()) * 0.5) - originY;
             float cz = (float) ((bb.getMinZ() + bb.getMaxZ()) * 0.5) - originZ;
@@ -312,12 +321,10 @@ public class ShipCollisionCoordinator extends BukkitRunnable {
                 int endB = startB + binCountsB[binB];
 
                 for (int ia = startA; ia < endA; ia++) {
-                    CollisionBox cbA = collidersA.get(sortedA[ia]);
-                    BoundingBox boxA = cbA.entity.getBoundingBox();
+                    BoundingBox boxA = boxesA.get(sortedA[ia]);
 
                     for (int ib = startB; ib < endB; ib++) {
-                        CollisionBox cbB = collidersB.get(sortedB[ib]);
-                        BoundingBox boxB = cbB.entity.getBoundingBox();
+                        BoundingBox boxB = boxesB.get(sortedB[ib]);
 
                         if (boxA.overlaps(boxB)) {
                             // Compute penetration depth (min overlap across all axes)

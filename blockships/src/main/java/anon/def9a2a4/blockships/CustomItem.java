@@ -29,6 +29,19 @@ public class CustomItem {
     private final NamespacedKey itemIdKey;
     private final NamespacedKey variantKey;
 
+    /**
+     * defCoreLib's item-identity key. The ship wheel is registered as a corelib {@code CustomHeadBlock} so
+     * that its tile PDC survives being carried by a mechanism (only a registry block gets
+     * {@code restoreConfigPdc} on landing), which means corelib can also mint and drop the wheel — on an
+     * explosion, say. Stamping this key here keeps BlockShips the SOLE minter while making the two mints
+     * indistinguishable to {@code isShipWheel}. Note this is safe on an ITEM but would NOT be on a block:
+     * {@code restoreConfigPdc} strips every {@code corelib:} key from a landing block's carried PDC.
+     */
+    private static final NamespacedKey CORELIB_BLOCK_TYPE_KEY = new NamespacedKey("corelib", "block_type");
+
+    /** The corelib type id the ship wheel is registered under. Keep in sync with {@link ShipWheelBlockType}. */
+    public static final String SHIP_WHEEL_CORELIB_ID = "blockships:ship_wheel";
+
     public CustomItem(String id, String displayNameTemplate, Material baseMaterial,
                      String textureSet, String variantSource, boolean enchantGlint,
                      Plugin plugin, ItemTextureManager textureManager) {
@@ -65,6 +78,11 @@ public class CustomItem {
         PersistentDataContainer pdc = meta.getPersistentDataContainer();
         pdc.set(itemIdKey, PersistentDataType.STRING, id);
         pdc.set(variantKey, PersistentDataType.STRING, variant);
+        // The wheel additionally carries corelib's identity key, so a corelib-minted drop and a
+        // BlockShips-minted one are the same item. See CORELIB_BLOCK_TYPE_KEY.
+        if (id.equals("ship_wheel")) {
+            pdc.set(CORELIB_BLOCK_TYPE_KEY, PersistentDataType.STRING, SHIP_WHEEL_CORELIB_ID);
+        }
 
         // Add lore
         List<net.kyori.adventure.text.Component> lore = new ArrayList<>();

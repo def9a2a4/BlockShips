@@ -20,8 +20,9 @@ public class ShipConfig {
     // Physics
     public final float activeDeceleration;
     public final float mountedDrag;
-    public final float unmannedDrag;
-    public final float idleDrag;
+    /** Drag applied whenever nobody is driving. Was split into unmanned/idle by player proximity; that
+     *  tier was decided by a flag sampled once at driver dismount, so it has been collapsed. */
+    public final float noDriverDrag;
     public final float rotationDeceleration;
     public final float minMovementThreshold;
     public final float deckPhysicsMinVelocity;
@@ -47,10 +48,27 @@ public class ShipConfig {
     // Ship stats (power-to-mass ratio system, custom ships only)
     public final boolean statsEnabled;       // Master switch for the ratio system (default: false)
     public final int basePower;              // Free power points every ship gets (default: 2)
-    public final int enginePower;            // Power points per fueled engine (default: 30)
     public final int woolPower;              // Power points per wool block (default: 3)
     public final int bannerPower;            // Power points per banner block (default: 7)
-    public final float fuelBurnMultiplier;   // Multiplier for fuel burn times (default: 1.0)
+    public final int largeBannerPower;       // Power points per large banner (default: 20)
+    public final int hugeBannerPower;        // Power points per huge banner (default: 50)
+    public final int baseTurn;               // Free turning points every ship gets
+    public final float sailTurnFactor;       // How much sail power aids turning, scaled by speed
+    // Land vehicles (ships with ground wheels): custom-ships.land
+    public final float landGroundDrag;        // Coasting drag multiplier while rolling on the ground
+    public final float landStepUpSpeed;       // Max blocks/tick the hull rises while climbing a step
+    public final float landSpeedMultiplier;   // Top-speed scale on land, so cars don't outrun chunk loading
+    public final float landGroundTurnFactor;  // How much ground thrust aids turning
+    public final float landStepHeightWheel;       // Step height per wheel size, in blocks
+    public final float landStepHeightLargeWheel;
+    public final float landStepHeightHugeWheel;
+    public final int thrustSpoolTicks;       // Ticks for thrust to ramp UP; spool-down decays and takes
+                                             // far longer (propeller inertia) — see ShipPhysics.approach
+    public final float maxSinkSpeed;         // Terminal fall speed at zero lift (blocks/tick)
+    public final float sinkSpeedExponent;    // Shape of sink rate vs (1 - lift); below 1 = harsher near the top
+    public final float liftHoldSinkFactor;   // Fraction of the free sink rate when holding Space under-powered
+    public final float climbSurplusFull;     // Lift surplus above 1.0 that earns the full climb speed
+    public final float sailVerticalFactor;   // How much sail power feeds vertical SPEED (not lift)
     public final float sailCapRatio;         // Sail contribution capped at this ratio (default: 0.8)
     public final float defaultRatio;         // Ratio that maps to current default stats (default: 0.7)
     public final float maxRatioMultiplier;   // Stats multiplier at ratio 1.0, relative to default (default: 1.5)
@@ -68,7 +86,6 @@ public class ShipConfig {
     public final float capRotationAcceleration;
     // Airship vertical stats scaling
     public final float verticalDensityScale;       // How much density magnitude affects vertical ratio
-    public final float verticalEngineScale;        // How much engine_points/mass affects vertical ratio
     public final float floorMaxVerticalSpeed;
     public final float floorVerticalAcceleration;
     public final float capMaxVerticalSpeed;
@@ -88,7 +105,6 @@ public class ShipConfig {
     public final float mobLargeMass;
 
     // Custom ship offsets (cached to avoid config reads every tick)
-    public final Vector3f customDisplayOffset;
     public final Vector3f customCollisionOffset;
 
     // Sound settings
@@ -121,8 +137,7 @@ public class ShipConfig {
         this.rotationAcceleration = b.rotationAcceleration;
         this.activeDeceleration = b.activeDeceleration;
         this.mountedDrag = b.mountedDrag;
-        this.unmannedDrag = b.unmannedDrag;
-        this.idleDrag = b.idleDrag;
+        this.noDriverDrag = b.noDriverDrag;
         this.rotationDeceleration = b.rotationDeceleration;
         this.minMovementThreshold = b.minMovementThreshold;
         this.deckPhysicsMinVelocity = b.deckPhysicsMinVelocity;
@@ -140,10 +155,25 @@ public class ShipConfig {
         this.verticalForwardNudge = b.verticalForwardNudge;
         this.statsEnabled = b.statsEnabled;
         this.basePower = b.basePower;
-        this.enginePower = b.enginePower;
         this.woolPower = b.woolPower;
         this.bannerPower = b.bannerPower;
-        this.fuelBurnMultiplier = b.fuelBurnMultiplier;
+        this.largeBannerPower = b.largeBannerPower;
+        this.hugeBannerPower = b.hugeBannerPower;
+        this.baseTurn = b.baseTurn;
+        this.sailTurnFactor = b.sailTurnFactor;
+        this.thrustSpoolTicks = b.thrustSpoolTicks;
+        this.landGroundDrag = b.landGroundDrag;
+        this.landStepUpSpeed = b.landStepUpSpeed;
+        this.landSpeedMultiplier = b.landSpeedMultiplier;
+        this.landGroundTurnFactor = b.landGroundTurnFactor;
+        this.landStepHeightWheel = b.landStepHeightWheel;
+        this.landStepHeightLargeWheel = b.landStepHeightLargeWheel;
+        this.landStepHeightHugeWheel = b.landStepHeightHugeWheel;
+        this.maxSinkSpeed = b.maxSinkSpeed;
+        this.sinkSpeedExponent = b.sinkSpeedExponent;
+        this.liftHoldSinkFactor = b.liftHoldSinkFactor;
+        this.climbSurplusFull = b.climbSurplusFull;
+        this.sailVerticalFactor = b.sailVerticalFactor;
         this.sailCapRatio = b.sailCapRatio;
         this.defaultRatio = b.defaultRatio;
         this.maxRatioMultiplier = b.maxRatioMultiplier;
@@ -158,7 +188,6 @@ public class ShipConfig {
         this.capRotationSpeed = b.capRotationSpeed;
         this.capRotationAcceleration = b.capRotationAcceleration;
         this.verticalDensityScale = b.verticalDensityScale;
-        this.verticalEngineScale = b.verticalEngineScale;
         this.floorMaxVerticalSpeed = b.floorMaxVerticalSpeed;
         this.floorVerticalAcceleration = b.floorVerticalAcceleration;
         this.capMaxVerticalSpeed = b.capMaxVerticalSpeed;
@@ -174,7 +203,6 @@ public class ShipConfig {
         this.mobSmallMass = b.mobSmallMass;
         this.mobMediumMass = b.mobMediumMass;
         this.mobLargeMass = b.mobLargeMass;
-        this.customDisplayOffset = b.customDisplayOffset;
         this.customCollisionOffset = b.customCollisionOffset;
         this.soundMinSpeed = b.soundMinSpeed;
         this.airshipSoundMinSpeed = b.airshipSoundMinSpeed;
@@ -207,8 +235,7 @@ public class ShipConfig {
             // Physics
             .activeDeceleration((float) cfg.getDouble(p + "controls.active-deceleration", 0.025))
             .mountedDrag((float) cfg.getDouble(p + "controls.mounted-drag", 0.99))
-            .unmannedDrag((float) cfg.getDouble(p + "controls.unmanned-drag", 0.97))
-            .idleDrag((float) cfg.getDouble(p + "controls.idle-drag", 0.93))
+            .noDriverDrag((float) cfg.getDouble(p + "controls.no-driver-drag", 0.93))
             .rotationDeceleration((float) cfg.getDouble(p + "controls.rotation-deceleration", 0.15))
             .minMovementThreshold((float) cfg.getDouble(p + "controls.min-movement-threshold", 0.01))
             .deckPhysicsMinVelocity((float) cfg.getDouble("physics.deck-physics-min-velocity", 0.1))
@@ -228,7 +255,7 @@ public class ShipConfig {
             .waterScanBelow(cfg.getInt(p + "controls.water-scan-below", 10))
             // Weight-based buoyancy (from custom-ships section)
             .airDensity((float) cfg.getDouble("custom-ships.buoyancy.air-density", 0.0))
-            .waterDensity((float) cfg.getDouble("custom-ships.buoyancy.water-density", 2.5))
+            .waterDensity((float) cfg.getDouble("custom-ships.buoyancy.water-density", 3.0))
             // Airship controls (custom ships read from custom-ships.airship-controls, prefab from ship config)
             .liftAcceleration((float) cfg.getDouble(
                 "custom".equals(shipType)
@@ -264,13 +291,12 @@ public class ShipConfig {
             .terrainSpeedMultiplier((float) cfg.getDouble(p + "collision.terrain-speed-multiplier", 10.0))
             .collisionDetectionRadius((float) cfg.getDouble(p + "collision.detection-radius", -1.0))
             // Entity masses (global)
-            .boatMass((float) cfg.getDouble("entity-masses.boat", 20.0))
-            .mobSmallMass((float) cfg.getDouble("entity-masses.mob-small", 10.0))
-            .mobMediumMass((float) cfg.getDouble("entity-masses.mob-medium", 50.0))
-            .mobLargeMass((float) cfg.getDouble("entity-masses.mob-large", 200.0))
+            .boatMass((float) cfg.getDouble("entity-masses.boat", 10.0))
+            .mobSmallMass((float) cfg.getDouble("entity-masses.mob-small", 5.0))
+            .mobMediumMass((float) cfg.getDouble("entity-masses.mob-medium", 10.0))
+            .mobLargeMass((float) cfg.getDouble("entity-masses.mob-large", 20.0))
             // Custom ship offsets (only used for custom ships, but loaded for all)
-            .customDisplayOffset(ShipModel.readVector3fFromConfig(cfg, "custom-ships.display-offset", new Vector3f(0, 1.975f, 0)))
-            .customCollisionOffset(ShipModel.readVector3fFromConfig(cfg, "custom-ships.collision-offset", new Vector3f(0, 0, 0)))
+            .customCollisionOffset(ShipModel.readVector3fFromConfig(cfg, "custom-ships.collision-offset", new Vector3f(0.5f, 0, 0.5f)))
             // Movement sound settings (per-ship with fallback to global)
             .soundMinSpeed((float) cfg.getDouble(p + "movement-sounds.min-speed", cfg.getDouble("sounds.min-speed", 0.1)))
             .airshipSoundMinSpeed((float) cfg.getDouble(p + "movement-sounds.airship-min-speed", cfg.getDouble("sounds.airship-min-speed", 0.45)))
@@ -286,12 +312,27 @@ public class ShipConfig {
             .assemblyNudgeHeight((float) cfg.getDouble("custom-ships.assembly-nudge-height", 0.2))
             .destroyOnDeath("destroy".equalsIgnoreCase(cfg.getString("custom-ships.destruction-mode", "disassemble")))
             // Ship stats (power-to-mass ratio system)
-            .statsEnabled(cfg.getBoolean("custom-ships.stats.enabled", false))
+            .statsEnabled(cfg.getBoolean("custom-ships.stats.enabled", true))
             .basePower(cfg.getInt("custom-ships.stats.base-power", 2))
-            .enginePower(cfg.getInt("custom-ships.stats.engine-power", 30))
             .woolPower(cfg.getInt("custom-ships.stats.wool-power", 3))
             .bannerPower(cfg.getInt("custom-ships.stats.banner-power", 7))
-            .fuelBurnMultiplier((float) cfg.getDouble("custom-ships.stats.fuel-burn-multiplier", 1.0))
+            .largeBannerPower(cfg.getInt("custom-ships.stats.large-banner-power", 20))
+            .hugeBannerPower(cfg.getInt("custom-ships.stats.huge-banner-power", 50))
+            .baseTurn(cfg.getInt("custom-ships.stats.base-turn", 2))
+            .sailTurnFactor((float) cfg.getDouble("custom-ships.stats.sail-turn-factor", 0.5))
+            .thrustSpoolTicks(cfg.getInt("custom-ships.stats.thrust-spool-ticks", 40))
+            .landGroundDrag((float) cfg.getDouble("custom-ships.land.ground-drag", 0.95))
+            .landStepUpSpeed((float) cfg.getDouble("custom-ships.land.step-up-speed", 0.35))
+            .landSpeedMultiplier((float) cfg.getDouble("custom-ships.land.speed-multiplier", 0.7))
+            .landGroundTurnFactor((float) cfg.getDouble("custom-ships.land.ground-turn-factor", 1.0))
+            .landStepHeightWheel((float) cfg.getDouble("custom-ships.land.step-height.wheel", 1.0))
+            .landStepHeightLargeWheel((float) cfg.getDouble("custom-ships.land.step-height.large-wheel", 1.5))
+            .landStepHeightHugeWheel((float) cfg.getDouble("custom-ships.land.step-height.huge-wheel", 2.0))
+            .maxSinkSpeed((float) cfg.getDouble("custom-ships.stats.max-sink-speed", 0.5))
+            .sinkSpeedExponent((float) cfg.getDouble("custom-ships.stats.sink-speed-exponent", 0.7))
+            .liftHoldSinkFactor((float) cfg.getDouble("custom-ships.stats.lift-hold-sink-factor", 0.35))
+            .climbSurplusFull((float) cfg.getDouble("custom-ships.stats.climb-surplus-full", 0.25))
+            .sailVerticalFactor((float) cfg.getDouble("custom-ships.stats.sail-vertical-factor", 0.5))
             .sailCapRatio((float) cfg.getDouble("custom-ships.stats.sail-cap-ratio", 0.8))
             .defaultRatio((float) cfg.getDouble("custom-ships.stats.default-ratio", 0.7))
             .maxRatioMultiplier((float) cfg.getDouble("custom-ships.stats.max-ratio-multiplier", 1.5))
@@ -306,7 +347,6 @@ public class ShipConfig {
             .capRotationSpeed((float) cfg.getDouble("custom-ships.stats.cap-rotation-speed", -1))
             .capRotationAcceleration((float) cfg.getDouble("custom-ships.stats.cap-rotation-acceleration", -1))
             .verticalDensityScale((float) cfg.getDouble("custom-ships.stats.vertical-density-scale", 0.3))
-            .verticalEngineScale((float) cfg.getDouble("custom-ships.stats.vertical-engine-scale", 0.01))
             .floorMaxVerticalSpeed((float) cfg.getDouble("custom-ships.stats.floor-max-vertical-speed", 0.03))
             .floorVerticalAcceleration((float) cfg.getDouble("custom-ships.stats.floor-vertical-acceleration", 0.01))
             .capMaxVerticalSpeed((float) cfg.getDouble("custom-ships.stats.cap-max-vertical-speed", 0.5))
@@ -319,6 +359,17 @@ public class ShipConfig {
      * ratio 0.0 -> floor, ratio defaultRatio -> defaultVal, ratio 1.0 -> cap.
      * Result is clamped to [floor, cap].
      */
+    /** Step height for one wheel type, in blocks; 0 for anything that is not a wheel. */
+    public float stepHeightOf(String wheelTypeId) {
+        if (wheelTypeId == null) return 0f;
+        return switch (wheelTypeId) {
+            case "mech:wheel" -> landStepHeightWheel;
+            case "mech:large_wheel" -> landStepHeightLargeWheel;
+            case "mech:huge_wheel" -> landStepHeightHugeWheel;
+            default -> 0f;
+        };
+    }
+
     public float computeStat(float ratio, float defaultVal, float floor, float configCap) {
         float cap = configCap > 0 ? configCap : defaultVal * maxRatioMultiplier;
         float stat;
@@ -345,8 +396,7 @@ public class ShipConfig {
         float rotationAcceleration = 0.3f;
         float activeDeceleration = 0.025f;
         float mountedDrag = 0.99f;
-        float unmannedDrag = 0.97f;
-        float idleDrag = 0.93f;
+        float noDriverDrag = 0.93f;
         float rotationDeceleration = 0.15f;
         float minMovementThreshold = 0.01f;
         float deckPhysicsMinVelocity = 0.1f;
@@ -356,19 +406,34 @@ public class ShipConfig {
         int waterScanAbove = 5;
         int waterScanBelow = 10;
         float airDensity = 0.0f;
-        float waterDensity = 2.5f;
+        float waterDensity = 3.0f;
         float liftAcceleration = 0.05f;
         float descendAcceleration = 0.05f;
         float maxVerticalSpeed = 0.3f;
         float verticalDrag = 0.9f;
         float verticalForwardNudge = 0.011f;
         // Ship stats defaults
-        boolean statsEnabled = false;
+        boolean statsEnabled = true;
         int basePower = 2;
-        int enginePower = 30;
         int woolPower = 3;
         int bannerPower = 7;
-        float fuelBurnMultiplier = 1.0f;
+        int largeBannerPower = 20;
+        int hugeBannerPower = 50;
+        int baseTurn = 2;
+        float sailTurnFactor = 0.5f;
+        int thrustSpoolTicks = 40;
+        float landGroundDrag = 0.95f;
+        float landStepUpSpeed = 0.35f;
+        float landSpeedMultiplier = 0.7f;
+        float landGroundTurnFactor = 1.0f;
+        float landStepHeightWheel = 1.0f;
+        float landStepHeightLargeWheel = 1.5f;
+        float landStepHeightHugeWheel = 2.0f;
+        float maxSinkSpeed = 0.5f;
+        float sinkSpeedExponent = 0.7f;
+        float liftHoldSinkFactor = 0.35f;
+        float climbSurplusFull = 0.25f;
+        float sailVerticalFactor = 0.5f;
         float sailCapRatio = 0.8f;
         float defaultRatio = 0.7f;
         float maxRatioMultiplier = 1.5f;
@@ -383,7 +448,6 @@ public class ShipConfig {
         float capRotationSpeed = -1f;
         float capRotationAcceleration = -1f;
         float verticalDensityScale = 0.3f;
-        float verticalEngineScale = 0.01f;
         float floorMaxVerticalSpeed = 0.03f;
         float floorVerticalAcceleration = 0.01f;
         float capMaxVerticalSpeed = 0.5f;
@@ -396,12 +460,11 @@ public class ShipConfig {
         float collisionForceDecay = 0.5f;
         float terrainSpeedMultiplier = 10.0f;
         float collisionDetectionRadius = -1.0f;
-        float boatMass = 20.0f;
-        float mobSmallMass = 10.0f;
-        float mobMediumMass = 50.0f;
-        float mobLargeMass = 200.0f;
-        Vector3f customDisplayOffset = new Vector3f(0, 1.975f, 0);
-        Vector3f customCollisionOffset = new Vector3f(0, 0, 0);
+        float boatMass = 10.0f;
+        float mobSmallMass = 5.0f;
+        float mobMediumMass = 10.0f;
+        float mobLargeMass = 20.0f;
+        Vector3f customCollisionOffset = new Vector3f(0.5f, 0, 0.5f);
         float soundMinSpeed = 0.1f;
         float airshipSoundMinSpeed = 0.45f;
         int soundIntervalTicks = 20;
@@ -422,8 +485,7 @@ public class ShipConfig {
         Builder rotationAcceleration(float v) { rotationAcceleration = v; return this; }
         Builder activeDeceleration(float v) { activeDeceleration = v; return this; }
         Builder mountedDrag(float v) { mountedDrag = v; return this; }
-        Builder unmannedDrag(float v) { unmannedDrag = v; return this; }
-        Builder idleDrag(float v) { idleDrag = v; return this; }
+        Builder noDriverDrag(float v) { noDriverDrag = v; return this; }
         Builder rotationDeceleration(float v) { rotationDeceleration = v; return this; }
         Builder minMovementThreshold(float v) { minMovementThreshold = v; return this; }
         Builder deckPhysicsMinVelocity(float v) { deckPhysicsMinVelocity = v; return this; }
@@ -441,10 +503,25 @@ public class ShipConfig {
         Builder verticalForwardNudge(float v) { verticalForwardNudge = v; return this; }
         Builder statsEnabled(boolean v) { statsEnabled = v; return this; }
         Builder basePower(int v) { basePower = v; return this; }
-        Builder enginePower(int v) { enginePower = v; return this; }
         Builder woolPower(int v) { woolPower = v; return this; }
         Builder bannerPower(int v) { bannerPower = v; return this; }
-        Builder fuelBurnMultiplier(float v) { fuelBurnMultiplier = v; return this; }
+        Builder largeBannerPower(int v) { largeBannerPower = v; return this; }
+        Builder hugeBannerPower(int v) { hugeBannerPower = v; return this; }
+        Builder baseTurn(int v) { baseTurn = v; return this; }
+        Builder sailTurnFactor(float v) { sailTurnFactor = v; return this; }
+        Builder thrustSpoolTicks(int v) { thrustSpoolTicks = v; return this; }
+        Builder landGroundDrag(float v) { landGroundDrag = v; return this; }
+        Builder landStepUpSpeed(float v) { landStepUpSpeed = v; return this; }
+        Builder landSpeedMultiplier(float v) { landSpeedMultiplier = v; return this; }
+        Builder landGroundTurnFactor(float v) { landGroundTurnFactor = v; return this; }
+        Builder landStepHeightWheel(float v) { landStepHeightWheel = v; return this; }
+        Builder landStepHeightLargeWheel(float v) { landStepHeightLargeWheel = v; return this; }
+        Builder landStepHeightHugeWheel(float v) { landStepHeightHugeWheel = v; return this; }
+        Builder maxSinkSpeed(float v) { maxSinkSpeed = v; return this; }
+        Builder sinkSpeedExponent(float v) { sinkSpeedExponent = v; return this; }
+        Builder liftHoldSinkFactor(float v) { liftHoldSinkFactor = v; return this; }
+        Builder climbSurplusFull(float v) { climbSurplusFull = v; return this; }
+        Builder sailVerticalFactor(float v) { sailVerticalFactor = v; return this; }
         Builder sailCapRatio(float v) { sailCapRatio = v; return this; }
         Builder defaultRatio(float v) { defaultRatio = v; return this; }
         Builder maxRatioMultiplier(float v) { maxRatioMultiplier = v; return this; }
@@ -459,7 +536,6 @@ public class ShipConfig {
         Builder capRotationSpeed(float v) { capRotationSpeed = v; return this; }
         Builder capRotationAcceleration(float v) { capRotationAcceleration = v; return this; }
         Builder verticalDensityScale(float v) { verticalDensityScale = v; return this; }
-        Builder verticalEngineScale(float v) { verticalEngineScale = v; return this; }
         Builder floorMaxVerticalSpeed(float v) { floorMaxVerticalSpeed = v; return this; }
         Builder floorVerticalAcceleration(float v) { floorVerticalAcceleration = v; return this; }
         Builder capMaxVerticalSpeed(float v) { capMaxVerticalSpeed = v; return this; }
@@ -475,7 +551,6 @@ public class ShipConfig {
         Builder mobSmallMass(float v) { mobSmallMass = v; return this; }
         Builder mobMediumMass(float v) { mobMediumMass = v; return this; }
         Builder mobLargeMass(float v) { mobLargeMass = v; return this; }
-        Builder customDisplayOffset(Vector3f v) { customDisplayOffset = v; return this; }
         Builder customCollisionOffset(Vector3f v) { customCollisionOffset = v; return this; }
         Builder soundMinSpeed(float v) { soundMinSpeed = v; return this; }
         Builder airshipSoundMinSpeed(float v) { airshipSoundMinSpeed = v; return this; }

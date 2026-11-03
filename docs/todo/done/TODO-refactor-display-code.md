@@ -1,5 +1,7 @@
 ---
-status: planned
+status: done
+version: v0.0.18
+note: shared via applySkullTransform / CustomShipRender.calculateBannerTransform; the line numbers below are pre-refactor
 ---
 
 # Refactor: Extract Skull/Banner Transform Calculation

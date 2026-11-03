@@ -1,3 +1,4 @@
+const { Vec3 } = require('vec3')
 const fs = require('fs')
 const path = require('path')
 
@@ -8,7 +9,6 @@ const {
   sleep,
   clearInventory,
   waitForWater,
-  waitForShulkers,
   CUSTOM_AIRSHIP,
   buildCustomShipWithWheel,
   findShulkers,
@@ -18,6 +18,8 @@ const {
   steerShip,
   cleanup,
   clickWheelMenu,
+  disassembleViaWheelMenu,
+  readShipHealth,
   createBot,
   setupBotEvents
 } = require('./lib/helpers')
@@ -150,8 +152,11 @@ async function spawnCustomAirshipAtFar() {
 
   // Activate wheel and assemble
   try {
+    // Start clickWheelMenu first: it registers the windowOpen listener, so the right-click that
+    // opens the window must come after it.
+    const menuPromise = clickWheelMenu(bot, log, 'assemble')
     await bot.activateBlock(result.wheelBlock)
-    if (!await clickWheelMenu(bot, log, 'assemble')) {
+    if (!await menuPromise) {
       log('Assembly menu interaction failed')
       return false
     }
@@ -421,11 +426,14 @@ async function testPostRecoverySteeringBase(testName, spawnFn, isAirship = false
   // Wait for ship to settle before dismounting
   await sleep(3000)
 
-  // Dismount FIRST, then measure position (same approach as test-bot.js)
+  // Dismount FIRST, then measure position (same approach as test-bot.js). 500ms settle to match the main
+  // suite: mineflayer freezes self-position while mounted (shouldUsePhysics=false until a position packet
+  // arrives), so an early read here returns the mount-time value — the stale read the main suite already
+  // fixed. Cloned so a later physics tick can't mutate the snapshot under the assertions below.
   await customDismount(bot, log)
-  await sleep(300)
+  await sleep(500)
 
-  const endPos = bot.entity.position
+  const endPos = bot.entity.position.clone()
   // Assert DIRECTIONAL propulsion after recovery: the recovered ship faces north and drives north
   // (negative Z), so require >=10 blocks northward. This replaces a total-distance > 1.0 check that
   // was a false negative — the vertical/seat dismount offset alone cleared it even for a dead ship.
@@ -463,6 +471,110 @@ async function testPostRecoverySteeringAirship() {
 }
 
 // =============================================================================
+// Wheel and Health After Recovery
+// =============================================================================
+
+// Two full plank decks: mass 84, so max health 84. It has to be over 40 to see the recovery bug below.
+const HEAVY_SHIP = {
+  layers: [
+    ['P P P', 'P P P', 'P P P', 'P P P', 'P P P', 'P P P', 'P P P'],
+    ['P P P', 'P P P', 'P P P', 'P P P', 'P P P', 'P P P', 'P P P'],
+    ['- - -', '- - -', '- - -', '- W -', '- - -', '- - -', '- - -']
+  ],
+  blocks: { 'P': 'oak_planks', 'W': 'wheel' }
+}
+
+// #46: a ship recovered after a restart (the same recovery a chunk reload runs) looked assembled but its
+// wheel menu would not open, so it could not be disassembled. And every recovered custom ship came back
+// with max health 40, whatever it had before. After a chunk cycle the menu must open, report the same
+// max health, and disassemble the ship back to blocks with its wheel.
+async function testWheelAfterRecovery() {
+  const testName = 'chunk_wheel'
+  say(`=== TEST: ${testName} ===`)
+
+  await cleanup(bot)
+  await setupFarRunway()
+
+  bot.chat(`/tp @s ${FAR_X} 105 ${FAR_Z} 90 0`)
+  await sleep(500)
+  await clearInventory(bot)
+  const built = await buildCustomShipWithWheel(bot, HEAVY_SHIP, FAR_X, 101, FAR_Z - 1)
+  if (!built.success) {
+    fail(testName, built.error)
+    return
+  }
+  await clearInventory(bot)
+  try {
+    const menuPromise = clickWheelMenu(bot, log, 'assemble')
+    await bot.activateBlock(built.wheelBlock)
+    if (!await menuPromise) {
+      fail(testName, 'Assembly menu interaction failed')
+      return
+    }
+  } catch (e) {
+    fail(testName, `Assembly failed: ${e.message}`)
+    return
+  }
+  await sleep(3000)
+
+  const before = await readShipHealth(bot, log)
+  if (!before) {
+    fail(testName, 'Could not read ship health before the chunk cycle')
+    return
+  }
+  log(`  health before cycle: ${before.hp}/${before.max}`)
+  if (before.max <= 40) {
+    fail(testName, `HEAVY_SHIP max health is ${before.max}; it must exceed 40 for this test to mean anything`)
+    return
+  }
+
+  await forceChunkCycle(bot.entity.position.clone())
+
+  const after = await readShipHealth(bot, log)
+  if (!after) {
+    fail(testName, 'Wheel menu did not open from the recovered ship (#46)')
+    return
+  }
+  log(`  health after cycle: ${after.hp}/${after.max}`)
+  if (after.max !== before.max) {
+    fail(testName, `Max health changed across recovery: ${before.max} -> ${after.max}`)
+    return
+  }
+
+  const shulkers = findShulkers(bot, 40)
+  const shipPos = shulkers.length > 0 ? getShipEntityPos(shulkers[0]) : bot.entity.position.clone()
+  if (!await disassembleViaWheelMenu(bot, log)) {
+    fail(testName, 'Could not disassemble the recovered ship via the wheel menu (#46)')
+    return
+  }
+  let remaining = shulkers.length
+  for (let attempt = 0; attempt < 20 && remaining > 0; attempt++) {
+    await sleep(500)
+    remaining = findShulkers(bot, 60).length
+  }
+  if (remaining !== 0) {
+    fail(testName, `Disassembly did not complete: ${remaining} shulkers remain`)
+    return
+  }
+  let wheelFound = false
+  const c = { x: Math.round(shipPos.x), y: Math.round(shipPos.y), z: Math.round(shipPos.z) }
+  for (let dx = -6; dx <= 6 && !wheelFound; dx++) {
+    for (let dy = -4; dy <= 4 && !wheelFound; dy++) {
+      for (let dz = -6; dz <= 6 && !wheelFound; dz++) {
+        const b = bot.blockAt(new Vec3(c.x + dx, c.y + dy, c.z + dz))
+        if (b && (b.name === 'player_head' || b.name === 'player_wall_head')) wheelFound = true
+      }
+    }
+  }
+  if (!wheelFound) {
+    fail(testName, 'No ship wheel in the world after disassembling the recovered ship')
+    return
+  }
+
+  pass(`${testName} (max health ${after.max} kept across recovery)`)
+}
+
+// =============================================================================
 // Test Registry and Main
 // =============================================================================
 
@@ -473,6 +585,7 @@ const TESTS = {
   chunk_persistence_airship: { name: 'Position Persistence (Airship)', fn: testPositionPersistenceAirship },
   chunk_steering: { name: 'Post-Recovery Steering', fn: testPostRecoverySteering },
   chunk_steering_airship: { name: 'Post-Recovery Steering (Airship)', fn: testPostRecoverySteeringAirship },
+  chunk_wheel: { name: 'Wheel Menu And Health After Recovery', fn: testWheelAfterRecovery },
 }
 
 async function runAllTests() {
@@ -533,9 +646,9 @@ async function main() {
 bot = createBot()
 setupBotEvents(bot, log, main)
 
-// Timeout after 6 minutes (6 tests with chunk cycling)
+// Timeout after 8 minutes (7 tests with chunk cycling)
 setTimeout(() => {
-  log('Chunk test timeout (6 minutes)')
+  log('Chunk test timeout (8 minutes)')
   log('Chunk tests FAILED (timeout)')
   process.exit(1)
-}, 360000)
+}, 480000)

@@ -51,9 +51,57 @@ public final class ShipModel {
     // Ship stats (power-to-mass ratio system)
     public final int woolCount;                 // Number of wool blocks
     public final int bannerCount;               // Number of banner blocks
-    public final int sailPower;                 // Sail power points (wool*3 + banner*7)
-    public final int engineCount;               // Number of ship engine blocks detected
-    public final List<Integer> engineBlockIndices;   // Block indices that are engines (for click detection + fuel)
+    // Large/huge banners come from defCoreLib's bbanners. They are tagged ItemDisplay entities on an
+    // otherwise-untouched host block, NOT block states — no material test can see them, so they are
+    // counted via CoreLibPlugin.bannerTiersIn during the scan.
+    public final int largeBannerCount;          // Number of large banners hosted on ship blocks
+    public final int hugeBannerCount;           // Number of huge banners hosted on ship blocks
+    public final int sailPower;                 // Sail power points (wool + banner + large + huge, weighted)
+
+    /**
+     * A defCoreLib propulsion block aboard this ship, and which way it pushes relative to the hull.
+     *
+     * <p>Classified once at scan time (facing is fixed for the life of the ship); how much it
+     * actually contributes is decided live, from whether it is currently powered or burning.
+     *
+     * <p>{@code blockIndex} is safe across a save/load: {@code parts} serializes as an ordered list
+     * and deserializes in the same order, which seats and cannons already rely on.
+     */
+    public record ThrustBlock(int blockIndex, String typeId, ShipThrust.Axis axis) {}
+
+    /** Propulsion blocks aboard, empty for a ship that carries none. */
+    public final List<ThrustBlock> thrustBlocks;
+
+    /**
+     * A drive wheel that reaches the ground. Position is the wheel block's cell in the model's local
+     * (as-assembled) frame, relative to the Ship's Wheel; {@code contactY} is the tyre's lowest point.
+     */
+    public record GroundWheel(int blockIndex, String typeId, float localX, float localZ, float contactY) {}
+
+    /**
+     * Wheels that touch the ground, derived from {@link #thrustBlocks} and {@link #parts}. Only wheels
+     * whose tyre reaches within {@link #GROUND_WHEEL_TOLERANCE} of {@link #landBottomY} count: a spare
+     * tyre on a cabin wall, wheels on a boat's gunwale above its keel, or an airship's gear above its
+     * gondola are decoration, not running gear.
+     */
+    public final List<GroundWheel> groundWheels;
+    /** Lowest point of the vehicle including tyres: min(minY, lowest wheel contact). */
+    public final float landBottomY;
+    /** Local-frame XZ points where support is sampled: ground wheels, then the hull footprint's edges. */
+    public final float[] supportSamplesXZ;
+    /** Fore-aft half-length of the footprint, in blocks, for the support look-ahead. */
+    public final float footprintRadius;
+
+    public static final float GROUND_WHEEL_TOLERANCE = 0.25f;
+
+    /** True when this hull has at least one wheel on the ground: it drives as a land vehicle. */
+    public boolean isLandVehicle() { return !groundWheels.isEmpty(); }
+
+    /** Whether this block is a wheel that reaches the ground (a spare on a wall or deck is not). */
+    public boolean isGroundWheel(int blockIndex) {
+        for (GroundWheel w : groundWheels) if (w.blockIndex() == blockIndex) return true;
+        return false;
+    }
 
     // Assembly rotation (for custom block ships disassembly)
     public final float assemblyYaw;             // Yaw angle when assembled (0=S, 90=W, 180=N, 270=E), 0 for prefab ships
@@ -62,8 +110,9 @@ public final class ShipModel {
                      Vector3f collisionOffset, Matrix3f rotationTransform, List<SeatInfo> seats, List<CannonInfo> cannons,
                      float waterFloatOffset, double maxHealth, double healthRegenPerSecond,
                      int totalWeight, int mass, int blockCount, Vector3f centerOfVolume, float minY, float maxY, float assemblyYaw,
-                     int woolCount, int bannerCount, int woolPower, int bannerPower, int engineCount,
-                     List<Integer> engineBlockIndices) {
+                     int woolCount, int bannerCount, int largeBannerCount, int hugeBannerCount,
+                     int woolPower, int bannerPower, int largeBannerPower, int hugeBannerPower,
+                     List<ThrustBlock> thrustBlocks) {
         this.parts = parts;
         this.items = items;
         this.initialRotation = initialRotation;
@@ -84,9 +133,73 @@ public final class ShipModel {
         this.assemblyYaw = assemblyYaw;
         this.woolCount = woolCount;
         this.bannerCount = bannerCount;
-        this.sailPower = woolCount * woolPower + bannerCount * bannerPower;
-        this.engineCount = engineCount;
-        this.engineBlockIndices = engineBlockIndices != null ? engineBlockIndices : Collections.emptyList();
+        this.largeBannerCount = largeBannerCount;
+        this.hugeBannerCount = hugeBannerCount;
+        this.sailPower = woolCount * woolPower + bannerCount * bannerPower
+                       + largeBannerCount * largeBannerPower + hugeBannerCount * hugeBannerPower;
+        this.thrustBlocks = thrustBlocks != null ? thrustBlocks : Collections.emptyList();
+
+        // Land geometry. Derived rather than persisted, so every construction path (scan, fromMap,
+        // prefab) gets it, and an old save gains it on load with no format change.
+        org.joml.Vector3f t = new org.joml.Vector3f();
+        List<GroundWheel> wheels = new java.util.ArrayList<>();
+        float bottom = minY;
+        for (ThrustBlock tb : this.thrustBlocks) {
+            if (tb.axis() != ShipThrust.Axis.GROUND) continue;
+            if (parts == null || tb.blockIndex() < 0 || tb.blockIndex() >= parts.size()) continue;
+            parts.get(tb.blockIndex()).local.getTranslation(t);
+            // A wall head sits in its cell at the same height as the block it hangs on; the tyre is
+            // centred on the cell, so it reaches (diameter/2 - 0.5) below the cell's bottom face.
+            float contact = t.y + 0.5f - ShipThrust.wheelDiameter(tb.typeId()) / 2f;
+            wheels.add(new GroundWheel(tb.blockIndex(), tb.typeId(), t.x, t.z, contact));
+            bottom = java.lang.Math.min(bottom, contact);
+        }
+        final float landBottom = bottom;
+        wheels.removeIf(w -> w.contactY() > landBottom + GROUND_WHEEL_TOLERANCE);
+        this.groundWheels = Collections.unmodifiableList(wheels);
+        this.landBottomY = wheels.isEmpty() ? minY : landBottom;
+
+        // Footprint: the XZ bounding rectangle of the bottom layer, sampled at corners, edge midpoints
+        // and centre. Only built for land vehicles; nothing else reads it.
+        List<Float> samples = new java.util.ArrayList<>();
+        float radius = 0.5f;
+        if (!wheels.isEmpty() && parts != null) {
+            for (GroundWheel w : wheels) { samples.add(w.localX()); samples.add(w.localZ()); }
+            float x0 = Float.MAX_VALUE, x1 = -Float.MAX_VALUE, z0 = Float.MAX_VALUE, z1 = -Float.MAX_VALUE;
+            for (ModelPart part : parts) {
+                part.local.getTranslation(t);
+                if (t.y > minY + 0.01f) continue;
+                x0 = java.lang.Math.min(x0, t.x); x1 = java.lang.Math.max(x1, t.x);
+                z0 = java.lang.Math.min(z0, t.z); z1 = java.lang.Math.max(z1, t.z);
+            }
+            if (x0 <= x1) {
+                float xm = (x0 + x1) / 2f, zm = (z0 + z1) / 2f;
+                float[][] pts = {{x0, z0}, {x1, z0}, {x0, z1}, {x1, z1},
+                                 {xm, z0}, {xm, z1}, {x0, zm}, {x1, zm}, {xm, zm}};
+                for (float[] pt : pts) { samples.add(pt[0]); samples.add(pt[1]); }
+                for (float[] pt : pts) radius = java.lang.Math.max(radius, (float) java.lang.Math.hypot(pt[0], pt[1]) + 0.5f);
+            }
+        }
+        this.supportSamplesXZ = new float[samples.size()];
+        for (int i = 0; i < samples.size(); i++) this.supportSamplesXZ[i] = samples.get(i);
+        this.footprintRadius = radius;
+    }
+
+    /**
+     * Index of the wheel part — the flood-fill seed, the unique part whose {@code local} translation is at the
+     * model origin (≈ 0,0,0). Returns -1 if no part sits at the origin (e.g. a prefab model). Block cells are
+     * ≥1 apart so the 0.01 tolerance matches exactly one part. Used to resolve the wheel collider/shulker on a
+     * delegated ship (its native {@code colliders} list is empty).
+     */
+    public int wheelPartIndex() {
+        org.joml.Vector3f t = new org.joml.Vector3f();
+        for (int i = 0; i < parts.size(); i++) {
+            parts.get(i).local.getTranslation(t);
+            if (java.lang.Math.abs(t.x) < 0.01f && java.lang.Math.abs(t.y) < 0.01f && java.lang.Math.abs(t.z) < 0.01f) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -97,16 +210,9 @@ public final class ShipModel {
         return (float) totalWeight / blockCount;
     }
 
-    /**
-     * Calculates the ship's power-to-mass ratio for stat scaling.
-     * Uses sail power only (engines are dynamic and added at runtime).
-     * @param basePower Free power points every ship gets
-     * @return The ratio (0.0 to ~1.0+), before sail cap is applied
-     */
-    public float getSailRatio(int basePower) {
-        if (mass <= 0) return 0;
-        return (float) (basePower + sailPower) / mass;
-    }
+    // The power-to-mass ratio used to be computed here (and, separately, in four other places).
+    // It now lives in ShipStats, which is the only thing that knows how the sail cap, the tiers and
+    // thrust combine — see ShipStats.of(config, model, thrust, speedFrac).
 
     /**
      * Calculates the surface offset based on density compared to water.
@@ -402,7 +508,7 @@ public final class ShipModel {
         return new ShipModel(out, items, initialRotation, positionOffset, collisionOffset, rotationTransform,
                            seats, new ArrayList<>(), waterFloatOffset, maxHealth, healthRegenPerSecond,
                            0, 0, 0, new Vector3f(0, 0, 0), 0f, 0f, 0f,
-                           0, 0, 3, 7, 0, null);
+                           0, 0, 0, 0, 3, 7, 20, 50, Collections.emptyList());
     }
 
     private static Matrix4f matrixFromMinecraftNbt(final float[] a) {
@@ -474,7 +580,10 @@ public final class ShipModel {
     public enum StorageType {
         CHEST(27, null),
         DOUBLE_CHEST(54, null),
-        DROPPER(9, null),
+        // Real 3x3 dropper/dispenser GUIs (9 slots) so a dropper/dispenser block in flight opens its true
+        // grid, not a 1x9 chest row. Exact size match -> zero overflow on disassembly.
+        DROPPER(9, org.bukkit.event.inventory.InventoryType.DROPPER),
+        DISPENSER(9, org.bukkit.event.inventory.InventoryType.DISPENSER),
         HOPPER(5, org.bukkit.event.inventory.InventoryType.HOPPER),
         // Real 3-slot furnace GUI for furnace/smoker/blast-furnace blocks in flight. Exact size match to the
         // real block -> zero overflow on disassembly. Result slot is take-only (correct furnace behaviour);
@@ -519,7 +628,7 @@ public final class ShipModel {
                 storageType = StorageType.valueOf(typeStr);
             } catch (IllegalArgumentException e) {
                 throw new IllegalArgumentException("Invalid storage type: " + typeStr +
-                    ". Valid types: CHEST, DOUBLE_CHEST, DROPPER, HOPPER, FURNACE");
+                    ". Valid types: CHEST, DOUBLE_CHEST, DROPPER, DISPENSER, HOPPER, FURNACE");
             }
 
             // Read name (optional, defaults to storage type name)
@@ -605,6 +714,34 @@ public final class ShipModel {
         }
     }
 
+    /** Regen for a custom (block-assembled) ship, in HP per second, when config.yml does not say. */
+    public static final double CUSTOM_SHIP_HEALTH_REGEN_PER_SECOND = 1.0;
+
+    /** Regen for a custom ship from {@code custom-ships.health.regen-per-second}; read fresh, never saved. */
+    public static double customShipHealthRegen(org.bukkit.plugin.Plugin plugin) {
+        if (plugin == null) return CUSTOM_SHIP_HEALTH_REGEN_PER_SECOND;
+        return java.lang.Math.max(0, plugin.getConfig().getDouble("custom-ships.health.regen-per-second",
+            CUSTOM_SHIP_HEALTH_REGEN_PER_SECOND));
+    }
+
+    /**
+     * Max health for a custom (block-assembled) ship: its mass (sum of positive block weights), at least 1
+     * and capped at 1024, vanilla's ceiling for the max_health attribute. The one formula the scanner, the
+     * wheel menu and a ship recovered from disk all use.
+     */
+    public static double customShipMaxHealth(int mass) {
+        return java.lang.Math.min(1024.0, java.lang.Math.max(1.0, mass));
+    }
+
+    /**
+     * The max health a custom ship's sidecar records. Saves from before {@code max_health} was persisted
+     * carry only the mass, so it is derived the same way the scanner does. (This used to be hardcoded to 40,
+     * which capped every custom ship at 40 HP after a restart or chunk reload.)
+     */
+    static double savedMaxHealth(Map<String, Object> map, int mass) {
+        return map.get("max_health") instanceof Number n ? n.doubleValue() : customShipMaxHealth(mass);
+    }
+
     // ===== Serialization for custom ship persistence =====
 
     /**
@@ -619,14 +756,24 @@ public final class ShipModel {
         map.put("assembly_yaw", assemblyYaw);
         map.put("total_weight", totalWeight);
         map.put("mass", mass);
+        map.put("max_health", maxHealth);
         map.put("block_count", blockCount);
         map.put("min_y", minY);
         map.put("max_y", maxY);
         map.put("wool_count", woolCount);
         map.put("banner_count", bannerCount);
-        map.put("engine_count", engineCount);
-        if (!engineBlockIndices.isEmpty()) {
-            map.put("engine_block_indices", new ArrayList<>(engineBlockIndices));
+        map.put("large_banner_count", largeBannerCount);
+        map.put("huge_banner_count", hugeBannerCount);
+        if (!thrustBlocks.isEmpty()) {
+            List<Map<String, Object>> tb = new ArrayList<>(thrustBlocks.size());
+            for (ThrustBlock t : thrustBlocks) {
+                Map<String, Object> m = new HashMap<>();
+                m.put("index", t.blockIndex());
+                m.put("type", t.typeId());
+                m.put("axis", t.axis().name());
+                tb.add(m);
+            }
+            map.put("thrust_blocks", tb);
         }
         map.put("center_of_volume", Arrays.asList(centerOfVolume.x, centerOfVolume.y, centerOfVolume.z));
 
@@ -776,36 +923,55 @@ public final class ShipModel {
         Vector3f collisionOffset = new Vector3f(0, 0, 0);
         Matrix3f rotationTransform = new Matrix3f();  // Identity
         float waterFloatOffset = 0f;
-        double maxHealth = 40.0;
-        double healthRegenPerSecond = 2.0;
 
         // Ship stats
         int mass = map.containsKey("mass") ? ((Number) map.get("mass")).intValue()
             : map.containsKey("total_positive_weight") ? ((Number) map.get("total_positive_weight")).intValue() : 0;
+
+        double maxHealth = savedMaxHealth(map, mass);
         int woolCount = map.containsKey("wool_count") ? ((Number) map.get("wool_count")).intValue() : 0;
         int bannerCount = map.containsKey("banner_count") ? ((Number) map.get("banner_count")).intValue() : 0;
-        int engineCount = map.containsKey("engine_count") ? ((Number) map.get("engine_count")).intValue() : 0;
+        int largeBannerCount = map.containsKey("large_banner_count")
+            ? ((Number) map.get("large_banner_count")).intValue() : 0;
+        int hugeBannerCount = map.containsKey("huge_banner_count")
+            ? ((Number) map.get("huge_banner_count")).intValue() : 0;
 
-        // Deserialize engine block indices
-        List<Integer> engineBlockIndices = new ArrayList<>();
-        if (map.containsKey("engine_block_indices")) {
-            @SuppressWarnings("unchecked")
-            List<Number> indices = (List<Number>) map.get("engine_block_indices");
-            for (Number idx : indices) engineBlockIndices.add(idx.intValue());
+        // Propulsion blocks. Absent for every ship saved before propulsion existed — an empty list is
+        // correct there, and such a ship simply carries no thrust until it is next re-detected.
+        List<ThrustBlock> thrustBlocks = new ArrayList<>();
+        if (map.get("thrust_blocks") instanceof List<?> rawThrust) {
+            for (Object o : rawThrust) {
+                if (!(o instanceof Map<?, ?> m)) continue;
+                Object idx = m.get("index"), type = m.get("type"), axis = m.get("axis");
+                if (!(idx instanceof Number n) || type == null || axis == null) continue;
+                try {
+                    thrustBlocks.add(new ThrustBlock(n.intValue(), String.valueOf(type),
+                        ShipThrust.Axis.valueOf(String.valueOf(axis))));
+                } catch (IllegalArgumentException ignored) {
+                    // Unknown axis name (downgrade, or a hand-edited sidecar) — drop that one entry
+                    // rather than failing the whole ship.
+                }
+            }
         }
-        // Old YAML files may contain "engine_local_positions" - ignored (dead data, removed)
+        // Sidecars written before the engine subsystem was removed still carry engine_count,
+        // engine_block_indices and engine_local_positions. All three are simply ignored — reading a
+        // pre-change world must keep working.
 
         // Load wool/banner power from config for sail power calculation
         org.bukkit.plugin.Plugin plugin = org.bukkit.Bukkit.getPluginManager().getPlugin("BlockShips");
         ShipConfig config = (plugin != null) ? ShipConfig.load(plugin, "custom") : null;
+        double healthRegenPerSecond = customShipHealthRegen(plugin);
         int woolPower = config != null ? config.woolPower : 3;
         int bannerPower = config != null ? config.bannerPower : 7;
+        int largeBannerPower = config != null ? config.largeBannerPower : 20;
+        int hugeBannerPower = config != null ? config.hugeBannerPower : 50;
 
         return new ShipModel(parts, new ArrayList<>(), initialRotation, positionOffset,
             collisionOffset, rotationTransform, seats, cannons, waterFloatOffset,
             maxHealth, healthRegenPerSecond, totalWeight, mass, blockCount,
             centerOfVolume, minY, maxY, assemblyYaw,
-            woolCount, bannerCount, woolPower, bannerPower, engineCount, engineBlockIndices);
+            woolCount, bannerCount, largeBannerCount, hugeBannerCount,
+            woolPower, bannerPower, largeBannerPower, hugeBannerPower, thrustBlocks);
     }
 }
 
