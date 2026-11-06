@@ -2,7 +2,9 @@
 name: Feature request
 about: Suggest an idea or new feature for BlockShips
 title: ''
-labels: 'enhancement'
+labels: enhancement
+assignees: ''
+
 ---
 
 **Is your feature request related to a problem? Please describe.**
