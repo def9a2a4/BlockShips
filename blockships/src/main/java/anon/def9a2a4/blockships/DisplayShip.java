@@ -962,7 +962,7 @@ public class DisplayShip implements Listener {
     /**
      * Creates a ship kit with balloon color support for airships.
      */
-    private ItemStack createShipKitWithBalloon(String shipType, ItemStack banner, String woodType, String balloonColor) {
+    public ItemStack createShipKitWithBalloon(String shipType, ItemStack banner, String woodType, String balloonColor) {
         // Start with the base ship kit
         ItemStack kit = createShipKit(shipType, banner, woodType, plugin);
 
@@ -1502,24 +1502,31 @@ public class DisplayShip implements Listener {
             .rotateX((float) Math.toRadians(model.initialRotation.y))
             .rotateZ((float) Math.toRadians(model.initialRotation.z));
 
+        // Prefab models (position-offset) were tuned with their displays riding the ArmorStand's passenger height
+        // UNcancelled: the native engine never compensated it for prefabs (only custom ships had a display offset).
+        // The mechanism subtracts rideOffset from every display, so put it back here or the hull draws ~2 blocks
+        // under its hitboxes. Colliders don't ride the stand, so their offset takes it back out below.
+        float lift = anon.def9a2a4.corelib.MechanismRegistry.ARMORSTAND_RIDE_OFFSET;
+        org.joml.Matrix4f liftT = new org.joml.Matrix4f().translation(0f, lift, 0f);
+
         java.util.List<anon.def9a2a4.corelib.MechanismRegistry.PartSpec> parts = new java.util.ArrayList<>();
         // Block parts (must stay first + in order — seat/collider block indices reference model.parts).
         for (ShipModel.ModelPart p : model.parts) {
-            // localTransform = R_i · T(Po) · L · T(+0.5): the trailing +0.5 cancels the engine's BlockDisplay
-            // -0.5 corner shift exactly (for any rotation/scale in L).
-            org.joml.Matrix4f lt = new org.joml.Matrix4f(ri)
+            // localTransform = T(lift) · R_i · T(Po) · L · T(+0.5): the trailing +0.5 cancels the engine's
+            // BlockDisplay -0.5 corner shift exactly (for any rotation/scale in L).
+            org.joml.Matrix4f lt = new org.joml.Matrix4f(liftT).mul(ri)
                 .mul(new org.joml.Matrix4f().translation(model.positionOffset))
                 .mul(p.local)
                 .mul(new org.joml.Matrix4f().translation(0.5f, 0.5f, 0.5f));
             anon.def9a2a4.corelib.CollisionConfig col;
             if (p.collision.enable) {
-                // collision.offset = R_i·(Co − Po + b − 0.5·L₃ₓ₃·(1,1,1)) + (0,+0.5,0): reconcile the engine's
-                // display↔collider frame (Po→Co, re-inject b, undo the baked +0.5 and the engine's fixed -0.5Y).
+                // collision.offset = R_i·(Co − Po + b − 0.5·L₃ₓ₃·(1,1,1)) + (0,+0.5−lift,0): reconcile the engine's
+                // display↔collider frame (Po→Co, re-inject b, undo the baked +0.5, the lift and the engine's fixed -0.5Y).
                 org.joml.Vector3f l3 = p.local.transformDirection(
                     new org.joml.Vector3f(1, 1, 1), new org.joml.Vector3f());
                 org.joml.Vector3f inner = new org.joml.Vector3f(model.collisionOffset)
                     .sub(model.positionOffset).add(p.collision.offset).sub(l3.mul(0.5f));
-                org.joml.Vector3f off = ri.transformDirection(inner, new org.joml.Vector3f()).add(0f, 0.5f, 0f);
+                org.joml.Vector3f off = ri.transformDirection(inner, new org.joml.Vector3f()).add(0f, 0.5f - lift, 0f);
                 col = new anon.def9a2a4.corelib.CollisionConfig(true, p.collision.size, off);
             } else {
                 col = anon.def9a2a4.corelib.CollisionConfig.NONE;
@@ -1540,7 +1547,7 @@ public class DisplayShip implements Listener {
         }
         // Standalone item parts (banners/sails/balloon) — AFTER all block parts so indices never shift.
         for (ShipModel.ItemPart p : model.items) {
-            org.joml.Matrix4f lt = new org.joml.Matrix4f(ri)
+            org.joml.Matrix4f lt = new org.joml.Matrix4f(liftT).mul(ri)
                 .mul(new org.joml.Matrix4f().translation(model.positionOffset))
                 .mul(p.local); // item primaries skip the -0.5 corner shift — no +0.5 here
             parts.add(anon.def9a2a4.corelib.MechanismRegistry.PartSpec.display(

@@ -1664,8 +1664,11 @@ public class ShipInstance {
                     world.dropItemNaturally(dropLocation, shipWheel);
                 }
             } else {
-                // Prefab ships drop the ship kit with customization
-                ItemStack shipKit = DisplayShip.createShipKit(customization.getCustomBanner(), customization.getWoodType(), shipType);
+                // Prefab ships drop the ship kit with customization, the balloon colour included
+                ItemStack shipKit = plugin instanceof BlockShipsPlugin bsp && bsp.getDisplayShip() != null
+                    ? bsp.getDisplayShip().createShipKitWithBalloon(shipType, customization.getCustomBanner(),
+                        customization.getWoodType(), customization.getBalloonColor())
+                    : DisplayShip.createShipKit(customization.getCustomBanner(), customization.getWoodType(), shipType);
                 world.dropItemNaturally(dropLocation, shipKit);
             }
         }
