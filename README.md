@@ -186,7 +186,7 @@ plugins/BlockShips/config/blocks.yml
 A file at the plugin folder root (`plugins/BlockShips/blocks.yml`) is **not read at all**. To get a copy to edit:
 
 ```sh
-unzip -o BlockShips-0.0.18.jar blocks.yml -d plugins/BlockShips/config/
+unzip -o BlockShips-0.0.19.jar blocks.yml -d plugins/BlockShips/config/
 ```
 
 or download [`blocks.yml`](https://raw.githubusercontent.com/def9a2a4/BlockShips/main/blockships/src/main/resources/blocks.yml) and save it to that path.
