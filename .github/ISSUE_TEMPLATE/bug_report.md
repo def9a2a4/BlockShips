@@ -2,7 +2,9 @@
 name: Bug report
 about: Create a report to help us improve
 title: ''
-labels: 'bug'
+labels: bug, enhancement
+assignees: ''
+
 ---
 
 <!-- note that this text, or anything between tags like it, will not be rendered in the final issue and will not be visible/ -->
@@ -65,4 +67,3 @@ paste plugin list here
 
 ## Additional Context
 <!-- Add any other context about the problem here. This could include: what you were trying to accomplish, any recent changes to your server, whether the issue is consistent or intermittent, etc. -->
-
